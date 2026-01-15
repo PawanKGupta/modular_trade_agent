@@ -3854,12 +3854,12 @@ class SellOrderManager:
                                 f"Skipping order {order_id_str}: Still PENDING/OPEN at broker"
                             )
                     # Order not found in broker - could be executed/rejected/cancelled
-                    # Only mark as stale if > 24 hours old (very conservative)
+                    # Only mark as stale if > 12 hours old
                     elif db_order.placed_at:
                         age_hours = (now - db_order.placed_at).total_seconds() / 3600
 
-                        if age_hours > 24:
-                            # Order is > 24h old and not in broker - likely failed
+                        if age_hours > 12:
+                            # Order is > 12h old and not in broker - likely failed
                             # But first double-check: if position is closed, order was executed
                             should_mark_failed = True
                             if self.positions_repo:
@@ -3886,7 +3886,7 @@ class SellOrderManager:
                                 stats["updated"] += 1
                                 logger.warning(
                                     f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
-                                    f"Order >24h old and not found in broker - marked as FAILED"
+                                    f"Order >12h old and not found in broker - marked as FAILED"
                                 )
                         else:
                             stats["skipped"] += 1

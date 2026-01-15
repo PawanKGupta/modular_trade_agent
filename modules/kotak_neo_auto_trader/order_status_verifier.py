@@ -271,7 +271,7 @@ class OrderStatusVerifier:
                     counts["cancelled"] += 1
                     continue
 
-                # Still not found - check if order is stale (>24 hours old)
+                # Still not found - check if order is stale (>12 hours old)
                 # Only mark as FAILED if we got a successful API response (even if empty)
                 # This prevents marking orders as failed when broker API is down or returning errors
                 # (If API threw exception, we wouldn't reach here - caught at line 161)
@@ -287,8 +287,8 @@ class OrderStatusVerifier:
                             placed_at = placed_at.replace(tzinfo=None)
                         age_hours = (datetime.now() - placed_at).total_seconds() / 3600
 
-                        # Only mark as stale if order is > 24 hours old
-                        if age_hours > 24:
+                        # Only mark as stale if order is > 12 hours old
+                        if age_hours > 12:
                             should_mark_failed = True
                             logger.warning(
                                 f"Order {order_id} not found in broker and is {age_hours:.1f}h old. "
