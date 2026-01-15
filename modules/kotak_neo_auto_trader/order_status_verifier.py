@@ -292,7 +292,7 @@ class OrderStatusVerifier:
                             should_mark_failed = True
                             logger.warning(
                                 f"Order {order_id} not found in broker and is {age_hours:.1f}h old. "
-                                f"Marking as FAILED in database."
+                                "Marking as FAILED in database."
                             )
                     except Exception as e:
                         logger.debug(f"Error checking order age for {order_id}: {e}")

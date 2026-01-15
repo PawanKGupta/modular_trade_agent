@@ -3885,8 +3885,9 @@ class SellOrderManager:
                                 )
                                 stats["updated"] += 1
                                 logger.warning(
-                                    f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
-                                    f"Order >12h old and not found in broker - marked as FAILED"
+                                    f"Reconciled stale sell order {order_id_str} "
+                                    f"({db_order.symbol}): Order >12h old and not found in broker - "
+                                    "marked as FAILED"
                                 )
                         else:
                             stats["skipped"] += 1
