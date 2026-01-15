@@ -378,7 +378,8 @@ def drop_order(
     """
     Drop an order from the retry queue.
 
-    Marks the order as CLOSED, removing it from retry tracking.
+    Marks the order as CANCELLED, removing it from retry tracking.
+    More semantically correct than CLOSED for failed orders that never executed.
     """
     try:
         repo = OrdersRepository(db)
@@ -406,10 +407,8 @@ def drop_order(
                 ),
             )
 
-        # Mark as closed
-        order.status = DbOrderStatus.CLOSED
-        order.closed_at = ist_now()
-        repo.update(order)
+        # Mark as cancelled (more semantically correct than CLOSED for failed orders)
+        repo.mark_cancelled(order, "Dropped from retry queue")
 
         return {"message": f"Order {order_id} dropped from retry queue"}
     except HTTPException:

@@ -98,6 +98,15 @@ class DummyOrdersRepo:
         self.update_calls.append(order)
         return order
 
+    def mark_cancelled(self, order, cancelled_reason=None):
+        """Mock mark_cancelled method that sets status to CANCELLED"""
+        # Use mocked ist_now from orders module (patched by mock_ist_now fixture)
+        order.status = OrderStatus.CANCELLED
+        order.reason = cancelled_reason or "Cancelled"
+        order.closed_at = orders.ist_now()  # Use mocked ist_now from orders module
+        order.last_status_check = orders.ist_now()
+        return self.update(order)
+
     def get_order_statistics(self, user_id):
         return self.stats.get(user_id, {})
 
@@ -470,8 +479,9 @@ def test_drop_order_success(orders_repo, current_user, mock_ist_now):
     result = orders.drop_order(order_id=1, db=None, current=current_user)
 
     assert result["message"] == "Order 1 dropped from retry queue"
-    assert order.status == OrderStatus.CLOSED
+    assert order.status == OrderStatus.CANCELLED
     assert order.closed_at == mock_ist_now
+    assert "Dropped from retry queue" in (order.reason or "")
     assert len(orders_repo.update_calls) == 1
 
 

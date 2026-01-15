@@ -329,8 +329,9 @@ def test_drop_order_success(client: TestClient, db_session):
     # Verify in DB
     db_session.refresh(retry_order)
 
-    assert retry_order.status == DbOrderStatus.CLOSED
+    assert retry_order.status == DbOrderStatus.CANCELLED
     assert retry_order.closed_at is not None
+    assert "Dropped from retry queue" in (retry_order.reason or "")
 
 
 def test_drop_order_not_found(client: TestClient):
