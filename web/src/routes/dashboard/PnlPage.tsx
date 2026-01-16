@@ -7,7 +7,10 @@ import { PnlTrendChart } from '@/components/charts/PnlTrendChart';
 import { ExportButton } from '@/components/ExportButton';
 import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
 
-function formatMoney(amount: number): string {
+function formatMoney(amount: number | null | undefined): string {
+	if (amount == null || isNaN(amount)) {
+		return '-';
+	}
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
@@ -310,17 +313,17 @@ export function PnlPage() {
 										) : '-'}
 									</td>
 									<td className="p-2 text-right text-[var(--text)] hidden md:table-cell">
-										{d.realized_pnl !== undefined ? formatMoney(d.realized_pnl) : '-'}
+										{formatMoney(d.realized_pnl)}
 									</td>
 									<td className="p-2 text-right text-[var(--text)] hidden lg:table-cell">
-										{d.unrealized_pnl !== undefined ? formatMoney(d.unrealized_pnl) : '-'}
+										{formatMoney(d.unrealized_pnl)}
 									</td>
 									<td className="p-2 text-right text-[var(--text)] hidden lg:table-cell">
-										{d.fees !== undefined ? formatMoney(d.fees) : '-'}
+										{formatMoney(d.fees)}
 									</td>
 									<td
 										className={`p-2 text-right font-medium ${
-											d.pnl >= 0 ? 'text-green-400' : 'text-red-400'
+											(d.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
 										}`}
 									>
 										{formatMoney(d.pnl)}
