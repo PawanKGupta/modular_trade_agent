@@ -1,7 +1,9 @@
 from datetime import date, timedelta
+from typing import Annotated
 
 # ruff: noqa: B008
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Positions, TradeMode, Users
@@ -10,7 +12,7 @@ from src.infrastructure.persistence.pnl_audit_repository import PnlAuditReposito
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 
 from ..core.deps import get_current_user, get_db
-from ..schemas.pnl import DailyPnl, PnlSummary
+from ..schemas.pnl import ClosedPositionDetail, DailyPnl, PaginatedClosedPositions, PnlSummary
 from ..services.pnl_calculation_service import PnlCalculationService
 
 try:
@@ -605,3 +607,120 @@ def backfill_pnl(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to backfill P&L: {str(e)}") from e
+
+
+def _get_stock_name(symbol: str) -> str | None:
+    """Get stock name from yfinance for display purposes."""
+    try:
+        import yfinance as yf  # noqa: PLC0415
+
+        # Remove broker suffixes like -EQ, -BE for ticker lookup
+        base_symbol = symbol.split("-")[0] if "-" in symbol else symbol
+        ticker = f"{base_symbol}.NS"
+
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        # Try multiple fields for stock name
+        name = (
+            info.get("longName")
+            or info.get("shortName")
+            or info.get("name")
+            or base_symbol
+        )
+        return name if name and name != base_symbol else None
+    except Exception:
+        return None
+
+
+@router.get("/closed-positions", response_model=PaginatedClosedPositions)
+def get_closed_positions(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 10,
+    trade_mode: str | None = Query(default=None, description="Filter by 'paper' or 'broker'"),
+    sort_by: str = Query(
+        default="closed_at", description="Sort field: closed_at, symbol, realized_pnl, opened_at"
+    ),
+    sort_order: str = Query(default="desc", description="Sort order: asc or desc"),
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get paginated closed positions with stock names for PnL page.
+
+    Returns closed positions sorted by the specified field with pagination support.
+    """
+    # Parse trade_mode
+    mode: TradeMode | None = None
+    if trade_mode and isinstance(trade_mode, str):
+        try:
+            mode = TradeMode(trade_mode.lower())
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail="Invalid trade_mode. Use 'paper' or 'broker'."
+            )
+
+    # Build base query
+    qry = db.query(Positions).filter(
+        Positions.user_id == current.id,
+        Positions.closed_at.isnot(None),  # noqa: E711
+    )
+
+    # Filter by trade_mode if specified (match via buy order)
+    if mode is not None:
+        orders_repo = OrdersRepository(db)
+        # Get all buy orders for this user
+        all_orders = orders_repo.list(current.id)[0]  # Returns (orders, count)
+        buy_order_symbols = {
+            order.symbol
+            for order in all_orders
+            if order.side == "buy" and getattr(order, "trade_mode", None) == mode
+        }
+        qry = qry.filter(Positions.symbol.in_(buy_order_symbols))
+
+    # Calculate total count before pagination
+    total_count = qry.count()
+
+    # Apply sorting
+    sort_field_map = {
+        "closed_at": Positions.closed_at,
+        "opened_at": Positions.opened_at,
+        "symbol": Positions.symbol,
+        "realized_pnl": Positions.realized_pnl,
+    }
+    sort_field = sort_field_map.get(sort_by, Positions.closed_at)
+    sort_func = desc if sort_order.lower() == "desc" else asc
+    qry = qry.order_by(sort_func(sort_field))
+
+    # Apply pagination
+    offset = (page - 1) * page_size
+    positions = qry.offset(offset).limit(page_size).all()
+
+    # Convert to response models with stock names
+    items: list[ClosedPositionDetail] = []
+    for pos in positions:
+        stock_name = _get_stock_name(pos.symbol)
+        items.append(
+            ClosedPositionDetail(
+                id=pos.id,
+                symbol=pos.symbol,
+                stock_name=stock_name,
+                quantity=float(pos.quantity) if pos.quantity else 0.0,
+                avg_price=float(pos.avg_price) if pos.avg_price else 0.0,
+                exit_price=float(pos.exit_price) if pos.exit_price else None,
+                opened_at=pos.opened_at.isoformat() if pos.opened_at else "",
+                closed_at=pos.closed_at.isoformat() if pos.closed_at else "",
+                realized_pnl=float(pos.realized_pnl) if pos.realized_pnl is not None else None,
+                realized_pnl_pct=float(pos.realized_pnl_pct) if pos.realized_pnl_pct is not None else None,
+                exit_reason=pos.exit_reason,
+            )
+        )
+
+    total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+
+    return PaginatedClosedPositions(
+        items=items,
+        total=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )

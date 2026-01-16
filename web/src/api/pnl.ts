@@ -22,6 +22,28 @@ export interface PnlSummary {
 	daysRed: number;
 }
 
+export interface ClosedPositionDetail {
+	id: number;
+	symbol: string;
+	stock_name: string | null;
+	quantity: number;
+	avg_price: number;
+	exit_price: number | null;
+	opened_at: string;
+	closed_at: string;
+	realized_pnl: number | null;
+	realized_pnl_pct: number | null;
+	exit_reason: string | null;
+}
+
+export interface PaginatedClosedPositions {
+	items: ClosedPositionDetail[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
 function formatDate(date: Date | string): string {
 	if (typeof date === 'string') {
 		return date;
@@ -77,5 +99,23 @@ export async function backfillPnlData(startDate: string, endDate: string, tradeM
 	};
 	if (tradeMode) params.trade_mode = tradeMode;
 	const { data } = await api.post('/user/pnl/backfill', {}, { params });
+	return data;
+}
+
+export async function getClosedPositions(
+	page: number = 1,
+	pageSize: number = 10,
+	tradeMode?: 'paper' | 'broker',
+	sortBy: string = 'closed_at',
+	sortOrder: 'asc' | 'desc' = 'desc',
+): Promise<PaginatedClosedPositions> {
+	const params: Record<string, string> = {
+		page: page.toString(),
+		page_size: pageSize.toString(),
+		sort_by: sortBy,
+		sort_order: sortOrder,
+	};
+	if (tradeMode) params.trade_mode = tradeMode;
+	const { data } = await api.get<PaginatedClosedPositions>('/user/pnl/closed-positions', { params });
 	return data;
 }

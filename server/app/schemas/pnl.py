@@ -24,3 +24,25 @@ class PnlSummary(BaseModel):
     # Backward-compat fields (mapped to trade counts to match expectation)
     daysGreen: int
     daysRed: int
+
+
+class ClosedPositionDetail(BaseModel):
+    id: int
+    symbol: str
+    stock_name: str | None  # Resolved from yfinance
+    quantity: float
+    avg_price: float
+    exit_price: float | None
+    opened_at: str
+    closed_at: str
+    realized_pnl: float | None
+    realized_pnl_pct: float | None
+    exit_reason: str | None
+
+
+class PaginatedClosedPositions(BaseModel):
+    items: list[ClosedPositionDetail]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

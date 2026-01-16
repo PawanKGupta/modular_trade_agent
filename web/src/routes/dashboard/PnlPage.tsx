@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
+import { getClosedPositions, getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
 import { exportPnl } from '@/api/export';
 import { exportPnlPdf } from '@/api/reports';
 import { PnlTrendChart } from '@/components/charts/PnlTrendChart';
@@ -27,6 +27,10 @@ export function PnlPage() {
 	const [includeUnrealized, setIncludeUnrealized] = useState<boolean>(false);
 	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
 	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [positionsPage, setPositionsPage] = useState(1);
+	const [positionsPageSize, setPositionsPageSize] = useState(10);
+	const [positionsSortBy, setPositionsSortBy] = useState<'closed_at' | 'symbol' | 'realized_pnl' | 'opened_at'>('closed_at');
+	const [positionsSortOrder, setPositionsSortOrder] = useState<'asc' | 'desc'>('desc');
 
 	const dailyQ = useQuery<DailyPnl[]>({
 		queryKey: ['pnl', 'daily', tradeMode, includeUnrealized],
@@ -39,9 +43,20 @@ export function PnlPage() {
 		refetchInterval: 30000,
 	});
 
+	const closedPositionsQ = useQuery({
+		queryKey: ['pnl', 'closed-positions', tradeMode, positionsPage, positionsPageSize, positionsSortBy, positionsSortOrder],
+		queryFn: () => getClosedPositions(positionsPage, positionsPageSize, tradeMode, positionsSortBy, positionsSortOrder),
+		refetchInterval: 30000,
+	});
+
 	useEffect(() => {
 		document.title = 'PnL';
 	}, []);
+
+	// Reset page when filters change
+	useEffect(() => {
+		setPositionsPage(1);
+	}, [tradeMode, positionsSortBy, positionsSortOrder]);
 
 	// Format last update time
 	const lastUpdate = summaryQ.dataUpdatedAt ? new Date(summaryQ.dataUpdatedAt).toLocaleTimeString() : 'Never';
@@ -111,6 +126,7 @@ export function PnlPage() {
 							onClick={() => {
 								summaryQ.refetch();
 								dailyQ.refetch();
+								closedPositionsQ.refetch();
 							}}
 							className="px-3 py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90"
 						>
@@ -255,6 +271,173 @@ export function PnlPage() {
 						</tbody>
 					</table>
 				</div>
+			</div>
+
+			{/* Closed Positions Section */}
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between px-3 py-2 border-b border-[#1e293b]">
+					<div className="font-medium text-[var(--text)]">Closed Positions</div>
+					{closedPositionsQ.isLoading && <span className="text-sm text-[var(--muted)]">Loading...</span>}
+					{closedPositionsQ.isError && <span className="text-sm text-red-400">Failed to load</span>}
+				</div>
+
+				{/* Pagination Controls - Top */}
+				{closedPositionsQ.data && closedPositionsQ.data.total > 0 && (
+					<div className="px-3 py-2 border-b border-[#1e293b] flex items-center justify-between gap-4 flex-wrap">
+						<div className="flex items-center gap-2">
+							<span className="text-sm text-[var(--muted)]">Items per page:</span>
+							<select
+								value={positionsPageSize}
+								onChange={(e) => {
+									setPositionsPageSize(Number(e.target.value));
+									setPositionsPage(1);
+								}}
+								className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)]"
+							>
+								<option value={10}>10</option>
+								<option value={25}>25</option>
+								<option value={50}>50</option>
+								<option value={100}>100</option>
+							</select>
+						</div>
+						<div className="text-sm text-[var(--muted)]">
+							Showing {((positionsPage - 1) * positionsPageSize) + 1} to {Math.min(positionsPage * positionsPageSize, closedPositionsQ.data.total)} of {closedPositionsQ.data.total}
+						</div>
+					</div>
+				)}
+
+				<div className="overflow-x-auto">
+					<table className="w-full text-sm">
+						<thead className="bg-[#0f172a] text-[var(--muted)]">
+							<tr>
+								<th
+									className="text-left p-2 whitespace-nowrap cursor-pointer hover:bg-[#1e293b]"
+									onClick={() => {
+										if (positionsSortBy === 'symbol') {
+											setPositionsSortOrder(positionsSortOrder === 'asc' ? 'desc' : 'asc');
+										} else {
+											setPositionsSortBy('symbol');
+											setPositionsSortOrder('asc');
+										}
+									}}
+								>
+									Symbol {positionsSortBy === 'symbol' && (positionsSortOrder === 'asc' ? '▲' : '▼')}
+								</th>
+								<th className="text-left p-2 whitespace-nowrap">Stock Name</th>
+								<th className="text-right p-2 whitespace-nowrap">Qty</th>
+								<th className="text-right p-2 whitespace-nowrap">Entry</th>
+								<th className="text-right p-2 whitespace-nowrap">Exit</th>
+								<th
+									className="text-right p-2 whitespace-nowrap cursor-pointer hover:bg-[#1e293b]"
+									onClick={() => {
+										if (positionsSortBy === 'realized_pnl') {
+											setPositionsSortOrder(positionsSortOrder === 'asc' ? 'desc' : 'asc');
+										} else {
+											setPositionsSortBy('realized_pnl');
+											setPositionsSortOrder('desc');
+										}
+									}}
+								>
+									P&L {positionsSortBy === 'realized_pnl' && (positionsSortOrder === 'asc' ? '▲' : '▼')}
+								</th>
+								<th className="text-right p-2 whitespace-nowrap">P&L %</th>
+								<th
+									className="text-left p-2 whitespace-nowrap cursor-pointer hover:bg-[#1e293b]"
+									onClick={() => {
+										if (positionsSortBy === 'closed_at') {
+											setPositionsSortOrder(positionsSortOrder === 'asc' ? 'desc' : 'asc');
+										} else {
+											setPositionsSortBy('closed_at');
+											setPositionsSortOrder('desc');
+										}
+									}}
+								>
+									Closed Date {positionsSortBy === 'closed_at' && (positionsSortOrder === 'asc' ? '▲' : '▼')}
+								</th>
+							</tr>
+						</thead>
+						<tbody>
+							{(closedPositionsQ.data?.items ?? []).map((pos) => (
+								<tr key={pos.id} className="border-t border-[#1e293b]">
+									<td className="p-2 text-[var(--text)] font-medium">{pos.symbol}</td>
+									<td className="p-2 text-[var(--text)]">{pos.stock_name || '-'}</td>
+									<td className="p-2 text-right text-[var(--text)]">{pos.quantity}</td>
+									<td className="p-2 text-right text-[var(--text)]">{formatMoney(pos.avg_price)}</td>
+									<td className="p-2 text-right text-[var(--text)]">{pos.exit_price ? formatMoney(pos.exit_price) : '-'}</td>
+									<td
+										className={`p-2 text-right font-medium ${
+											pos.realized_pnl && pos.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+										}`}
+									>
+										{pos.realized_pnl !== null ? formatMoney(pos.realized_pnl) : '-'}
+									</td>
+									<td
+										className={`p-2 text-right font-medium ${
+											pos.realized_pnl_pct && pos.realized_pnl_pct >= 0 ? 'text-green-400' : 'text-red-400'
+										}`}
+									>
+										{pos.realized_pnl_pct !== null ? `${pos.realized_pnl_pct.toFixed(2)}%` : '-'}
+									</td>
+									<td className="p-2 text-[var(--text)]">{new Date(pos.closed_at).toLocaleDateString('en-IN')}</td>
+								</tr>
+							))}
+							{(closedPositionsQ.data?.items ?? []).length === 0 && !closedPositionsQ.isLoading && (
+								<tr>
+									<td className="p-2 text-[var(--muted)] text-center" colSpan={8}>
+										No closed positions available
+									</td>
+								</tr>
+							)}
+						</tbody>
+					</table>
+				</div>
+
+				{/* Pagination Controls - Bottom */}
+				{closedPositionsQ.data && closedPositionsQ.data.total_pages > 1 && (
+					<div className="px-3 py-2 border-t border-[#1e293b] flex items-center justify-between gap-2 flex-wrap">
+						<button
+							onClick={() => setPositionsPage((p) => Math.max(1, p - 1))}
+							disabled={positionsPage === 1}
+							className="px-3 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#1e293b]"
+						>
+							Previous
+						</button>
+						<div className="flex items-center gap-1">
+							{Array.from({ length: Math.min(5, closedPositionsQ.data.total_pages) }, (_, i) => {
+								let pageNum: number;
+								if (closedPositionsQ.data.total_pages <= 5) {
+									pageNum = i + 1;
+								} else if (positionsPage <= 3) {
+									pageNum = i + 1;
+								} else if (positionsPage >= closedPositionsQ.data.total_pages - 2) {
+									pageNum = closedPositionsQ.data.total_pages - 4 + i;
+								} else {
+									pageNum = positionsPage - 2 + i;
+								}
+								return (
+									<button
+										key={pageNum}
+										onClick={() => setPositionsPage(pageNum)}
+										className={`px-2 py-1 text-sm rounded ${
+											positionsPage === pageNum
+												? 'bg-blue-600 text-white'
+												: 'bg-[var(--panel)] border border-[#1e293b] text-[var(--text)] hover:bg-[#1e293b]'
+										}`}
+									>
+										{pageNum}
+									</button>
+								);
+							})}
+						</div>
+						<button
+							onClick={() => setPositionsPage((p) => Math.min(closedPositionsQ.data!.total_pages, p + 1))}
+							disabled={positionsPage === closedPositionsQ.data.total_pages}
+							className="px-3 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#1e293b]"
+						>
+							Next
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);
