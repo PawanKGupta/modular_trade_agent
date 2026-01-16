@@ -2427,11 +2427,6 @@ class SellOrderManager:
                 logger.error("No symbol found in trade entry")
                 return None
 
-            # Ensure symbol has exchange suffix
-            if not symbol.endswith(("-EQ", "-BE", "-BL", "-BZ")):
-                symbol = f"{symbol}-EQ"
-
-            # Try to get correct trading symbol from scrip master
             # Use user's trading config preference for exchange (from database UserTradingConfig)
             # Falls back to config.DEFAULT_EXCHANGE if strategy_config not available
             exchange = (
@@ -2439,13 +2434,88 @@ class SellOrderManager:
                 if self.strategy_config
                 else config.DEFAULT_EXCHANGE
             )
-            if self.scrip_master and self.scrip_master.symbol_map:
-                correct_symbol = self.scrip_master.get_trading_symbol(symbol, exchange=exchange)
-                if correct_symbol:
-                    logger.debug(
-                        f"Resolved {symbol} -> {correct_symbol} via scrip master ({exchange})"
-                    )
-                    symbol = correct_symbol
+
+            # Resolve symbol and reject T2T segments - only allow -EQ segment stocks
+            # IMPORTANT: Only -EQ segment symbols are supported for trading
+            # T2T segments (-BE, -BL, -BZ) are rejected as they are not supported
+            if any(symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                # Reject T2T segment symbols
+                logger.error(
+                    f"Cannot place sell order for {symbol}: T2T segment stock (-BE/-BL/-BZ) "
+                    f"which is not supported. Only -EQ segment stocks are allowed for trading."
+                )
+                return None
+
+            # If symbol already has -EQ suffix, validate it exists in scrip master
+            if symbol.upper().endswith("-EQ"):
+                if self.scrip_master and self.scrip_master.symbol_map:
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if instrument and instrument.get("symbol"):
+                        # Symbol exists in scrip master, use as-is
+                        logger.debug(
+                            f"Symbol {symbol} already has -EQ suffix and exists in scrip master ({exchange})"
+                        )
+                    else:
+                        logger.warning(
+                            f"Symbol {symbol} not found in scrip master ({exchange}). "
+                            f"Using as-is (not validated)."
+                        )
+                # Continue with symbol as-is (already -EQ)
+            # Symbol doesn't have suffix - resolve to -EQ variant via scrip master
+            elif self.scrip_master and self.scrip_master.symbol_map:
+                # First, try to get -EQ variant explicitly
+                eq_symbol = f"{symbol}-EQ"
+                instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+
+                if instrument and instrument.get("symbol"):
+                    resolved = instrument["symbol"]
+                    # Double-check it's -EQ (safety check)
+                    if resolved.upper().endswith("-EQ"):
+                        logger.debug(
+                            f"Resolved {symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
+                        )
+                        symbol = resolved
+                    else:
+                        logger.warning(f"Expected -EQ variant but got {resolved} for {symbol}")
+                else:
+                    # If -EQ not found, try base symbol (might resolve to something else)
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if instrument and instrument.get("symbol"):
+                        resolved = instrument["symbol"]
+
+                        # Check if resolved symbol is T2T segment - reject it
+                        if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                            logger.error(
+                                f"Cannot place sell order for {symbol}: resolves to T2T segment {resolved} "
+                                f"which is not supported. Only -EQ segment stocks are allowed for trading. "
+                                f"The stock may only be available in T2T segment on {exchange}."
+                            )
+                            return None
+
+                        # Check if it's -EQ
+                        if resolved.upper().endswith("-EQ"):
+                            logger.debug(
+                                f"Resolved {symbol} -> {resolved} via scrip master ({exchange})"
+                            )
+                            symbol = resolved
+                        else:
+                            # Resolved to something unexpected - default to -EQ suffix
+                            logger.warning(
+                                f"Symbol {symbol} resolved to unexpected format: {resolved}. "
+                                f"Defaulting to {symbol}-EQ"
+                            )
+                            symbol = f"{symbol}-EQ"
+                    else:
+                        # Symbol not found in scrip master - default to -EQ suffix
+                        logger.warning(
+                            f"Symbol {symbol} not found in scrip master ({exchange}). "
+                            f"Defaulting to {symbol}-EQ"
+                        )
+                        symbol = f"{symbol}-EQ"
+            else:
+                # Scrip master not available - default to -EQ suffix
+                logger.warning(f"Scrip master not available. Defaulting {symbol} to {symbol}-EQ")
+                symbol = f"{symbol}-EQ"
 
             qty = trade.get("qty", 0)
             if qty <= 0:
@@ -3877,9 +3947,7 @@ class SellOrderManager:
 
                         # Order exists but is still PENDING/OPEN and > 1 hour old
                         stats["skipped"] += 1
-                        logger.debug(
-                            f"Skipping order {order_id_str}: Still PENDING/OPEN at broker"
-                        )
+                        logger.debug(f"Skipping order {order_id_str}: Still PENDING/OPEN at broker")
                     # Order not found in broker - could be executed/rejected/cancelled
                     # Only mark as stale if > 12 hours old
                     elif db_order.placed_at:
