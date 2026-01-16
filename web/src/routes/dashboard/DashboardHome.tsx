@@ -84,7 +84,7 @@ export function DashboardHome() {
 		queryKey: ['orders-open'],
 		queryFn: async () => {
 			const orders = await listOrders({ status: 'pending' });
-			return orders.length;
+			return orders.total; // Use total count from paginated response
 		},
 		refetchInterval: 30000,
 	});

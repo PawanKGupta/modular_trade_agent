@@ -2,18 +2,24 @@
 Paper Trading API endpoints
 """
 
+import json
 import logging
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import pandas_ta as ta
+import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from core.data_fetcher import fetch_ohlcv_yf
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
-from src.infrastructure.db.models import PnlDaily, Users
+from src.infrastructure.db.models import PnlDaily, TradeMode, Users
+from src.infrastructure.db.models import Positions as PositionsModel
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -194,11 +200,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             raise HTTPException(status_code=404, detail="Paper trading account not initialized")
 
         # Read positions from database (single source of truth)
-        from src.infrastructure.db.models import TradeMode
-        from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
-            PositionsRepository,
-        )
-
         # Handle case where db is None (for backward compatibility with tests)
         if db is None:
             all_positions = []
@@ -210,7 +211,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             orders_repo = OrdersRepository(db)
             # Get all open positions for this user
             all_positions = positions_repo.list(current.id)
-            all_orders = orders_repo.list(current.id)
+            all_orders, _ = orders_repo.list(current.id)
             # Filter for open positions only (closed_at IS NULL)
             open_positions = [pos for pos in all_positions if pos.closed_at is None]
 
@@ -280,8 +281,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 file_holdings = store.get_all_holdings()
                 if file_holdings:
                     # Convert file-based holdings to position-like objects
-                    from types import SimpleNamespace
-
                     for symbol, holding_data in file_holdings.items():
                         file_based_holdings[symbol] = SimpleNamespace(
                             symbol=symbol,
@@ -298,8 +297,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 pass  # If file-based fallback fails, continue with empty positions
 
         # Fetch live prices using yfinance (broker-agnostic)
-        import yfinance as yf  # noqa: PLC0415
-
         portfolio_value = 0.0
         # Process both DB positions and file-based holdings
         all_holdings_to_process = list(paper_positions) + list(file_based_holdings.values())
@@ -355,8 +352,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         target_prices = {}
         try:
             # Try to load active sell orders from service adapter storage
-            import json  # noqa: PLC0415
-
             sell_orders_file = store_path / "active_sell_orders.json"
             if sell_orders_file.exists():
                 with open(sell_orders_file) as f:
@@ -383,10 +378,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         def calculate_ema9_target(symbol: str) -> float | None:
             """Calculate EMA9 target for a holding"""
             try:
-                import pandas_ta as ta  # noqa: PLC0415
-
-                from core.data_fetcher import fetch_ohlcv_yf  # noqa: PLC0415
-
                 ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
                 data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
 
@@ -531,7 +522,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         # Recent orders (last 50) - read from database instead of file
         orders_repo = OrdersRepository(db)
         try:
-            all_orders = orders_repo.list(user_id=current.id)
+            all_orders, _ = orders_repo.list(user_id=current.id)
 
             # Filter for paper trading orders and sort by placed_at descending
             db_orders = [
@@ -673,7 +664,7 @@ def get_paper_trading_history(  # noqa: PLR0915
 
         # Build transactions from Orders
         fee_rate = getattr(PnlCalculationService, "DEFAULT_FEE_RATE", 0.0)
-        orders = orders_repo.list(current.id)
+        orders, _ = orders_repo.list(current.id)
         transactions_db: list[PaperTradingTransaction] = []
         for o in orders:
             try:
@@ -700,8 +691,6 @@ def get_paper_trading_history(  # noqa: PLR0915
 
         # Build closed positions from Positions (strictly from Positions table)
         closed_positions_db: list[ClosedPosition] = []
-        from src.infrastructure.db.models import Positions as PositionsModel
-
         db_positions = (
             db.query(PositionsModel)
             .filter(

@@ -38,3 +38,13 @@ class OrderResponse(BaseModel):
     trade_mode_display: str | None = (
         None  # 'Paper' for paper trading, broker name (e.g., 'Kotak Neo') for broker trading
     )
+
+
+class PaginatedOrderResponse(BaseModel):
+    """Paginated response for orders list"""
+
+    items: list[OrderResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

@@ -37,7 +37,7 @@ from src.infrastructure.persistence.user_trading_config_repository import (
 )
 
 from ..core.deps import get_current_user, get_db
-from ..schemas.orders import OrderResponse
+from ..schemas.orders import OrderResponse, PaginatedOrderResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         # Continue with original quantity if recalculation fails
 
 
-@router.get("/", response_model=list[OrderResponse])
+@router.get("/", response_model=PaginatedOrderResponse)
 def list_orders(  # noqa: PLR0912, PLR0913
     status: Annotated[
         Literal[
@@ -146,9 +146,17 @@ def list_orders(  # noqa: PLR0912, PLR0913
         str | None,
         Query(description="Filter orders to this date (ISO format: YYYY-MM-DD)"),
     ] = None,
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of items per page"),
+    ] = 50,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection
     current: Users = Depends(get_current_user),  # noqa: B008 - FastAPI dependency injection
-) -> list[OrderResponse]:
+) -> PaginatedOrderResponse:
     try:
         repo = OrdersRepository(db)
         # Map string status to enum member
@@ -161,7 +169,12 @@ def list_orders(  # noqa: PLR0912, PLR0913
             # Note: SELL status removed - use side='sell' to filter sell orders
         }
         db_status = status_map.get(status) if status else None
-        items = repo.list(current.id, db_status)
+
+        # Calculate offset for pagination
+        offset = (page - 1) * page_size
+
+        # Get paginated orders and total count
+        items, total_count = repo.list(current.id, db_status, limit=page_size, offset=offset)
 
         # Apply additional filters
         if reason:
@@ -265,7 +278,16 @@ def list_orders(  # noqa: PLR0912, PLR0913
                 # Skip this order and continue
                 continue
 
-        return result
+        # Calculate total pages
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+
+        return PaginatedOrderResponse(
+            items=result,
+            total=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
     except Exception as e:
         logger.exception(f"Error listing orders for user {current.id}: {e}")
         raise HTTPException(
@@ -527,7 +549,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 }
             else:
                 # Sync all paper trading orders - just refresh from DB
-                all_orders = repo.list(current.id, status=None)
+                all_orders, _ = repo.list(current.id, status=None)
                 paper_orders = []
                 for o in all_orders:
                     o_trade_mode_value = (
@@ -670,7 +692,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 orders_to_sync = [order]
             else:
                 # Sync all pending/ongoing orders
-                all_orders = repo.list(current.id, status=None)
+                all_orders, _ = repo.list(current.id, status=None)
                 orders_to_sync = [
                     o
                     for o in all_orders
