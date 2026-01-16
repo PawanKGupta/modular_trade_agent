@@ -3826,17 +3826,9 @@ class SellOrderManager:
                         except Exception as e:
                             logger.debug(f"Error checking position for order {order_id_str}: {e}")
 
-                    # Edge Case: Don't check orders placed < 1 hour ago (too recent)
-                    if db_order.placed_at:
-                        age_hours = (now - db_order.placed_at).total_seconds() / 3600
-                        if age_hours < 1.0:
-                            stats["skipped"] += 1
-                            logger.debug(
-                                f"Skipping order {order_id_str}: Too recent ({age_hours:.1f}h old)"
-                            )
-                            continue
-
-                    # Find this order in broker orders
+                    # Find this order in broker orders FIRST
+                    # Check broker status before age check - cancelled/rejected orders should be
+                    # synced immediately regardless of age
                     broker_order = self._find_order_in_broker_orders(order_id_str, broker_orders)
 
                     if broker_order:
@@ -3844,34 +3836,50 @@ class SellOrderManager:
                         is_rejected = OrderStatusParser.is_rejected(broker_order)
                         is_cancelled = OrderStatusParser.is_cancelled(broker_order)
 
-                        if is_rejected:
-                            rejection_reason = (
-                                OrderFieldExtractor.get_rejection_reason(broker_order)
-                                or "Rejected by broker"
-                            )
-                            self.orders_repo.mark_rejected(db_order, rejection_reason)
-                            stats["updated"] += 1
-                            logger.info(
-                                f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
-                                f"Updated from PENDING to FAILED - {rejection_reason}"
-                            )
-                        elif is_cancelled:
-                            cancelled_reason = (
-                                OrderFieldExtractor.get_rejection_reason(broker_order)
-                                or "Cancelled"
-                            )
-                            self.orders_repo.mark_cancelled(db_order, cancelled_reason)
-                            stats["updated"] += 1
-                            logger.info(
-                                f"Reconciled stale sell order {order_id_str} ({db_order.symbol}): "
-                                f"Updated from PENDING to CANCELLED - {cancelled_reason}"
-                            )
-                        # If order is still PENDING/OPEN at broker, leave it as is
-                        else:
-                            stats["skipped"] += 1
-                            logger.debug(
-                                f"Skipping order {order_id_str}: Still PENDING/OPEN at broker"
-                            )
+                        # IMPORTANT: Sync cancelled/rejected orders immediately (skip age check)
+                        if is_rejected or is_cancelled:
+                            if is_rejected:
+                                rejection_reason = (
+                                    OrderFieldExtractor.get_rejection_reason(broker_order)
+                                    or "Rejected by broker"
+                                )
+                                self.orders_repo.mark_rejected(db_order, rejection_reason)
+                                stats["updated"] += 1
+                                logger.info(
+                                    f"Reconciled sell order {order_id_str} ({db_order.symbol}): "
+                                    f"Updated from PENDING to FAILED - {rejection_reason}"
+                                )
+                            elif is_cancelled:
+                                cancelled_reason = (
+                                    OrderFieldExtractor.get_rejection_reason(broker_order)
+                                    or "Cancelled"
+                                )
+                                self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+                                stats["updated"] += 1
+                                logger.info(
+                                    f"Reconciled sell order {order_id_str} ({db_order.symbol}): "
+                                    f"Updated from PENDING to CANCELLED - {cancelled_reason}"
+                                )
+                            # Continue to next order - don't apply age check for cancelled/rejected
+                            continue
+
+                        # Order is still PENDING/OPEN at broker - apply age check
+                        # Edge Case: Don't check orders placed < 1 hour ago (too recent)
+                        if db_order.placed_at:
+                            age_hours = (now - db_order.placed_at).total_seconds() / 3600
+                            if age_hours < 1.0:
+                                stats["skipped"] += 1
+                                logger.debug(
+                                    f"Skipping order {order_id_str}: Too recent ({age_hours:.1f}h old), "
+                                    f"still PENDING/OPEN at broker"
+                                )
+                                continue
+
+                        # Order exists but is still PENDING/OPEN and > 1 hour old
+                        stats["skipped"] += 1
+                        logger.debug(
+                            f"Skipping order {order_id_str}: Still PENDING/OPEN at broker"
+                        )
                     # Order not found in broker - could be executed/rejected/cancelled
                     # Only mark as stale if > 12 hours old
                     elif db_order.placed_at:
