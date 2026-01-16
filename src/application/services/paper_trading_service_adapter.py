@@ -1519,6 +1519,75 @@ class PaperTradingServiceAdapter:
                         )
                     # Continue to place new order (don't skip)
 
+                # Race condition protection: Re-check position status right before placing order
+                # Position might have been closed during the loop (e.g., by _monitor_sell_orders())
+                from src.infrastructure.persistence.positions_repository import PositionsRepository
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+
+                positions_repo = PositionsRepository(self.db)
+                current_position = positions_repo.get_by_symbol(self.user_id, symbol)
+
+                if not current_position or current_position.closed_at is not None:
+                    self.logger.info(
+                        f"Skipping {symbol} - position already closed (race condition protection)",
+                        action="_place_sell_orders",
+                    )
+
+                    # Also check if there's an active sell order for this closed position
+                    # and cancel it immediately (don't wait for next _cancel_orphaned_sell_orders() cycle)
+                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+
+                    orders_repo = OrdersRepository(self.db)
+                    base_symbol = extract_base_symbol(symbol).upper()
+
+                    # Find active sell orders for this symbol
+                    all_orders = orders_repo.list(self.user_id)
+                    active_sell_orders = [
+                        o
+                        for o in all_orders
+                        if o.side.lower() == "sell"
+                        and o.status in (DbOrderStatus.PENDING, DbOrderStatus.ONGOING)
+                        and extract_base_symbol(o.symbol).upper() == base_symbol
+                    ]
+
+                    if active_sell_orders:
+                        self.logger.info(
+                            f"Cancelling {len(active_sell_orders)} active sell order(s) "
+                            f"for closed position {symbol}",
+                            action="_place_sell_orders",
+                        )
+                        for order in active_sell_orders:
+                            try:
+                                # Cancel via broker if possible
+                                if order.broker_order_id and self.broker:
+                                    try:
+                                        self.broker.cancel_order(order.broker_order_id)
+                                    except Exception:
+                                        pass  # Ignore broker cancellation errors
+
+                                # Mark as cancelled in database
+                                orders_repo.mark_cancelled(
+                                    order, f"Position closed - no longer valid"
+                                )
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to cancel sell order {order.id} "
+                                    f"for closed position {symbol}: {e}",
+                                    action="_place_sell_orders",
+                                )
+
+                    continue
+
+                # Also check quantity hasn't changed
+                if current_position.quantity < quantity:
+                    self.logger.info(
+                        f"Skipping {symbol} - insufficient quantity "
+                        f"(have {current_position.quantity}, need {quantity})",
+                        action="_place_sell_orders",
+                    )
+                    continue
+
                 # Calculate EMA9 target (initial entry - will be updated on re-entry)
                 ema9_target = self._calculate_ema9(ticker)
 
