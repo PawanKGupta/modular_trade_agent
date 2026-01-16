@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getPaperTradingPortfolio } from '@/api/paper-trading';
 import type { PaperTradingPortfolio } from '@/api/paper-trading';
@@ -12,9 +12,12 @@ function formatPercent(value: number): string {
 }
 
 export function PaperTradingPage() {
+	const [ordersPage, setOrdersPage] = useState(1);
+	const [ordersPageSize, setOrdersPageSize] = useState(10);
+
 	const { data, isLoading, error, refetch, dataUpdatedAt } = useQuery<PaperTradingPortfolio>({
-		queryKey: ['paper-trading-portfolio'],
-		queryFn: getPaperTradingPortfolio,
+		queryKey: ['paper-trading-portfolio', ordersPage, ordersPageSize],
+		queryFn: () => getPaperTradingPortfolio({ page: ordersPage, page_size: ordersPageSize }),
 		refetchInterval: 5000, // Refresh every 5 seconds for live P&L
 	});
 
@@ -56,6 +59,8 @@ export function PaperTradingPage() {
 	}
 
 	const { account, holdings, recent_orders, order_statistics } = data;
+	// Ensure recent_orders has items array for backward compatibility
+	const recentOrdersItems = recent_orders.items || [];
 
 	// Debug: Log holdings with reentry data
 	if (holdings.length > 0) {
@@ -379,12 +384,27 @@ export function PaperTradingPage() {
 
 			{/* Recent Orders */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
-				<div className="px-3 py-2 border-b border-[#1e293b]">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-[var(--text)]">
-						Recent Orders (Last 50)
+						Recent Orders ({recent_orders.total || 0})
+					</div>
+					<div className="flex items-center gap-2 text-xs sm:text-sm">
+						<select
+							value={ordersPageSize}
+							onChange={(e) => {
+								setOrdersPageSize(Number(e.target.value));
+								setOrdersPage(1);
+							}}
+							className="bg-[var(--bg)] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
+						>
+							<option value={10}>10 per page</option>
+							<option value={25}>25 per page</option>
+							<option value={50}>50 per page</option>
+							<option value={100}>100 per page</option>
+						</select>
 					</div>
 				</div>
-				{recent_orders.length === 0 ? (
+				{recentOrdersItems.length === 0 ? (
 					<div className="p-4 text-[var(--muted)]">No orders</div>
 				) : (
 					<div className="overflow-x-auto">
@@ -401,7 +421,7 @@ export function PaperTradingPage() {
 								</tr>
 							</thead>
 							<tbody>
-								{recent_orders.map((order) => (
+								{recentOrdersItems.map((order) => (
 									<tr key={order.order_id} className="border-t border-[#1e293b]">
 										<td className="p-2 text-[var(--text)]">
 											{new Date(order.created_at).toLocaleString()}
@@ -465,6 +485,72 @@ export function PaperTradingPage() {
 								))}
 							</tbody>
 						</table>
+					</div>
+				)}
+				{recent_orders.total_pages > 1 && (
+					<div className="flex flex-col sm:flex-row items-center justify-between gap-2 p-3 border-t border-[#1e293b]">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">
+							Showing {((ordersPage - 1) * ordersPageSize) + 1} to{' '}
+							{Math.min(ordersPage * ordersPageSize, recent_orders.total)} of{' '}
+							{recent_orders.total} orders
+						</div>
+						<div className="flex items-center gap-1">
+							<button
+								onClick={() => setOrdersPage(1)}
+								disabled={ordersPage === 1}
+								className="px-2 py-1 text-xs sm:text-sm bg-[var(--bg)] border border-[#1e293b] rounded disabled:opacity-50 disabled:cursor-not-allowed text-[var(--text)] hover:bg-[#0f1720]"
+							>
+								First
+							</button>
+							<button
+								onClick={() => setOrdersPage((p) => Math.max(1, p - 1))}
+								disabled={ordersPage === 1}
+								className="px-2 py-1 text-xs sm:text-sm bg-[var(--bg)] border border-[#1e293b] rounded disabled:opacity-50 disabled:cursor-not-allowed text-[var(--text)] hover:bg-[#0f1720]"
+							>
+								Previous
+							</button>
+							<div className="flex items-center gap-1">
+								{Array.from({ length: Math.min(5, recent_orders.total_pages) }, (_, i) => {
+									let pageNum: number;
+									if (recent_orders.total_pages <= 5) {
+										pageNum = i + 1;
+									} else if (ordersPage <= 3) {
+										pageNum = i + 1;
+									} else if (ordersPage >= recent_orders.total_pages - 2) {
+										pageNum = recent_orders.total_pages - 4 + i;
+									} else {
+										pageNum = ordersPage - 2 + i;
+									}
+									return (
+										<button
+											key={pageNum}
+											onClick={() => setOrdersPage(pageNum)}
+											className={`px-2 py-1 text-xs sm:text-sm border rounded ${
+												ordersPage === pageNum
+													? 'bg-blue-600 text-white border-blue-600'
+													: 'bg-[var(--bg)] border-[#1e293b] text-[var(--text)] hover:bg-[#0f1720]'
+											}`}
+										>
+											{pageNum}
+										</button>
+									);
+								})}
+							</div>
+							<button
+								onClick={() => setOrdersPage((p) => Math.min(recent_orders.total_pages, p + 1))}
+								disabled={ordersPage === recent_orders.total_pages}
+								className="px-2 py-1 text-xs sm:text-sm bg-[var(--bg)] border border-[#1e293b] rounded disabled:opacity-50 disabled:cursor-not-allowed text-[var(--text)] hover:bg-[#0f1720]"
+							>
+								Next
+							</button>
+							<button
+								onClick={() => setOrdersPage(recent_orders.total_pages)}
+								disabled={ordersPage === recent_orders.total_pages}
+								className="px-2 py-1 text-xs sm:text-sm bg-[var(--bg)] border border-[#1e293b] rounded disabled:opacity-50 disabled:cursor-not-allowed text-[var(--text)] hover:bg-[#0f1720]"
+							>
+								Last
+							</button>
+						</div>
 					</div>
 				)}
 			</div>

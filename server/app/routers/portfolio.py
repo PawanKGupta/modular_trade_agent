@@ -82,17 +82,19 @@ def create_portfolio_snapshot(
             from ..routers.paper_trading import get_paper_trading_portfolio  # noqa: PLC0415
 
             try:
-                portfolio = get_paper_trading_portfolio(db=db, current=current)
+                # Call with default pagination (page=1, page_size=10)
+                portfolio = get_paper_trading_portfolio(page=1, page_size=10, db=db, current=current)
             except HTTPException as e:
                 # If paper trading account not initialized (404) or any other HTTP error,
                 # create empty portfolio
                 if e.status_code in (404, 500):  # noqa: PLR2004
-                    from ..schemas.portfolio import (  # noqa: PLC0415
+                    from ..routers.paper_trading import (  # noqa: PLC0415
+                        PaginatedPaperTradingOrders,
                         PaperTradingAccount,
-                        PaperTradingPortfolio,
+                        PaginatedPaperTradingPortfolio,
                     )
 
-                    portfolio = PaperTradingPortfolio(
+                    portfolio = PaginatedPaperTradingPortfolio(
                         account=PaperTradingAccount(
                             initial_capital=0.0,
                             available_cash=0.0,
@@ -104,7 +106,13 @@ def create_portfolio_snapshot(
                             return_percentage=0.0,
                         ),
                         holdings=[],
-                        recent_orders=[],
+                        recent_orders=PaginatedPaperTradingOrders(
+                            items=[],
+                            total=0,
+                            page=1,
+                            page_size=10,
+                            total_pages=0,
+                        ),
                         order_statistics={
                             "total_orders": 0,
                             "buy_orders": 0,
@@ -121,12 +129,13 @@ def create_portfolio_snapshot(
             except Exception:
                 # Handle any other exceptions (e.g., file system errors, etc.)
                 # Create empty portfolio to allow snapshot creation
-                from ..schemas.portfolio import (  # noqa: PLC0415
+                from ..routers.paper_trading import (  # noqa: PLC0415
+                    PaginatedPaperTradingOrders,
                     PaperTradingAccount,
-                    PaperTradingPortfolio,
+                    PaginatedPaperTradingPortfolio,
                 )
 
-                portfolio = PaperTradingPortfolio(
+                portfolio = PaginatedPaperTradingPortfolio(
                     account=PaperTradingAccount(
                         initial_capital=0.0,
                         available_cash=0.0,
@@ -138,7 +147,13 @@ def create_portfolio_snapshot(
                         return_percentage=0.0,
                     ),
                     holdings=[],
-                    recent_orders=[],
+                    recent_orders=PaginatedPaperTradingOrders(
+                        items=[],
+                        total=0,
+                        page=1,
+                        page_size=10,
+                        total_pages=0,
+                    ),
                     order_statistics={
                         "total_orders": 0,
                         "buy_orders": 0,

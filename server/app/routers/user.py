@@ -1,7 +1,8 @@
 # ruff: noqa: B008
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,11 @@ from src.infrastructure.persistence.settings_repository import SettingsRepositor
 
 from ..core.deps import get_current_user, get_db
 from ..routers.broker import get_broker_portfolio
-from ..routers.paper_trading import PaperTradingPortfolio, get_paper_trading_portfolio
+from ..routers.paper_trading import (
+    PaginatedPaperTradingPortfolio,
+    PaperTradingPortfolio,
+    get_paper_trading_portfolio,
+)
 from ..schemas.user import SettingsResponse, SettingsUpdateRequest
 
 logger = logging.getLogger(__name__)
@@ -161,8 +166,16 @@ def delete_filter_preset(
         raise
 
 
-@router.get("/portfolio", response_model=PaperTradingPortfolio)
+@router.get("/portfolio", response_model=PaginatedPaperTradingPortfolio)
 def get_portfolio(
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number for recent orders (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of recent orders per page"),
+    ] = 10,
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ):
@@ -184,11 +197,29 @@ def get_portfolio(
 
         # Route to appropriate portfolio based on trade mode
         if settings.trade_mode == TradeMode.BROKER:
-            # Use broker portfolio endpoint
-            return get_broker_portfolio(db=db, current=current)
+            # Use broker portfolio endpoint (still returns non-paginated for now)
+            broker_portfolio = get_broker_portfolio(db=db, current=current)
+            # Convert to paginated format for consistency
+            from ..routers.paper_trading import (
+                PaginatedPaperTradingOrders,
+                PaperTradingAccount,
+                PaperTradingHolding,
+            )
+            return PaginatedPaperTradingPortfolio(
+                account=broker_portfolio.account,
+                holdings=broker_portfolio.holdings,
+                recent_orders=PaginatedPaperTradingOrders(
+                    items=broker_portfolio.recent_orders,
+                    total=len(broker_portfolio.recent_orders),
+                    page=1,
+                    page_size=len(broker_portfolio.recent_orders) or 1,
+                    total_pages=1,
+                ),
+                order_statistics=broker_portfolio.order_statistics,
+            )
         else:
-            # Use paper trading portfolio endpoint
-            return get_paper_trading_portfolio(db=db, current=current)
+            # Use paper trading portfolio endpoint (now paginated)
+            return get_paper_trading_portfolio(page=page, page_size=page_size, db=db, current=current)
 
     except Exception as e:
         logger.exception(f"Error fetching unified portfolio for user {current.id}: {e}")

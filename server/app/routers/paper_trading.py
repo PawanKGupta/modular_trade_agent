@@ -11,7 +11,9 @@ from typing import Any
 
 import pandas_ta as ta
 import yfinance as yf
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -112,6 +114,53 @@ class PaperTradingPortfolio(BaseModel):
     order_statistics: dict
 
 
+class PaginatedPaperTradingOrders(BaseModel):
+    """Paginated response for paper trading recent orders"""
+
+    items: list[PaperTradingOrder]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedPaperTradingPortfolio(BaseModel):
+    """Paginated paper trading portfolio response"""
+
+    account: PaperTradingAccount
+    holdings: list[PaperTradingHolding]
+    recent_orders: PaginatedPaperTradingOrders
+    order_statistics: dict
+
+
+class PaginatedClosedPositions(BaseModel):
+    """Paginated response for closed positions"""
+
+    items: list[ClosedPosition]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedTransactions(BaseModel):
+    """Paginated response for transactions"""
+
+    items: list[PaperTradingTransaction]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedTradeHistory(BaseModel):
+    """Paginated trade history response"""
+
+    transactions: PaginatedTransactions
+    closed_positions: PaginatedClosedPositions
+    statistics: dict[str, Any]
+
+
 def _parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -154,8 +203,16 @@ def _upsert_pnl_from_closed_positions(
         logger.warning(f"Skipping PnL sync from history for user {user_id}: {e}")
 
 
-@router.get("/portfolio", response_model=PaperTradingPortfolio)
+@router.get("/portfolio", response_model=PaginatedPaperTradingPortfolio)
 def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number for recent orders (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of recent orders per page"),
+    ] = 10,
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ):
@@ -166,7 +223,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         if not store_path.exists():
             # Return empty portfolio if no data exists
-            return PaperTradingPortfolio(
+            return PaginatedPaperTradingPortfolio(
                 account=PaperTradingAccount(
                     initial_capital=0.0,
                     available_cash=0.0,
@@ -178,7 +235,13 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     return_percentage=0.0,
                 ),
                 holdings=[],
-                recent_orders=[],
+                recent_orders=PaginatedPaperTradingOrders(
+                    items=[],
+                    total=0,
+                    page=1,
+                    page_size=page_size,
+                    total_pages=0,
+                ),
                 order_statistics={
                     "total_orders": 0,
                     "buy_orders": 0,
@@ -519,7 +582,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             return_percentage=return_pct,
         )
 
-        # Recent orders (last 50) - read from database instead of file
+        # Recent orders - read from database instead of file (with pagination)
         orders_repo = OrdersRepository(db)
         try:
             all_orders, _ = orders_repo.list(user_id=current.id)
@@ -531,15 +594,21 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 if hasattr(o, "trade_mode") and o.trade_mode and o.trade_mode == TradeMode.PAPER
             ]
             db_orders.sort(key=lambda o: o.placed_at if o.placed_at else datetime.min, reverse=True)
-            # Limit to last 50
-            db_orders = db_orders[:50]
+
+            # Apply pagination
+            total_orders_count = len(db_orders)
+            offset = (page - 1) * page_size
+            paginated_orders = db_orders[offset : offset + page_size]
+            total_pages = (total_orders_count + page_size - 1) // page_size if total_orders_count > 0 else 0
         except Exception as e:
             logger.error(f"Error fetching orders from database: {e}", exc_info=True)
-            db_orders = []
+            paginated_orders = []
             all_orders = []
+            total_orders_count = 0
+            total_pages = 0
 
         recent_orders = []
-        for db_order in db_orders:
+        for db_order in paginated_orders:
             try:
                 # Map database status to UI status
                 status_map = {
@@ -629,10 +698,16 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             "reentry_orders": reentry_count,
         }
 
-        return PaperTradingPortfolio(
+        return PaginatedPaperTradingPortfolio(
             account=account,
             holdings=holdings,
-            recent_orders=recent_orders,
+            recent_orders=PaginatedPaperTradingOrders(
+                items=recent_orders,
+                total=total_orders_count,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+            ),
             order_statistics=order_statistics,
         )
 
@@ -644,11 +719,27 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}") from e
 
 
-@router.get("/history", response_model=TradeHistory)
+@router.get("/history", response_model=PaginatedTradeHistory)
 def get_paper_trading_history(  # noqa: PLR0915
+    positions_page: Annotated[
+        int,
+        Query(ge=1, description="Page number for closed positions (1-based)"),
+    ] = 1,
+    positions_page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of closed positions per page"),
+    ] = 10,
+    transactions_page: Annotated[
+        int,
+        Query(ge=1, description="Page number for transactions (1-based)"),
+    ] = 1,
+    transactions_page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of transactions per page"),
+    ] = 10,
     current: Users = Depends(get_current_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
-) -> TradeHistory:
+) -> PaginatedTradeHistory:
     """
     Get complete paper trading transaction history
 
@@ -778,21 +869,51 @@ def get_paper_trading_history(  # noqa: PLR0915
             except Exception:
                 continue
 
-        # Use only DB-backed trade history; no file-based fallback
-        transactions_out = transactions_db
-        closed_positions_out = closed_positions_db
+        # Apply pagination to closed positions
+        closed_positions_sorted = sorted(
+            closed_positions_db,
+            key=lambda p: p.sell_date,
+            reverse=True,
+        )
+        total_positions_count = len(closed_positions_sorted)
+        positions_offset = (positions_page - 1) * positions_page_size
+        paginated_positions = closed_positions_sorted[
+            positions_offset : positions_offset + positions_page_size
+        ]
+        positions_total_pages = (
+            (total_positions_count + positions_page_size - 1) // positions_page_size
+            if total_positions_count > 0
+            else 0
+        )
 
-        # Upsert PnL from whichever source we used
-        _upsert_pnl_from_closed_positions(current.id, closed_positions_out, db)
+        # Apply pagination to transactions
+        transactions_sorted = sorted(
+            transactions_db,
+            key=lambda t: t.timestamp,
+            reverse=True,
+        )
+        total_transactions_count = len(transactions_sorted)
+        transactions_offset = (transactions_page - 1) * transactions_page_size
+        paginated_transactions = transactions_sorted[
+            transactions_offset : transactions_offset + transactions_page_size
+        ]
+        transactions_total_pages = (
+            (total_transactions_count + transactions_page_size - 1) // transactions_page_size
+            if total_transactions_count > 0
+            else 0
+        )
 
-        total_trades = len(closed_positions_out)
-        profitable_trades = sum(1 for p in closed_positions_out if p.realized_pnl > 0)
-        losing_trades = sum(1 for p in closed_positions_out if p.realized_pnl < 0)
-        breakeven_trades = sum(1 for p in closed_positions_out if p.realized_pnl == 0)
+        # Upsert PnL from all closed positions (before pagination)
+        _upsert_pnl_from_closed_positions(current.id, closed_positions_db, db)
 
-        total_profit = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl > 0)
-        total_loss = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl < 0)
-        net_pnl = sum(p.realized_pnl for p in closed_positions_out)
+        total_trades = len(closed_positions_db)
+        profitable_trades = sum(1 for p in closed_positions_db if p.realized_pnl > 0)
+        losing_trades = sum(1 for p in closed_positions_db if p.realized_pnl < 0)
+        breakeven_trades = sum(1 for p in closed_positions_db if p.realized_pnl == 0)
+
+        total_profit = sum(p.realized_pnl for p in closed_positions_db if p.realized_pnl > 0)
+        total_loss = sum(p.realized_pnl for p in closed_positions_db if p.realized_pnl < 0)
+        net_pnl = sum(p.realized_pnl for p in closed_positions_db)
 
         win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
         avg_profit = total_profit / profitable_trades if profitable_trades > 0 else 0.0
@@ -809,12 +930,24 @@ def get_paper_trading_history(  # noqa: PLR0915
             "net_pnl": net_pnl,
             "avg_profit_per_trade": avg_profit,
             "avg_loss_per_trade": avg_loss,
-            "total_transactions": len(transactions_out or []),
+            "total_transactions": len(transactions_db),
         }
 
-        return TradeHistory(
-            transactions=transactions_out or [],
-            closed_positions=closed_positions_out or [],
+        return PaginatedTradeHistory(
+            transactions=PaginatedTransactions(
+                items=paginated_transactions,
+                total=total_transactions_count,
+                page=transactions_page,
+                page_size=transactions_page_size,
+                total_pages=transactions_total_pages,
+            ),
+            closed_positions=PaginatedClosedPositions(
+                items=paginated_positions,
+                total=total_positions_count,
+                page=positions_page,
+                page_size=positions_page_size,
+                total_pages=positions_total_pages,
+            ),
             statistics=statistics,
         )
 

@@ -178,6 +178,11 @@ class MultiUserTradingService:
 
         thread_db = SessionLocal()
 
+        # Create user logger early so it can be used throughout the function
+        user_logger = get_user_logger(
+            user_id=user_id, db=thread_db, module="PaperTradingScheduler"
+        )
+
         lock_key: int | None = None
         try:
             acquired, lock_key = _try_acquire_paper_scheduler_lock(thread_db, user_id)
@@ -193,9 +198,6 @@ class MultiUserTradingService:
             # CRITICAL: Use thread_db instead of main thread's session
             thread_schedule_manager = ScheduleManager(thread_db)
 
-            user_logger = get_user_logger(
-                user_id=user_id, db=thread_db, module="PaperTradingScheduler"
-            )
             user_logger.info("Paper trading scheduler started", action="scheduler")
 
             service.running = True
