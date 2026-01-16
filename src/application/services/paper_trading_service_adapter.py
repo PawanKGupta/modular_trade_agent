@@ -1271,6 +1271,128 @@ class PaperTradingServiceAdapter:
         # Filter for open positions only (closed_at IS NULL)
         open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
+        # FIX: Check for ONGOING buy orders without positions and create positions for them
+        # This handles cases where buy orders executed but positions were never created
+        # (e.g., if order was ONGOING when service started or _sync_order_execution_to_db failed)
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+        from src.infrastructure.db.timezone_utils import ist_now
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+        orders_repo = OrdersRepository(self.db)
+
+        # Get all ONGOING buy orders executed today
+        today = ist_now().date()
+        today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
+
+        # Helper function to normalize datetime to IST timezone-aware
+        def normalize_to_ist(dt: datetime | None) -> datetime | None:
+            """Convert datetime to IST timezone-aware if it's naive"""
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                # Assume naive datetime is in IST
+                from src.infrastructure.db.timezone_utils import IST
+
+                return dt.replace(tzinfo=IST)
+            # Already timezone-aware, convert to IST if needed
+            from src.infrastructure.db.timezone_utils import IST
+
+            return dt.astimezone(IST) if dt.tzinfo != IST else dt
+
+        ongoing_buy_orders = orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+        ongoing_buy_orders_today = []
+        for order in ongoing_buy_orders:
+            # Only process buy orders
+            if order.side.lower() != "buy":
+                continue
+
+            # Skip manual orders - system does not track manual buys
+            if order.orig_source and order.orig_source.lower() == "manual":
+                continue
+
+            # Check if order was executed today
+            execution_time = getattr(order, "execution_time", None) or order.filled_at
+            execution_time = normalize_to_ist(execution_time)
+
+            if execution_time and execution_time >= today_start:
+                ongoing_buy_orders_today.append(order)
+
+        # Check each ONGOING buy order and create position if missing
+        positions_created = 0
+        for db_order in ongoing_buy_orders_today:
+            symbol = db_order.symbol.upper()
+            existing_position = positions_repo.get_by_symbol(self.user_id, symbol)
+
+            # Check if closed position exists
+            if not existing_position:
+                existing_position = positions_repo.get_by_symbol_any(
+                    self.user_id, symbol, include_closed=True
+                )
+
+            # Create position if missing or closed
+            if not existing_position or (
+                existing_position and existing_position.closed_at is not None
+            ):
+                execution_price = (
+                    getattr(db_order, "execution_price", None)
+                    or db_order.avg_price
+                    or db_order.price
+                )
+                execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
+
+                if execution_price and execution_qty > 0:
+                    try:
+                        # Extract entry RSI from order metadata
+                        entry_rsi = 29.5  # Default
+                        if db_order.order_metadata:
+                            metadata = (
+                                db_order.order_metadata
+                                if isinstance(db_order.order_metadata, dict)
+                                else {}
+                            )
+                            if metadata.get("rsi_entry_level") is not None:
+                                entry_rsi = float(metadata["rsi_entry_level"])
+                            elif metadata.get("entry_rsi") is not None:
+                                entry_rsi = float(metadata["entry_rsi"])
+                            elif metadata.get("rsi10") is not None:
+                                entry_rsi = float(metadata["rsi10"])
+
+                        execution_time = (
+                            getattr(db_order, "execution_time", None) or db_order.filled_at
+                        ) or ist_now()
+
+                        positions_repo.upsert(
+                            user_id=self.user_id,
+                            symbol=symbol,
+                            quantity=execution_qty,
+                            avg_price=execution_price,
+                            opened_at=execution_time,
+                            entry_rsi=entry_rsi,
+                            initial_entry_price=execution_price,
+                            auto_commit=True,
+                        )
+                        positions_created += 1
+                        self.logger.info(
+                            f"Created position for {symbol} from ONGOING buy order "
+                            f"{db_order.broker_order_id} before placing sell order",
+                            action="_place_sell_orders",
+                        )
+                    except Exception as pos_err:
+                        self.logger.error(
+                            f"Failed to create position for {symbol}: {pos_err}",
+                            exc_info=True,
+                            action="_place_sell_orders",
+                        )
+
+        # Refresh open positions list after creating missing positions
+        if positions_created > 0:
+            open_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+            self.logger.info(
+                f"Created {positions_created} missing positions from ONGOING buy orders",
+                action="_place_sell_orders",
+            )
+
         if not open_positions:
             self.logger.info(
                 "No open positions in database to place sell orders for",
@@ -1521,9 +1643,9 @@ class PaperTradingServiceAdapter:
 
                 # Race condition protection: Re-check position status right before placing order
                 # Position might have been closed during the loop (e.g., by _monitor_sell_orders())
-                from src.infrastructure.persistence.positions_repository import PositionsRepository
-                from src.infrastructure.persistence.orders_repository import OrdersRepository
                 from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+                from src.infrastructure.persistence.positions_repository import PositionsRepository
 
                 positions_repo = PositionsRepository(self.db)
                 current_position = positions_repo.get_by_symbol(self.user_id, symbol)
@@ -1568,7 +1690,7 @@ class PaperTradingServiceAdapter:
 
                                 # Mark as cancelled in database
                                 orders_repo.mark_cancelled(
-                                    order, f"Position closed - no longer valid"
+                                    order, "Position closed - no longer valid"
                                 )
                             except Exception as e:
                                 self.logger.warning(
