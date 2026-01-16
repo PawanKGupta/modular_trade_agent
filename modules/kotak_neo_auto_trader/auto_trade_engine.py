@@ -2413,14 +2413,18 @@ class AutoTradeEngine:
         Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
         If scrip master is not available or symbol is not found, raises an error.
 
+        IMPORTANT: Only resolves to -EQ segment symbols. T2T segments (-BE, -BL, -BZ)
+        are rejected as they are not supported for trading.
+
         Args:
-            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-BE")
+            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-EQ")
 
         Returns:
-            Resolved broker symbol (e.g., "SALSTEEL-BE")
+            Resolved broker symbol (e.g., "SALSTEEL-EQ") - ONLY -EQ symbols
 
         Raises:
-            ValueError: If scrip master is not available or symbol cannot be resolved
+            ValueError: If scrip master is not available, symbol cannot be resolved,
+                       or only T2T segment available (no -EQ variant)
         """
         # Get exchange from user's trading config (from database UserTradingConfig)
         # This is the user's preference stored in their trading configuration
@@ -2433,25 +2437,32 @@ class AutoTradeEngine:
 
         # If symbol already has suffix, validate it exists in scrip master
         if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
-            # Validate that this symbol exists in scrip master
+            # Reject T2T segments - only -EQ is allowed
+            if any(base_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                raise ValueError(
+                    f"Symbol {base_symbol} is a T2T segment stock (-BE/-BL/-BZ) which is not supported. "
+                    f"Only -EQ segment stocks are allowed for trading."
+                )
+
+            # Validate that -EQ symbol exists in scrip master
             if self.scrip_master and self.scrip_master.symbol_map:
                 instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
                 if instrument and instrument.get("symbol"):
                     # Symbol exists in scrip master, use as-is
                     logger.debug(
-                        f"Symbol {base_symbol} already has suffix and exists in scrip master ({exchange})"
+                        f"Symbol {base_symbol} already has -EQ suffix and exists in scrip master ({exchange})"
                     )
                     return base_symbol
                 else:
                     # Symbol has suffix but not in scrip master - this is an error
                     raise ValueError(
-                        f"Symbol {base_symbol} has suffix but not found in scrip master ({exchange}). "
+                        f"Symbol {base_symbol} not found in scrip master ({exchange}). "
                         f"Please verify the symbol is correct."
                     )
             else:
-                # Scrip master not available, but symbol has suffix - assume it's valid
+                # Scrip master not available, but symbol has -EQ suffix - assume it's valid
                 logger.warning(
-                    f"Scrip master not available, but symbol {base_symbol} has suffix. "
+                    f"Scrip master not available, but symbol {base_symbol} has -EQ suffix. "
                     f"Using as-is (not validated)."
                 )
                 return base_symbol
@@ -2464,14 +2475,46 @@ class AutoTradeEngine:
             )
 
         try:
-            # Use configurable exchange for symbol resolution
+            # First, try to get -EQ variant explicitly
+            eq_symbol = f"{base_symbol}-EQ"
+            instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+
+            if instrument and instrument.get("symbol"):
+                resolved = instrument["symbol"]
+                # Double-check it's -EQ (safety check)
+                if resolved.upper().endswith("-EQ"):
+                    logger.info(
+                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
+                    )
+                    return resolved
+                else:
+                    logger.warning(f"Expected -EQ variant but got {resolved} for {base_symbol}")
+
+            # If -EQ not found, try base symbol (might resolve to something else)
             instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
             if instrument and instrument.get("symbol"):
                 resolved = instrument["symbol"]
-                logger.info(
-                    f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - single source of truth"
-                )
-                return resolved
+
+                # Check if resolved symbol is T2T segment - reject it
+                if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                    raise ValueError(
+                        f"Symbol {base_symbol} resolves to T2T segment {resolved} which is not supported. "
+                        f"Only -EQ segment stocks are allowed for trading. "
+                        f"The stock may only be available in T2T segment on {exchange}."
+                    )
+
+                # Check if it's -EQ
+                if resolved.upper().endswith("-EQ"):
+                    logger.info(
+                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange})"
+                    )
+                    return resolved
+                else:
+                    # Resolved to something unexpected
+                    raise ValueError(
+                        f"Symbol {base_symbol} resolved to unexpected format: {resolved}. "
+                        f"Expected -EQ segment symbol."
+                    )
             else:
                 # Symbol not found in scrip master
                 raise ValueError(
