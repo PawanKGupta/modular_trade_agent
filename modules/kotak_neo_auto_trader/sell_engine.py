@@ -1828,12 +1828,72 @@ class SellOrderManager:
                     )
                     try:
                         if ist_now:
+                            # Try to find exit price from executed sell orders for this symbol
+                            exit_price = None
+                            sell_order_id = None
+                            if self.orders_repo:
+                                try:
+                                    # Search for executed sell orders around the time of closure
+                                    all_orders, _ = self.orders_repo.list(self.user_id)
+                                    # Filter matching sell orders
+                                    matching_orders = [
+                                        order
+                                        for order in all_orders
+                                        if (
+                                            order.symbol == symbol
+                                            and order.side.lower() == "sell"
+                                            and order.execution_price is not None
+                                            and order.status.value in ("closed", "ongoing")  # Executed orders
+                                        )
+                                    ]
+
+                                    # Sort by execution_time (most recent first), fallback to placed_at
+                                    matching_orders.sort(
+                                        key=lambda o: (
+                                            o.execution_time or o.placed_at or datetime.min
+                                        ),
+                                        reverse=True,
+                                    )
+
+                                    # Use the most recent matching order within 24 hours
+                                    now_time = ist_now()
+                                    if now_time.tzinfo is not None:
+                                        now_time = now_time.replace(tzinfo=None)
+
+                                    for order in matching_orders:
+                                        order_time = order.execution_time or order.placed_at
+                                        if order_time:
+                                            # Normalize timezone for comparison
+                                            if order_time.tzinfo is not None:
+                                                order_time = order_time.replace(tzinfo=None)
+                                            time_diff = abs((order_time - now_time).total_seconds())
+                                            if time_diff < 86400:  # Within 24 hours
+                                                exit_price = order.execution_price
+                                                sell_order_id = order.id
+                                                logger.info(
+                                                    f"Found executed sell order {order.id} for manual sell detection: "
+                                                    f"exit_price={exit_price}, sell_order_id={sell_order_id}"
+                                                )
+                                                break
+                                        else:
+                                            # No timestamp available, but order is executed - use most recent one anyway
+                                            exit_price = order.execution_price
+                                            sell_order_id = order.id
+                                            logger.info(
+                                                f"Found executed sell order {order.id} for manual sell detection (no timestamp): "
+                                                f"exit_price={exit_price}, sell_order_id={sell_order_id}"
+                                            )
+                                            break
+                                except Exception as e:
+                                    logger.debug(f"Could not find exit price from orders for {symbol}: {e}")
+
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 closed_at=ist_now(),
-                                exit_price=None,  # Manual sell, price unknown
+                                exit_price=exit_price,  # Use found price or None
                                 exit_reason="MANUAL",  # Phase 0.2: Manual sell
+                                sell_order_id=sell_order_id,  # Link to sell order if found
                             )
                             # Close corresponding ONGOING buy orders
                             try:

@@ -517,7 +517,7 @@ class AutoTradeEngine:
                 entry_rsi=entry_rsi,  # Set entry RSI for new positions
             )
         elif status == "closed":
-            # Close position
+            # Close position using mark_closed() to ensure exit details are populated
             pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
             if pos:
                 try:
@@ -526,8 +526,46 @@ class AutoTradeEngine:
                     )
                 except:
                     exit_time = datetime.now()
-                pos.closed_at = exit_time
-                self.positions_repo.db.commit()
+
+                # Extract exit details from trade dictionary if available
+                exit_price = trade.get("exit_price")
+                exit_reason = trade.get("exit_reason", "HISTORY_IMPORT")
+                exit_rsi = trade.get("exit_rsi10")  # May be "exit_rsi10" in trade dict
+                realized_pnl = trade.get("pnl")  # May be "pnl" in trade dict
+                sell_order_id_str = trade.get("sell_order_id")
+
+                # Try to find sell_order_id if provided (may be string or int)
+                sell_order_id = None
+                if sell_order_id_str and self.orders_repo:
+                    try:
+                        # If it's already an int, use it directly (assume it's a DB ID)
+                        if isinstance(sell_order_id_str, int):
+                            sell_order_id = sell_order_id_str
+                        else:
+                            # Try to find order by broker_order_id or order_id (string match)
+                            all_orders, _ = self.orders_repo.list(self.user_id)
+                            for order in all_orders:
+                                if (
+                                    str(getattr(order, "broker_order_id", None) or "") == str(sell_order_id_str)
+                                    or str(getattr(order, "order_id", None) or "") == str(sell_order_id_str)
+                                ):
+                                    sell_order_id = order.id
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Could not find sell_order_id {sell_order_id_str}: {e}")
+
+                # Use mark_closed() to properly set all exit details
+                self.positions_repo.mark_closed(
+                    user_id=self.user_id,
+                    symbol=pos.symbol,
+                    closed_at=exit_time,
+                    exit_price=exit_price,
+                    exit_reason=exit_reason,
+                    exit_rsi=exit_rsi,
+                    realized_pnl=realized_pnl,
+                    sell_order_id=sell_order_id,
+                    auto_commit=True,
+                )
 
     def _save_trades_history(self, data: dict[str, Any]) -> None:
         """
