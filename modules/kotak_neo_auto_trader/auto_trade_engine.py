@@ -545,9 +545,10 @@ class AutoTradeEngine:
                             # Try to find order by broker_order_id or order_id (string match)
                             all_orders, _ = self.orders_repo.list(self.user_id)
                             for order in all_orders:
-                                if (
-                                    str(getattr(order, "broker_order_id", None) or "") == str(sell_order_id_str)
-                                    or str(getattr(order, "order_id", None) or "") == str(sell_order_id_str)
+                                if str(getattr(order, "broker_order_id", None) or "") == str(
+                                    sell_order_id_str
+                                ) or str(getattr(order, "order_id", None) or "") == str(
+                                    sell_order_id_str
                                 ):
                                     sell_order_id = order.id
                                     break

@@ -1843,7 +1843,8 @@ class SellOrderManager:
                                             order.symbol == symbol
                                             and order.side.lower() == "sell"
                                             and order.execution_price is not None
-                                            and order.status.value in ("closed", "ongoing")  # Executed orders
+                                            and order.status.value
+                                            in ("closed", "ongoing")  # Executed orders
                                         )
                                     ]
 
@@ -1885,7 +1886,9 @@ class SellOrderManager:
                                             )
                                             break
                                 except Exception as e:
-                                    logger.debug(f"Could not find exit price from orders for {symbol}: {e}")
+                                    logger.debug(
+                                        f"Could not find exit price from orders for {symbol}: {e}"
+                                    )
 
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
