@@ -1878,6 +1878,62 @@ class UnifiedOrderMonitor:
                         )
                         continue
 
+                    # FIX: Ensure position exists before placing sell order
+                    # If position doesn't exist or is closed, create it from the executed order
+                    # This handles cases where buy order executed but position was never created
+                    # (e.g., if order was ONGOING when service started)
+                    existing_position = None
+                    if self.positions_repo:
+                        try:
+                            # First check for open position
+                            existing_position = self.positions_repo.get_by_symbol(
+                                self.user_id, full_symbol
+                            )
+                            # If no open position, check if closed position exists
+                            if not existing_position:
+                                existing_position = self.positions_repo.get_by_symbol_any(
+                                    self.user_id, full_symbol, include_closed=True
+                                )
+                        except Exception as pos_check_err:
+                            logger.warning(
+                                f"Error checking position for {full_symbol}: {pos_check_err}"
+                            )
+
+                    # Create position if missing or closed
+                    if not existing_position or (
+                        existing_position and existing_position.closed_at is not None
+                    ):
+                        # Position doesn't exist or is closed - create new position from executed order
+                        # This ensures position exists before placing sell order
+                        logger.info(
+                            f"Position missing or closed for {full_symbol} (order {db_order.broker_order_id}). "
+                            f"Creating position before placing sell order."
+                        )
+                        try:
+                            # Use existing _create_position_from_executed_order method
+                            # This handles reentry logic, closed positions, and transactions correctly
+                            order_info = {
+                                "symbol": full_symbol,
+                                "db_order_id": db_order.id,
+                            }
+                            self._create_position_from_executed_order(
+                                str(db_order.broker_order_id or db_order.order_id),
+                                order_info,
+                                execution_price,
+                                execution_qty,
+                            )
+                            logger.info(
+                                f"Created/updated position for {full_symbol} from ONGOING order "
+                                f"{db_order.broker_order_id}"
+                            )
+                        except Exception as pos_create_err:
+                            logger.error(
+                                f"Failed to create position for {full_symbol}: {pos_create_err}. "
+                                f"Skipping sell order placement.",
+                                exc_info=True,
+                            )
+                            continue
+
                     # Get execution time for this order (normalize to IST)
                     order_execution_time = (
                         getattr(db_order, "execution_time", None) or db_order.filled_at
@@ -1908,7 +1964,7 @@ class UnifiedOrderMonitor:
                     if not ema9:
                         logger.error(
                             f"Issue #3: Skipping {full_symbol}: Failed to calculate EMA9 after retries "
-                            f"and fallback. Position exists but sell order cannot be placed."
+                            f"and fallback. Sell order cannot be placed."
                         )
                         continue
 
