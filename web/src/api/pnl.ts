@@ -6,6 +6,8 @@ export interface DailyPnl {
 	realized_pnl?: number;
 	unrealized_pnl?: number;
 	fees?: number;
+	trades_count?: number;
+	symbols?: string[];
 }
 
 export interface PnlSummary {

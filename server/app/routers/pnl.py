@@ -1,4 +1,5 @@
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 # ruff: noqa: B008
@@ -10,6 +11,7 @@ from src.infrastructure.db.models import Positions, TradeMode, Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_audit_repository import PnlAuditRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.pnl import ClosedPositionDetail, DailyPnl, PaginatedClosedPositions, PnlSummary
@@ -309,6 +311,43 @@ def daily_pnl(
     pnl_repo = PnlRepository(db)
     pnl_records = pnl_repo.range(current.id, start, end)
 
+    # Get closed positions for the date range to extract symbols and trade counts
+    positions_repo = PositionsRepository(db)
+    closed_positions_qry = db.query(Positions).filter(
+        Positions.user_id == current.id,
+        Positions.closed_at.isnot(None),  # noqa: E711
+    )
+    # Filter by date range
+    start_datetime = datetime.combine(start, datetime.min.time())
+    end_datetime = datetime.combine(end, datetime.max.time())
+    closed_positions_qry = closed_positions_qry.filter(
+        Positions.closed_at >= start_datetime,
+        Positions.closed_at <= end_datetime,
+    )
+
+    # Optional trade_mode filter
+    if mode is not None:
+        orders_repo = OrdersRepository(db)
+        all_orders = orders_repo.list(current.id)[0]  # Returns (orders, count)
+        buy_order_symbols = {
+            order.symbol
+            for order in all_orders
+            if order.side == "buy" and getattr(order, "trade_mode", None) == mode
+        }
+        closed_positions_qry = closed_positions_qry.filter(Positions.symbol.in_(buy_order_symbols))
+
+    closed_positions = closed_positions_qry.all()
+
+    # Group closed positions by date
+    symbols_by_date: dict[date, list[str]] = defaultdict(list)
+    trades_count_by_date: dict[date, int] = defaultdict(int)
+    for pos in closed_positions:
+        if pos.closed_at:
+            closed_date = pos.closed_at.date()
+            if closed_date >= start and closed_date <= end:
+                symbols_by_date[closed_date].append(pos.symbol)
+                trades_count_by_date[closed_date] += 1
+
     series: list[DailyPnl] = []
 
     # If we have PnlDaily records, use them (includes realized + unrealized - fees)
@@ -318,7 +357,19 @@ def daily_pnl(
             total_pnl = (
                 (record.realized_pnl or 0.0) + (record.unrealized_pnl or 0.0) - (record.fees or 0.0)
             )
-            series.append(DailyPnl(date=record.date, pnl=round(float(total_pnl), 2)))
+            # Get unique symbols for this date
+            symbols_list = list(set(symbols_by_date.get(record.date, [])))
+            series.append(
+                DailyPnl(
+                    date=record.date,
+                    pnl=round(float(total_pnl), 2),
+                    realized_pnl=round(float(record.realized_pnl or 0.0), 2),
+                    unrealized_pnl=round(float(record.unrealized_pnl or 0.0), 2),
+                    fees=round(float(record.fees or 0.0), 2),
+                    trades_count=trades_count_by_date.get(record.date, 0),
+                    symbols=symbols_list if symbols_list else None,
+                )
+            )
     else:
         # Fallback: calculate from positions dynamically
         service = PnlCalculationService(db)
@@ -327,7 +378,18 @@ def daily_pnl(
         # Filter by requested range and build daily series from DB closed trades
         for d, val in realized_by_date.items():
             if d >= start and d <= end:
-                series.append(DailyPnl(date=d, pnl=round(float(val or 0.0), 2)))
+                symbols_list = list(set(symbols_by_date.get(d, [])))
+                series.append(
+                    DailyPnl(
+                        date=d,
+                        pnl=round(float(val or 0.0), 2),
+                        realized_pnl=round(float(val or 0.0), 2),
+                        unrealized_pnl=None,
+                        fees=None,
+                        trades_count=trades_count_by_date.get(d, 0),
+                        symbols=symbols_list if symbols_list else None,
+                    )
+                )
 
     # Fallback: if DB has no realized data, derive from paper-trading transactions SELL entries
     if len(series) == 0:
@@ -351,7 +413,18 @@ def daily_pnl(
                             if day >= start and day <= end:
                                 daily_map[day] = daily_map.get(day, 0.0) + pnl
                 for d, val in sorted(daily_map.items()):
-                    series.append(DailyPnl(date=d, pnl=round(val, 2)))
+                    symbols_list = list(set(symbols_by_date.get(d, [])))
+                    series.append(
+                        DailyPnl(
+                            date=d,
+                            pnl=round(val, 2),
+                            realized_pnl=round(val, 2),
+                            unrealized_pnl=None,
+                            fees=None,
+                            trades_count=trades_count_by_date.get(d, 0),
+                            symbols=symbols_list if symbols_list else None,
+                        )
+                    )
         except Exception:
             pass
 
@@ -364,11 +437,30 @@ def daily_pnl(
             found = False
             for i, item in enumerate(series):
                 if item.date == today:
-                    series[i] = DailyPnl(date=today, pnl=round(item.pnl + unrealized_today, 2))
+                    new_pnl = item.pnl + unrealized_today
+                    series[i] = DailyPnl(
+                        date=today,
+                        pnl=round(new_pnl, 2),
+                        realized_pnl=item.realized_pnl,
+                        unrealized_pnl=round(unrealized_today, 2) if unrealized_today else item.unrealized_pnl,
+                        fees=item.fees,
+                        trades_count=item.trades_count,
+                        symbols=item.symbols,
+                    )
                     found = True
                     break
             if not found:
-                series.append(DailyPnl(date=today, pnl=round(unrealized_today, 2)))
+                series.append(
+                    DailyPnl(
+                        date=today,
+                        pnl=round(unrealized_today, 2),
+                        realized_pnl=None,
+                        unrealized_pnl=round(unrealized_today, 2),
+                        fees=None,
+                        trades_count=0,
+                        symbols=None,
+                    )
+                )
 
     # Sort by date ascending for chart consistency
     series.sort(key=lambda x: x.date)

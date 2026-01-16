@@ -6,6 +6,11 @@ from pydantic import BaseModel
 class DailyPnl(BaseModel):
     date: date
     pnl: float
+    realized_pnl: float | None = None
+    unrealized_pnl: float | None = None
+    fees: float | None = None
+    trades_count: int | None = None
+    symbols: list[str] | None = None  # List of symbols closed that day
 
 
 class PnlSummary(BaseModel):

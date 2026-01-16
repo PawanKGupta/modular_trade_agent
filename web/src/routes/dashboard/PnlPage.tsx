@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getClosedPositions, getDailyPnl, getPnlSummary, type DailyPnl, type PnlSummary } from '@/api/pnl';
 import { exportPnl } from '@/api/export';
@@ -31,6 +31,8 @@ export function PnlPage() {
 	const [positionsPageSize, setPositionsPageSize] = useState(10);
 	const [positionsSortBy, setPositionsSortBy] = useState<'closed_at' | 'symbol' | 'realized_pnl' | 'opened_at'>('closed_at');
 	const [positionsSortOrder, setPositionsSortOrder] = useState<'asc' | 'desc'>('desc');
+	const [dailySortBy, setDailySortBy] = useState<'date' | 'pnl'>('date');
+	const [dailySortOrder, setDailySortOrder] = useState<'asc' | 'desc'>('desc');
 
 	const dailyQ = useQuery<DailyPnl[]>({
 		queryKey: ['pnl', 'daily', tradeMode, includeUnrealized],
@@ -57,6 +59,21 @@ export function PnlPage() {
 	useEffect(() => {
 		setPositionsPage(1);
 	}, [tradeMode, positionsSortBy, positionsSortOrder]);
+
+	// Sort daily P&L data
+	const sortedDailyData = useMemo(() => {
+		if (!dailyQ.data) return [];
+		const sorted = [...dailyQ.data];
+		sorted.sort((a, b) => {
+			const multiplier = dailySortOrder === 'asc' ? 1 : -1;
+			if (dailySortBy === 'pnl') {
+				return (a.pnl - b.pnl) * multiplier;
+			}
+			// Sort by date
+			return (new Date(a.date).getTime() - new Date(b.date).getTime()) * multiplier;
+		});
+		return sorted;
+	}, [dailyQ.data, dailySortBy, dailySortOrder]);
 
 	// Format last update time
 	const lastUpdate = summaryQ.dataUpdatedAt ? new Date(summaryQ.dataUpdatedAt).toLocaleTimeString() : 'Never';
@@ -232,21 +249,84 @@ export function PnlPage() {
 					<table className="w-full text-sm">
 						<thead className="bg-[#0f172a] text-[var(--muted)]">
 							<tr>
-								<th className="text-left p-2 whitespace-nowrap">Date</th>
-								<th className="text-right p-2 whitespace-nowrap">P&L</th>
+								<th
+									className="text-left p-2 whitespace-nowrap cursor-pointer hover:bg-[#1e293b]"
+									onClick={() => {
+										if (dailySortBy === 'date') {
+											setDailySortOrder(dailySortOrder === 'asc' ? 'desc' : 'asc');
+										} else {
+											setDailySortBy('date');
+											setDailySortOrder('desc');
+										}
+									}}
+								>
+									Date {dailySortBy === 'date' && (dailySortOrder === 'asc' ? '▲' : '▼')}
+								</th>
+								<th className="text-left p-2 whitespace-nowrap">Symbols</th>
+								<th className="text-right p-2 whitespace-nowrap hidden md:table-cell">Realized</th>
+								<th className="text-right p-2 whitespace-nowrap hidden lg:table-cell">Unrealized</th>
+								<th className="text-right p-2 whitespace-nowrap hidden lg:table-cell">Fees</th>
+								<th
+									className="text-right p-2 whitespace-nowrap cursor-pointer hover:bg-[#1e293b]"
+									onClick={() => {
+										if (dailySortBy === 'pnl') {
+											setDailySortOrder(dailySortOrder === 'asc' ? 'desc' : 'asc');
+										} else {
+											setDailySortBy('pnl');
+											setDailySortOrder('desc');
+										}
+									}}
+								>
+									Total P&L {dailySortBy === 'pnl' && (dailySortOrder === 'asc' ? '▲' : '▼')}
+								</th>
+								<th className="text-right p-2 whitespace-nowrap hidden sm:table-cell">Trades</th>
 								<th className="text-right p-2 whitespace-nowrap">Status</th>
 							</tr>
 						</thead>
 						<tbody>
-							{(dailyQ.data ?? []).map((d) => (
+							{sortedDailyData.map((d) => (
 								<tr key={d.date} className="border-t border-[#1e293b]">
-									<td className="p-2 text-[var(--text)]">{d.date}</td>
+									<td className="p-2 text-[var(--text)]">
+										{new Date(d.date).toLocaleDateString('en-IN', {
+											day: 'numeric',
+											month: 'short',
+											year: 'numeric'
+										})}
+									</td>
+									<td className="p-2 text-[var(--text)] text-xs">
+										{d.symbols && d.symbols.length > 0 ? (
+											<div className="flex flex-wrap gap-1">
+												{d.symbols.slice(0, 3).map((sym) => (
+													<span key={sym} className="px-1.5 py-0.5 bg-[#1e293b] rounded text-[var(--text)]">
+														{sym.split('-')[0]}
+													</span>
+												))}
+												{d.symbols.length > 3 && (
+													<span className="px-1.5 py-0.5 text-[var(--muted)]">
+														+{d.symbols.length - 3}
+													</span>
+												)}
+											</div>
+										) : '-'}
+									</td>
+									<td className="p-2 text-right text-[var(--text)] hidden md:table-cell">
+										{d.realized_pnl !== undefined ? formatMoney(d.realized_pnl) : '-'}
+									</td>
+									<td className="p-2 text-right text-[var(--text)] hidden lg:table-cell">
+										{d.unrealized_pnl !== undefined ? formatMoney(d.unrealized_pnl) : '-'}
+									</td>
+									<td className="p-2 text-right text-[var(--text)] hidden lg:table-cell">
+										{d.fees !== undefined ? formatMoney(d.fees) : '-'}
+									</td>
 									<td
 										className={`p-2 text-right font-medium ${
 											d.pnl >= 0 ? 'text-green-400' : 'text-red-400'
 										}`}
 									>
 										{formatMoney(d.pnl)}
+									</td>
+									<td className="p-2 text-right text-[var(--text)] hidden sm:table-cell">
+										{d.trades_count !== undefined ? d.trades_count : '-'}
 									</td>
 									<td className="p-2 text-right">
 										<span
@@ -261,9 +341,9 @@ export function PnlPage() {
 									</td>
 								</tr>
 							))}
-							{(dailyQ.data ?? []).length === 0 && !dailyQ.isLoading && (
+							{sortedDailyData.length === 0 && !dailyQ.isLoading && (
 								<tr>
-									<td className="p-2 text-[var(--muted)] text-center" colSpan={3}>
+									<td className="p-2 text-[var(--muted)] text-center" colSpan={8}>
 										No P&L data available
 									</td>
 								</tr>
