@@ -143,6 +143,7 @@ export function AppShell() {
 		{ path: '/dashboard/admin/users', label: 'Users', icon: '👥' },
 		{ path: '/dashboard/admin/ml', label: 'ML Training', icon: '🤖' },
 		{ path: '/dashboard/admin/schedules', label: 'Schedules', icon: '📅' },
+		{ path: '/dashboard/admin/monitoring', label: 'Monitoring', icon: '📊' },
 	];
 
 	// Auto-expand group if current page is in it

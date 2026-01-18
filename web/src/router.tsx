@@ -22,6 +22,7 @@ import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
 import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
 import { LogViewerPage } from './routes/dashboard/LogViewerPage';
 import { ServiceSchedulePage } from './routes/dashboard/ServiceSchedulePage';
+import { MonitoringDashboardPage } from './routes/dashboard/MonitoringDashboardPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -57,6 +58,7 @@ export function createAppRouter() {
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
 				{ path: 'admin/schedules', element: <ServiceSchedulePage /> },
+				{ path: 'admin/monitoring', element: <MonitoringDashboardPage /> },
 			],
 		},
 	]);

@@ -234,6 +234,7 @@ from .routers import (
     logs,
     metrics,
     ml,
+    monitoring,
     notification_preferences,
     notifications,
     orders,
@@ -685,6 +686,7 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+app.include_router(monitoring.router, prefix="/api/v1/admin/monitoring", tags=["monitoring"])
 
 
 async def _log_retention_worker():
