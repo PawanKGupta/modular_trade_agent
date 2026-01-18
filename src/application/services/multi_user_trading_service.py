@@ -179,9 +179,7 @@ class MultiUserTradingService:
         thread_db = SessionLocal()
 
         # Create user logger early so it can be used throughout the function
-        user_logger = get_user_logger(
-            user_id=user_id, db=thread_db, module="PaperTradingScheduler"
-        )
+        user_logger = get_user_logger(user_id=user_id, db=thread_db, module="PaperTradingScheduler")
 
         lock_key: int | None = None
         try:
@@ -442,6 +440,31 @@ class MultiUserTradingService:
             service.running = False
             user_logger.info("Paper trading scheduler stopped", action="scheduler")
         finally:
+            # Update database status to False when thread exits (for any reason)
+            # This ensures database reflects actual service state even if thread
+            # crashes/exits unexpectedly
+            try:
+                thread_status_repo = ServiceStatusRepository(thread_db)
+                thread_status_repo.update_running(user_id, running=False)
+                thread_status_repo.update_heartbeat(user_id)  # Final heartbeat on exit
+                thread_db.commit()
+                user_logger.debug(
+                    "Updated database service status to stopped on thread exit",
+                    action="scheduler",
+                )
+            except Exception as e:
+                # Log but don't fail cleanup - database update is best-effort
+                # Skip locked errors to avoid noisy logs
+                if "database is locked" not in str(e).lower():
+                    user_logger.warning(
+                        f"Failed to update service status on exit: {e}",
+                        action="scheduler",
+                    )
+                try:
+                    thread_db.rollback()
+                except Exception:  # noqa: S110
+                    pass  # Ignore rollback errors
+
             _release_paper_scheduler_lock(thread_db, lock_key)
             # Clean up thread-local session
             # Ensure any pending transactions are handled before closing
