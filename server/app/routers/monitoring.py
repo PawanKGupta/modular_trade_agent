@@ -12,6 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 
+from modules.kotak_neo_auto_trader.shared_session_manager import (
+    get_shared_session_manager,
+)
 from src.infrastructure.db.models import (
     ErrorLog,
     IndividualServiceTaskExecution,
@@ -29,10 +32,6 @@ from src.infrastructure.persistence.service_status_repository import (
     ServiceStatusRepository,
 )
 from src.infrastructure.persistence.user_repository import UserRepository
-
-from modules.kotak_neo_auto_trader.shared_session_manager import (
-    get_shared_session_manager,
-)
 
 from ..core.deps import get_db, require_admin
 from ..schemas.monitoring import (
