@@ -26,8 +26,6 @@ from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
 
-from sqlalchemy import text
-
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -1148,9 +1146,13 @@ class TradingService:
             )
 
             # Delete expired locks and locks for this user
-            deleted = self.db.query(SchedulerLock).filter(
-                (SchedulerLock.user_id == self.user_id) | (SchedulerLock.expires_at < ist_now())
-            ).delete()
+            deleted = (
+                self.db.query(SchedulerLock)
+                .filter(
+                    (SchedulerLock.user_id == self.user_id) | (SchedulerLock.expires_at < ist_now())
+                )
+                .delete()
+            )
             self.db.commit()
 
             if deleted > 0:
@@ -1192,10 +1194,11 @@ class TradingService:
             return True
 
         try:
+            import uuid
+            from datetime import timedelta
+
             from src.infrastructure.db.models import SchedulerLock
             from src.infrastructure.db.timezone_utils import ist_now
-            from datetime import timedelta
-            import uuid
 
             # Generate unique lock ID for this instance
             lock_id = str(uuid.uuid4())
@@ -1205,9 +1208,7 @@ class TradingService:
 
             # Clean up stale locks first (expired locks)
             try:
-                self.db.query(SchedulerLock).filter(
-                    SchedulerLock.expires_at < ist_now()
-                ).delete()
+                self.db.query(SchedulerLock).filter(SchedulerLock.expires_at < ist_now()).delete()
                 self.db.commit()
             except Exception:
                 self.db.rollback()
@@ -1220,21 +1221,24 @@ class TradingService:
 
                 if dialect_name == "postgresql":
                     from sqlalchemy import text  # noqa: PLC0415
+
                     # PostgreSQL: Use INSERT ... ON CONFLICT DO NOTHING
                     result = self.db.execute(
-                        text("""
+                        text(
+                            """
                             INSERT INTO scheduler_lock (user_id, locked_at, lock_id, expires_at, created_at)
                             VALUES (:user_id, :locked_at, :lock_id, :expires_at, :created_at)
                             ON CONFLICT (user_id) DO NOTHING
                             RETURNING lock_id
-                        """),
+                        """
+                        ),
                         {
                             "user_id": self.user_id,
                             "locked_at": ist_now(),
                             "lock_id": lock_id,
                             "expires_at": expires_at,
                             "created_at": ist_now(),
-                        }
+                        },
                     )
                     row = result.fetchone()
                     if row:

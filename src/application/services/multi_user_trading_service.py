@@ -74,10 +74,11 @@ def _try_acquire_paper_scheduler_lock(db_session, user_id: int) -> tuple[bool, s
     Returns (acquired, lock_id).
     """
     try:
+        import uuid
+        from datetime import timedelta
+
         from src.infrastructure.db.models import SchedulerLock
         from src.infrastructure.db.timezone_utils import ist_now
-        from datetime import timedelta
-        import uuid
 
         # Generate unique lock ID for this instance
         lock_id = str(uuid.uuid4())
@@ -87,9 +88,7 @@ def _try_acquire_paper_scheduler_lock(db_session, user_id: int) -> tuple[bool, s
 
         # Clean up stale locks first (expired locks)
         try:
-            db_session.query(SchedulerLock).filter(
-                SchedulerLock.expires_at < ist_now()
-            ).delete()
+            db_session.query(SchedulerLock).filter(SchedulerLock.expires_at < ist_now()).delete()
             db_session.commit()
         except Exception:
             db_session.rollback()
@@ -102,21 +101,24 @@ def _try_acquire_paper_scheduler_lock(db_session, user_id: int) -> tuple[bool, s
 
             if dialect_name == "postgresql":
                 from sqlalchemy import text  # noqa: PLC0415
+
                 # PostgreSQL: Use INSERT ... ON CONFLICT DO NOTHING
                 result = db_session.execute(
-                    text("""
+                    text(
+                        """
                         INSERT INTO scheduler_lock (user_id, locked_at, lock_id, expires_at, created_at)
                         VALUES (:user_id, :locked_at, :lock_id, :expires_at, :created_at)
                         ON CONFLICT (user_id) DO NOTHING
                         RETURNING lock_id
-                    """),
+                    """
+                    ),
                     {
                         "user_id": user_id,
                         "locked_at": ist_now(),
                         "lock_id": lock_id,
                         "expires_at": expires_at,
                         "created_at": ist_now(),
-                    }
+                    },
                 )
                 row = result.fetchone()
                 if row:
@@ -147,6 +149,7 @@ def _try_acquire_paper_scheduler_lock(db_session, user_id: int) -> tuple[bool, s
             db_session.rollback()
             # Log but don't fail - allow scheduler to run
             import logging
+
             logging.warning(f"Failed to acquire scheduler lock for user {user_id}: {e}")
             return False, None
     except Exception:
@@ -162,18 +165,14 @@ def _release_paper_scheduler_lock(db_session, lock_id: str | None) -> None:
         from src.infrastructure.db.models import SchedulerLock
 
         # Delete lock by lock_id (only release our own lock)
-        db_session.query(SchedulerLock).filter(
-            SchedulerLock.lock_id == lock_id
-        ).delete()
+        db_session.query(SchedulerLock).filter(SchedulerLock.lock_id == lock_id).delete()
         db_session.commit()
     except Exception:
         db_session.rollback()
         pass
 
 
-def _cleanup_stale_paper_scheduler_lock(
-    db_session: Session, user_id: int, logger
-) -> bool:
+def _cleanup_stale_paper_scheduler_lock(db_session: Session, user_id: int, logger) -> bool:
     """
     Clean up stale table-based lock held by dead thread.
 
@@ -200,9 +199,11 @@ def _cleanup_stale_paper_scheduler_lock(
         )
 
         # Delete expired locks and locks for this user
-        deleted = db_session.query(SchedulerLock).filter(
-            (SchedulerLock.user_id == user_id) | (SchedulerLock.expires_at < ist_now())
-        ).delete()
+        deleted = (
+            db_session.query(SchedulerLock)
+            .filter((SchedulerLock.user_id == user_id) | (SchedulerLock.expires_at < ist_now()))
+            .delete()
+        )
         db_session.commit()
 
         if deleted > 0:
@@ -233,7 +234,9 @@ _shared_services: dict[int, any] = {}  # user_id -> TradingService instance
 _shared_service_threads: dict[int, threading.Thread] = {}  # user_id -> scheduler thread
 _shared_locks: dict[int, threading.Lock] = {}  # user_id -> service lock
 _shared_start_locks: dict[int, threading.Lock] = {}  # Per-user locks to prevent concurrent starts
-_shared_lock_keys: dict[int, str | None] = {}  # user_id -> table-based lock_id (for cleanup on stop)
+_shared_lock_keys: dict[int, str | None] = (
+    {}
+)  # user_id -> table-based lock_id (for cleanup on stop)
 _shared_state_lock = threading.Lock()  # Lock for thread-safe access to shared state
 
 
@@ -321,7 +324,13 @@ class MultiUserTradingService:
             # CRITICAL: Before failing, check if there's actually another running thread
             # If no thread is running, the lock is held by a dead connection - wait longer
             max_lock_retries = 5  # Increased from 3 to 5 to handle slow connection pool recycling
-            lock_retry_delays = [2.0, 3.0, 5.0, 10.0, 15.0]  # Longer delays for connection pool recycling
+            lock_retry_delays = [
+                2.0,
+                3.0,
+                5.0,
+                10.0,
+                15.0,
+            ]  # Longer delays for connection pool recycling
             acquired = False
 
             user_logger.info(
@@ -350,11 +359,15 @@ class MultiUserTradingService:
                 # So we check if there's ANOTHER thread (different object ID) that's alive
                 current_thread_id = id(threading.current_thread())
                 other_thread = _shared_service_threads.get(user_id)
-                other_thread_alive = other_thread and other_thread.is_alive() if other_thread else False
+                other_thread_alive = (
+                    other_thread and other_thread.is_alive() if other_thread else False
+                )
 
                 # Check if this is a different thread (compare thread object IDs)
                 # If the stored thread is this thread, then no other thread is running
-                is_different_thread = other_thread is not None and id(other_thread) != current_thread_id
+                is_different_thread = (
+                    other_thread is not None and id(other_thread) != current_thread_id
+                )
 
                 if other_thread_alive and is_different_thread:
                     # Another thread is actually running - don't retry
@@ -391,10 +404,14 @@ class MultiUserTradingService:
                 current_thread_id = id(current_thread_obj)
 
                 other_thread = _shared_service_threads.get(user_id)
-                other_thread_alive = other_thread and other_thread.is_alive() if other_thread else False
+                other_thread_alive = (
+                    other_thread and other_thread.is_alive() if other_thread else False
+                )
 
                 # Check if this is a different thread (compare thread object IDs)
-                is_different_thread = other_thread is not None and id(other_thread) != current_thread_id
+                is_different_thread = (
+                    other_thread is not None and id(other_thread) != current_thread_id
+                )
 
                 if other_thread_alive and is_different_thread:
                     # Another thread started while we were retrying - don't fail
@@ -437,8 +454,12 @@ class MultiUserTradingService:
 
                     # Check if another thread started while waiting
                     other_thread = _shared_service_threads.get(user_id)
-                    other_thread_alive = other_thread and other_thread.is_alive() if other_thread else False
-                    is_different_thread = other_thread is not None and id(other_thread) != current_thread_id
+                    other_thread_alive = (
+                        other_thread and other_thread.is_alive() if other_thread else False
+                    )
+                    is_different_thread = (
+                        other_thread is not None and id(other_thread) != current_thread_id
+                    )
 
                     if other_thread_alive and is_different_thread:
                         user_logger.info(
@@ -740,7 +761,9 @@ class MultiUserTradingService:
                             except Exception:
                                 import logging  # noqa: PLC0415
 
-                                logging.warning(f"Failed to update heartbeat for user {user_id}: {e}")
+                                logging.warning(
+                                    f"Failed to update heartbeat for user {user_id}: {e}"
+                                )
                             break
 
                     if heartbeat_update_successful:
@@ -815,7 +838,7 @@ class MultiUserTradingService:
                     else:
                         # Final failure with thread_db - will try emergency session below
                         pass
-                except Exception as e:
+                except Exception:
                     thread_db.rollback()
                     thread_db.expire_all()
                     # Non-OperationalError - try emergency session immediately
@@ -1309,57 +1332,11 @@ class MultiUserTradingService:
                 if service_thread and service_thread.is_alive():
                     # Thread was just added and is alive - don't mark as stale
                     thread_is_alive = True
-                else:
-                    # Thread reference still doesn't exist - check heartbeat before marking stale
-                    # If heartbeat is recent (< 2 minutes), service might be starting - don't mark as stale
-                    if status.last_heartbeat:
-                        from datetime import timedelta
-                        from src.infrastructure.db.timezone_utils import ist_now
-
-                        now = ist_now()
-                        last_heartbeat = status.last_heartbeat
-                        if last_heartbeat.tzinfo is None:
-                            last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
-                        heartbeat_age = now - last_heartbeat
-
-                        # Only mark as stale if heartbeat is old (> 2 minutes)
-                        # This prevents false positives when service just started
-                        if heartbeat_age > timedelta(minutes=2):
-                            self._logger.warning(
-                                f"Detected stale service for user {user_id}: "
-                                "database shows running=True but thread reference not found "
-                                f"and heartbeat is old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
-                                action="get_service_status",
-                            )
-                            # Clean up stale service
-                            self._services.pop(user_id, None)
-                            self._service_threads.pop(user_id, None)
-                            # Update database status
-                            self._service_status_repo.update_running(user_id, running=False)
-                            self.db.commit()
-                            # Refresh status from database
-                            status = self._service_status_repo.get(user_id)
-                        else:
-                            # Heartbeat is recent - service might be starting, don't mark as stale
-                            self._logger.debug(
-                                f"Service for user {user_id} has no thread reference but heartbeat is recent "
-                                f"({heartbeat_age.total_seconds():.0f}s). Not marking as stale - may be starting.",
-                                action="get_service_status",
-                            )
-                    else:
-                        # No heartbeat yet - service might be starting, don't mark as stale
-                        self._logger.debug(
-                            f"Service for user {user_id} has no thread reference and no heartbeat yet. "
-                            "Not marking as stale - may be starting.",
-                            action="get_service_status",
-                        )
-            else:
-                # Thread reference exists but is_alive() returned False
-                # This could be a false negative - be very conservative
-                # Only mark as stale if we've checked multiple times and it's consistently dead
-                # AND the heartbeat is very old (indicating it's been dead for a while)
-                if status.last_heartbeat:
+                # Thread reference still doesn't exist - check heartbeat before marking stale
+                # If heartbeat is recent (< 2 minutes), service might be starting - don't mark as stale
+                elif status.last_heartbeat:
                     from datetime import timedelta
+
                     from src.infrastructure.db.timezone_utils import ist_now
 
                     now = ist_now()
@@ -1368,13 +1345,13 @@ class MultiUserTradingService:
                         last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
                     heartbeat_age = now - last_heartbeat
 
-                    # Only mark as stale if heartbeat is VERY old (>30 minutes) AND thread is dead
+                    # Only mark as stale if heartbeat is old (> 2 minutes)
                     # This prevents false positives when service just started
-                    if heartbeat_age > timedelta(minutes=30):
+                    if heartbeat_age > timedelta(minutes=2):
                         self._logger.warning(
                             f"Detected stale service for user {user_id}: "
-                            f"database shows running=True, thread is dead, "
-                            f"and heartbeat is very old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
+                            "database shows running=True but thread reference not found "
+                            f"and heartbeat is old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
                             action="get_service_status",
                         )
                         # Clean up stale service
@@ -1386,25 +1363,72 @@ class MultiUserTradingService:
                         # Refresh status from database
                         status = self._service_status_repo.get(user_id)
                     else:
-                        # Heartbeat is recent - thread might just be starting, don't mark as stale
+                        # Heartbeat is recent - service might be starting, don't mark as stale
                         self._logger.debug(
-                            f"Service for user {user_id} shows dead thread but heartbeat is recent "
+                            f"Service for user {user_id} has no thread reference but heartbeat is recent "
                             f"({heartbeat_age.total_seconds():.0f}s). Not marking as stale - may be starting.",
                             action="get_service_status",
                         )
                 else:
-                    # No heartbeat yet - service might just be starting, don't mark as stale
+                    # No heartbeat yet - service might be starting, don't mark as stale
                     self._logger.debug(
-                        f"Service for user {user_id} shows dead thread but no heartbeat yet. "
+                        f"Service for user {user_id} has no thread reference and no heartbeat yet. "
                         "Not marking as stale - may be starting.",
                         action="get_service_status",
                     )
+            # Thread reference exists but is_alive() returned False
+            # This could be a false negative - be very conservative
+            # Only mark as stale if we've checked multiple times and it's consistently dead
+            # AND the heartbeat is very old (indicating it's been dead for a while)
+            elif status.last_heartbeat:
+                from datetime import timedelta
+
+                from src.infrastructure.db.timezone_utils import ist_now
+
+                now = ist_now()
+                last_heartbeat = status.last_heartbeat
+                if last_heartbeat.tzinfo is None:
+                    last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
+                heartbeat_age = now - last_heartbeat
+
+                # Only mark as stale if heartbeat is VERY old (>30 minutes) AND thread is dead
+                # This prevents false positives when service just started
+                if heartbeat_age > timedelta(minutes=30):
+                    self._logger.warning(
+                        f"Detected stale service for user {user_id}: "
+                        f"database shows running=True, thread is dead, "
+                        f"and heartbeat is very old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
+                        action="get_service_status",
+                    )
+                    # Clean up stale service
+                    self._services.pop(user_id, None)
+                    self._service_threads.pop(user_id, None)
+                    # Update database status
+                    self._service_status_repo.update_running(user_id, running=False)
+                    self.db.commit()
+                    # Refresh status from database
+                    status = self._service_status_repo.get(user_id)
+                else:
+                    # Heartbeat is recent - thread might just be starting, don't mark as stale
+                    self._logger.debug(
+                        f"Service for user {user_id} shows dead thread but heartbeat is recent "
+                        f"({heartbeat_age.total_seconds():.0f}s). Not marking as stale - may be starting.",
+                        action="get_service_status",
+                    )
+            else:
+                # No heartbeat yet - service might just be starting, don't mark as stale
+                self._logger.debug(
+                    f"Service for user {user_id} shows dead thread but no heartbeat yet. "
+                    "Not marking as stale - may be starting.",
+                    action="get_service_status",
+                )
 
         # Also check heartbeat age - if heartbeat is very old (>30 minutes), consider stale
         # But only if thread is also consistently dead (already checked above)
         # This is a separate check for cases where thread reference doesn't exist
         if status.service_running and status.last_heartbeat and not thread_is_alive:
             from datetime import timedelta
+
             from src.infrastructure.db.timezone_utils import ist_now
 
             now = ist_now()
