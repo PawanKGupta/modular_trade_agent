@@ -4,12 +4,12 @@
 import logging
 import traceback
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc, or_
+from sqlalchemy import and_, desc, or_, text
 from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader.shared_session_manager import (
@@ -21,7 +21,7 @@ from src.infrastructure.db.models import (
     ServiceStatus,
     Users,
 )
-from src.infrastructure.db.timezone_utils import IST, ist_now
+from src.infrastructure.db.timezone_utils import IST, ist_now, utc_to_ist
 from src.infrastructure.persistence.individual_service_task_execution_repository import (
     IndividualServiceTaskExecutionRepository,
 )
@@ -75,10 +75,39 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
     """Internal implementation to get health status for all services"""
     try:
         status_repo = ServiceStatusRepository(db)
-        user_repo = UserRepository(db)
 
-        # Get all service statuses
-        all_statuses = db.query(ServiceStatus).all()
+        # CRITICAL: Use raw SQL query to bypass SQLAlchemy's identity map/cache entirely
+        # This ensures we always read the absolute latest data from the database
+        # The service updates heartbeat in another thread/connection, so we need fresh data
+
+        # Query service_status table directly using raw SQL to bypass ORM cache
+        result = db.execute(
+            text(
+                """
+                SELECT
+                    id, user_id, service_running, last_heartbeat,
+                    last_task_execution, error_count, last_error,
+                    created_at, updated_at
+                FROM service_status
+            """
+            )
+        )
+        raw_rows = result.fetchall()
+
+        # Convert raw rows to ServiceStatus objects (but they won't be in identity map)
+        all_statuses = []
+        for row in raw_rows:
+            status = ServiceStatus()
+            status.id = row.id
+            status.user_id = row.user_id
+            status.service_running = row.service_running
+            status.last_heartbeat = row.last_heartbeat
+            status.last_task_execution = row.last_task_execution
+            status.error_count = row.error_count
+            status.last_error = row.last_error
+            status.created_at = row.created_at
+            status.updated_at = row.updated_at
+            all_statuses.append(status)
 
         services = []
         total_running = 0
@@ -92,12 +121,31 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
         for status in all_statuses:
             heartbeat_age = None
             if status.last_heartbeat:
-                # Ensure last_heartbeat is timezone-aware
+                # CRITICAL: PostgreSQL stores timestamps in UTC, but we need IST for comparison
+                # Convert last_heartbeat from UTC (database storage) to IST for accurate age calculation
                 last_heartbeat = status.last_heartbeat
+
+                # If naive, assume it's UTC (PostgreSQL default)
                 if last_heartbeat.tzinfo is None:
-                    last_heartbeat = last_heartbeat.replace(tzinfo=IST)
+                    last_heartbeat = last_heartbeat.replace(tzinfo=UTC)
+
+                # Convert UTC to IST for comparison with ist_now()
+                if last_heartbeat.tzinfo != IST:
+                    last_heartbeat = utc_to_ist(last_heartbeat)
+
                 age_delta = now - last_heartbeat
                 heartbeat_age = age_delta.total_seconds()
+
+            # Report stale services: if heartbeat is very old (>10 minutes) and
+            # service shows as running, report it (monitoring should only observe, not fix)
+            # The service itself should update its status properly when thread exits
+            if status.service_running and heartbeat_age and heartbeat_age > 600:
+                # Report as stale (but don't fix - monitoring should only observe)
+                logger.warning(
+                    f"Service for user {status.user_id} appears stale: "
+                    f"heartbeat age {heartbeat_age:.0f}s > 10 minutes. "
+                    "Service should update its status when thread exits."
+                )
 
             services.append(
                 ServiceHealthStatus(

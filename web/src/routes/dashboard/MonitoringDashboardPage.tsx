@@ -404,7 +404,8 @@ export function MonitoringDashboardPage() {
 							</tr>
 						</thead>
 						<tbody>
-							{recent_task_executions.slice(0, 10).map((exec) => (
+							{/* Use executions.items if available (pagination), otherwise fall back to recent_task_executions */}
+							{(executions?.items || recent_task_executions.slice(0, 10)).map((exec) => (
 								<tr key={exec.id} className="border-b border-[#1e293b]">
 									<td className="p-2 font-medium text-[var(--text)]">{exec.task_name}</td>
 									<td className="p-2 text-[var(--text)]">{exec.user_email || `User ${exec.user_id}`}</td>

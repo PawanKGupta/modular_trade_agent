@@ -642,6 +642,31 @@ class ServiceStatus(Base):
     )
 
 
+class SchedulerLock(Base):
+    """
+    Table-based lock for scheduler instances.
+
+    Replaces PostgreSQL advisory locks which are problematic with connection pooling.
+    This ensures only ONE scheduler instance runs per user across processes/containers.
+    """
+
+    __tablename__ = "scheduler_lock"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), primary_key=True, nullable=False
+    )
+    locked_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    lock_id: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # Unique identifier for this lock instance
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False
+    )  # Auto-expire stale locks (e.g., 5 minutes)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (Index("ix_scheduler_lock_expires_at", "expires_at"),)
+
+
 class ServiceTaskExecution(Base):
     """Task execution history per user"""
 
