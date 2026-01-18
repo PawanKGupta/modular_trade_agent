@@ -12,8 +12,8 @@ from src.infrastructure.persistence.settings_repository import SettingsRepositor
 from ..core.deps import get_current_user, get_db
 from ..routers.broker import get_broker_portfolio
 from ..routers.paper_trading import (
+    PaginatedPaperTradingOrders,
     PaginatedPaperTradingPortfolio,
-    PaperTradingPortfolio,
     get_paper_trading_portfolio,
 )
 from ..schemas.user import SettingsResponse, SettingsUpdateRequest
@@ -59,7 +59,9 @@ def update_settings(
 ):
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
-    trade_mode = TradeMode(payload.trade_mode) if payload.trade_mode else None
+    # CRITICAL: Normalize to lowercase before creating enum to handle "BROKER"/"PAPER"
+    # This prevents validation errors when uppercase values are sent
+    trade_mode = TradeMode(payload.trade_mode.lower()) if payload.trade_mode else None
     settings = repo.update(
         settings,
         trade_mode=trade_mode,
@@ -200,11 +202,6 @@ def get_portfolio(
             # Use broker portfolio endpoint (still returns non-paginated for now)
             broker_portfolio = get_broker_portfolio(db=db, current=current)
             # Convert to paginated format for consistency
-            from ..routers.paper_trading import (
-                PaginatedPaperTradingOrders,
-                PaperTradingAccount,
-                PaperTradingHolding,
-            )
             return PaginatedPaperTradingPortfolio(
                 account=broker_portfolio.account,
                 holdings=broker_portfolio.holdings,
@@ -219,7 +216,9 @@ def get_portfolio(
             )
         else:
             # Use paper trading portfolio endpoint (now paginated)
-            return get_paper_trading_portfolio(page=page, page_size=page_size, db=db, current=current)
+            return get_paper_trading_portfolio(
+                page=page, page_size=page_size, db=db, current=current
+            )
 
     except Exception as e:
         logger.exception(f"Error fetching unified portfolio for user {current.id}: {e}")
