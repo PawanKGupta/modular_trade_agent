@@ -707,25 +707,30 @@ class UnifiedOrderMonitor:
                                                 symbol.upper() if symbol else ""
                                             )  # symbol is already full symbol
                                             if full_symbol and self.positions_repo:
+                                                # Always call _create_position_from_executed_order
+                                                # It handles both creating new positions and updating
+                                                # existing ones (including reentries)
                                                 existing_pos = self.positions_repo.get_by_symbol(
                                                     self.user_id, full_symbol
                                                 )
-                                                if not existing_pos:
-                                                    # Position missing - create from DB order data
-                                                    logger.info(
-                                                        f"Order {order_id} has execution data but "
-                                                        f"no position exists. Creating position "
-                                                        f"from DB order data."
+                                                action = (
+                                                    "updating existing position"
+                                                    if existing_pos
+                                                    else "creating position"
+                                                )
+                                                logger.info(
+                                                    f"Order {order_id} has execution data. "
+                                                    f"{action.capitalize()} from DB order data."
+                                                )
+                                                with transaction(self.orders_repo.db):
+                                                    self._create_position_from_executed_order(
+                                                        order_id,
+                                                        order_info,
+                                                        float(db_order.execution_price),
+                                                        float(db_order.execution_qty),
                                                     )
-                                                    with transaction(self.orders_repo.db):
-                                                        self._create_position_from_executed_order(
-                                                            order_id,
-                                                            order_info,
-                                                            float(db_order.execution_price),
-                                                            float(db_order.execution_qty),
-                                                        )
-                                                    stats["executed"] += 1
-                                                    order_ids_to_remove.append(order_id)
+                                                stats["executed"] += 1
+                                                order_ids_to_remove.append(order_id)
                                     except Exception as e:
                                         logger.warning(
                                             f"Error checking/creating position for order "
@@ -768,25 +773,31 @@ class UnifiedOrderMonitor:
                                         symbol.upper() if symbol else ""
                                     )  # symbol is already full symbol
                                     if full_symbol and self.positions_repo:
+                                        # Always call _create_position_from_executed_order
+                                        # It handles both creating new positions and updating
+                                        # existing ones (including reentries)
                                         existing_pos = self.positions_repo.get_by_symbol(
                                             self.user_id, full_symbol
                                         )
-                                        if not existing_pos:
-                                            # Position missing - create it from DB order data
-                                            logger.info(
-                                                f"Order {order_id} has execution data but "
-                                                f"no position exists (holdings API unavailable). "
-                                                f"Creating position from DB order data."
+                                        action = (
+                                            "updating existing position"
+                                            if existing_pos
+                                            else "creating position"
+                                        )
+                                        logger.info(
+                                            f"Order {order_id} has execution data "
+                                            f"(holdings API unavailable). "
+                                            f"{action.capitalize()} from DB order data."
+                                        )
+                                        with transaction(self.orders_repo.db):
+                                            self._create_position_from_executed_order(
+                                                order_id,
+                                                order_info,
+                                                float(db_order.execution_price),
+                                                float(db_order.execution_qty),
                                             )
-                                            with transaction(self.orders_repo.db):
-                                                self._create_position_from_executed_order(
-                                                    order_id,
-                                                    order_info,
-                                                    float(db_order.execution_price),
-                                                    float(db_order.execution_qty),
-                                                )
-                                            stats["executed"] += 1
-                                            order_ids_to_remove.append(order_id)
+                                        stats["executed"] += 1
+                                        order_ids_to_remove.append(order_id)
                             except Exception as e:
                                 logger.warning(
                                     f"Error checking/creating position for order {order_id}: {e}"
