@@ -12,7 +12,7 @@ import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from decimal import ROUND_UP, Decimal
 from pathlib import Path
@@ -4253,17 +4253,98 @@ class SellOrderManager:
                     # Fallback to database price if broker price is 0.0
                     if price == 0.0 and self.orders_repo and self.user_id and order_id:
                         try:
-                            db_order = self.orders_repo.get_by_broker_order_id(
-                                self.user_id, order_id
+                            # First, try to find price in broker order response (might be in different field)
+                            # Check for limit price fields that might not be checked by OrderFieldExtractor
+                            limit_price = (
+                                order.get("limitPrice")
+                                or order.get("limit_price")
+                                or order.get("lmtPrc")
+                                or order.get("triggerPrice")
+                                or order.get("trigger_price")
+                                or order.get("trgPrc")
+                                or 0.0
                             )
-                            if db_order and db_order.price and db_order.price > 0:
-                                price = float(db_order.price)
+
+                            if limit_price and limit_price > 0:
+                                price = float(limit_price)
                                 logger.debug(
-                                    f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                    f"Using limit price from broker response for {symbol} order {order_id}: Rs {price:.2f}"
                                 )
-                        except Exception as e:
+                            else:
+                                # Fallback to database price
+                                db_order = self.orders_repo.get_by_broker_order_id(
+                                    self.user_id, order_id
+                                )
+                                if db_order and db_order.price is not None and db_order.price > 0:
+                                    db_price = float(db_order.price)
+
+                                    # STALENESS DETECTION (read-only, no side effects)
+                                    is_stale = False
+                                    staleness_reason = None
+
+                                    # Check 1: Database order was updated more than 5 minutes ago
+                                    if db_order.updated_at:
+                                        from datetime import datetime
+
+                                        age_minutes = (
+                                            datetime.now(UTC) - db_order.updated_at
+                                        ).total_seconds() / 60
+                                        if age_minutes > 5:
+                                            is_stale = True
+                                            staleness_reason = f"Database order updated {age_minutes:.1f} minutes ago"
+
+                                    # Check 2: Broker order timestamp is newer than database update
+                                    if not is_stale and db_order.updated_at:
+                                        broker_order_time = OrderFieldExtractor.get_order_time(
+                                            order
+                                        )
+                                        if broker_order_time:
+                                            try:
+                                                from dateutil import parser
+
+                                                broker_time = parser.parse(broker_order_time)
+                                                if broker_time.tzinfo is None:
+                                                    from src.infrastructure.db.timezone_utils import (
+                                                        IST,
+                                                    )
+
+                                                    broker_time = broker_time.replace(tzinfo=IST)
+
+                                                if broker_time.tzinfo != UTC:
+                                                    broker_time = broker_time.astimezone(UTC)
+
+                                                if broker_time > db_order.updated_at:
+                                                    is_stale = True
+                                                    staleness_reason = "Broker order timestamp is newer than database update"
+                                            except Exception:
+                                                # Ignore parsing errors - not critical
+                                                pass
+
+                                    if is_stale:
+                                        # Use database price but warn about staleness
+                                        price = db_price
+                                        logger.warning(
+                                            f"Using potentially stale database price for {symbol} order {order_id}: "
+                                            f"Rs {price:.2f}. {staleness_reason}. "
+                                            f"Price will be used but may be incorrect. "
+                                            f"Consider syncing order status from broker."
+                                        )
+                                    else:
+                                        # Fresh database price - use it
+                                        price = db_price
+                                        logger.debug(
+                                            f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                        )
+
+                        except (AttributeError, ValueError, TypeError) as e:
+                            # Expected errors (missing field, wrong type, etc.)
                             logger.debug(
                                 f"Could not fetch database price for order {order_id}: {e}"
+                            )
+                        except Exception as e:
+                            # Unexpected errors (database connection, etc.)
+                            logger.warning(
+                                f"Unexpected error fetching database price for order {order_id}: {e}"
                             )
 
                     if symbol and qty > 0:
