@@ -21,7 +21,6 @@ except ImportError:
 try:
     from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
-    from .utils.symbol_utils import extract_base_symbol
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
@@ -193,6 +192,15 @@ class UnifiedOrderMonitor:
 
             loaded_count = 0
             for order in pending_orders:
+                # CRITICAL FIX: Safeguard - only process buy orders
+                # This prevents sell orders from being incorrectly tracked as buy orders
+                if order.side and order.side.lower() != "buy":
+                    logger.warning(
+                        f"Skipping non-buy order {order.id} ({order.side}) "
+                        f"in load_pending_buy_orders()"
+                    )
+                    continue
+
                 order_id = order.broker_order_id or order.order_id
                 if not order_id:
                     logger.warning(f"Order {order.id} has no broker_order_id, skipping")
@@ -387,7 +395,8 @@ class UnifiedOrderMonitor:
 
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
                     # Previously only orders WITHOUT execution_price were checked, causing
-                    # positions to never be created for executed orders that already had execution_price
+                    # positions to never be created for executed orders that already had
+                    # execution_price
                     order_id = order.broker_order_id or order.order_id
                     if order_id and order_id not in orders_to_check:
                         orders_to_check[str(order_id)] = {
@@ -486,7 +495,6 @@ class UnifiedOrderMonitor:
                     # If symbol appears in holdings, order likely executed while service was down
                     symbol = order_info.get("symbol", "")
                     full_symbol = symbol.upper() if symbol else ""  # symbol is already full symbol
-                    base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
 
                     if full_symbol and holdings_data is not None:
                         try:
@@ -678,7 +686,50 @@ class UnifiedOrderMonitor:
                                         )
                             else:
                                 # Order not in holdings either - might be rejected/cancelled
-                                # or holdings API unavailable
+                                # or holdings API unavailable, OR already executed days ago
+                                # Check if order has execution_price/qty in DB but no position
+                                # exists
+                                if self.orders_repo and order_info.get("db_order_id"):
+                                    try:
+                                        db_order = self.orders_repo.get(order_info["db_order_id"])
+                                        if (
+                                            db_order
+                                            and db_order.execution_price
+                                            and db_order.execution_price > 0
+                                            and db_order.execution_qty
+                                            and db_order.execution_qty > 0
+                                        ):
+                                            # Order has execution data - check if position exists
+                                            symbol = order_info.get("symbol", "")
+                                            full_symbol = (
+                                                symbol.upper() if symbol else ""
+                                            )  # symbol is already full symbol
+                                            if full_symbol and self.positions_repo:
+                                                existing_pos = self.positions_repo.get_by_symbol(
+                                                    self.user_id, full_symbol
+                                                )
+                                                if not existing_pos:
+                                                    # Position missing - create from DB order data
+                                                    logger.info(
+                                                        f"Order {order_id} has execution data but "
+                                                        f"no position exists. Creating position "
+                                                        f"from DB order data."
+                                                    )
+                                                    with transaction(self.orders_repo.db):
+                                                        self._create_position_from_executed_order(
+                                                            order_id,
+                                                            order_info,
+                                                            float(db_order.execution_price),
+                                                            float(db_order.execution_qty),
+                                                        )
+                                                    stats["executed"] += 1
+                                                    order_ids_to_remove.append(order_id)
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Error checking/creating position for order "
+                                            f"{order_id}: {e}"
+                                        )
+
                                 placed_at = order_info.get("placed_at")
                                 if placed_at:
                                     logger.debug(
@@ -696,6 +747,47 @@ class UnifiedOrderMonitor:
                                 logger.debug(f"Buy order {order_id} not found in broker orders")
                     else:
                         # No portfolio access or symbol info - use original behavior
+                        # But still check if order has execution data and needs position creation
+                        if self.orders_repo and order_info.get("db_order_id"):
+                            try:
+                                db_order = self.orders_repo.get(order_info["db_order_id"])
+                                if (
+                                    db_order
+                                    and db_order.execution_price
+                                    and db_order.execution_price > 0
+                                    and db_order.execution_qty
+                                    and db_order.execution_qty > 0
+                                ):
+                                    # Order has execution data - check if position exists
+                                    symbol = order_info.get("symbol", "")
+                                    full_symbol = (
+                                        symbol.upper() if symbol else ""
+                                    )  # symbol is already full symbol
+                                    if full_symbol and self.positions_repo:
+                                        existing_pos = self.positions_repo.get_by_symbol(
+                                            self.user_id, full_symbol
+                                        )
+                                        if not existing_pos:
+                                            # Position missing - create it from DB order data
+                                            logger.info(
+                                                f"Order {order_id} has execution data but "
+                                                f"no position exists (holdings API unavailable). "
+                                                f"Creating position from DB order data."
+                                            )
+                                            with transaction(self.orders_repo.db):
+                                                self._create_position_from_executed_order(
+                                                    order_id,
+                                                    order_info,
+                                                    float(db_order.execution_price),
+                                                    float(db_order.execution_qty),
+                                                )
+                                            stats["executed"] += 1
+                                            order_ids_to_remove.append(order_id)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Error checking/creating position for order {order_id}: {e}"
+                                )
+
                         placed_at = order_info.get("placed_at")
                         if placed_at:
                             logger.debug(f"Buy order {order_id} not found in broker orders")

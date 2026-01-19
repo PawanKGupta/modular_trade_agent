@@ -785,15 +785,19 @@ class OrdersRepository:
             logger.warning(f"Failed to mark signal as FAILED for order {order.id}: {e}")
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
-        """Get all pending orders that need status checking
+        """Get all pending AMO buy orders that need status checking
 
         Note: Previously returned AMO + PENDING_EXECUTION, now returns PENDING only.
+        CRITICAL: Only returns buy orders to prevent sell orders from being tracked as buy orders.
         """
         orders, _ = self.list(
             user_id,
             status=OrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
         )
-        return orders
+        # CRITICAL FIX: Filter to only buy orders
+        # AMO orders are always buy orders, but we need to prevent sell orders
+        # with PENDING status from being incorrectly loaded as buy orders
+        return [o for o in orders if o.side == "buy"]
 
     def get_failed_orders(self, user_id: int) -> list[Orders]:
         """Get all failed orders
