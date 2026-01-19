@@ -4270,6 +4270,20 @@ class SellOrderManager:
                                 logger.debug(
                                     f"Using limit price from broker response for {symbol} order {order_id}: Rs {price:.2f}"
                                 )
+                                # Sync this price to database if different
+                                try:
+                                    db_order = self.orders_repo.get_by_broker_order_id(
+                                        self.user_id, order_id
+                                    )
+                                    if db_order and (db_order.price is None or abs(float(db_order.price) - price) > 0.01):
+                                        db_order.price = price
+                                        self.orders_repo.update(db_order)
+                                        logger.debug(
+                                            f"Updated database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                        )
+                                except Exception as sync_error:
+                                    # Don't fail the main flow if sync fails
+                                    logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
                             else:
                                 # Fallback to database price
                                 db_order = self.orders_repo.get_by_broker_order_id(
@@ -4321,14 +4335,51 @@ class SellOrderManager:
                                                 pass
 
                                     if is_stale:
-                                        # Use database price but warn about staleness
-                                        price = db_price
-                                        logger.warning(
-                                            f"Using potentially stale database price for {symbol} order {order_id}: "
-                                            f"Rs {price:.2f}. {staleness_reason}. "
-                                            f"Price will be used but may be incorrect. "
-                                            f"Consider syncing order status from broker."
+                                        # Try to extract price from broker order (even if 0.0, check other fields)
+                                        broker_price = OrderFieldExtractor.get_price(order)
+                                        broker_limit_price = (
+                                            order.get("limitPrice")
+                                            or order.get("limit_price")
+                                            or order.get("lmtPrc")
+                                            or 0.0
                                         )
+                                        
+                                        # If we found a price in broker response, use it and update DB
+                                        if broker_limit_price and broker_limit_price > 0:
+                                            fresh_price = float(broker_limit_price)
+                                            try:
+                                                # Only update if price actually changed (avoid unnecessary writes)
+                                                if abs(float(db_order.price) - fresh_price) > 0.01:
+                                                    db_order.price = fresh_price
+                                                    self.orders_repo.update(db_order)  # auto_commit=True by default
+                                                    logger.info(
+                                                        f"Synced stale price for {symbol} order {order_id}: "
+                                                        f"Rs {db_price:.2f} -> Rs {fresh_price:.2f} ({staleness_reason})"
+                                                    )
+                                                    price = fresh_price  # Use the synced price
+                                                else:
+                                                    # Price unchanged, just refresh timestamp to mark as checked
+                                                    self.orders_repo.update(db_order)
+                                                    logger.debug(
+                                                        f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                        f"(price unchanged: Rs {db_price:.2f}, {staleness_reason})"
+                                                    )
+                                                    price = db_price  # Use database price (unchanged)
+                                            except Exception as sync_error:
+                                                # Don't fail the main flow if sync fails
+                                                logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
+                                                price = db_price  # Fallback to database price
+                                        else:
+                                            # No price in broker response, just refresh timestamp
+                                            try:
+                                                self.orders_repo.update(db_order)
+                                                logger.debug(
+                                                    f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                    f"(no broker price available, {staleness_reason})"
+                                                )
+                                            except Exception:
+                                                pass  # Non-critical
+                                            price = db_price
                                     else:
                                         # Fresh database price - use it
                                         price = db_price
