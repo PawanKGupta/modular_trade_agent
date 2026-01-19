@@ -4343,7 +4343,7 @@ class SellOrderManager:
                                             or order.get("lmtPrc")
                                             or 0.0
                                         )
-                                        
+
                                         # If we found a price in broker response, use it and update DB
                                         if broker_limit_price and broker_limit_price > 0:
                                             fresh_price = float(broker_limit_price)

@@ -1092,7 +1092,7 @@ def get_monitoring_dashboard(
 
         # Get re-auth count in last 24h - optimized for performance
         reauth_start = now - timedelta(hours=24)
-        
+
         # Use count() for total count (fast, uses index)
         reauth_count_24h = (
             db.query(ErrorLog)
@@ -1134,7 +1134,7 @@ def get_monitoring_dashboard(
                 or "success" in (e.error_message or "").lower()
             ]
         )
-        
+
         # Approximate success rate (from sample if count > 1000, otherwise exact)
         if reauth_count_24h > 0:
             if reauth_count_24h <= 1000:
