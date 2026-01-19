@@ -1,7 +1,7 @@
 """add_error_log_gin_index
 
 Revision ID: f8a9b0c1d2e3
-Revises: c9d8e7f6g5h6
+Revises: d1e2f3a4b5c6
 Create Date: 2026-01-19 00:00:00.000000+00:00
 """
 
@@ -12,7 +12,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "f8a9b0c1d2e3"
-down_revision = "c9d8e7f6g5h6"
+down_revision = "d1e2f3a4b5c6"  # Points to latest in chain that includes c9d8e7f6g5h6
 branch_labels = None
 depends_on = None
 
@@ -49,7 +49,7 @@ def upgrade() -> None:
                 op.execute(
                     text(
                         """
-                        CREATE INDEX IF NOT EXISTS idx_error_log_error_message_gin 
+                        CREATE INDEX IF NOT EXISTS idx_error_log_error_message_gin
                         ON error_logs USING gin(error_message gin_trgm_ops)
                         """
                     )
