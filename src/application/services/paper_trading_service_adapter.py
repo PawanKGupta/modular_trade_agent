@@ -961,7 +961,7 @@ class PaperTradingServiceAdapter:
                 now = now.astimezone(IST)
 
             # Get all PENDING buy orders for paper trading
-            all_orders = orders_repo.list(self.user_id, status=None)
+            all_orders, _ = orders_repo.list(self.user_id, status=None)
             pending_orders = [
                 o
                 for o in all_orders
@@ -1069,7 +1069,7 @@ class PaperTradingServiceAdapter:
             positions_repo = PositionsRepository(self.db)
 
             # Get all ONGOING buy orders for paper trading
-            all_orders = orders_repo.list(self.user_id, status=None)
+            all_orders, _ = orders_repo.list(self.user_id, status=None)
             ongoing_orders = [
                 o
                 for o in all_orders
@@ -1299,7 +1299,7 @@ class PaperTradingServiceAdapter:
 
             return dt.astimezone(IST) if dt.tzinfo != IST else dt
 
-        ongoing_buy_orders = orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+        ongoing_buy_orders, _ = orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
         ongoing_buy_orders_today = []
         for order in ongoing_buy_orders:
             # Only process buy orders
@@ -1664,7 +1664,7 @@ class PaperTradingServiceAdapter:
                     base_symbol = extract_base_symbol(symbol).upper()
 
                     # Find active sell orders for this symbol
-                    all_orders = orders_repo.list(self.user_id)
+                    all_orders, _ = orders_repo.list(self.user_id)
                     active_sell_orders = [
                         o
                         for o in all_orders
@@ -1922,7 +1922,7 @@ class PaperTradingServiceAdapter:
             # 1. Get sell orders from database
             # Handle session state issues (e.g., prepared state)
             try:
-                db_sell_orders = orders_repo.list(self.user_id)
+                db_sell_orders, _ = orders_repo.list(self.user_id)
             except Exception as query_error:
                 # If query fails due to prepared state, rollback and retry
                 if (
@@ -1936,7 +1936,7 @@ class PaperTradingServiceAdapter:
                             action="_cancel_orphaned_sell_orders",
                         )
                         # Retry the query after rollback
-                        db_sell_orders = orders_repo.list(self.user_id)
+                        db_sell_orders, _ = orders_repo.list(self.user_id)
                     except Exception as retry_error:
                         self.logger.error(
                             f"Failed to query orders after rollback: {retry_error}",
@@ -2625,7 +2625,7 @@ class PaperTradingServiceAdapter:
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             orders_repo = OrdersRepository(self.db)
-            db_sell_orders = orders_repo.list(self.user_id)
+            db_sell_orders, _ = orders_repo.list(self.user_id)
 
             active_orders = [
                 o
@@ -3191,7 +3191,7 @@ class PaperTradingEngineAdapter:
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             orders_repo_for_positions = OrdersRepository(self.db)
-            all_orders_for_positions = orders_repo_for_positions.list(self.user_id)
+            all_orders_for_positions, _ = orders_repo_for_positions.list(self.user_id)
 
             # Rebuild current_symbols from database positions (paper trading only)
             current_symbols = set()
@@ -3266,7 +3266,7 @@ class PaperTradingEngineAdapter:
                 # Fallback to 24-hour check if trading_day_utils not available
                 get_next_trading_day_close = None
 
-            db_orders = orders_repo.list(self.user_id, status=None)
+            db_orders, _ = orders_repo.list(self.user_id, status=None)
             now = ist_now()
             # Normalize to IST for consistent comparison
             if now.tzinfo is None:

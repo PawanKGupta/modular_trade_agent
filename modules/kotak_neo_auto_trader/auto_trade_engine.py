@@ -341,7 +341,7 @@ class AutoTradeEngine:
             open_positions = [p for p in open_positions if p.closed_at is None]
 
             # Get buy orders for these positions to reconstruct trade metadata
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             buy_orders = [o for o in all_orders if o.side.lower() == "buy"]
 
             # Convert positions to trades format
@@ -645,7 +645,7 @@ class AutoTradeEngine:
                 logger.warning(f"Error getting failed orders from repository: {e}")
                 # Fallback: Check status manually
 
-                all_orders = self.orders_repo.list(self.user_id)
+                all_orders, _ = self.orders_repo.list(self.user_id)
                 failed_orders = []
                 for order in all_orders:
                     if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
@@ -704,7 +704,7 @@ class AutoTradeEngine:
 
                 # Phase 6: Check for existing failed orders using status instead of metadata
 
-                existing_orders = self.orders_repo.list(self.user_id)
+                existing_orders, _ = self.orders_repo.list(self.user_id)
                 existing_failed_orders = [
                     o
                     for o in existing_orders
@@ -880,7 +880,7 @@ class AutoTradeEngine:
         if self.orders_repo and self.user_id:
             # Phase 6: Use repository-based storage with status-based lookup
 
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             for order in all_orders:
                 # Phase 6: Check status instead of metadata
                 if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
@@ -2138,7 +2138,7 @@ class AutoTradeEngine:
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
-                existing_orders = self.orders_repo.list(self.user_id)
+                existing_orders, _ = self.orders_repo.list(self.user_id)
                 for existing_order in existing_orders:
                     # Check if symbol matches (including variants)
                     order_symbol_base = (
@@ -2999,7 +2999,7 @@ class AutoTradeEngine:
                         if self.orders_repo and self.user_id:
                             try:
                                 # Find the order in database
-                                all_orders = self.orders_repo.list(self.user_id)
+                                all_orders, _ = self.orders_repo.list(self.user_id)
                                 db_order = None
                                 for order in all_orders:
                                     if (
@@ -3436,7 +3436,7 @@ class AutoTradeEngine:
                     )
                     # Database fallback: Check for pending/ongoing buy orders
                     if self.orders_repo and self.user_id:
-                        existing_orders = self.orders_repo.list(self.user_id)
+                        existing_orders, _ = self.orders_repo.list(self.user_id)
                         for existing_order in existing_orders:
                             if (
                                 existing_order.symbol == symbol
@@ -3626,7 +3626,7 @@ class AutoTradeEngine:
                     # Import here to ensure it's available
                     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-                    all_orders = self.orders_repo.list(self.user_id)
+                    all_orders, _ = self.orders_repo.list(self.user_id)
                     reentry_orders_from_db = [
                         db_order
                         for db_order in all_orders
@@ -4614,7 +4614,7 @@ class AutoTradeEngine:
             existing_db_order = None
             if self.orders_repo and self.user_id:
                 try:
-                    existing_orders = self.orders_repo.list(self.user_id)
+                    existing_orders, _ = self.orders_repo.list(self.user_id)
                     for existing_order in existing_orders:
                         order_symbol_base = (
                             existing_order.symbol.upper()
