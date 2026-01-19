@@ -22,16 +22,9 @@ from src.infrastructure.db.models import (
     Users,
 )
 from src.infrastructure.db.timezone_utils import IST, ist_now, utc_to_ist
-from src.infrastructure.persistence.individual_service_task_execution_repository import (
-    IndividualServiceTaskExecutionRepository,
-)
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
-from src.infrastructure.persistence.service_status_repository import (
-    ServiceStatusRepository,
-)
-from src.infrastructure.persistence.user_repository import UserRepository
 
 from ..core.deps import get_db, require_admin
 from ..schemas.monitoring import (
@@ -74,8 +67,6 @@ def _get_user_email_map(db: Session, user_ids: list[int]) -> dict[int, str]:
 def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
     """Internal implementation to get health status for all services"""
     try:
-        status_repo = ServiceStatusRepository(db)
-
         # CRITICAL: Use raw SQL query to bypass SQLAlchemy's identity map/cache entirely
         # This ensures we always read the absolute latest data from the database
         # The service updates heartbeat in another thread/connection, so we need fresh data
@@ -122,7 +113,7 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
             heartbeat_age = None
             if status.last_heartbeat:
                 # CRITICAL: PostgreSQL stores timestamps in UTC, but we need IST for comparison
-                # Convert last_heartbeat from UTC (database storage) to IST for accurate age calculation
+                # Convert last_heartbeat from UTC (database storage) to IST for age calc
                 last_heartbeat = status.last_heartbeat
 
                 # If naive, assume it's UTC (PostgreSQL default)
@@ -135,6 +126,30 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
 
                 age_delta = now - last_heartbeat
                 heartbeat_age = age_delta.total_seconds()
+
+            # CRITICAL: Ensure timestamps are timezone-aware (UTC) for proper frontend display
+            # PostgreSQL stores timestamps in UTC, but they may be returned as naive datetimes
+            # Making them timezone-aware ensures FastAPI serializes them correctly with 'Z' suffix
+            # If naive, assume they're UTC (PostgreSQL default) and mark them as such
+            # If timezone-aware but not UTC, convert to UTC
+            if status.last_heartbeat:
+                if status.last_heartbeat.tzinfo is None:
+                    status.last_heartbeat = status.last_heartbeat.replace(tzinfo=UTC)
+                elif status.last_heartbeat.tzinfo != UTC:
+                    # Convert to UTC if in different timezone
+                    status.last_heartbeat = status.last_heartbeat.astimezone(UTC)
+            if status.last_task_execution:
+                if status.last_task_execution.tzinfo is None:
+                    status.last_task_execution = status.last_task_execution.replace(tzinfo=UTC)
+                elif status.last_task_execution.tzinfo != UTC:
+                    # Convert to UTC if in different timezone
+                    status.last_task_execution = status.last_task_execution.astimezone(UTC)
+            if status.updated_at:
+                if status.updated_at.tzinfo is None:
+                    status.updated_at = status.updated_at.replace(tzinfo=UTC)
+                elif status.updated_at.tzinfo != UTC:
+                    # Convert to UTC if in different timezone
+                    status.updated_at = status.updated_at.astimezone(UTC)
 
             # Report stale services: if heartbeat is very old (>10 minutes) and
             # service shows as running, report it (monitoring should only observe, not fix)
@@ -202,9 +217,7 @@ def get_task_executions(
 ):
     """Get paginated task execution history with schedule information"""
     try:
-        execution_repo = IndividualServiceTaskExecutionRepository(db)
         schedule_repo = ServiceScheduleRepository(db)
-        user_repo = UserRepository(db)
 
         # Get schedules for task_name mapping
         all_schedules = schedule_repo.get_all()
@@ -260,6 +273,14 @@ def get_task_executions(
                     time_diff = (exec_dt - scheduled_datetime).total_seconds()
                     scheduled_time = schedule.schedule_time.strftime("%H:%M")
 
+            # Ensure executed_at is timezone-aware (UTC) for proper frontend display
+            executed_at_utc = exec.executed_at
+            if executed_at_utc:
+                if executed_at_utc.tzinfo is None:
+                    executed_at_utc = executed_at_utc.replace(tzinfo=UTC)
+                elif executed_at_utc.tzinfo != UTC:
+                    executed_at_utc = executed_at_utc.astimezone(UTC)
+
             items.append(
                 TaskExecutionWithSchedule(
                     id=exec.id,
@@ -267,7 +288,7 @@ def get_task_executions(
                     user_email=user_email_map.get(exec.user_id),
                     task_name=exec.task_name,
                     scheduled_time=scheduled_time,
-                    executed_at=exec.executed_at,
+                    executed_at=executed_at_utc,
                     time_difference_seconds=time_diff,
                     status=exec.status,
                     duration_seconds=exec.duration_seconds,
@@ -409,7 +430,14 @@ def get_task_metrics(
             if not stats["last_execution"] or (
                 exec.executed_at and exec.executed_at > stats["last_execution"]
             ):
-                stats["last_execution"] = exec.executed_at
+                # Ensure executed_at is timezone-aware (UTC) for proper frontend display
+                exec_dt = exec.executed_at
+                if exec_dt:
+                    if exec_dt.tzinfo is None:
+                        exec_dt = exec_dt.replace(tzinfo=UTC)
+                    elif exec_dt.tzinfo != UTC:
+                        exec_dt = exec_dt.astimezone(UTC)
+                stats["last_execution"] = exec_dt
                 stats["last_status"] = exec.status
 
         metrics = []
@@ -458,7 +486,6 @@ def get_schedule_compliance(
     """Get schedule compliance for all tasks"""
     try:
         schedule_repo = ServiceScheduleRepository(db)
-        execution_repo = IndividualServiceTaskExecutionRepository(db)
 
         schedules = schedule_repo.get_enabled()
         now = ist_now()
@@ -485,12 +512,15 @@ def get_schedule_compliance(
             )
 
             execution_count = len(today_executions)
-            # Get last execution and ensure it's timezone-aware
+            # Get last execution and ensure it's timezone-aware (UTC) for proper frontend display
             last_execution = None
             if today_executions:
                 last_execution = max((e.executed_at for e in today_executions), default=None)
-                if last_execution and last_execution.tzinfo is None:
-                    last_execution = last_execution.replace(tzinfo=IST)
+                if last_execution:
+                    if last_execution.tzinfo is None:
+                        last_execution = last_execution.replace(tzinfo=UTC)
+                    elif last_execution.tzinfo != UTC:
+                        last_execution = last_execution.astimezone(UTC)
 
             # Determine expected count
             expected_count = None
@@ -521,6 +551,13 @@ def get_schedule_compliance(
                     next_expected = datetime.combine(
                         today + timedelta(days=1), schedule_time, tzinfo=IST
                     )
+
+                # Convert next_expected to UTC for proper frontend display
+                if next_expected:
+                    if next_expected.tzinfo is None:
+                        next_expected = next_expected.replace(tzinfo=UTC)
+                    elif next_expected.tzinfo != UTC:
+                        next_expected = next_expected.astimezone(UTC)
 
             # Determine compliance status
             compliance_status = "not_applicable"
@@ -1117,7 +1154,10 @@ def get_monitoring_dashboard(
                         {
                             "severity": "critical",
                             "type": "service_stale",
-                            "message": f"Service for user {service.user_id} stale (no heartbeat for {service.heartbeat_age_seconds:.0f}s)",
+                            "message": (
+                                f"Service for user {service.user_id} stale "
+                                f"(no heartbeat for {service.heartbeat_age_seconds:.0f}s)"
+                            ),
                             "user_id": service.user_id,
                         }
                     )
@@ -1127,7 +1167,10 @@ def get_monitoring_dashboard(
                         {
                             "severity": "warning",
                             "type": "service_delayed_heartbeat",
-                            "message": f"Service for user {service.user_id} delayed heartbeat ({service.heartbeat_age_seconds:.0f}s)",
+                            "message": (
+                                f"Service for user {service.user_id} delayed heartbeat "
+                                f"({service.heartbeat_age_seconds:.0f}s)"
+                            ),
                             "user_id": service.user_id,
                         }
                     )
@@ -1138,7 +1181,9 @@ def get_monitoring_dashboard(
                     {
                         "severity": "warning",
                         "type": "service_errors",
-                        "message": f"Service for user {service.user_id} has {service.error_count} errors",
+                        "message": (
+                            f"Service for user {service.user_id} has {service.error_count} errors"
+                        ),
                         "user_id": service.user_id,
                     }
                 )
@@ -1188,6 +1233,14 @@ def get_monitoring_dashboard(
                     time_diff = (exec_dt - scheduled_datetime).total_seconds()
                     scheduled_time = schedule.schedule_time.strftime("%H:%M")
 
+            # Ensure executed_at is timezone-aware (UTC) for proper frontend display
+            executed_at_utc = exec.executed_at
+            if executed_at_utc:
+                if executed_at_utc.tzinfo is None:
+                    executed_at_utc = executed_at_utc.replace(tzinfo=UTC)
+                elif executed_at_utc.tzinfo != UTC:
+                    executed_at_utc = executed_at_utc.astimezone(UTC)
+
             recent_task_executions.append(
                 TaskExecutionWithSchedule(
                     id=exec.id,
@@ -1195,7 +1248,7 @@ def get_monitoring_dashboard(
                     user_email=user_email_map.get(exec.user_id),
                     task_name=exec.task_name,
                     scheduled_time=scheduled_time,
-                    executed_at=exec.executed_at,
+                    executed_at=executed_at_utc,
                     time_difference_seconds=time_diff,
                     status=exec.status,
                     duration_seconds=exec.duration_seconds,
