@@ -856,7 +856,7 @@ class OrderStateManager:
 
         try:
             # Find order in database
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             db_order = None
             for order in all_orders:
                 if (
@@ -899,7 +899,7 @@ class OrderStateManager:
 
         try:
             # Find order in database
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             db_order = None
             for order in all_orders:
                 if (

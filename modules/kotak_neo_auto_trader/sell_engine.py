@@ -635,7 +635,7 @@ class SellOrderManager:
                 # Try to get ticker and placed_symbol from most recent ONGOING order
                 if self.orders_repo and DbOrderStatus:
                     try:
-                        ongoing_orders = self.orders_repo.list(
+                        ongoing_orders, _ = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
                         )
                         for order in ongoing_orders:
@@ -948,7 +948,7 @@ class SellOrderManager:
             if self.orders_repo:
                 try:
                     # Get all pending/ongoing sell orders from database
-                    all_orders = self.orders_repo.list(self.user_id)
+                    all_orders, _ = self.orders_repo.list(self.user_id)
                     for order in all_orders:
                         if order.side.lower() == "sell" and order.status in {
                             DbOrderStatus.PENDING,
@@ -976,7 +976,7 @@ class SellOrderManager:
                 if self.orders_repo:
                     try:
                         # Try to get ticker from most recent buy order
-                        ongoing_orders = self.orders_repo.list(
+                        ongoing_orders, _ = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
                         )
                         for order in ongoing_orders:
@@ -1152,7 +1152,7 @@ class SellOrderManager:
                         # Check if there's a system buy order (orig_source != 'manual') for this symbol
                         # that was executed around the time the position was opened
                         # Get all buy orders for this symbol (no status filter)
-                        buy_orders = self.orders_repo.list(self.user_id)
+                        buy_orders, _ = self.orders_repo.list(self.user_id)
 
                         # Filter for buy orders matching this symbol
                         for buy_order in buy_orders:
@@ -1566,7 +1566,7 @@ class SellOrderManager:
                     if self.orders_repo and position_obj.opened_at:
                         try:
                             if DbOrderStatus:
-                                buy_orders = self.orders_repo.list(
+                                buy_orders, _ = self.orders_repo.list(
                                     self.user_id,
                                     status=DbOrderStatus.ONGOING,
                                 )
@@ -2014,7 +2014,7 @@ class SellOrderManager:
             cutoff_time = now - timedelta(minutes=minutes)
 
             # Get all buy orders for this user
-            orders = self.orders_repo.list(self.user_id)
+            orders, _ = self.orders_repo.list(self.user_id)
 
             # Filter for buy orders matching this symbol
             for order in orders:
@@ -2081,7 +2081,7 @@ class SellOrderManager:
             now = ist_now()
 
             # Get all PENDING sell orders (not ONGOING - those might be executing)
-            sell_orders = self.orders_repo.list(self.user_id)
+            sell_orders, _ = self.orders_repo.list(self.user_id)
             sell_orders = [
                 o
                 for o in sell_orders
@@ -3221,7 +3221,7 @@ class SellOrderManager:
                 return 0
 
             # Query for pending reentry orders for this symbol
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             reentry_orders = [
                 db_order
                 for db_order in all_orders
@@ -3337,7 +3337,7 @@ class SellOrderManager:
                 return 0
 
             # Query for ONGOING buy orders for this symbol
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             ongoing_buy_orders = [
                 db_order
                 for db_order in all_orders
@@ -3873,7 +3873,7 @@ class SellOrderManager:
 
         try:
             # Get all PENDING sell orders from database
-            pending_sell_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.PENDING)
+            pending_sell_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.PENDING)
 
             # Filter for sell orders only
             pending_sell_orders = [

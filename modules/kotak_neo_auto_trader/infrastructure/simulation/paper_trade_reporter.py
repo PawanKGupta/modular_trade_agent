@@ -84,7 +84,7 @@ class PaperTradeReporter:
 
                 # Get all open positions for this user
                 all_positions = positions_repo.list(self.user_id)
-                all_orders = orders_repo.list(self.user_id)
+                all_orders, _ = orders_repo.list(self.user_id)
 
                 # Filter for open positions only (closed_at IS NULL)
                 open_positions = [pos for pos in all_positions if pos.closed_at is None]

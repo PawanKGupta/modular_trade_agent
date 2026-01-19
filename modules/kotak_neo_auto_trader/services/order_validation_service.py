@@ -328,7 +328,7 @@ class OrderValidationService:
             try:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-                existing_orders = self.orders_repo.list(self.user_id)
+                existing_orders, _ = self.orders_repo.list(self.user_id)
                 symbol_base = (
                     symbol.upper()
                     .replace("-EQ", "")

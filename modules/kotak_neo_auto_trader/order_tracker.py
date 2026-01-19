@@ -285,7 +285,7 @@ class OrderTracker:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
                 # Get pending orders from DB
-                db_orders = self.orders_repo.list(self.user_id)
+                db_orders, _ = self.orders_repo.list(self.user_id)
 
                 # Filter by status
                 pending_statuses = {

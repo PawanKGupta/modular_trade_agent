@@ -377,7 +377,7 @@ class UnifiedOrderMonitor:
         if self.orders_repo and self.user_id:
             try:
                 # Get ONGOING buy orders with missing execution price
-                ongoing_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+                ongoing_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
                 for order in ongoing_orders:
                     # Filter for buy orders only
                     if order.side and order.side.lower() != "buy":
@@ -1771,7 +1771,7 @@ class UnifiedOrderMonitor:
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
-            all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+            all_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
 
             newly_executed_orders = []
             skipped_orders = []
