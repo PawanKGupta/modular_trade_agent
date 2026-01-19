@@ -3873,7 +3873,9 @@ class SellOrderManager:
 
         try:
             # Get all PENDING sell orders from database
-            pending_sell_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.PENDING)
+            pending_sell_orders, _ = self.orders_repo.list(
+                self.user_id, status=DbOrderStatus.PENDING
+            )
 
             # Filter for sell orders only
             pending_sell_orders = [
@@ -4692,10 +4694,31 @@ class SellOrderManager:
             # Skip stocks that are no longer in trade (position closed manually or by other process)
             if self.positions_repo and self.user_id:
                 try:
-                    full_symbol = (
-                        symbol.upper()
-                    )  # symbol is already full symbol from active_sell_orders
-                    position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
+                    # BUG FIX: active_sell_orders uses base symbol (e.g., "INDIAGLYCO")
+                    # but positions table uses full symbol (e.g., "INDIAGLYCO-EQ")
+                    # Try multiple symbol formats to find the position
+                    base_symbol = symbol.upper()
+                    position = None
+
+                    # First, try using placed_symbol from order_info if available (most reliable)
+                    placed_symbol = order_info.get("placed_symbol")
+                    if placed_symbol:
+                        position = self.positions_repo.get_by_symbol(
+                            self.user_id, placed_symbol.upper()
+                        )
+
+                    # If not found, try the symbol as-is (in case it's already full symbol)
+                    if not position:
+                        position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+                    # If still not found, try common full symbol variants
+                    if not position:
+                        for suffix in ["-EQ", "-BE", "-BL"]:
+                            full_symbol = f"{base_symbol}{suffix}"
+                            position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
+                            if position:
+                                break
+
                     if not position or position.closed_at is not None:
                         logger.debug(
                             f"Skipping {symbol}: Position is closed or doesn't exist "
