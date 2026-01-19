@@ -4349,8 +4349,11 @@ class SellOrderManager:
                 continue
 
             # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
-            if symbol.upper() in existing_orders:
-                existing = existing_orders[symbol.upper()]
+            # BUG FIX: existing_orders uses base symbols (e.g., "INDIAGLYCO") but symbol from positions
+            # is full symbol (e.g., "INDIAGLYCO-EQ"). Extract base symbol for lookup.
+            base_symbol = extract_base_symbol(symbol).upper()
+            if base_symbol in existing_orders:
+                existing = existing_orders[base_symbol]
                 existing_qty = existing["qty"]
                 existing_price = existing["price"]
 
