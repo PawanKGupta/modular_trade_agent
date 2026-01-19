@@ -141,6 +141,12 @@ def sample_failed_order():
     }
 
 
+@pytest.fixture
+def orders_repo(db_session):
+    """Create OrdersRepository instance for testing"""
+    return OrdersRepository(db_session)
+
+
 class TestLoadTradesHistory:
     """Test _load_trades_history method"""
 
@@ -402,6 +408,116 @@ class TestSaveTradesHistory:
         # Verify position was closed
         db_session.refresh(position)
         assert position.closed_at is not None
+
+    def test_save_to_repository_closed_position_with_exit_details(
+        self, auto_trade_engine_with_db, db_session, test_user, orders_repo
+    ):
+        """Test Fix #1: Closed position with exit details (exit_price, exit_reason, realized_pnl)"""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Create an open position first
+        positions_repo = PositionsRepository(db_session)
+        position = positions_repo.upsert(
+            user_id=test_user.id,
+            symbol="IMFA-EQ",
+            quantity=82,
+            avg_price=1222.7,
+            opened_at=datetime.now(),
+        )
+
+        # Close it with full exit details in trade dict
+        exit_time = ist_now()
+        closed_trade = {
+            "symbol": "IMFA-EQ",
+            "qty": 82,
+            "entry_price": 1222.7,
+            "status": "closed",
+            "exit_time": exit_time.isoformat(),
+            "exit_price": 1331.19,
+            "exit_reason": "EMA9 or RSI50",
+            "exit_rsi10": 25.5,
+            "pnl": 8887.68,  # (1331.19 - 1222.7) * 82
+        }
+        data = {
+            "trades": [closed_trade],
+            "failed_orders": [],
+        }
+
+        # Ensure orders_repo is set for the test
+        auto_trade_engine_with_db.orders_repo = orders_repo
+
+        auto_trade_engine_with_db._save_trades_history(data)
+
+        # Verify position was closed with all exit details
+        db_session.refresh(position)
+        assert position.closed_at is not None
+        assert position.exit_price == 1331.19
+        assert position.exit_reason == "EMA9 or RSI50"
+        assert position.exit_rsi == 25.5
+        assert position.realized_pnl == 8887.68
+        assert position.quantity == 0.0  # Position should be fully closed
+
+    def test_save_to_repository_closed_position_with_sell_order_id(
+        self, auto_trade_engine_with_db, db_session, test_user, orders_repo
+    ):
+        """Test Fix #1: Closed position with sell_order_id resolution from string"""
+        from src.infrastructure.db.models import Orders, OrderStatus as DbOrderStatus
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        # Create a sell order
+        sell_order = Orders(
+            user_id=test_user.id,
+            symbol="IMFA-EQ",
+            side="sell",
+            order_type="limit",
+            quantity=82,
+            status=DbOrderStatus.CLOSED,
+            execution_price=1331.19,
+            execution_qty=82,
+            broker_order_id="BROKER123",
+            order_id="ORDER456",
+        )
+        db_session.add(sell_order)
+        db_session.commit()
+        db_session.refresh(sell_order)
+
+        # Create an open position
+        positions_repo = PositionsRepository(db_session)
+        position = positions_repo.upsert(
+            user_id=test_user.id,
+            symbol="IMFA-EQ",
+            quantity=82,
+            avg_price=1222.7,
+            opened_at=datetime.now(),
+        )
+
+        # Close it with sell_order_id as string (broker_order_id)
+        exit_time = ist_now()
+        closed_trade = {
+            "symbol": "IMFA-EQ",
+            "qty": 82,
+            "entry_price": 1222.7,
+            "status": "closed",
+            "exit_time": exit_time.isoformat(),
+            "exit_price": 1331.19,
+            "exit_reason": "TARGET_HIT",
+            "sell_order_id": "BROKER123",  # String, should be resolved to DB ID
+        }
+        data = {
+            "trades": [closed_trade],
+            "failed_orders": [],
+        }
+
+        # Ensure orders_repo is set
+        auto_trade_engine_with_db.orders_repo = orders_repo
+
+        auto_trade_engine_with_db._save_trades_history(data)
+
+        # Verify position was closed with sell_order_id resolved
+        db_session.refresh(position)
+        assert position.closed_at is not None
+        assert position.exit_price == 1331.19
+        assert position.sell_order_id == sell_order.id  # Should be resolved from "BROKER123"
 
     def test_save_to_file_fallback(self, auto_trade_engine_file_mode, sample_trade):
         """Test saving trades to file when repository not available"""

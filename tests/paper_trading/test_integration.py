@@ -36,7 +36,7 @@ class TestPaperTradingIntegration:
     @pytest.fixture
     def broker(self, config):
         """Create paper trading broker"""
-        broker = PaperTradingBrokerAdapter(config)
+        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker.connect()
 
         # Set mock prices (both with and without .NS suffix for compatibility)
@@ -175,7 +175,7 @@ class TestPaperTradingIntegration:
     def test_persistence_across_sessions(self, config):
         """Test data persists across broker sessions"""
         # Session 1
-        broker1 = PaperTradingBrokerAdapter(config)
+        broker1 = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker1.connect()
         broker1.price_provider.set_mock_price("INFY", 1450.00)
         broker1.price_provider.set_mock_price("INFY.NS", 1450.00)
@@ -190,7 +190,7 @@ class TestPaperTradingIntegration:
         broker1.disconnect()
 
         # Session 2
-        broker2 = PaperTradingBrokerAdapter(config)
+        broker2 = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker2.connect()
 
         holdings = broker2.get_holdings()
@@ -273,7 +273,7 @@ class TestDuplicateOrderPrevention:
     @pytest.fixture
     def broker(self, config):
         """Create paper trading broker"""
-        broker = PaperTradingBrokerAdapter(config)
+        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker.connect()
 
         # Set mock prices
@@ -424,7 +424,7 @@ class TestFrozenEMA9SellStrategy:
     @pytest.fixture
     def broker(self, config):
         """Create paper trading broker with holdings"""
-        broker = PaperTradingBrokerAdapter(config)
+        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker.connect()
 
         # Set mock prices
@@ -563,7 +563,7 @@ class TestEdgeCases:
             enforce_market_hours=False,
             check_sufficient_funds=True,
         )
-        broker = PaperTradingBrokerAdapter(config)
+        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
         broker.connect()
         broker.price_provider.set_mock_price("EXPENSIVE", 10000.00)
         yield broker

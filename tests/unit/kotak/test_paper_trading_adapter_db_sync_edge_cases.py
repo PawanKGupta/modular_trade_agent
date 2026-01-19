@@ -33,9 +33,9 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        self.adapter = PaperTradingBrokerAdapter()
-        self.adapter.db_session = MagicMock()
         self.user_id = 1
+        self.adapter = PaperTradingBrokerAdapter(user_id=self.user_id)
+        self.adapter.db_session = MagicMock()
 
         # Mock repositories
         self.mock_orders_repo = MagicMock()

@@ -139,6 +139,7 @@ class TestPaperTradingPortfolioMultiUser:
         """Test that User 1 only sees their paper position, not User 2's broker position"""
         # Mock PaperTradeStore
         from unittest.mock import MagicMock
+
         mock_store = MagicMock()
         mock_store.get_account.return_value = {
             "initial_capital": 100000.0,
@@ -204,6 +205,7 @@ class TestPaperTradingPortfolioMultiUser:
         """Test that User 2's broker position doesn't appear in paper portfolio"""
         # Mock PaperTradeStore
         from unittest.mock import MagicMock
+
         mock_store = MagicMock()
         mock_store.get_account.return_value = {
             "initial_capital": 100000.0,

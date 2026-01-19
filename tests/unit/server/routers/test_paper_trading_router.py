@@ -94,7 +94,6 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
         repo.list = lambda user_id: []
         return repo
 
-    import server.app.routers.paper_trading as paper_trading_module
     monkeypatch.setattr(
         "src.infrastructure.persistence.positions_repository.PositionsRepository",
         mock_positions_repo,

@@ -377,15 +377,19 @@ class UnifiedOrderMonitor:
         if self.orders_repo and self.user_id:
             try:
                 # Get ONGOING buy orders with missing execution price
-                ongoing_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+                ongoing_orders, _ = self.orders_repo.list(
+                    self.user_id, status=DbOrderStatus.ONGOING
+                )
                 for order in ongoing_orders:
                     # Filter for buy orders only
                     if order.side and order.side.lower() != "buy":
                         continue
 
-                    # Only add if missing execution price and not already in active_buy_orders
+                    # BUG FIX: Include orders WITH execution_price to check for missing positions
+                    # Previously only orders WITHOUT execution_price were checked, causing
+                    # positions to never be created for executed orders that already had execution_price
                     order_id = order.broker_order_id or order.order_id
-                    if order_id and order_id not in orders_to_check and not order.execution_price:
+                    if order_id and order_id not in orders_to_check:
                         orders_to_check[str(order_id)] = {
                             "symbol": order.symbol,
                             "quantity": order.quantity,
@@ -395,7 +399,8 @@ class UnifiedOrderMonitor:
                             "placed_at": order.placed_at,
                         }
                         logger.debug(
-                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - missing execution price"
+                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - "
+                            f"execution_price={'present' if order.execution_price else 'missing'}"
                         )
             except Exception as e:
                 logger.error(f"Error loading ONGOING orders for sync: {e}", exc_info=True)
@@ -901,6 +906,27 @@ class UnifiedOrderMonitor:
             execution_price: Execution price
             execution_qty: Execution quantity
         """
+        # EDGE CASE FIX #1: Validate execution_price and execution_qty at the start
+        if not execution_price or execution_price <= 0:
+            logger.error(
+                f"Invalid execution_price: {execution_price} for order {order_id}. "
+                f"Cannot create position. This will prevent sell order placement."
+            )
+            self._position_creation_metrics["failed_invalid_data"] = (
+                self._position_creation_metrics.get("failed_invalid_data", 0) + 1
+            )
+            return
+
+        if not execution_qty or execution_qty <= 0:
+            logger.error(
+                f"Invalid execution_qty: {execution_qty} for order {order_id}. "
+                f"Cannot create position. This will prevent sell order placement."
+            )
+            self._position_creation_metrics["failed_invalid_data"] = (
+                self._position_creation_metrics.get("failed_invalid_data", 0) + 1
+            )
+            return
+
         # Issue #1 Fix: Enhanced validation with structured logging and alerting
         if not self.positions_repo or not self.user_id:
             # Issue #1 Fix: Track metrics
@@ -1070,6 +1096,74 @@ class UnifiedOrderMonitor:
                 execution_time = db_order.filled_at
             elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
                 execution_time = db_order.execution_time
+
+            # EDGE CASE FIX #2: Check if this order was already processed to prevent duplicate position updates
+            if existing_pos:
+                # Check if order_id is already in reentries (indicates order was already processed)
+                reentries_to_check = []
+                if existing_pos.reentries:
+                    if isinstance(existing_pos.reentries, dict):
+                        reentries_to_check = list(existing_pos.reentries.get("reentries", []))
+                    elif isinstance(existing_pos.reentries, list):
+                        reentries_to_check = list(existing_pos.reentries)
+
+                # Check if order_id matches any reentry
+                order_already_processed = any(
+                    r.get("order_id") == order_id for r in reentries_to_check
+                )
+
+                # Also check if position opened_at matches execution_time (within 1 hour window)
+                # This handles cases where order was processed but reentry tracking wasn't set
+                # IMPORTANT: Only skip if it's likely the FIRST order (no reentries exist yet)
+                # For reentries, position quantity should be > execution_qty (includes previous orders)
+                if not order_already_processed and existing_pos.opened_at and execution_time:
+                    time_diff = abs((existing_pos.opened_at - execution_time).total_seconds())
+                    # If position was opened within 1 hour of order execution, check if it's the first order
+                    if time_diff < 3600:  # 1 hour window
+                        # Only skip if:
+                        # 1. Position quantity matches execution_qty (likely first order, not reentry)
+                        # 2. AND no reentries exist yet (confirms it's the first order)
+                        # For reentries, position quantity should be > execution_qty
+                        qty_match = abs(existing_pos.quantity - execution_qty) <= max(
+                            execution_qty * 0.1, 1
+                        )
+                        has_no_reentries = (
+                            not existing_pos.reentries
+                            or (
+                                isinstance(existing_pos.reentries, list)
+                                and len(existing_pos.reentries) == 0
+                            )
+                            or (
+                                isinstance(existing_pos.reentries, dict)
+                                and len(existing_pos.reentries.get("reentries", [])) == 0
+                            )
+                        )
+
+                        # Only skip if quantities match AND no reentries exist (first order scenario)
+                        if qty_match and has_no_reentries:
+                            logger.info(
+                                f"Order {order_id} for {full_symbol} appears to have already been processed "
+                                f"(first order, no reentries). "
+                                f"Position opened_at={existing_pos.opened_at}, "
+                                f"order execution_time={execution_time}, "
+                                f"time_diff={time_diff:.0f}s, qty_match={qty_match}. "
+                                f"Skipping duplicate position update."
+                            )
+                            return
+                        elif qty_match and not has_no_reentries:
+                            # Position has reentries but quantities match - likely a reentry with same qty
+                            # This is valid, proceed with reentry update
+                            logger.debug(
+                                f"Order {order_id} for {full_symbol}: quantities match but reentries exist. "
+                                f"This is likely a reentry order. Proceeding with position update."
+                            )
+
+                if order_already_processed:
+                    logger.info(
+                        f"Order {order_id} for {full_symbol} already processed (found in reentries). "
+                        f"Skipping duplicate position update."
+                    )
+                    return
 
             # Create or update position
             if existing_pos:
@@ -1485,6 +1579,11 @@ class UnifiedOrderMonitor:
                     f"Created position for {base_symbol}: qty={execution_qty}, "
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
+
+            # Note: Order status is already correct (ONGOING = executed order)
+            # According to design: PENDING → ONGOING (when executed) → CLOSED (when sold)
+            # If order has execution_price and status is ONGOING, that's the correct state.
+            # We're only fixing the missing position creation here.
 
         except ValueError as e:
             # Issue #1 Fix: Track metrics and send alert

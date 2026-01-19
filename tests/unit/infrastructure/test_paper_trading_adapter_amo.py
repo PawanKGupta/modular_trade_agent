@@ -30,7 +30,7 @@ def paper_broker():
         market_close_time="15:30",
         amo_execution_time="09:15",
     )
-    broker = PaperTradingBrokerAdapter(config, storage_path="paper_trading/test_amo")
+    broker = PaperTradingBrokerAdapter(user_id=1, config=config, storage_path="paper_trading/test_amo")
     broker.connect()
     yield broker
     broker.reset()

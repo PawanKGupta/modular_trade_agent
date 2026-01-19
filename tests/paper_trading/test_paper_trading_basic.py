@@ -49,7 +49,7 @@ def paper_config():
 @pytest.fixture
 def broker(paper_config):
     """Create paper trading broker"""
-    broker = PaperTradingBrokerAdapter(paper_config)
+    broker = PaperTradingBrokerAdapter(user_id=1, config=paper_config)
     yield broker
     # Cleanup
     broker.reset()

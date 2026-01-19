@@ -1275,32 +1275,16 @@ class PaperTradingServiceAdapter:
         # This handles cases where buy orders executed but positions were never created
         # (e.g., if order was ONGOING when service started or _sync_order_execution_to_db failed)
         from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-        from src.infrastructure.db.timezone_utils import ist_now
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
         orders_repo = OrdersRepository(self.db)
 
-        # Get all ONGOING buy orders executed today
-        today = ist_now().date()
-        today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=ist_now().tzinfo)
-
-        # Helper function to normalize datetime to IST timezone-aware
-        def normalize_to_ist(dt: datetime | None) -> datetime | None:
-            """Convert datetime to IST timezone-aware if it's naive"""
-            if dt is None:
-                return None
-            if dt.tzinfo is None:
-                # Assume naive datetime is in IST
-                from src.infrastructure.db.timezone_utils import IST
-
-                return dt.replace(tzinfo=IST)
-            # Already timezone-aware, convert to IST if needed
-            from src.infrastructure.db.timezone_utils import IST
-
-            return dt.astimezone(IST) if dt.tzinfo != IST else dt
-
+        # BUG FIX: Process ALL ONGOING orders (any execution date), not just today's
+        # This matches real broker trading behavior and ensures positions are created
+        # for orders executed on previous days when service restarts
+        # Get all ONGOING buy orders (any execution date)
         ongoing_buy_orders, _ = orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
-        ongoing_buy_orders_today = []
+        ongoing_buy_orders_filtered = []
         for order in ongoing_buy_orders:
             # Only process buy orders
             if order.side.lower() != "buy":
@@ -1310,16 +1294,13 @@ class PaperTradingServiceAdapter:
             if order.orig_source and order.orig_source.lower() == "manual":
                 continue
 
-            # Check if order was executed today
-            execution_time = getattr(order, "execution_time", None) or order.filled_at
-            execution_time = normalize_to_ist(execution_time)
-
-            if execution_time and execution_time >= today_start:
-                ongoing_buy_orders_today.append(order)
+            # Include ALL ONGOING orders regardless of execution date
+            # This matches real broker trading behavior in UnifiedOrderMonitor
+            ongoing_buy_orders_filtered.append(order)
 
         # Check each ONGOING buy order and create position if missing
         positions_created = 0
-        for db_order in ongoing_buy_orders_today:
+        for db_order in ongoing_buy_orders_filtered:
             symbol = db_order.symbol.upper()
             existing_position = positions_repo.get_by_symbol(self.user_id, symbol)
 
