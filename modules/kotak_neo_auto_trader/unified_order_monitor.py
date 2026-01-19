@@ -694,12 +694,14 @@ class UnifiedOrderMonitor:
                                         db_order = self.orders_repo.get(order_info["db_order_id"])
                                         if (
                                             db_order
+                                            and db_order.status == DbOrderStatus.ONGOING
                                             and db_order.execution_price
                                             and db_order.execution_price > 0
                                             and db_order.execution_qty
                                             and db_order.execution_qty > 0
                                         ):
-                                            # Order has execution data - check if position exists
+                                            # Order has execution data and is ONGOING
+                                            # Check if position exists
                                             symbol = order_info.get("symbol", "")
                                             full_symbol = (
                                                 symbol.upper() if symbol else ""
@@ -753,12 +755,14 @@ class UnifiedOrderMonitor:
                                 db_order = self.orders_repo.get(order_info["db_order_id"])
                                 if (
                                     db_order
+                                    and db_order.status == DbOrderStatus.ONGOING
                                     and db_order.execution_price
                                     and db_order.execution_price > 0
                                     and db_order.execution_qty
                                     and db_order.execution_qty > 0
                                 ):
-                                    # Order has execution data - check if position exists
+                                    # Order has execution data and is ONGOING
+                                    # Check if position exists
                                     symbol = order_info.get("symbol", "")
                                     full_symbol = (
                                         symbol.upper() if symbol else ""
