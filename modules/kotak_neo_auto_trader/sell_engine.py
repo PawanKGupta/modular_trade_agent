@@ -4249,6 +4249,23 @@ class SellOrderManager:
                     price = OrderFieldExtractor.get_price(order)
                     order_id = OrderFieldExtractor.get_order_id(order)
 
+                    # BUG FIX: Broker API may not return price for pending orders
+                    # Fallback to database price if broker price is 0.0
+                    if price == 0.0 and self.orders_repo and self.user_id and order_id:
+                        try:
+                            db_order = self.orders_repo.get_by_broker_order_id(
+                                self.user_id, order_id
+                            )
+                            if db_order and db_order.price and db_order.price > 0:
+                                price = float(db_order.price)
+                                logger.debug(
+                                    f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                )
+                        except Exception as e:
+                            logger.debug(
+                                f"Could not fetch database price for order {order_id}: {e}"
+                            )
+
                     if symbol and qty > 0:
                         existing_orders[symbol.upper()] = {
                             "order_id": order_id,
