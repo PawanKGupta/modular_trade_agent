@@ -297,6 +297,42 @@ class OrdersRepository:
                     )
                     return existing_order
 
+        # CRITICAL: Check for existing active SELL order by base symbol
+        # There should only be ONE sell order per symbol (base symbol, not full symbol)
+        # This prevents multiple sell orders for the same stock
+        if side == "sell":
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                    extract_base_symbol,
+                )
+
+                existing_orders, _ = self.list(user_id)
+                symbol_base = extract_base_symbol(symbol).upper().strip()
+
+                for existing_order in existing_orders:
+                    if existing_order.side != "sell":
+                        continue
+                    if existing_order.status not in [OrderStatus.PENDING, OrderStatus.ONGOING]:
+                        continue
+
+                    existing_symbol_base = (
+                        extract_base_symbol(existing_order.symbol).upper().strip()
+                    )
+
+                    # Check by base symbol (e.g., "INDIAGLYCO" matches "INDIAGLYCO-EQ" and "INDIAGLYCO-BE")
+                    if existing_symbol_base == symbol_base:
+                        logger.warning(
+                            f"Duplicate sell order prevented: Active sell order already exists for base symbol '{symbol_base}'. "
+                            f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
+                            f"Requested order: {symbol}. "
+                            f"Returning existing order."
+                        )
+                        return existing_order
+            except Exception as e:
+                # Non-critical: if symbol extraction fails, log and continue
+                # Better to place order than to block due to utility function failure
+                logger.debug(f"Could not check for duplicate sell orders: {e}")
+
         # Phase 0.1: Get trade_mode from UserSettings if not provided
         if trade_mode is None:
             settings_repo = SettingsRepository(self.db)

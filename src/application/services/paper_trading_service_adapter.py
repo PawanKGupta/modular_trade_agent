@@ -2325,25 +2325,181 @@ class PaperTradingServiceAdapter:
                     }
 
                     try:
-                        # Cancel existing limit order if any
-                        pending_orders = self.broker.get_all_orders()
-                        for pending in pending_orders:
-                            if (
-                                pending.symbol.replace(".NS", "").replace("-EQ", "") == symbol
-                                and pending.transaction_type.value == "SELL"
-                                and pending.status.value in ["PENDING", "OPEN"]
-                            ):
-                                try:
-                                    self.broker.cancel_order(pending.order_id)
-                                except Exception:
-                                    pass  # Ignore if already executed/cancelled
-                                break
+                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+                        from src.infrastructure.db.timezone_utils import ist_now
+                        from src.infrastructure.db.transaction import transaction
+                        from src.infrastructure.persistence.orders_repository import (
+                            OrdersRepository,
+                        )
+                        from src.infrastructure.persistence.positions_repository import (
+                            PositionsRepository,
+                        )
 
-                        # Place market order - will execute immediately at target price
-                        self.broker.place_order(target_order)
+                        orders_repo = OrdersRepository(self.db)
+                        positions_repo = PositionsRepository(self.db)
+
+                        # Check if position exists and is open
+                        position = positions_repo.get_by_symbol(self.user_id, symbol)
+                        if not position or position.closed_at is not None:
+                            self.logger.info(
+                                f"Position {symbol} not found or already closed - skipping target hit processing",
+                                action="_monitor_sell_orders",
+                            )
+                            continue  # Don't process if position already closed
+
+                        # Find all matching limit orders for this symbol
+                        active_orders, _ = orders_repo.list(
+                            self.user_id,
+                            side="sell",
+                            status=[DbOrderStatus.PENDING, DbOrderStatus.ONGOING],
+                        )
+
+                        matching_orders = []
+                        for o in active_orders:
+                            order_base = extract_base_symbol(o.symbol).upper()
+                            if (
+                                order_base == symbol_base
+                                and abs(float(o.price) - target_price)
+                                < 0.01  # Match the frozen target
+                                and o.order_type == "limit"
+                            ):
+                                matching_orders.append(o)
+
+                        # CRITICAL: There should only be ONE sell order per symbol
+                        if len(matching_orders) == 0:
+                            self.logger.warning(
+                                f"No matching limit sell order found for {symbol} at target {target_price}",
+                                action="_monitor_sell_orders",
+                            )
+                            continue  # No order to process
+
+                        limit_order = None
+                        if len(matching_orders) > 1:
+                            # DATA INTEGRITY ISSUE: Multiple sell orders for same symbol
+                            self.logger.error(
+                                f"DATA INTEGRITY ERROR: Found {len(matching_orders)} sell orders for {symbol} at target {target_price}. "
+                                f"Order IDs: {[o.id for o in matching_orders]}. "
+                                f"This should not happen - will process the oldest order and cancel others.",
+                                action="_monitor_sell_orders",
+                            )
+
+                            # Sort by placed_at (oldest first) - process oldest, cancel others
+                            matching_orders.sort(
+                                key=lambda o: o.placed_at or o.updated_at or ist_now()
+                            )
+                            limit_order = matching_orders[0]  # Oldest order
+
+                            # Cancel the other duplicate orders
+                            for duplicate_order in matching_orders[1:]:
+                                try:
+                                    if duplicate_order.broker_order_id and self.broker:
+                                        self.broker.cancel_order(duplicate_order.broker_order_id)
+                                    # Mark as cancelled in database
+                                    duplicate_order.status = DbOrderStatus.CANCELLED
+                                    duplicate_order.reason = (
+                                        "Cancelled - duplicate sell order detected (target hit)"
+                                    )
+                                    orders_repo.update(duplicate_order, auto_commit=True)
+                                    self.logger.warning(
+                                        f"Cancelled duplicate sell order {duplicate_order.id} for {symbol}",
+                                        action="_monitor_sell_orders",
+                                    )
+                                except Exception as cancel_dup_err:
+                                    self.logger.error(
+                                        f"Failed to cancel duplicate sell order {duplicate_order.id} for {symbol}: {cancel_dup_err}",
+                                        action="_monitor_sell_orders",
+                                    )
+                        else:
+                            # Normal case: exactly one order
+                            limit_order = matching_orders[0]
+
+                        # Use transaction for atomicity (all or nothing)
+                        with transaction(self.db):
+                            # Cancel via broker if possible (to prevent double execution)
+                            if limit_order.broker_order_id and self.broker:
+                                try:
+                                    self.broker.cancel_order(limit_order.broker_order_id)
+                                except Exception as cancel_err:
+                                    self.logger.debug(
+                                        f"Could not cancel broker order {limit_order.broker_order_id}: {cancel_err}"
+                                    )
+
+                            # Mark as EXECUTED and CLOSED in database (target hit - order fulfilled)
+                            orders_repo.mark_executed(
+                                limit_order,
+                                execution_price=float(target_price),
+                                execution_qty=float(order_qty),
+                                auto_commit=False,  # Part of transaction
+                            )
+
+                            # Then mark as CLOSED since position will be closed
+                            limit_order.status = DbOrderStatus.CLOSED
+                            limit_order.closed_at = ist_now()
+                            limit_order.reason = f"Target hit - executed at Rs {target_price:.2f}"
+                            orders_repo.update(
+                                limit_order, auto_commit=False
+                            )  # Part of transaction
+
+                            # Explicitly close the position
+                            positions_repo.mark_closed(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                exit_price=float(target_price),
+                                exit_reason="Target Hit (High >= Target)",
+                                sell_order_id=limit_order.id,
+                                auto_commit=False,  # Part of transaction
+                            )
+
+                            # Place market order - will execute immediately at target price
+                            # Note: This is a broker API call (side effect), not a DB operation
+                            new_order_id = (
+                                self.broker.place_order(target_order) if self.broker else None
+                            )
+                            if not new_order_id:
+                                raise Exception(
+                                    f"Failed to place market order for {symbol} after target hit"
+                                )
+
+                            # Note: We don't create DB record here because create_amo commits immediately
+                            # and would break the transaction. We'll create it after transaction succeeds.
+                            # Transaction commits here - limit order and position updates are atomic
+
+                        # Save the market order to database (after transaction succeeded)
+                        # create_amo commits immediately, so we call it after the transaction
+                        try:
+                            orders_repo.create_amo(
+                                user_id=self.user_id,
+                                symbol=symbol,
+                                side="sell",
+                                order_type="market",
+                                quantity=float(order_qty),
+                                price=float(target_price),
+                                broker_order_id=new_order_id,
+                                entry_type="exit",
+                                order_metadata={
+                                    "ticker": ticker,
+                                    "base_symbol": symbol_base,
+                                    "exit_reason": "Target Hit (High >= Target)",
+                                    "replaced_limit_order_id": limit_order.id,
+                                },
+                                reason="Target hit - market sell order executed",
+                                trade_mode="paper",
+                            )
+                        except Exception as create_err:
+                            # Non-critical: order is already placed with broker, DB record is secondary
+                            self.logger.warning(
+                                f"Failed to save market order {new_order_id} to database: {create_err}",
+                                action="_monitor_sell_orders",
+                            )
+
+                        self.logger.info(
+                            f"Target hit for {symbol}: Limit order {limit_order.id} marked as CLOSED, "
+                            f"position closed, market order {new_order_id} placed",
+                            action="_monitor_sell_orders",
+                        )
 
                         # Verify position is actually closed before removing from tracking
-                        holding = self.broker.get_holding(symbol)
+                        holding = self.broker.get_holding(symbol) if self.broker else None
                         if not holding or holding.quantity == 0:
                             symbols_to_remove.append(symbol)
                             self.logger.info(
@@ -2358,6 +2514,7 @@ class PaperTradingServiceAdapter:
                     except Exception as e:
                         self.logger.error(
                             f"Failed to execute target exit for {symbol}: {e}",
+                            exc_info=True,
                             action="_monitor_sell_orders",
                         )
 

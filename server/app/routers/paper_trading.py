@@ -2,17 +2,14 @@
 Paper Trading API endpoints
 """
 
-import json
 import logging
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Annotated, Any
 
 import pandas_ta as ta
 import yfinance as yf
-from typing import Annotated
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -20,8 +17,16 @@ from sqlalchemy.orm import Session
 from core.data_fetcher import fetch_ohlcv_yf
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
-from src.infrastructure.db.models import PnlDaily, TradeMode, Users
-from src.infrastructure.db.models import Positions as PositionsModel
+from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+from src.infrastructure.db.models import (
+    OrderStatus,
+    PnlDaily,
+    TradeMode,
+    Users,
+)
+from src.infrastructure.db.models import (
+    Positions as PositionsModel,
+)
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -411,19 +416,37 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 f"This may indicate sync issues between file and database."
             )
 
-        # Load target prices from service adapter's active_sell_orders
+        # Load target prices from DATABASE sell orders ONLY (single source of truth)
+        # No file fallback - database is the only source for target prices
         target_prices = {}
         try:
-            # Try to load active sell orders from service adapter storage
-            sell_orders_file = store_path / "active_sell_orders.json"
-            if sell_orders_file.exists():
-                with open(sell_orders_file) as f:
-                    active_sell_orders = json.load(f)
-                    for symbol, order_info in active_sell_orders.items():
-                        target_prices[symbol] = float(order_info.get("target_price", 0))
-                        logger.debug(f"Loaded target for {symbol}: {target_prices[symbol]}")
+            if db:
+                orders_repo = OrdersRepository(db)
+                # Get all active sell orders for this user (PENDING or ONGOING)
+                active_sell_orders, _ = orders_repo.list(
+                    current.id,
+                    side="sell",
+                    status=[OrderStatus.PENDING, OrderStatus.ONGOING],
+                )
+
+                # Extract target prices from sell orders
+                for order in active_sell_orders:
+                    if order.price and order.price > 0:
+                        # Store by both full symbol and base symbol for flexible lookup
+                        symbol = order.symbol
+                        base_symbol = extract_base_symbol(symbol).upper()
+
+                        # Prefer full symbol if available, fallback to base symbol
+                        if symbol not in target_prices:
+                            target_prices[symbol] = float(order.price)
+                        if base_symbol not in target_prices:
+                            target_prices[base_symbol] = float(order.price)
+
+                        logger.debug(
+                            f"Loaded target from DB sell order: {symbol} (base: {base_symbol}) = {order.price}"
+                        )
         except Exception as e:
-            logger.debug(f"Could not load target prices: {e}")
+            logger.debug(f"Could not load target prices from database: {e}")
 
         # Helper function to get live price
         def get_live_price(symbol: str) -> float | None:
@@ -506,15 +529,20 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
 
-            # Get target price (frozen EMA9) if available, or calculate it
+            # Get target price (frozen EMA9) from database sell order if available
             # Try both full symbol and base symbol for target price lookup
             base_symbol_for_target = symbol.split("-")[0] if "-" in symbol else symbol
             target_price = target_prices.get(symbol)  # Try full symbol first
             if target_price is None:
                 target_price = target_prices.get(base_symbol_for_target)  # Try base symbol
+
+            # ONLY calculate EMA9 if NO sell order exists (don't recalculate if order exists)
             if target_price is None:
-                # Calculate on-the-fly if no sell order placed yet
+                # Calculate on-the-fly only if no sell order placed yet
                 target_price = calculate_ema9_target(base_symbol_for_target)
+                logger.debug(
+                    f"Calculated EMA9 target for {base_symbol_for_target} (no sell order found): {target_price}"
+                )
 
             distance_to_target = None
             if target_price and current_price > 0:
@@ -599,7 +627,9 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             total_orders_count = len(db_orders)
             offset = (page - 1) * page_size
             paginated_orders = db_orders[offset : offset + page_size]
-            total_pages = (total_orders_count + page_size - 1) // page_size if total_orders_count > 0 else 0
+            total_pages = (
+                (total_orders_count + page_size - 1) // page_size if total_orders_count > 0 else 0
+            )
         except Exception as e:
             logger.error(f"Error fetching orders from database: {e}", exc_info=True)
             paginated_orders = []
