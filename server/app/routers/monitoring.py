@@ -1061,23 +1061,40 @@ def get_monitoring_dashboard(
         services_running = services_health.total_running
         services_stopped = services_health.total_stopped
 
-        # Get task executions today
-        today_executions = (
+        # Get task executions today - use count() queries for performance
+        # These queries use indexes and don't load all records into memory
+        tasks_executed_today = (
             db.query(IndividualServiceTaskExecution)
             .filter(IndividualServiceTaskExecution.executed_at >= today_start)
-            .all()
+            .count()
         )
 
-        tasks_executed_today = len(today_executions)
-        tasks_successful_today = len([e for e in today_executions if e.status == "success"])
-        tasks_failed_today = len([e for e in today_executions if e.status == "failed"])
+        tasks_successful_today = (
+            db.query(IndividualServiceTaskExecution)
+            .filter(
+                IndividualServiceTaskExecution.executed_at >= today_start,
+                IndividualServiceTaskExecution.status == "success",
+            )
+            .count()
+        )
+
+        tasks_failed_today = (
+            db.query(IndividualServiceTaskExecution)
+            .filter(
+                IndividualServiceTaskExecution.executed_at >= today_start,
+                IndividualServiceTaskExecution.status == "failed",
+            )
+            .count()
+        )
 
         # Get active sessions
         active_sessions = _get_active_sessions_impl(db)
 
-        # Get re-auth count in last 24h
+        # Get re-auth count in last 24h - optimized for performance
         reauth_start = now - timedelta(hours=24)
-        reauth_errors = (
+        
+        # Use count() for total count (fast, uses index)
+        reauth_count_24h = (
             db.query(ErrorLog)
             .filter(
                 and_(
@@ -1088,21 +1105,46 @@ def get_monitoring_dashboard(
                     ),
                 )
             )
+            .count()
+        )
+
+        # For success rate calculation, use limited sample (approximate but fast)
+        # This prevents loading thousands of records into memory
+        reauth_errors_sample = (
+            db.query(ErrorLog)
+            .filter(
+                and_(
+                    ErrorLog.occurred_at >= reauth_start,
+                    or_(
+                        ErrorLog.error_message.ilike("%reauth%"),
+                        ErrorLog.error_message.ilike("%re-authentication%"),
+                    ),
+                )
+            )
+            .order_by(desc(ErrorLog.occurred_at))  # Use index on occurred_at
+            .limit(1000)  # Reasonable limit for approximate calculation
             .all()
         )
 
-        reauth_count_24h = len(reauth_errors)
         reauth_success_count = len(
             [
                 e
-                for e in reauth_errors
+                for e in reauth_errors_sample
                 if "successful" in (e.error_message or "").lower()
                 or "success" in (e.error_message or "").lower()
             ]
         )
-        reauth_success_rate = (
-            (reauth_success_count / reauth_count_24h * 100) if reauth_count_24h > 0 else 0.0
-        )
+        
+        # Approximate success rate (from sample if count > 1000, otherwise exact)
+        if reauth_count_24h > 0:
+            if reauth_count_24h <= 1000:
+                # Exact calculation (sample size matches total)
+                reauth_success_rate = (reauth_success_count / reauth_count_24h * 100)
+            else:
+                # Approximate calculation (from sample)
+                reauth_success_rate = (reauth_success_count / len(reauth_errors_sample) * 100)
+        else:
+            reauth_success_rate = 0.0
 
         # Get auth errors in last 24h
         auth_errors_24h = (
