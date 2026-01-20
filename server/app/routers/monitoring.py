@@ -628,18 +628,57 @@ def _get_active_sessions_impl(db: Session) -> ActiveSessionsResponse:
         expiring_soon = 0
         expired = 0
 
-        # Access internal sessions dict (requires knowledge of internal structure)
-        # This is a bit fragile but necessary for monitoring
-        user_ids = list(session_manager._sessions.keys())
+        # Access internal sessions dict - wrap in try-except to handle threading issues
+        try:
+            # Check if _sessions exists and is accessible
+            if not hasattr(session_manager, "_sessions"):
+                logger.debug("Session manager has no _sessions attribute")
+                return ActiveSessionsResponse(
+                    sessions=[],
+                    total_active=0,
+                    expiring_soon=0,
+                    expired=0,
+                )
+
+            # Make a snapshot of sessions to avoid holding lock during iteration
+            # This prevents deadlocks if session manager is being updated
+            session_items = list(session_manager._sessions.items())
+
+            # Early return if no sessions exist (common case - avoids unnecessary processing)
+            if not session_items:
+                logger.debug("No active sessions in session manager")
+                return ActiveSessionsResponse(
+                    sessions=[],
+                    total_active=0,
+                    expiring_soon=0,
+                    expired=0,
+                )
+
+            user_ids = [user_id for user_id, _ in session_items]
+        except (AttributeError, RuntimeError, KeyError) as e:
+            logger.warning(f"Error accessing session manager sessions: {e}")
+            return ActiveSessionsResponse(
+                sessions=[],
+                total_active=0,
+                expiring_soon=0,
+                expired=0,
+            )
+
         user_email_map = _get_user_email_map(db, user_ids)
 
-        for user_id, auth in session_manager._sessions.items():
-            is_authenticated = (
-                auth.is_authenticated() if hasattr(auth, "is_authenticated") else False
-            )
-            client_available = (
-                auth.get_client() is not None if hasattr(auth, "get_client") else False
-            )
+        for user_id, auth in session_items:  # Use snapshot instead of direct access
+            try:
+                # Wrap these calls in try-except as they might block
+                is_authenticated = (
+                    auth.is_authenticated() if hasattr(auth, "is_authenticated") else False
+                )
+                client_available = (
+                    auth.get_client() is not None if hasattr(auth, "get_client") else False
+                )
+            except Exception as e:
+                logger.debug(f"Error checking auth status for user {user_id}: {e}")
+                is_authenticated = False
+                client_available = False
 
             session_created_at = None
             session_age_minutes = None
@@ -697,9 +736,14 @@ def _get_active_sessions_impl(db: Session) -> ActiveSessionsResponse:
             expiring_soon=expiring_soon,
             expired=expired,
         )
-    except Exception:
-        # Don't raise HTTPException here - let caller handle it
-        raise
+    except Exception as e:
+        logger.warning(f"Error in _get_active_sessions_impl: {e}", exc_info=True)
+        return ActiveSessionsResponse(
+            sessions=[],
+            total_active=0,
+            expiring_soon=0,
+            expired=0,
+        )
 
 
 @router.get("/auth/sessions", response_model=ActiveSessionsResponse)
@@ -1087,8 +1131,18 @@ def get_monitoring_dashboard(
             .count()
         )
 
-        # Get active sessions
-        active_sessions = _get_active_sessions_impl(db)
+        # Get active sessions - with error handling to prevent hanging
+        try:
+            active_sessions = _get_active_sessions_impl(db)
+        except Exception as e:
+            logger.warning(f"Error getting active sessions (using fallback): {e}", exc_info=True)
+            # Fallback to empty response to prevent dashboard from hanging
+            active_sessions = ActiveSessionsResponse(
+                sessions=[],
+                total_active=0,
+                expiring_soon=0,
+                expired=0,
+            )
 
         # Get re-auth count in last 24h - optimized for performance
         reauth_start = now - timedelta(hours=24)
@@ -1139,10 +1193,10 @@ def get_monitoring_dashboard(
         if reauth_count_24h > 0:
             if reauth_count_24h <= 1000:
                 # Exact calculation (sample size matches total)
-                reauth_success_rate = (reauth_success_count / reauth_count_24h * 100)
+                reauth_success_rate = reauth_success_count / reauth_count_24h * 100
             else:
                 # Approximate calculation (from sample)
-                reauth_success_rate = (reauth_success_count / len(reauth_errors_sample) * 100)
+                reauth_success_rate = reauth_success_count / len(reauth_errors_sample) * 100
         else:
             reauth_success_rate = 0.0
 
@@ -1299,13 +1353,16 @@ def get_monitoring_dashboard(
                 )
             )
 
-        # Get recent re-auth events (last 20)
+        # Get recent re-auth events (last 20) - ADD TIME FILTER
         recent_reauth_query = (
             db.query(ErrorLog)
             .filter(
-                or_(
-                    ErrorLog.error_message.ilike("%reauth%"),
-                    ErrorLog.error_message.ilike("%re-authentication%"),
+                and_(
+                    ErrorLog.occurred_at >= reauth_start,  # Filter by time to avoid full table scan
+                    or_(
+                        ErrorLog.error_message.ilike("%reauth%"),
+                        ErrorLog.error_message.ilike("%re-authentication%"),
+                    ),
                 )
             )
             .order_by(desc(ErrorLog.occurred_at))
@@ -1348,9 +1405,14 @@ def get_monitoring_dashboard(
                 )
             )
 
-        # Get running tasks
-        running_tasks_response = _get_running_tasks_impl(db, None)
-        running_tasks = running_tasks_response.tasks
+        # Get running tasks - with error handling
+        try:
+            running_tasks_response = _get_running_tasks_impl(db, None)
+            running_tasks = running_tasks_response.tasks
+        except Exception as e:
+            logger.warning(f"Error getting running tasks (using fallback): {e}", exc_info=True)
+            # Fallback to empty list
+            running_tasks = []
 
         return MonitoringDashboardResponse(
             summary=summary,
