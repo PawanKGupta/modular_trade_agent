@@ -532,30 +532,104 @@ class PaperTradingServiceAdapter:
                 else 200000.0
             )
 
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             from math import floor
 
-            # Process each AMO order
+            # PERFORMANCE FIX: Pre-fetch prices and calculate EMA9 for all orders in parallel
+            # This reduces total time from N*3-4s to ~3-4s for all orders
+            order_data = []
             for order in amo_buy_orders:
-                try:
-                    # Get original ticker from metadata for price fetching
-                    price_symbol = order.symbol
-                    if (
-                        hasattr(order, "metadata")
-                        and order.metadata
-                        and "original_ticker" in order.metadata
-                    ):
-                        price_symbol = order.metadata["original_ticker"]
-                    elif (
-                        hasattr(order, "_metadata")
-                        and order._metadata
-                        and "original_ticker" in order._metadata
-                    ):
-                        price_symbol = order._metadata["original_ticker"]
-                    elif not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
-                        price_symbol = f"{price_symbol}.NS"
+                # Get original ticker from metadata for price fetching
+                price_symbol = order.symbol
+                if (
+                    hasattr(order, "metadata")
+                    and order.metadata
+                    and "original_ticker" in order.metadata
+                ):
+                    price_symbol = order.metadata["original_ticker"]
+                elif (
+                    hasattr(order, "_metadata")
+                    and order._metadata
+                    and "original_ticker" in order._metadata
+                ):
+                    price_symbol = order._metadata["original_ticker"]
+                elif not price_symbol.endswith(".NS") and not price_symbol.endswith(".BO"):
+                    price_symbol = f"{price_symbol}.NS"
 
-                    # Fetch pre-market price
-                    premarket_price = self.broker.price_provider.get_price(price_symbol)
+                order_data.append(
+                    {
+                        "order": order,
+                        "price_symbol": price_symbol,
+                        "original_qty": order.quantity,
+                    }
+                )
+
+            # Fetch prices and calculate EMA9 for all orders in parallel
+            price_results = {}
+            ema9_results = {}
+            if order_data:
+                self.logger.info(
+                    f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel...",
+                    action="adjust_amo_quantities_premarket",
+                )
+
+                def fetch_price_and_ema9(order_info):
+                    """Fetch price and calculate EMA9 for a single order"""
+                    order = order_info["order"]
+                    price_symbol = order_info["price_symbol"]
+                    result = {
+                        "order": order,
+                        "price": None,
+                        "ema9": None,
+                    }
+                    try:
+                        # Fetch pre-market price
+                        price = self.broker.price_provider.get_price(price_symbol)
+                        if price and price > 0:
+                            result["price"] = price
+                    except Exception as e:
+                        self.logger.warning(
+                            f"{order.symbol}: Failed to fetch pre-market price: {e}",
+                            action="adjust_amo_quantities_premarket",
+                        )
+
+                    try:
+                        # Calculate EMA9
+                        ema9 = self._calculate_ema9(price_symbol)
+                        if ema9 and ema9 > 0:
+                            result["ema9"] = ema9
+                    except Exception as e:
+                        self.logger.warning(
+                            f"{order.symbol}: Failed to calculate EMA9: {e}",
+                            action="adjust_amo_quantities_premarket",
+                        )
+
+                    return order.symbol, result
+
+                with ThreadPoolExecutor(max_workers=min(10, len(order_data))) as executor:
+                    future_to_order = {
+                        executor.submit(fetch_price_and_ema9, o): o for o in order_data
+                    }
+                    for future in as_completed(future_to_order):
+                        order_symbol, result = future.result()
+                        price_results[order_symbol] = result["price"]
+                        ema9_results[order_symbol] = result["ema9"]
+
+                self.logger.info(
+                    f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
+                    f"{len([e for e in ema9_results.values() if e is not None])}/{len(order_data)} EMA9 values",
+                    action="adjust_amo_quantities_premarket",
+                )
+
+            # Process each AMO order using pre-fetched prices and EMA9 values
+            for order_info in order_data:
+                order = order_info["order"]
+                price_symbol = order_info["price_symbol"]
+                original_qty = order_info["original_qty"]
+
+                try:
+                    # Use pre-fetched pre-market price
+                    premarket_price = price_results.get(order.symbol)
                     if not premarket_price or premarket_price <= 0:
                         self.logger.warning(
                             f"{order.symbol}: Pre-market price not available",
@@ -564,22 +638,14 @@ class PaperTradingServiceAdapter:
                         summary["price_unavailable"] += 1
                         continue
 
-                    original_qty = order.quantity
                     self.logger.info(
                         f"{order.symbol}: Pre-market price = Rs {premarket_price:.2f}, "
                         f"current qty = {original_qty}",
                         action="adjust_amo_quantities_premarket",
                     )
 
-                    # Check if pre-market price is above EMA9-1% (cancel order if so)
-                    ema9 = None
-                    try:
-                        ema9 = self._calculate_ema9(price_symbol)
-                    except Exception as e:
-                        self.logger.warning(
-                            f"{order.symbol}: Failed to calculate EMA9: {e}",
-                            action="adjust_amo_quantities_premarket",
-                        )
+                    # Use pre-calculated EMA9
+                    ema9 = ema9_results.get(order.symbol)
 
                     # Check if pre-market price > EMA9 - 1%
                     if ema9 and ema9 > 0:
@@ -1427,11 +1493,63 @@ class PaperTradingServiceAdapter:
             action="_place_sell_orders",
         )
 
+        # PERFORMANCE FIX: Pre-calculate EMA9 targets for all holdings in parallel
+        # This reduces total time from N*2-3s to ~2-3s for all symbols
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        holding_data = []
         for holding in holdings:
+            symbol = holding.symbol
+            symbol_base = extract_base_symbol(symbol).upper()
+            ticker = f"{symbol_base}.NS"
+            holding_data.append(
+                {
+                    "holding": holding,
+                    "symbol": symbol,
+                    "symbol_base": symbol_base,
+                    "ticker": ticker,
+                }
+            )
+
+        # Calculate EMA9 for all holdings in parallel
+        ema9_results = {}
+        if holding_data:
+            self.logger.info(
+                f"Pre-calculating EMA9 targets for {len(holding_data)} holdings in parallel...",
+                action="_place_sell_orders",
+            )
+
+            def calculate_ema9_for_holding(holding_info):
+                """Calculate EMA9 for a single holding"""
+                try:
+                    ema9 = self._calculate_ema9(holding_info["ticker"])
+                    return holding_info["symbol_base"], ema9
+                except Exception as e:
+                    self.logger.warning(
+                        f"Failed to calculate EMA9 for {holding_info['symbol']}: {e}",
+                        action="_place_sell_orders",
+                    )
+                    return holding_info["symbol_base"], None
+
+            with ThreadPoolExecutor(max_workers=min(10, len(holding_data))) as executor:
+                future_to_holding = {
+                    executor.submit(calculate_ema9_for_holding, h): h for h in holding_data
+                }
+                for future in as_completed(future_to_holding):
+                    symbol_base, ema9 = future.result()
+                    ema9_results[symbol_base] = ema9
+
+            self.logger.info(
+                f"EMA9 pre-calculation complete: {len([e for e in ema9_results.values() if e is not None])}/{len(holding_data)} successful",
+                action="_place_sell_orders",
+            )
+
+        for holding_info in holding_data:
             try:
-                symbol = holding.symbol  # Full symbol from holdings (e.g., "RELIANCE-EQ")
-                symbol_base = extract_base_symbol(symbol).upper()  # Base symbol for comparison
-                ticker = f"{symbol_base}.NS"  # Use base symbol for ticker
+                holding = holding_info["holding"]
+                symbol = holding_info["symbol"]
+                symbol_base = holding_info["symbol_base"]
+                ticker = holding_info["ticker"]
                 quantity = holding.quantity
 
                 # Log processing of this holding
@@ -1468,8 +1586,18 @@ class PaperTradingServiceAdapter:
                             f"updating sell order quantity and target",
                             action="_place_sell_orders",
                         )
-                        # Recalculate EMA9 target (matches backtest behavior)
-                        new_target = self._calculate_ema9(ticker)
+                        # Use pre-calculated EMA9 target (calculated in parallel above)
+                        new_target = ema9_results.get(symbol_base)
+                        if new_target is None:
+                            # Fallback: calculate now if not pre-calculated
+                            try:
+                                new_target = self._calculate_ema9(ticker)
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"Failed to recalculate EMA9 for {symbol}: {e}",
+                                    action="_place_sell_orders",
+                                )
+                                continue
                         self._update_sell_order_quantity_by_db_order(db_order, quantity, new_target)
                     continue
 
@@ -1691,11 +1819,26 @@ class PaperTradingServiceAdapter:
                     )
                     continue
 
-                # Calculate EMA9 target (initial entry - will be updated on re-entry)
-                ema9_target = self._calculate_ema9(ticker)
+                # Use pre-calculated EMA9 target (calculated in parallel above)
+                ema9_target = ema9_results.get(symbol_base)
+
+                if ema9_target is None:
+                    # Fallback: calculate now if not pre-calculated (shouldn't happen)
+                    self.logger.warning(
+                        f"EMA9 not pre-calculated for {symbol}, calculating now...",
+                        action="_place_sell_orders",
+                    )
+                    try:
+                        ema9_target = self._calculate_ema9(ticker)
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to calculate EMA9 for {symbol}: {e}",
+                            action="_place_sell_orders",
+                        )
+                        ema9_target = None
 
                 self.logger.info(
-                    f"EMA9 calculation for {ticker}: {ema9_target}",
+                    f"EMA9 target for {ticker}: {ema9_target}",
                     action="_place_sell_orders",
                 )
 
@@ -3123,6 +3266,23 @@ class PaperTradingEngineAdapter:
                 f"Found {len(signals)} signals in database", action="load_recommendations"
             )
 
+            # PERFORMANCE FIX: Batch load user signal statuses to avoid N+1 query problem
+            # Load all user signal statuses in a single query instead of one per signal
+            signal_ids = [signal.id for signal in signals]
+            user_statuses_dict = {}
+            if signal_ids:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import UserSignalStatus
+
+                user_statuses = self.db.execute(
+                    select(UserSignalStatus.signal_id, UserSignalStatus.status).where(
+                        UserSignalStatus.user_id == self.user_id,
+                        UserSignalStatus.signal_id.in_(signal_ids),
+                    )
+                ).all()
+                user_statuses_dict = {signal_id: status for signal_id, status in user_statuses}
+
             # Filter signals by effective status (considering per-user status)
             # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
             active_signals = []
@@ -3131,7 +3291,7 @@ class PaperTradingEngineAdapter:
                 # IMPORTANT: EXPIRED base status cannot be overridden by user status
                 # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
                 # (from our recent fix - user actions are preserved even when base expires)
-                user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                user_status = user_statuses_dict.get(signal.id)
 
                 # Determine effective status:
                 # 1. If user has TRADED, REJECTED, or FAILED override, use that (completed actions take precedence)

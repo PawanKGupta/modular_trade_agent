@@ -77,9 +77,44 @@ except Exception:
 
 
 def get_session():
-    """Provide a transactional scope around a series of operations."""
+    """
+    Provide a transactional scope around a series of operations.
+
+    Handles transaction lifecycle automatically:
+    - Commits on success (if no explicit commit was made)
+    - Rolls back on exceptions
+    - Always closes the session
+
+    This prevents "idle in transaction" connection leaks when exceptions occur.
+    """
     db = SessionLocal()
     try:
         yield db
+        # Success path: commit transaction if still active
+        try:
+            db.commit()
+        except Exception:
+            # If commit fails (e.g., already committed), rollback and re-raise
+            try:
+                db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors (transaction might already be closed)
+            raise
+    except Exception:
+        # Exception path: rollback transaction to prevent "idle in transaction" state
+        try:
+            db.rollback()
+        except Exception:
+            # Ignore rollback errors (transaction might already be closed or connection lost)
+            # The original exception will still be raised
+            pass
+        raise
     finally:
-        db.close()
+        # Always close the session to return connection to pool
+        # This ensures connections are never left open
+        try:
+            db.close()
+        except Exception:
+            # Ignore close errors (session might already be closed)
+            # This is safe - if close fails, the connection will be recycled by the pool
+            pass

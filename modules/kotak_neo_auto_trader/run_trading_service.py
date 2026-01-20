@@ -1929,19 +1929,32 @@ class TradingService:
                     action="run",
                 )
 
-            # Clean up thread-local session
+            # PERFORMANCE FIX: Clean up thread-local session to prevent "idle in transaction" leaks
+            # This matches the pattern in get_session() to ensure proper transaction lifecycle:
+            # - Rollback any pending transaction (safe even if already committed)
+            # - Always close the session to return connection to pool
+            # This prevents connection leaks when exceptions occur during service execution
             self.logger.debug("Cleaning up thread-local session", action="run")
+
+            # Rollback any pending transaction (safe even if already committed/closed)
+            # This prevents "idle in transaction" state if an exception occurred
             try:
-                # Rollback any pending transaction
                 thread_db.rollback()
                 self.logger.debug("Thread-local session rolled back", action="run")
             except Exception:
-                pass  # Ignore rollback errors (session may already be closed/rolled back)
+                # Ignore rollback errors (session may already be closed/rolled back)
+                # This is safe - rollback is idempotent and won't cause harm
+                pass
+
+            # Always close the session to return connection to pool
+            # This ensures connections are never left open, preventing connection exhaustion
             try:
                 thread_db.close()
                 self.logger.debug("Thread-local session closed", action="run")
             except Exception:
-                pass  # Ignore close errors if session is in bad state
+                # Ignore close errors if session is in bad state
+                # This is safe - if close fails, the connection will be recycled by the pool
+                pass
 
 
 def main():

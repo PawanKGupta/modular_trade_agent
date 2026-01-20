@@ -1184,6 +1184,25 @@ class AutoTradeEngine:
                 else:
                     logger.info(f"Loaded {len(signals)} signals from database (Signals table)")
 
+                    # PERFORMANCE FIX: Batch load user signal statuses to avoid N+1 query problem
+                    # Load all user signal statuses in a single query instead of one per signal
+                    signal_ids = [signal.id for signal in signals]
+                    user_statuses_dict = {}
+                    if signal_ids:
+                        from sqlalchemy import select
+
+                        from src.infrastructure.db.models import UserSignalStatus
+
+                        user_statuses = self.db.execute(
+                            select(UserSignalStatus.signal_id, UserSignalStatus.status).where(
+                                UserSignalStatus.user_id == self.user_id,
+                                UserSignalStatus.signal_id.in_(signal_ids),
+                            )
+                        ).all()
+                        user_statuses_dict = {
+                            signal_id: status for signal_id, status in user_statuses
+                        }
+
                     # Filter signals by effective status (considering per-user status)
                     # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
                     active_signals = []
@@ -1192,7 +1211,7 @@ class AutoTradeEngine:
                         # IMPORTANT: EXPIRED base status cannot be overridden by user status
                         # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
                         # (from our recent fix - user actions are preserved even when base expires)
-                        user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                        user_status = user_statuses_dict.get(signal.id)
 
                         # Determine effective status:
                         # 1. If user has TRADED, REJECTED, or FAILED override, use that (completed actions take precedence)
@@ -3803,11 +3822,16 @@ class AutoTradeEngine:
 
             summary["total_orders"] = len(amo_orders)
 
-            # 2. Process each AMO order
+            # PERFORMANCE FIX: Pre-fetch prices and calculate EMA9 for all orders in parallel
+            # This reduces total time from N*3-4s to ~3-4s for all orders
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
             from .market_data import KotakNeoMarketData
 
             market_data = KotakNeoMarketData(self.auth)
 
+            # Prepare order data for parallel processing
+            order_data = []
             for order in amo_orders:
                 symbol = order.get("symbol", order.get("tradingSymbol", ""))
                 original_qty = int(order.get("quantity", 0))
@@ -3820,19 +3844,6 @@ class AutoTradeEngine:
                 # Extract base symbol (remove -EQ suffix if present)
                 base_symbol = symbol.replace("-EQ", "")
 
-                logger.info(f"Processing {base_symbol}: current qty={original_qty}")
-
-                # 3. Fetch pre-market price
-                premarket_price = market_data.get_ltp(symbol, exchange="NSE")
-
-                if not premarket_price or premarket_price <= 0:
-                    logger.warning(f"{base_symbol}: Pre-market price not available, skipping")
-                    summary["price_unavailable"] += 1
-                    continue
-
-                logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
-
-                # 3.5. Check if pre-market price is above EMA9-1% (cancel order if so)
                 # Get ticker from order metadata or construct from symbol
                 ticker = None
                 if self.orders_repo and self.user_id:
@@ -3842,23 +3853,101 @@ class AutoTradeEngine:
                             ticker = db_order.order_metadata.get(
                                 "ticker"
                             ) or db_order.order_metadata.get("original_ticker")
-                    except Exception as e:
-                        logger.debug(f"Error fetching order metadata for {base_symbol}: {e}")
+                    except Exception:
+                        pass  # Ignore errors - will construct ticker below
 
                 # Construct ticker if not found in metadata
                 if not ticker:
                     ticker = f"{base_symbol}.NS"
 
-                # Calculate EMA9
-                ema9 = None
-                try:
-                    ema9 = self.indicator_service.calculate_ema9_realtime(
-                        ticker=ticker,
-                        broker_symbol=symbol,
-                        current_ltp=premarket_price,
-                    )
-                except Exception as e:
-                    logger.warning(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                order_data.append(
+                    {
+                        "order": order,
+                        "symbol": symbol,
+                        "base_symbol": base_symbol,
+                        "ticker": ticker,
+                        "order_id": order_id,
+                        "original_qty": original_qty,
+                    }
+                )
+
+            # Fetch prices and calculate EMA9 for all orders in parallel
+            price_results = {}
+            ema9_results = {}
+            if order_data:
+                logger.info(
+                    f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
+                )
+
+                def fetch_price_and_ema9(order_info):
+                    """Fetch price and calculate EMA9 for a single order"""
+                    symbol = order_info["symbol"]
+                    base_symbol = order_info["base_symbol"]
+                    ticker = order_info["ticker"]
+                    order_id = order_info["order_id"]
+                    result = {
+                        "order_id": order_id,
+                        "price": None,
+                        "ema9": None,
+                    }
+                    try:
+                        # Fetch pre-market price
+                        price = market_data.get_ltp(symbol, exchange="NSE")
+                        if price and price > 0:
+                            result["price"] = price
+
+                            # Calculate EMA9 using fetched price
+                            try:
+                                ema9 = self.indicator_service.calculate_ema9_realtime(
+                                    ticker=ticker,
+                                    broker_symbol=symbol,
+                                    current_ltp=price,
+                                )
+                                if ema9 and ema9 > 0:
+                                    result["ema9"] = ema9
+                            except Exception as e:
+                                logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                    except Exception as e:
+                        logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
+
+                    return order_id, result
+
+                with ThreadPoolExecutor(max_workers=min(10, len(order_data))) as executor:
+                    future_to_order = {
+                        executor.submit(fetch_price_and_ema9, o): o for o in order_data
+                    }
+                    for future in as_completed(future_to_order):
+                        order_id, result = future.result()
+                        price_results[order_id] = result["price"]
+                        ema9_results[order_id] = result["ema9"]
+
+                logger.info(
+                    f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
+                    f"{len([e for e in ema9_results.values() if e is not None])}/{len(order_data)} EMA9 values"
+                )
+
+            # Process each AMO order using pre-fetched prices and EMA9 values
+            for order_info in order_data:
+                order = order_info["order"]
+                symbol = order_info["symbol"]
+                base_symbol = order_info["base_symbol"]
+                order_id = order_info["order_id"]
+                original_qty = order_info["original_qty"]
+
+                logger.info(f"Processing {base_symbol}: current qty={original_qty}")
+
+                # Use pre-fetched pre-market price
+                premarket_price = price_results.get(order_id)
+
+                if not premarket_price or premarket_price <= 0:
+                    logger.warning(f"{base_symbol}: Pre-market price not available, skipping")
+                    summary["price_unavailable"] += 1
+                    continue
+
+                logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                # Use pre-calculated EMA9
+                ema9 = ema9_results.get(order_id)
 
                 # Check if pre-market price > EMA9 - 1%
                 if ema9 and ema9 > 0:
