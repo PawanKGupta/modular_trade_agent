@@ -2,6 +2,7 @@
 
 # ruff: noqa: B008, PLR0912, PLR0915
 import logging
+import time
 import traceback
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
@@ -668,15 +669,56 @@ def _get_active_sessions_impl(db: Session) -> ActiveSessionsResponse:
 
         for user_id, auth in session_items:  # Use snapshot instead of direct access
             try:
+                user_check_start = time.time()
+
                 # Wrap these calls in try-except as they might block
+                is_auth_start = time.time()
                 is_authenticated = (
                     auth.is_authenticated() if hasattr(auth, "is_authenticated") else False
                 )
+                is_auth_duration = time.time() - is_auth_start
+                if is_auth_duration > 0.1:
+                    logger.warning(
+                        f"[MONITORING_DEBUG] User {user_id}: is_authenticated() took "
+                        f"{is_auth_duration:.2f}s"
+                    )
+
+                # Check session validity before calling get_client() to avoid blocking
+                session_expired = False
+                if hasattr(auth, "is_session_valid"):
+                    try:
+                        session_expired = not auth.is_session_valid()
+                    except Exception as e:
+                        logger.debug(f"Error checking session validity for user {user_id}: {e}")
+
+                get_client_start = time.time()
+                if session_expired:
+                    logger.warning(
+                        f"[MONITORING_DEBUG] User {user_id}: Session expired, calling get_client() "
+                        "may trigger re-auth (this may block)"
+                    )
+
                 client_available = (
                     auth.get_client() is not None if hasattr(auth, "get_client") else False
                 )
+                get_client_duration = time.time() - get_client_start
+                user_check_duration = time.time() - user_check_start
+
+                if get_client_duration > 1.0:
+                    logger.warning(
+                        f"[MONITORING_DEBUG] User {user_id}: get_client() took {get_client_duration:.2f}s "
+                        f"(session_expired={session_expired}, is_authenticated={is_authenticated}, "
+                        f"total user check: {user_check_duration:.2f}s)"
+                    )
+                elif get_client_duration > 0.5:
+                    logger.info(
+                        f"[MONITORING_DEBUG] User {user_id}: get_client() took {get_client_duration:.2f}s"
+                    )
             except Exception as e:
-                logger.debug(f"Error checking auth status for user {user_id}: {e}")
+                logger.debug(
+                    f"[MONITORING_DEBUG] Error checking auth status for user {user_id}: {e}",
+                    exc_info=True,
+                )
                 is_authenticated = False
                 client_available = False
 
@@ -1093,26 +1135,33 @@ def get_monitoring_dashboard(
     db: Session = Depends(get_db),
 ):
     """Get complete monitoring dashboard data"""
+    logger.info("Dashboard endpoint: Started execution")
     try:
+        logger.info("Dashboard: Getting current time")
         now = ist_now()
         today = now.date()
         # Create timezone-aware datetime for today_start
         today_start = datetime.combine(today, dt_time.min, tzinfo=IST)
+        logger.info("Dashboard: Got time, calling _get_services_health_impl")
 
         # Get service health
         services_health = _get_services_health_impl(db)
+        logger.info(f"Dashboard: Got service health - {len(services_health.services)} services")
         total_services = len(services_health.services)
         services_running = services_health.total_running
         services_stopped = services_health.total_stopped
 
         # Get task executions today - use count() queries for performance
         # These queries use indexes and don't load all records into memory
+        logger.info("Dashboard: Getting task executions count")
         tasks_executed_today = (
             db.query(IndividualServiceTaskExecution)
             .filter(IndividualServiceTaskExecution.executed_at >= today_start)
             .count()
         )
+        logger.info(f"Dashboard: Got tasks_executed_today = {tasks_executed_today}")
 
+        logger.info("Dashboard: Getting successful tasks count")
         tasks_successful_today = (
             db.query(IndividualServiceTaskExecution)
             .filter(
@@ -1121,7 +1170,9 @@ def get_monitoring_dashboard(
             )
             .count()
         )
+        logger.info(f"Dashboard: Got tasks_successful_today = {tasks_successful_today}")
 
+        logger.info("Dashboard: Getting failed tasks count")
         tasks_failed_today = (
             db.query(IndividualServiceTaskExecution)
             .filter(
@@ -1130,12 +1181,30 @@ def get_monitoring_dashboard(
             )
             .count()
         )
+        logger.info(f"Dashboard: Got tasks_failed_today = {tasks_failed_today}")
 
         # Get active sessions - with error handling to prevent hanging
+        logger.info("Dashboard: Attempting to get active sessions")
+        get_sessions_start = time.time()
         try:
             active_sessions = _get_active_sessions_impl(db)
+            get_sessions_duration = time.time() - get_sessions_start
+            logger.info(
+                f"Dashboard: Got active sessions - {active_sessions.total_active} active "
+                f"(took {get_sessions_duration:.2f}s)"
+            )
+            if get_sessions_duration > 5.0:
+                logger.warning(
+                    f"[MONITORING_DEBUG] Dashboard: _get_active_sessions_impl() took "
+                    f"{get_sessions_duration:.2f}s - this may cause database connection leaks!"
+                )
         except Exception as e:
-            logger.warning(f"Error getting active sessions (using fallback): {e}", exc_info=True)
+            get_sessions_duration = time.time() - get_sessions_start
+            logger.warning(
+                f"[MONITORING_DEBUG] Error getting active sessions after {get_sessions_duration:.2f}s "
+                f"(using fallback): {e}",
+                exc_info=True,
+            )
             # Fallback to empty response to prevent dashboard from hanging
             active_sessions = ActiveSessionsResponse(
                 sessions=[],
@@ -1143,11 +1212,14 @@ def get_monitoring_dashboard(
                 expiring_soon=0,
                 expired=0,
             )
+            logger.info("Dashboard: Using fallback for active sessions")
 
         # Get re-auth count in last 24h - optimized for performance
+        logger.info("Dashboard: Calculating reauth start time")
         reauth_start = now - timedelta(hours=24)
 
         # Use count() for total count (fast, uses index)
+        logger.info("Dashboard: Getting reauth count for last 24h")
         reauth_count_24h = (
             db.query(ErrorLog)
             .filter(
@@ -1161,9 +1233,11 @@ def get_monitoring_dashboard(
             )
             .count()
         )
+        logger.info(f"Dashboard: Got reauth_count_24h = {reauth_count_24h}")
 
         # For success rate calculation, use limited sample (approximate but fast)
         # This prevents loading thousands of records into memory
+        logger.info("Dashboard: Getting reauth errors sample")
         reauth_errors_sample = (
             db.query(ErrorLog)
             .filter(
@@ -1179,6 +1253,7 @@ def get_monitoring_dashboard(
             .limit(1000)  # Reasonable limit for approximate calculation
             .all()
         )
+        logger.info(f"Dashboard: Got reauth_errors_sample - {len(reauth_errors_sample)} records")
 
         reauth_success_count = len(
             [
@@ -1201,6 +1276,7 @@ def get_monitoring_dashboard(
             reauth_success_rate = 0.0
 
         # Get auth errors in last 24h
+        logger.info("Dashboard: Getting auth errors count")
         auth_errors_24h = (
             db.query(ErrorLog)
             .filter(
@@ -1215,11 +1291,13 @@ def get_monitoring_dashboard(
             )
             .count()
         )
+        logger.info(f"Dashboard: Got auth_errors_24h = {auth_errors_24h}")
 
         # Count tasks failed due to auth (would need more sophisticated analysis)
         tasks_failed_due_to_auth = 0  # Placeholder
 
         # Create summary
+        logger.info("Dashboard: Creating summary")
         summary = DashboardSummary(
             total_services=total_services,
             services_running=services_running,
@@ -1299,18 +1377,23 @@ def get_monitoring_dashboard(
                 critical_count += 1
 
         # Get recent task executions (last 20)
+        logger.info("Dashboard: Getting recent task executions")
         recent_executions_query = (
             db.query(IndividualServiceTaskExecution)
             .order_by(desc(IndividualServiceTaskExecution.executed_at))
             .limit(20)
         )
         recent_executions = recent_executions_query.all()
+        logger.info(f"Dashboard: Got {len(recent_executions)} recent executions")
 
+        logger.info("Dashboard: Getting schedules")
         schedule_repo = ServiceScheduleRepository(db)
         all_schedules = schedule_repo.get_all()
         schedule_map = {s.task_name: s for s in all_schedules}
         user_ids = list({e.user_id for e in recent_executions})
+        logger.info("Dashboard: Getting user email map")
         user_email_map = _get_user_email_map(db, user_ids)
+        logger.info(f"Dashboard: Got user email map for {len(user_ids)} users")
 
         recent_task_executions = []
         for exec in recent_executions:
@@ -1354,6 +1437,7 @@ def get_monitoring_dashboard(
             )
 
         # Get recent re-auth events (last 20) - ADD TIME FILTER
+        logger.info("Dashboard: Getting recent reauth events")
         recent_reauth_query = (
             db.query(ErrorLog)
             .filter(
@@ -1369,8 +1453,10 @@ def get_monitoring_dashboard(
             .limit(20)
         )
         recent_reauth_errors = recent_reauth_query.all()
+        logger.info(f"Dashboard: Got {len(recent_reauth_errors)} recent reauth errors")
 
         user_ids_reauth = list({e.user_id for e in recent_reauth_errors})
+        logger.info("Dashboard: Getting user email map for reauth")
         user_email_map_reauth = _get_user_email_map(db, user_ids_reauth)
 
         recent_reauth_events = []
@@ -1406,14 +1492,18 @@ def get_monitoring_dashboard(
             )
 
         # Get running tasks - with error handling
+        logger.info("Dashboard: Getting running tasks")
         try:
             running_tasks_response = _get_running_tasks_impl(db, None)
             running_tasks = running_tasks_response.tasks
+            logger.info(f"Dashboard: Got {len(running_tasks)} running tasks")
         except Exception as e:
             logger.warning(f"Error getting running tasks (using fallback): {e}", exc_info=True)
             # Fallback to empty list
             running_tasks = []
+            logger.info("Dashboard: Using fallback for running tasks")
 
+        logger.info("Dashboard: Creating response object")
         return MonitoringDashboardResponse(
             summary=summary,
             alerts=DashboardAlerts(
