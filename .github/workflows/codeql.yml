@@ -1,12 +1,15 @@
 name: CodeQL
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ "**" ]
-  schedule:
-    - cron: '0 6 * * 1'
+  # NOTE: This workflow is an *advanced* CodeQL configuration.
+  # GitHub cannot process SARIF uploads from advanced configurations when
+  # the repository has CodeQL "default setup" enabled.
+  #
+  # Options:
+  # - Keep default setup enabled: leave this workflow manual-only (current).
+  # - Switch to advanced configuration: disable default setup in GitHub UI,
+  #   then re-add push/pull_request/schedule triggers.
+  workflow_dispatch:
 
 permissions:
   contents: read
