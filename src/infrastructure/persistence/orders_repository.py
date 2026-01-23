@@ -23,6 +23,11 @@ except ImportError:
     # Fallback if module not available
     get_next_trading_day_close = None  # type: ignore
 
+try:
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+except ImportError:
+    extract_base_symbol = None  # type: ignore
+
 # Import logger for duplicate detection logging
 try:
     from utils.logger import logger
@@ -39,7 +44,7 @@ class OrdersRepository:
     def get(self, order_id: int) -> Orders | None:
         return self.db.get(Orders, order_id)
 
-    def list(
+    def list(  # noqa: PLR0912, PLR0915
         self,
         user_id: int,
         status: OrderStatus | None = None,
@@ -125,20 +130,26 @@ class OrdersRepository:
             params["status"] = status.value.lower()
 
         # Get total count before applying pagination
-        count_query = f"SELECT COUNT(*) FROM orders {where_clause}"
+        # `where_clause` is built from static strings; values are bound via `params`.
+        count_query = f"SELECT COUNT(*) FROM orders {where_clause}"  # noqa: S608
         total_count = self.db.execute(text(count_query), params).scalar() or 0
 
-        # Build SELECT query with pagination
-        query = f"""
-            SELECT {", ".join(all_columns)}
-            FROM orders
-            {where_clause}
-            ORDER BY placed_at DESC
-        """
+        # Build SELECT query with pagination.
+        # Columns are derived from DB introspection; values are bound via `params`.
+        query = "\n".join(
+            [
+                "SELECT " + ", ".join(all_columns),
+                "FROM orders",
+                where_clause,
+                "ORDER BY placed_at DESC",
+            ]
+        )  # noqa: S608
 
         # Apply pagination if limit is provided
         if limit is not None:
-            query += f" LIMIT {limit} OFFSET {offset}"
+            query += " LIMIT :limit OFFSET :offset"
+            params["limit"] = int(limit)
+            params["offset"] = max(0, int(offset))
 
         results = self.db.execute(text(query), params).fetchall()
 
@@ -225,8 +236,6 @@ class OrdersRepository:
                 order_kwargs["retry_count"] = row_dict.get("retry_count") or 0
             if "reason" in orders_columns:
                 order_kwargs["reason"] = row_dict.get("reason")
-            if "reason" in orders_columns:
-                order_kwargs["reason"] = row_dict.get("reason")
             if "last_status_check" in orders_columns:
                 order_kwargs["last_status_check"] = parse_datetime(
                     row_dict.get("last_status_check")
@@ -257,7 +266,7 @@ class OrdersRepository:
             orders.append(order)
         return orders, total_count
 
-    def create_amo(
+    def create_amo(  # noqa: PLR0912, PLR0913
         self,
         *,
         user_id: int,
@@ -291,9 +300,13 @@ class OrdersRepository:
                 # Only exact match (full symbols are different instruments)
                 if existing_symbol_upper == symbol_upper:
                     logger.warning(
-                        f"Duplicate order prevented: Active buy order already exists with symbol '{symbol}'. "
-                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
-                        f"Returning existing order."
+                        "Duplicate order prevented: Active buy order already exists "
+                        "with symbol '%s'. "
+                        "Existing order: %s (id: %s, status: %s). Returning existing order.",
+                        symbol,
+                        existing_order.symbol,
+                        existing_order.id,
+                        existing_order.status,
                     )
                     return existing_order
 
@@ -302,10 +315,8 @@ class OrdersRepository:
         # This prevents multiple sell orders for the same stock
         if side == "sell":
             try:
-                from modules.kotak_neo_auto_trader.utils.symbol_utils import (
-                    extract_base_symbol,
-                )
-
+                if extract_base_symbol is None:
+                    raise ImportError("extract_base_symbol not available")
                 existing_orders, _ = self.list(user_id)
                 symbol_base = extract_base_symbol(symbol).upper().strip()
 
@@ -319,19 +330,25 @@ class OrdersRepository:
                         extract_base_symbol(existing_order.symbol).upper().strip()
                     )
 
-                    # Check by base symbol (e.g., "INDIAGLYCO" matches "INDIAGLYCO-EQ" and "INDIAGLYCO-BE")
+                    # Check by base symbol (e.g., "INDIAGLYCO" matches "INDIAGLYCO-EQ"
+                    # and "INDIAGLYCO-BE")
                     if existing_symbol_base == symbol_base:
                         logger.warning(
-                            f"Duplicate sell order prevented: Active sell order already exists for base symbol '{symbol_base}'. "
-                            f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
-                            f"Requested order: {symbol}. "
-                            f"Returning existing order."
+                            "Duplicate sell order prevented: Active sell order already exists "
+                            "for base symbol '%s'. "
+                            "Existing order: %s (id: %s, status: %s). Requested order: %s. "
+                            "Returning existing order.",
+                            symbol_base,
+                            existing_order.symbol,
+                            existing_order.id,
+                            existing_order.status,
+                            symbol,
                         )
                         return existing_order
             except Exception as e:
                 # Non-critical: if symbol extraction fails, log and continue
                 # Better to place order than to block due to utility function failure
-                logger.debug(f"Could not check for duplicate sell orders: {e}")
+                logger.debug("Could not check for duplicate sell orders: %s", e)
 
         # Phase 0.1: Get trade_mode from UserSettings if not provided
         if trade_mode is None:
@@ -488,7 +505,8 @@ class OrdersRepository:
 
         Args:
             order: Order to update
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
             **fields: Fields to update on the order
         """
         # Merge order into current session if it's detached
@@ -522,7 +540,8 @@ class OrdersRepository:
 
         Args:
             order: Order to cancel
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
         """
         # For AMO orders, cancel means remove or mark closed without fills
         order.status = OrderStatus.CLOSED
@@ -589,7 +608,7 @@ class OrdersRepository:
 
         return self.update(order)
 
-    def mark_executed(
+    def mark_executed(  # noqa: PLR0913
         self,
         order: Orders,
         execution_price: float,
@@ -610,8 +629,10 @@ class OrdersRepository:
             execution_qty: Quantity executed in this fill (defaults to order quantity)
             charges: Brokerage + taxes for this fill
             broker_fill_id: Broker's unique fill ID for deduplication
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
-            create_fill_record: If True, create Fill record (default); set False for legacy single-fill behavior
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
+            create_fill_record: If True, create Fill record (default). Set False for
+                legacy single-fill behavior.
         """
         fill_qty = execution_qty or order.quantity
 
