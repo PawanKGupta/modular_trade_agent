@@ -16,9 +16,15 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 try:
-    from src.infrastructure.db.timezone_utils import IST
+    from src.infrastructure.db.timezone_utils import IST, ist_now
 except ImportError:
     IST = None
+    ist_now = None
+
+
+def _now():
+    return ist_now() if ist_now is not None else datetime.now()
+
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -87,14 +93,14 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         # Mock get_by_symbol_for_update to return existing position (code now uses locking)
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create reentry order with entry_type="reentry"
-        placement_date = datetime.now(IST) - timedelta(days=1)  # Placed yesterday
+        placement_date = _now() - timedelta(days=1)  # Placed yesterday
         reentry_order = Orders(
             id=1,
             user_id=1,
@@ -188,7 +194,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
@@ -255,12 +261,14 @@ class TestReentryTrackingInDatabase:
             reentries=existing_reentries,
             initial_entry_price=2500.0,
             last_reentry_price=2490.0,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         # Create second reentry order with a specific execution time to avoid
         # time-based duplicate detection
-        execution_time = datetime(2024, 1, 2, 10, 0, 0)  # Different day/time from first reentry
+        execution_time = _now().replace(
+            year=2024, month=1, day=2, hour=10, minute=0, second=0, microsecond=0
+        )  # Different day/time from first reentry
         reentry_order = Orders(
             id=2,
             user_id=1,
@@ -398,7 +406,7 @@ class TestReentryTrackingInDatabase:
                 symbol="RELIANCE",
                 quantity=10,
                 avg_price=2500.0,
-                opened_at=datetime.now(),
+                opened_at=_now(),
             )
 
         positions_repo.upsert = Mock(side_effect=capture_upsert)
@@ -431,7 +439,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
@@ -494,7 +502,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,  # Original entry price
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
@@ -550,7 +558,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
@@ -621,7 +629,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
@@ -688,7 +696,7 @@ class TestReentryTrackingInDatabase:
             reentries=None,
             initial_entry_price=2500.0,
             last_reentry_price=None,
-            opened_at=datetime.now(),
+            opened_at=_now(),
         )
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)

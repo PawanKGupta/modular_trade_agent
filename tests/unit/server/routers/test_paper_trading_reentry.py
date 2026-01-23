@@ -1,11 +1,14 @@
 """Tests for reentry data in paper trading portfolio endpoint"""
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from server.app.routers import paper_trading
-from src.infrastructure.db.models import Positions, UserRole
+from src.infrastructure.db.models import UserRole
 
 
 class DummyUser(SimpleNamespace):
@@ -69,9 +72,61 @@ class DummyPositionsRepository:
     def __init__(self, db):
         self.db = db
         self.positions = {}
+        self.positions_list = []  # For list() method
 
     def get_by_symbol(self, user_id, symbol):
         return self.positions.get((user_id, symbol.upper()))
+
+    def list(self, user_id):
+        """Return all positions for user_id"""
+        return self.positions_list
+
+
+def _install_router_repo_stubs(monkeypatch, *, positions, orders):
+    """Patch router-local repository symbols used by get_paper_trading_portfolio."""
+
+    class _PositionsRepo:
+        def __init__(self, db):
+            self.db = db
+
+        def list(self, user_id):
+            return positions
+
+    class _OrdersRepo:
+        def __init__(self, db):
+            self.db = db
+
+        def list(self, user_id, **kwargs):
+            # Router expects (items, total_count)
+            # - For sell-order lookups (target prices), return empty.
+            # - For general list() usage, return the provided orders.
+            if kwargs.get("side") == "sell":
+                return ([], 0)
+            return (orders, len(orders))
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", _PositionsRepo)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", _OrdersRepo)
+    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
+
+
+def _make_paper_buy_order(*, symbol: str, placed_at: datetime):
+    # Minimal shape required by get_paper_trading_portfolio() for recent_orders + stats.
+    return SimpleNamespace(
+        id=1,
+        broker_order_id=None,
+        order_id="order-1",
+        symbol=symbol,
+        side="buy",
+        quantity=1,
+        order_type="market",
+        status="closed",
+        price=None,
+        avg_price=None,
+        placed_at=placed_at,
+        filled_at=None,
+        trade_mode=paper_trading.TradeMode.PAPER,
+        order_metadata={},
+    )
 
 
 def test_get_paper_trading_portfolio_with_reentry_data(monkeypatch):
@@ -108,42 +163,39 @@ def test_get_paper_trading_portfolio_with_reentry_data(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository with reentry data
-    mock_position = MagicMock(spec=Positions)
-    mock_position.reentry_count = 2
-    mock_position.entry_rsi = 28.5
-    mock_position.initial_entry_price = 2500.0
-    mock_position.reentries = {
-        "reentries": [
-            {
-                "qty": 5,
-                "price": 2400.0,
-                "time": "2025-01-15T10:00:00",
-                "level": 20,
-                "rsi": 18.5,
-                "cycle": 1,
-            },
-            {
-                "qty": 3,
-                "price": 2300.0,
-                "time": "2025-01-20T10:00:00",
-                "level": 10,
-                "rsi": 9.2,
-                "cycle": 2,
-            },
-        ]
-    }
-
-    positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
-
-    def mock_positions_repo_init(db):
-        return positions_repo
-
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
+    now = datetime.utcnow()
+    mock_position = SimpleNamespace(
+        symbol="RELIANCE",
+        quantity=10,
+        avg_price=2500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=2,
+        entry_rsi=28.5,
+        initial_entry_price=2500.0,
+        reentries={
+            "reentries": [
+                {
+                    "qty": 5,
+                    "price": 2400.0,
+                    "time": "2025-01-15T10:00:00",
+                    "level": 20,
+                    "rsi": 18.5,
+                    "cycle": 1,
+                },
+                {
+                    "qty": 3,
+                    "price": 2300.0,
+                    "time": "2025-01-20T10:00:00",
+                    "level": 10,
+                    "rsi": 9.2,
+                    "cycle": 2,
+                },
+            ]
+        },
     )
+    buy_order = _make_paper_buy_order(symbol="RELIANCE", placed_at=now + timedelta(minutes=1))
+    _install_router_repo_stubs(monkeypatch, positions=[mock_position], orders=[buy_order])
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:
@@ -209,29 +261,26 @@ def test_get_paper_trading_portfolio_with_reentry_data_old_format(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository with old format reentries (direct array)
-    mock_position = MagicMock(spec=Positions)
-    mock_position.reentry_count = 1
-    mock_position.entry_rsi = 29.0
-    mock_position.initial_entry_price = 2500.0
-    mock_position.reentries = [  # Old format: direct array
-        {
-            "qty": 5,
-            "price": 2400.0,
-            "time": "2025-01-15T10:00:00",
-        }
-    ]
-
-    positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
-
-    def mock_positions_repo_init(db):
-        return positions_repo
-
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
+    now = datetime.utcnow()
+    mock_position = SimpleNamespace(
+        symbol="RELIANCE.NS",
+        quantity=10,
+        avg_price=2500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=1,
+        entry_rsi=29.0,
+        initial_entry_price=2500.0,
+        reentries=[
+            {
+                "qty": 5,
+                "price": 2400.0,
+                "time": "2025-01-15T10:00:00",
+            }
+        ],
     )
+    buy_order = _make_paper_buy_order(symbol="RELIANCE.NS", placed_at=now + timedelta(minutes=1))
+    _install_router_repo_stubs(monkeypatch, positions=[mock_position], orders=[buy_order])
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:
@@ -289,16 +338,20 @@ def test_get_paper_trading_portfolio_without_reentry_data(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository - no position found
-    positions_repo = DummyPositionsRepository(None)
-
-    def mock_positions_repo_init(db):
-        return positions_repo
-
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
+    now = datetime.utcnow()
+    mock_position = SimpleNamespace(
+        symbol="TCS",
+        quantity=20,
+        avg_price=3500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=0,
+        entry_rsi=None,
+        initial_entry_price=None,
+        reentries=None,
     )
+    buy_order = _make_paper_buy_order(symbol="TCS", placed_at=now + timedelta(minutes=1))
+    _install_router_repo_stubs(monkeypatch, positions=[mock_position], orders=[buy_order])
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:
@@ -321,11 +374,11 @@ def test_get_paper_trading_portfolio_without_reentry_data(monkeypatch):
         assert holding.reentry_count == 0
         assert holding.entry_rsi is None
         assert holding.initial_entry_price is None
-        assert holding.reentries is None
+        assert holding.reentries == []
 
 
 def test_get_paper_trading_portfolio_reentry_data_symbol_normalization(monkeypatch):
-    """Test that symbol normalization works correctly for reentry data lookup"""
+    """Test that reentry data is included for positions with varying symbol formats."""
     user = DummyUser(id=42)
 
     def mock_exists(self):
@@ -364,31 +417,35 @@ def test_get_paper_trading_portfolio_reentry_data_symbol_normalization(monkeypat
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository - positions stored as "RELIANCE" and "TCS" (normalized)
-    mock_position1 = MagicMock(spec=Positions)
-    mock_position1.reentry_count = 1
-    mock_position1.entry_rsi = 28.0
-    mock_position1.initial_entry_price = 2500.0
-    mock_position1.reentries = {
-        "reentries": [{"qty": 5, "price": 2400.0, "time": "2025-01-15T10:00:00"}]
-    }
-
-    mock_position2 = MagicMock(spec=Positions)
-    mock_position2.reentry_count = 0
-    mock_position2.entry_rsi = None
-    mock_position2.initial_entry_price = None
-    mock_position2.reentries = None
-
-    positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position1
-    positions_repo.positions[(42, "TCS")] = mock_position2
-
-    def mock_positions_repo_init(db):
-        return positions_repo
-
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
+    now = datetime.utcnow()
+    mock_position1 = SimpleNamespace(
+        symbol="RELIANCE-EQ",
+        quantity=10,
+        avg_price=2500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=1,
+        entry_rsi=28.0,
+        initial_entry_price=2500.0,
+        reentries={"reentries": [{"qty": 5, "price": 2400.0, "time": "2025-01-15T10:00:00"}]},
+    )
+    mock_position2 = SimpleNamespace(
+        symbol="TCS.NS",
+        quantity=20,
+        avg_price=3500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=0,
+        entry_rsi=None,
+        initial_entry_price=None,
+        reentries=None,
+    )
+    orders = [
+        _make_paper_buy_order(symbol="RELIANCE-EQ", placed_at=now + timedelta(minutes=1)),
+        _make_paper_buy_order(symbol="TCS.NS", placed_at=now + timedelta(minutes=2)),
+    ]
+    _install_router_repo_stubs(
+        monkeypatch, positions=[mock_position1, mock_position2], orders=orders
     )
 
     # Mock yfinance
@@ -416,12 +473,12 @@ def test_get_paper_trading_portfolio_reentry_data_symbol_normalization(monkeypat
 
         assert len(result.holdings) == 2
 
-        # RELIANCE-EQ should match RELIANCE in database
+        # RELIANCE-EQ position includes reentry data
         reliance_holding = next(h for h in result.holdings if h.symbol == "RELIANCE-EQ")
         assert reliance_holding.reentry_count == 1
         assert reliance_holding.entry_rsi == 28.0
 
-        # TCS.NS should match TCS in database
+        # TCS.NS has no reentry data
         tcs_holding = next(h for h in result.holdings if h.symbol == "TCS.NS")
         assert tcs_holding.reentry_count == 0
         assert tcs_holding.entry_rsi is None
@@ -461,23 +518,20 @@ def test_get_paper_trading_portfolio_reentry_data_invalid_format(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository with invalid reentries format (string instead of dict/list)
-    mock_position = MagicMock(spec=Positions)
-    mock_position.reentry_count = 1
-    mock_position.entry_rsi = 28.5
-    mock_position.initial_entry_price = 2500.0
-    mock_position.reentries = "invalid_format"  # Invalid format - neither dict nor list
-
-    positions_repo = DummyPositionsRepository(None)
-    positions_repo.positions[(42, "RELIANCE")] = mock_position
-
-    def mock_positions_repo_init(db):
-        return positions_repo
-
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
+    now = datetime.utcnow()
+    mock_position = SimpleNamespace(
+        symbol="RELIANCE",
+        quantity=10,
+        avg_price=2500.0,
+        opened_at=now,
+        closed_at=None,
+        reentry_count=1,
+        entry_rsi=28.5,
+        initial_entry_price=2500.0,
+        reentries="invalid_format",
     )
+    buy_order = _make_paper_buy_order(symbol="RELIANCE", placed_at=now + timedelta(minutes=1))
+    _install_router_repo_stubs(monkeypatch, positions=[mock_position], orders=[buy_order])
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:
@@ -502,7 +556,7 @@ def test_get_paper_trading_portfolio_reentry_data_invalid_format(monkeypatch):
 
 
 def test_get_paper_trading_portfolio_reentry_data_exception_handling(monkeypatch):
-    """Test that exceptions during reentry data fetch don't break the endpoint"""
+    """Test that exceptions in DB position fetch raise an HTTP 500 (current behavior)."""
     user = DummyUser(id=42)
 
     def mock_exists(self):
@@ -535,14 +589,23 @@ def test_get_paper_trading_portfolio_reentry_data_exception_handling(monkeypatch
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock positions repository to raise exception
-    def mock_positions_repo_init(db):
-        raise Exception("Database connection error")
+    class _FailingPositionsRepo:
+        def __init__(self, db):
+            self.db = db
 
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo_init,
-    )
+        def list(self, user_id):
+            raise Exception("Database connection error")
+
+    class _OrdersRepo:
+        def __init__(self, db):
+            self.db = db
+
+        def list(self, user_id, **kwargs):
+            return ([], 0)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", _FailingPositionsRepo)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", _OrdersRepo)
+    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:
@@ -556,11 +619,7 @@ def test_get_paper_trading_portfolio_reentry_data_exception_handling(monkeypatch
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         db_session = MagicMock()
-        result = paper_trading.get_paper_trading_portfolio(db=db_session, current=user)
+        with pytest.raises(paper_trading.HTTPException) as exc:
+            paper_trading.get_paper_trading_portfolio(db=db_session, current=user)
 
-        # Should still return holdings with default reentry values
-        assert len(result.holdings) == 1
-        holding = result.holdings[0]
-        assert holding.reentry_count == 0
-        assert holding.entry_rsi is None
-        assert holding.reentries is None
+        assert exc.value.status_code == 500

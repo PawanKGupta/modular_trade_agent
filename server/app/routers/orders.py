@@ -37,10 +37,20 @@ from src.infrastructure.persistence.user_trading_config_repository import (
 )
 
 from ..core.deps import get_current_user, get_db
-from ..schemas.orders import OrderResponse
+from ..schemas.orders import OrderResponse, PaginatedOrderResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _normalize_repo_list_result(result):
+    """Normalize OrdersRepository.list() result across legacy/new call signatures."""
+    # Some call sites/tests expect (items, total_count), while the current
+    # OrdersRepository.list() returns a plain list of Orders.
+    if isinstance(result, tuple) and len(result) == 2:
+        items, total_count = result
+        return items, int(total_count) if total_count is not None else len(items)
+    return result, len(result)
 
 
 def _is_order_monitoring_active(user_id: int, db: Session) -> bool:
@@ -120,7 +130,7 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         # Continue with original quantity if recalculation fails
 
 
-@router.get("/", response_model=list[OrderResponse])
+@router.get("/", response_model=PaginatedOrderResponse)
 def list_orders(  # noqa: PLR0912, PLR0913
     status: Annotated[
         Literal[
@@ -146,9 +156,17 @@ def list_orders(  # noqa: PLR0912, PLR0913
         str | None,
         Query(description="Filter orders to this date (ISO format: YYYY-MM-DD)"),
     ] = None,
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of items per page"),
+    ] = 50,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection
     current: Users = Depends(get_current_user),  # noqa: B008 - FastAPI dependency injection
-) -> list[OrderResponse]:
+) -> PaginatedOrderResponse:
     try:
         repo = OrdersRepository(db)
         # Map string status to enum member
@@ -161,7 +179,20 @@ def list_orders(  # noqa: PLR0912, PLR0913
             # Note: SELL status removed - use side='sell' to filter sell orders
         }
         db_status = status_map.get(status) if status else None
-        items = repo.list(current.id, db_status)
+
+        # Calculate offset for pagination
+        offset = (page - 1) * page_size
+
+        # Get paginated orders and total count
+        # The underlying OrdersRepository.list() may or may not support limit/offset.
+        try:
+            result = repo.list(current.id, db_status, limit=page_size, offset=offset)
+            items, total_count = _normalize_repo_list_result(result)
+        except TypeError:
+            # Fallback: fetch all and slice
+            all_items = repo.list(current.id, status=db_status)
+            total_count = len(all_items)
+            items = all_items[offset : offset + page_size]
 
         # Apply additional filters
         if reason:
@@ -265,7 +296,16 @@ def list_orders(  # noqa: PLR0912, PLR0913
                 # Skip this order and continue
                 continue
 
-        return result
+        # Calculate total pages
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+
+        return PaginatedOrderResponse(
+            items=result,
+            total=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
     except Exception as e:
         logger.exception(f"Error listing orders for user {current.id}: {e}")
         raise HTTPException(
@@ -378,7 +418,8 @@ def drop_order(
     """
     Drop an order from the retry queue.
 
-    Marks the order as CLOSED, removing it from retry tracking.
+    Marks the order as CANCELLED, removing it from retry tracking.
+    More semantically correct than CLOSED for failed orders that never executed.
     """
     try:
         repo = OrdersRepository(db)
@@ -406,10 +447,8 @@ def drop_order(
                 ),
             )
 
-        # Mark as closed
-        order.status = DbOrderStatus.CLOSED
-        order.closed_at = ist_now()
-        repo.update(order)
+        # Mark as cancelled (more semantically correct than CLOSED for failed orders)
+        repo.mark_cancelled(order, "Dropped from retry queue")
 
         return {"message": f"Order {order_id} dropped from retry queue"}
     except HTTPException:
@@ -528,7 +567,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 }
             else:
                 # Sync all paper trading orders - just refresh from DB
-                all_orders = repo.list(current.id, status=None)
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
                 paper_orders = []
                 for o in all_orders:
                     o_trade_mode_value = (
@@ -671,7 +710,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 orders_to_sync = [order]
             else:
                 # Sync all pending/ongoing orders
-                all_orders = repo.list(current.id, status=None)
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
                 orders_to_sync = [
                     o
                     for o in all_orders

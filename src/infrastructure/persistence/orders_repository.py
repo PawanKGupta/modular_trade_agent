@@ -10,8 +10,18 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.fills_repository import FillsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
+
+# Optional imports (may not be available in all environments)
+try:
+    from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+        get_next_trading_day_close,
+    )
+except ImportError:
+    # Fallback if module not available
+    get_next_trading_day_close = None  # type: ignore
 
 # Import logger for duplicate detection logging
 try:
@@ -29,7 +39,25 @@ class OrdersRepository:
     def get(self, order_id: int) -> Orders | None:
         return self.db.get(Orders, order_id)
 
-    def list(self, user_id: int, status: OrderStatus | None = None) -> builtins.list[Orders]:
+    def list(
+        self,
+        user_id: int,
+        status: OrderStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[builtins.list[Orders], int]:
+        """
+        List orders with optional pagination support.
+
+        Args:
+            user_id: User ID to filter orders
+            status: Optional status filter
+            limit: Optional limit for pagination
+            offset: Offset for pagination (default: 0)
+
+        Returns:
+            Tuple of (orders list, total count)
+        """
         # Always use raw SQL fallback to avoid enum validation issues
         # This ensures compatibility with database schema regardless of SQLAlchemy metadata cache
 
@@ -87,17 +115,30 @@ class OrdersRepository:
             optional_columns.append("trade_mode")
 
         all_columns = base_columns + optional_columns
+
+        # Build base WHERE clause
+        where_clause = "WHERE user_id = :user_id"
+        params = {"user_id": user_id}
+        if status:
+            where_clause += " AND status = :status"
+            # Use enum value (lowercase) to match database
+            params["status"] = status.value.lower()
+
+        # Get total count before applying pagination
+        count_query = f"SELECT COUNT(*) FROM orders {where_clause}"
+        total_count = self.db.execute(text(count_query), params).scalar() or 0
+
+        # Build SELECT query with pagination
         query = f"""
             SELECT {", ".join(all_columns)}
             FROM orders
-            WHERE user_id = :user_id
+            {where_clause}
+            ORDER BY placed_at DESC
         """
-        params = {"user_id": user_id}
-        if status:
-            query += " AND status = :status"
-            # Use enum value (lowercase) to match database
-            params["status"] = status.value.lower()
-        query += " ORDER BY placed_at DESC"
+
+        # Apply pagination if limit is provided
+        if limit is not None:
+            query += f" LIMIT {limit} OFFSET {offset}"
 
         results = self.db.execute(text(query), params).fetchall()
 
@@ -214,7 +255,7 @@ class OrdersRepository:
 
             order = Orders(**order_kwargs)
             orders.append(order)
-        return orders
+        return orders, total_count
 
     def create_amo(
         self,
@@ -236,7 +277,7 @@ class OrdersRepository:
         # First check by exact symbol match (most common case - same symbol format)
         # Then check by base symbol (fallback for different formats like SALSTEEL-BE vs SALSTEEL)
         if side == "buy":
-            existing_orders = self.list(user_id)
+            existing_orders, _ = self.list(user_id)
             symbol_upper = symbol.upper().strip()
 
             for existing_order in existing_orders:
@@ -255,6 +296,42 @@ class OrdersRepository:
                         f"Returning existing order."
                     )
                     return existing_order
+
+        # CRITICAL: Check for existing active SELL order by base symbol
+        # There should only be ONE sell order per symbol (base symbol, not full symbol)
+        # This prevents multiple sell orders for the same stock
+        if side == "sell":
+            try:
+                from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                    extract_base_symbol,
+                )
+
+                existing_orders, _ = self.list(user_id)
+                symbol_base = extract_base_symbol(symbol).upper().strip()
+
+                for existing_order in existing_orders:
+                    if existing_order.side != "sell":
+                        continue
+                    if existing_order.status not in [OrderStatus.PENDING, OrderStatus.ONGOING]:
+                        continue
+
+                    existing_symbol_base = (
+                        extract_base_symbol(existing_order.symbol).upper().strip()
+                    )
+
+                    # Check by base symbol (e.g., "INDIAGLYCO" matches "INDIAGLYCO-EQ" and "INDIAGLYCO-BE")
+                    if existing_symbol_base == symbol_base:
+                        logger.warning(
+                            f"Duplicate sell order prevented: Active sell order already exists for base symbol '{symbol_base}'. "
+                            f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
+                            f"Requested order: {symbol}. "
+                            f"Returning existing order."
+                        )
+                        return existing_order
+            except Exception as e:
+                # Non-critical: if symbol extraction fails, log and continue
+                # Better to place order than to block due to utility function failure
+                logger.debug(f"Could not check for duplicate sell orders: {e}")
 
         # Phase 0.1: Get trade_mode from UserSettings if not provided
         if trade_mode is None:
@@ -349,7 +426,7 @@ class OrdersRepository:
         base_symbol = symbol.upper().split("-")[0].strip()
 
         # Get all buy orders for user
-        all_orders = self.list(user_id)
+        all_orders, _ = self.list(user_id)
 
         for order in all_orders:
             if order.side != "buy" or order.status not in statuses:
@@ -541,8 +618,6 @@ class OrdersRepository:
         # Create Fill record for this execution
         if create_fill_record:
             try:
-                from src.infrastructure.persistence.fills_repository import FillsRepository
-
                 fills_repo = FillsRepository(self.db)
 
                 # Check for duplicate fill by broker_fill_id
@@ -650,9 +725,7 @@ class OrdersRepository:
             if upper_symbol not in candidates:
                 candidates.append(upper_symbol)
             # Add NSE-style ticker if missing
-            ticker_variant = (
-                f"{base_symbol}.NS" if not base_symbol.endswith(".NS") else base_symbol
-            )
+            ticker_variant = f"{base_symbol}.NS" if not base_symbol.endswith(".NS") else base_symbol
             if ticker_variant not in candidates:
                 candidates.append(ticker_variant)
 
@@ -722,7 +795,7 @@ class OrdersRepository:
 
             # Edge case: Check if there are other successful orders for this symbol
             # Only mark as FAILED if ALL buy orders have failed
-            other_orders = self.list(order.user_id)
+            other_orders, _ = self.list(order.user_id)
             symbol_orders = [
                 o
                 for o in other_orders
@@ -748,14 +821,19 @@ class OrdersRepository:
             logger.warning(f"Failed to mark signal as FAILED for order {order.id}: {e}")
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
-        """Get all pending orders that need status checking
+        """Get all pending AMO buy orders that need status checking
 
         Note: Previously returned AMO + PENDING_EXECUTION, now returns PENDING only.
+        CRITICAL: Only returns buy orders to prevent sell orders from being tracked as buy orders.
         """
-        return self.list(
+        orders, _ = self.list(
             user_id,
             status=OrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
         )
+        # CRITICAL FIX: Filter to only buy orders
+        # AMO orders are always buy orders, but we need to prevent sell orders
+        # with PENDING status from being incorrectly loaded as buy orders
+        return [o for o in orders if o.side == "buy"]
 
     def get_failed_orders(self, user_id: int) -> list[Orders]:
         """Get all failed orders
@@ -763,10 +841,11 @@ class OrdersRepository:
         Note: Previously returned RETRY_PENDING + FAILED, now returns FAILED only.
         For retriable orders (with expiry filter), use get_retriable_failed_orders().
         """
-        return self.list(
+        orders, _ = self.list(
             user_id,
             status=OrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
         )
+        return orders
 
     def get_retriable_failed_orders(self, user_id: int) -> list[Orders]:
         """
@@ -779,12 +858,13 @@ class OrdersRepository:
         Returns:
             List of FAILED orders that haven't expired yet
         """
-        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
-            get_next_trading_day_close,
-        )
+        if get_next_trading_day_close is None:
+            # Module not available, return all failed orders without expiry filter
+            all_failed, _ = self.list(user_id, status=OrderStatus.FAILED)
+            return all_failed
 
         # Get all FAILED orders
-        all_failed = self.list(user_id, status=OrderStatus.FAILED)
+        all_failed, _ = self.list(user_id, status=OrderStatus.FAILED)
 
         # Apply expiry filter
         retriable_orders = []

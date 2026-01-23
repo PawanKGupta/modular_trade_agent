@@ -47,6 +47,8 @@ function getDefaultDateRange(): DateRange {
 
 export function OrdersPage() {
 	const [tab, setTab] = useState<OrderStatus>('pending');
+	const [page, setPage] = useState(1);
+	const [pageSize, setPageSize] = useState(50);
 	const [tradeModeFilter, setTradeModeFilter] = useState<'all' | 'paper' | 'broker'>('all');
 	const [showExportOptions, setShowExportOptions] = useState(false);
 	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
@@ -55,9 +57,14 @@ export function OrdersPage() {
 	// Saved filters hook
 	const { presets, savePreset, deletePreset, loading: presetsLoading } = useSavedFilters('orders');
 
+	// Reset to page 1 when tab changes
+	useEffect(() => {
+		setPage(1);
+	}, [tab]);
+
 	const { data, isLoading, isError } = useQuery({
-		queryKey: ['orders', tab],
-		queryFn: () => listOrders({ status: tab }),
+		queryKey: ['orders', tab, page, pageSize],
+		queryFn: () => listOrders({ status: tab, page, page_size: pageSize }),
 	});
 
 	const retryMutation = useMutation({
@@ -124,7 +131,7 @@ export function OrdersPage() {
 	};
 
 	const orders: Order[] = useMemo(() => {
-		const allOrders = data ?? [];
+		const allOrders = data?.items ?? [];
 		if (tradeModeFilter === 'all') {
 			return allOrders;
 		}
@@ -140,7 +147,19 @@ export function OrdersPage() {
 			}
 			return true;
 		});
-	}, [data, tradeModeFilter]);
+	}, [data?.items, tradeModeFilter]);
+
+	// Pagination handlers
+	const handlePageChange = (newPage: number) => {
+		setPage(newPage);
+		// Optional: scroll to top
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	};
+
+	const handlePageSizeChange = (newPageSize: number) => {
+		setPageSize(newPageSize);
+		setPage(1); // Reset to first page
+	};
 
 	const handleRetry = async (orderId: number) => {
 		if (confirm('Retry this order?')) {
@@ -435,6 +454,89 @@ export function OrdersPage() {
 					</tbody>
 				</table>
 				</div>
+				{/* Pagination Controls */}
+				{data && data.total > 0 && (
+					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-3 py-3 border-t border-[#1e293b]">
+						<div className="text-sm text-[var(--muted)]">
+							Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, data.total)} of {data.total} orders
+						</div>
+
+						<div className="flex items-center gap-2">
+							{/* Page Size Selector */}
+							<select
+								value={pageSize}
+								onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+								className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)]"
+							>
+								<option value={25}>25 per page</option>
+								<option value={50}>50 per page</option>
+								<option value={100}>100 per page</option>
+								<option value={200}>200 per page</option>
+							</select>
+
+							{/* Pagination Buttons */}
+							<div className="flex items-center gap-1">
+								<button
+									onClick={() => handlePageChange(1)}
+									disabled={page === 1}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									««
+								</button>
+								<button
+									onClick={() => handlePageChange(page - 1)}
+									disabled={page === 1}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									«
+								</button>
+
+								{/* Page Numbers */}
+								{[...Array(Math.min(5, data.total_pages))].map((_, i) => {
+									let pageNum;
+									if (data.total_pages <= 5) {
+										pageNum = i + 1;
+									} else if (page <= 3) {
+										pageNum = i + 1;
+									} else if (page >= data.total_pages - 2) {
+										pageNum = data.total_pages - 4 + i;
+									} else {
+										pageNum = page - 2 + i;
+									}
+
+									return (
+										<button
+											key={pageNum}
+											onClick={() => handlePageChange(pageNum)}
+											className={`px-2 py-1 text-sm border rounded ${
+												page === pageNum
+													? 'bg-blue-600 text-white border-blue-600'
+													: 'bg-[var(--panel)] border-[#1e293b] text-[var(--text)] hover:bg-[#0f1720]'
+											}`}
+										>
+											{pageNum}
+										</button>
+									);
+								})}
+
+								<button
+									onClick={() => handlePageChange(page + 1)}
+									disabled={page >= data.total_pages}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									»
+								</button>
+								<button
+									onClick={() => handlePageChange(data.total_pages)}
+									disabled={page >= data.total_pages}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									»»
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);

@@ -517,7 +517,8 @@ class TestRetryPendingOrdersFromDB:
         mock_existing_order = Mock()
         mock_existing_order.symbol = "RELIANCE"
         mock_existing_order.status = DbOrderStatus.ONGOING
-        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+        # Some code paths expect OrdersRepository.list() to return (items, total_count)
+        auto_trade_engine.orders_repo.list.return_value = ([mock_existing_order], 1)
         auto_trade_engine.orders_repo.mark_cancelled = Mock()
 
         summary = auto_trade_engine.retry_pending_orders_from_db()
@@ -614,7 +615,8 @@ class TestRetryPendingOrdersFromDB:
         mock_existing_order.symbol = "RELIANCE"
         mock_existing_order.side = "buy"
         mock_existing_order.status = DbOrderStatus.PENDING
-        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+        # Code path under test expects OrdersRepository.list() to return (items, total_count)
+        auto_trade_engine.orders_repo.list.return_value = ([mock_existing_order], 1)
 
         # Mock cancel
         auto_trade_engine.orders = MagicMock()

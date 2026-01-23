@@ -5,18 +5,32 @@ Paper Trading API endpoints
 import logging
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+import pandas_ta as ta
+import yfinance as yf
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from core.data_fetcher import fetch_ohlcv_yf
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
-from src.infrastructure.db.models import PnlDaily, Users
+from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+from src.infrastructure.db.models import (
+    OrderStatus,
+    PnlDaily,
+    TradeMode,
+    Users,
+)
+from src.infrastructure.db.models import (
+    Positions as PositionsModel,
+)
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.deps import get_current_user, get_db
 from ..services.pnl_calculation_service import PnlCalculationService
@@ -105,6 +119,53 @@ class PaperTradingPortfolio(BaseModel):
     order_statistics: dict
 
 
+class PaginatedPaperTradingOrders(BaseModel):
+    """Paginated response for paper trading recent orders"""
+
+    items: list[PaperTradingOrder]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedPaperTradingPortfolio(BaseModel):
+    """Paginated paper trading portfolio response"""
+
+    account: PaperTradingAccount
+    holdings: list[PaperTradingHolding]
+    recent_orders: PaginatedPaperTradingOrders
+    order_statistics: dict
+
+
+class PaginatedClosedPositions(BaseModel):
+    """Paginated response for closed positions"""
+
+    items: list[ClosedPosition]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedTransactions(BaseModel):
+    """Paginated response for transactions"""
+
+    items: list[PaperTradingTransaction]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class PaginatedTradeHistory(BaseModel):
+    """Paginated trade history response"""
+
+    transactions: PaginatedTransactions
+    closed_positions: PaginatedClosedPositions
+    statistics: dict[str, Any]
+
+
 def _parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -147,8 +208,16 @@ def _upsert_pnl_from_closed_positions(
         logger.warning(f"Skipping PnL sync from history for user {user_id}: {e}")
 
 
-@router.get("/portfolio", response_model=PaperTradingPortfolio)
+@router.get("/portfolio", response_model=PaginatedPaperTradingPortfolio)
 def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number for recent orders (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of recent orders per page"),
+    ] = 10,
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ):
@@ -159,7 +228,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
 
         if not store_path.exists():
             # Return empty portfolio if no data exists
-            return PaperTradingPortfolio(
+            return PaginatedPaperTradingPortfolio(
                 account=PaperTradingAccount(
                     initial_capital=0.0,
                     available_cash=0.0,
@@ -171,7 +240,13 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     return_percentage=0.0,
                 ),
                 holdings=[],
-                recent_orders=[],
+                recent_orders=PaginatedPaperTradingOrders(
+                    items=[],
+                    total=0,
+                    page=1,
+                    page_size=page_size,
+                    total_pages=0,
+                ),
                 order_statistics={
                     "total_orders": 0,
                     "buy_orders": 0,
@@ -187,52 +262,191 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         store = PaperTradeStore(storage_path, auto_save=False)
         reporter = PaperTradeReporter(store)
 
-        # Account information
+        # Account information (still from file - cash balance managed there)
         account_data = store.get_account()
         if not account_data:
             raise HTTPException(status_code=404, detail="Paper trading account not initialized")
 
-        # Calculate portfolio value
-        holdings_data = store.get_all_holdings()
+        # Read positions from database (single source of truth)
+        # Handle case where db is None (for backward compatibility with tests)
+        if db is None:
+            all_positions = []
+            all_orders = []
+            open_positions = []
+            paper_positions = []
+        else:
+            positions_repo = PositionsRepository(db)
+            orders_repo = OrdersRepository(db)
+            # Get all open positions for this user
+            all_positions = positions_repo.list(current.id)
+            all_orders, _ = orders_repo.list(current.id)
+            # Filter for open positions only (closed_at IS NULL)
+            open_positions = [pos for pos in all_positions if pos.closed_at is None]
+
+            # Filter for paper trading positions by matching with buy orders that have trade_mode=PAPER
+            # Since Positions table doesn't have trade_mode field, we match with orders
+            paper_positions = []
+            for pos in open_positions:
+                # Find a buy order for this position to check trade_mode
+                is_paper_position = False
+                for order in all_orders:
+                    if (
+                        order.symbol == pos.symbol
+                        and order.side == "buy"
+                        and order.placed_at
+                        and pos.opened_at
+                        and abs((order.placed_at - pos.opened_at).total_seconds())
+                        < 3600  # Within 1 hour
+                        and getattr(order, "trade_mode", None) == TradeMode.PAPER
+                    ):
+                        is_paper_position = True
+                        break
+
+                # If no matching order found, use fallback logic to determine trade mode
+                # This handles positions created before order tracking or edge cases
+                if not is_paper_position:
+                    # Check if there are any broker orders for this symbol (if yes, it's likely broker position)
+                    # Note: all_orders is already filtered by current.id, so we're only checking this user's orders
+                    has_broker_order = any(
+                        o.symbol == pos.symbol
+                        and o.side == "buy"
+                        and getattr(o, "trade_mode", None) == TradeMode.BROKER
+                        for o in all_orders
+                    )
+                    if has_broker_order:
+                        # User has broker orders for this symbol, so this position is likely broker mode
+                        # Skip it (don't add to paper_positions)
+                        is_paper_position = False
+                    else:
+                        # No broker orders found for this symbol
+                        # Check user's current trade mode setting to make an educated guess
+                        # If user is in paper mode, assume paper trading (backward compatibility)
+                        # If user is in broker mode, this is ambiguous - skip it to be safe
+                        settings_repo = SettingsRepository(db)
+                        user_settings = settings_repo.get_by_user_id(current.id)
+                        if user_settings and user_settings.trade_mode == TradeMode.PAPER:
+                            # User is in paper mode, assume paper trading for backward compatibility
+                            is_paper_position = True
+                        else:
+                            # User is in broker mode or unknown - skip ambiguous position
+                            # This prevents showing broker positions in paper trading portfolio
+                            logger.debug(
+                                f"Skipping ambiguous position {pos.symbol} for user {current.id}: "
+                                f"no matching order found and user is in broker mode"
+                            )
+                            is_paper_position = False
+
+                if is_paper_position:
+                    paper_positions.append(pos)
+
+        # If no DB positions found, fall back to file-based holdings
+        # This maintains backward compatibility with tests that use file-based storage
+        # and handles cases where DB is empty but file-based data exists
+        file_based_holdings = {}
+        if len(paper_positions) == 0:
+            # Fall back to file-based holdings from PaperTradeStore
+            try:
+                file_holdings = store.get_all_holdings()
+                if file_holdings:
+                    # Convert file-based holdings to position-like objects
+                    for symbol, holding_data in file_holdings.items():
+                        file_based_holdings[symbol] = SimpleNamespace(
+                            symbol=symbol,
+                            quantity=holding_data.get("quantity", 0),
+                            avg_price=holding_data.get("average_price", 0.0),
+                            closed_at=None,
+                            opened_at=None,
+                            reentry_count=0,
+                            entry_rsi=None,
+                            initial_entry_price=None,  # File-based holdings don't have initial_entry_price
+                            reentries=None,
+                        )
+            except Exception:
+                pass  # If file-based fallback fails, continue with empty positions
 
         # Fetch live prices using yfinance (broker-agnostic)
-        import yfinance as yf  # noqa: PLC0415
-
         portfolio_value = 0.0
-        for symbol, h in holdings_data.items():
-            qty = h.get("quantity", 0)
-            ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
-            try:
-                stock = yf.Ticker(ticker)
-                live_price = stock.info.get("currentPrice") or stock.info.get("regularMarketPrice")
-                current_price = (
-                    float(live_price) if live_price else float(h.get("current_price", 0))
+        # Process both DB positions and file-based holdings
+        all_holdings_to_process = list(paper_positions) + list(file_based_holdings.values())
+        for position in all_holdings_to_process:
+            qty = position.quantity or 0
+            if qty > 0:
+                # Construct ticker from symbol (add .NS if not present)
+                symbol = position.symbol
+                ticker = (
+                    f"{symbol}.NS"
+                    if not symbol.endswith(".NS") and not symbol.endswith(".BO")
+                    else symbol
                 )
-            except Exception:
-                # Fallback to stored price if live fetch fails
-                current_price = float(h.get("current_price", 0))
-            portfolio_value += qty * current_price
+                # Remove broker suffixes like -EQ, -BE for ticker lookup
+                if "-" in ticker:
+                    ticker = ticker.split("-")[0] + ".NS"
+                try:
+                    stock = yf.Ticker(ticker)
+                    live_price = stock.info.get("currentPrice") or stock.info.get(
+                        "regularMarketPrice"
+                    )
+                    current_price = float(live_price) if live_price else position.avg_price or 0.0
+                except Exception:
+                    # Fallback to avg_price if live fetch fails
+                    current_price = position.avg_price or 0.0
+                portfolio_value += qty * current_price
 
         total_value = account_data["available_cash"] + portfolio_value
 
         # Get realized P&L from stored account (from completed trades)
         realized_pnl = account_data.get("realized_pnl", 0.0)
 
-        # Load target prices from service adapter's active_sell_orders
+        # Validation: Check if account balance matches expected value based on positions
+        # This helps detect inconsistencies between file-based account and DB positions
+        all_positions_for_validation = list(paper_positions) + list(file_based_holdings.values())
+        expected_invested = sum(
+            pos.quantity * pos.avg_price for pos in all_positions_for_validation if pos.quantity > 0
+        )
+        initial_capital = account_data.get("initial_capital", 0.0)
+        expected_cash = initial_capital - expected_invested + realized_pnl
+        actual_cash = account_data.get("available_cash", 0.0)
+        cash_discrepancy = abs(expected_cash - actual_cash)
+
+        if cash_discrepancy > 100.0:  # More than Rs 100 discrepancy
+            logger.warning(
+                f"[PaperTrading] Account balance discrepancy detected for user {current.id}: "
+                f"expected Rs {expected_cash:.2f}, actual Rs {actual_cash:.2f}, "
+                f"difference Rs {cash_discrepancy:.2f}. "
+                f"This may indicate sync issues between file and database."
+            )
+
+        # Load target prices from DATABASE sell orders ONLY (single source of truth)
+        # No file fallback - database is the only source for target prices
         target_prices = {}
         try:
-            # Try to load active sell orders from service adapter storage
-            import json  # noqa: PLC0415
+            if db:
+                orders_repo = OrdersRepository(db)
+                # Get all active sell orders for this user (PENDING or ONGOING)
+                active_sell_orders, _ = orders_repo.list(
+                    current.id,
+                    side="sell",
+                    status=[OrderStatus.PENDING, OrderStatus.ONGOING],
+                )
 
-            sell_orders_file = store_path / "active_sell_orders.json"
-            if sell_orders_file.exists():
-                with open(sell_orders_file) as f:
-                    active_sell_orders = json.load(f)
-                    for symbol, order_info in active_sell_orders.items():
-                        target_prices[symbol] = float(order_info.get("target_price", 0))
-                        logger.debug(f"Loaded target for {symbol}: {target_prices[symbol]}")
+                # Extract target prices from sell orders
+                for order in active_sell_orders:
+                    if order.price and order.price > 0:
+                        # Store by both full symbol and base symbol for flexible lookup
+                        symbol = order.symbol
+                        base_symbol = extract_base_symbol(symbol).upper()
+
+                        # Prefer full symbol if available, fallback to base symbol
+                        if symbol not in target_prices:
+                            target_prices[symbol] = float(order.price)
+                        if base_symbol not in target_prices:
+                            target_prices[base_symbol] = float(order.price)
+
+                        logger.debug(
+                            f"Loaded target from DB sell order: {symbol} (base: {base_symbol}) = {order.price}"
+                        )
         except Exception as e:
-            logger.debug(f"Could not load target prices: {e}")
+            logger.debug(f"Could not load target prices from database: {e}")
 
         # Helper function to get live price
         def get_live_price(symbol: str) -> float | None:
@@ -250,10 +464,6 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         def calculate_ema9_target(symbol: str) -> float | None:
             """Calculate EMA9 target for a holding"""
             try:
-                import pandas_ta as ta  # noqa: PLC0415
-
-                from core.data_fetcher import fetch_ohlcv_yf  # noqa: PLC0415
-
                 ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
                 data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
 
@@ -269,28 +479,49 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
                 return None
 
-        # Holdings (calculate unrealized P&L with live prices)
+        # Holdings (calculate unrealized P&L with live prices) - from database
         holdings = []
         unrealized_pnl_total = 0.0
 
-        for symbol, holding in sorted(holdings_data.items()):
-            qty = holding.get("quantity", 0)
-            avg_price = float(holding.get("average_price", 0))
+        # Include both DB positions and file-based holdings
+        all_holdings_for_display = sorted(
+            list(paper_positions) + list(file_based_holdings.values()),
+            key=lambda p: p.symbol,
+        )
+        for position in all_holdings_for_display:
+            symbol = position.symbol
+            qty = position.quantity or 0
+            avg_price = position.avg_price or 0.0
 
-            # Fetch live price, fallback to stored price if fetch fails
-            current_price = get_live_price(symbol)
+            # Skip positions with zero quantity
+            if qty <= 0:
+                continue
+
+            # Construct ticker for price lookup (add .NS if not present)
+            ticker = symbol
+            if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+                # Remove broker suffixes like -EQ, -BE for ticker lookup
+                base_symbol = symbol.split("-")[0] if "-" in symbol else symbol
+                ticker = f"{base_symbol}.NS"
+            # Remove broker suffixes from existing ticker
+            elif "-" in ticker:
+                base_symbol = ticker.split("-")[0]
+                if base_symbol.endswith(".NS") or base_symbol.endswith(".BO"):
+                    ticker = base_symbol
+                else:
+                    ticker = f"{base_symbol}.NS"
+
+            # Fetch live price, fallback to avg_price if fetch fails
+            current_price = get_live_price(symbol.split("-")[0] if "-" in symbol else symbol)
             if current_price is None:
-                current_price = float(holding.get("current_price", 0))
-                logger.debug(f"Using stored price for {symbol}: {current_price}")
+                current_price = avg_price
+                logger.debug(f"Using avg_price for {symbol}: {current_price}")
 
             cost_basis = qty * avg_price
             market_value = qty * current_price
             pnl = market_value - cost_basis
-            # P&L percentage: if quantity is 0, return 0% (no position)
-            # Otherwise, calculate based on price change
-            if qty == 0:
-                pnl_pct = 0.0
-            elif avg_price > 0:
+            # P&L percentage: calculate based on price change
+            if avg_price > 0:
                 pnl_pct = (current_price - avg_price) / avg_price * 100
             else:
                 pnl_pct = 0.0
@@ -298,67 +529,43 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
 
-            # Get target price (frozen EMA9) if available, or calculate it
-            target_price = target_prices.get(symbol)
+            # Get target price (frozen EMA9) from database sell order if available
+            # Try both full symbol and base symbol for target price lookup
+            base_symbol_for_target = symbol.split("-")[0] if "-" in symbol else symbol
+            target_price = target_prices.get(symbol)  # Try full symbol first
             if target_price is None:
-                # Calculate on-the-fly if no sell order placed yet
-                target_price = calculate_ema9_target(symbol)
+                target_price = target_prices.get(base_symbol_for_target)  # Try base symbol
+
+            # ONLY calculate EMA9 if NO sell order exists (don't recalculate if order exists)
+            if target_price is None:
+                # Calculate on-the-fly only if no sell order placed yet
+                target_price = calculate_ema9_target(base_symbol_for_target)
+                logger.debug(
+                    f"Calculated EMA9 target for {base_symbol_for_target} (no sell order found): {target_price}"
+                )
 
             distance_to_target = None
             if target_price and current_price > 0:
                 distance_to_target = (target_price - current_price) / current_price * 100
 
-            # Fetch reentry details from database positions table
-            reentry_count = 0
+            # Get reentry details from position (already loaded from database)
+            reentry_count = position.reentry_count or 0
+            entry_rsi = position.entry_rsi
+            initial_entry_price = position.initial_entry_price
+
+            # Parse reentries JSON field
             reentries_list = None
-            entry_rsi = None
-            initial_entry_price = None
-
-            try:
-                from src.infrastructure.persistence.positions_repository import (  # noqa: PLC0415
-                    PositionsRepository,
-                )
-
-                positions_repo = PositionsRepository(db)
-                # Normalize symbol: remove .NS/.BO suffix and -EQ/-BE suffix,
-                # convert to uppercase
-                normalized_symbol = symbol.upper().replace(".NS", "").replace(".BO", "")
-                # Remove broker-specific suffixes like -EQ, -BE
-                if "-" in normalized_symbol:
-                    normalized_symbol = normalized_symbol.split("-")[0]
-
-                position = positions_repo.get_by_symbol(current.id, normalized_symbol)
-                if position:
-                    reentry_count = position.reentry_count or 0
-                    entry_rsi = position.entry_rsi
-                    initial_entry_price = position.initial_entry_price
-
-                    # Parse reentries JSON field
-                    if position.reentries:
-                        if isinstance(position.reentries, dict):
-                            # New format: {"reentries": [...], "current_cycle": ...}
-                            reentries_list = position.reentries.get("reentries", [])
-                        elif isinstance(position.reentries, list):
-                            # Old format: direct array
-                            reentries_list = position.reentries
-                        else:
-                            reentries_list = []
-                    else:
-                        reentries_list = []
-
-                    logger.debug(
-                        f"Found reentry data for {symbol} "
-                        f"(normalized: {normalized_symbol}): "
-                        f"count={reentry_count}, "
-                        f"reentries={len(reentries_list) if reentries_list else 0}"
-                    )
+            if position.reentries:
+                if isinstance(position.reentries, dict):
+                    # New format: {"reentries": [...], "current_cycle": ...}
+                    reentries_list = position.reentries.get("reentries", [])
+                elif isinstance(position.reentries, list):
+                    # Old format: direct array
+                    reentries_list = position.reentries
                 else:
-                    logger.debug(
-                        f"No position found for {symbol} "
-                        f"(normalized: {normalized_symbol}) in database"
-                    )
-            except Exception as e:
-                logger.debug(f"Could not fetch reentry details for {symbol}: {e}")
+                    reentries_list = []
+            else:
+                reentries_list = []
 
             holdings.append(
                 PaperTradingHolding(
@@ -403,57 +610,134 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             return_percentage=return_pct,
         )
 
-        # Recent orders (last 50)
-        orders_data = store.get_all_orders()
-        orders_data.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        # Recent orders - read from database instead of file (with pagination)
+        orders_repo = OrdersRepository(db)
+        try:
+            all_orders, _ = orders_repo.list(user_id=current.id)
+
+            # Filter for paper trading orders and sort by placed_at descending
+            db_orders = [
+                o
+                for o in all_orders
+                if hasattr(o, "trade_mode") and o.trade_mode and o.trade_mode == TradeMode.PAPER
+            ]
+            db_orders.sort(key=lambda o: o.placed_at if o.placed_at else datetime.min, reverse=True)
+
+            # Apply pagination
+            total_orders_count = len(db_orders)
+            offset = (page - 1) * page_size
+            paginated_orders = db_orders[offset : offset + page_size]
+            total_pages = (
+                (total_orders_count + page_size - 1) // page_size if total_orders_count > 0 else 0
+            )
+        except Exception as e:
+            logger.error(f"Error fetching orders from database: {e}", exc_info=True)
+            paginated_orders = []
+            all_orders = []
+            total_orders_count = 0
+            total_pages = 0
 
         recent_orders = []
-        for order in orders_data[:50]:
-            recent_orders.append(
-                PaperTradingOrder(
-                    order_id=order.get("order_id", ""),
-                    symbol=order.get("symbol", ""),
-                    transaction_type=order.get("transaction_type", ""),
-                    quantity=order.get("quantity", 0),
-                    order_type=order.get("order_type", ""),
-                    status=order.get("status", ""),
-                    execution_price=order.get("executed_price")  # Fixed: was "execution_price"
-                    or order.get("price")  # For LIMIT orders
-                    or None,
-                    created_at=order.get("created_at", ""),
-                    executed_at=order.get("executed_at"),
-                    metadata=order.get("metadata"),  # Include order metadata
+        for db_order in paginated_orders:
+            try:
+                # Map database status to UI status
+                status_map = {
+                    "pending": "OPEN",  # PENDING orders shown as OPEN in UI
+                    "ongoing": "OPEN",  # ONGOING orders shown as OPEN in UI
+                    "closed": "COMPLETE",
+                    "cancelled": "CANCELLED",
+                    "failed": "FAILED",
+                }
+                status_value = (
+                    db_order.status.value.lower()
+                    if hasattr(db_order.status, "value")
+                    else str(db_order.status).lower()
                 )
-            )
+                ui_status = status_map.get(status_value, status_value.upper())
 
-        # Order statistics
-        stats = reporter.order_statistics()
-        total_orders = stats.get("total_orders", 0)
-        success_rate = (
-            (stats.get("completed_orders", 0) / total_orders * 100) if total_orders > 0 else 0.0
-        )
+                # Get execution price (avg_price if executed, price if pending)
+                execution_price = db_order.avg_price if db_order.avg_price else db_order.price
+
+                recent_orders.append(
+                    PaperTradingOrder(
+                        order_id=db_order.broker_order_id or db_order.order_id or "",
+                        symbol=db_order.symbol or "",
+                        transaction_type=(
+                            db_order.side.upper() if db_order.side else "BUY"
+                        ),  # 'buy' or 'sell' -> 'BUY' or 'SELL'
+                        quantity=int(db_order.quantity) if db_order.quantity else 0,
+                        order_type=(
+                            db_order.order_type.upper() if db_order.order_type else "MARKET"
+                        ),  # 'market' or 'limit' -> 'MARKET' or 'LIMIT'
+                        status=ui_status,
+                        execution_price=execution_price,
+                        created_at=db_order.placed_at.isoformat() if db_order.placed_at else "",
+                        executed_at=db_order.filled_at.isoformat() if db_order.filled_at else None,
+                        metadata=getattr(db_order, "order_metadata", None)
+                        or getattr(db_order, "metadata", None),  # Include order metadata
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Error processing order {db_order.id if hasattr(db_order, 'id') else 'unknown'}: {e}",
+                    exc_info=True,
+                )
+                continue
+
+        # Order statistics - calculate from database orders
+        all_db_orders = [
+            o
+            for o in all_orders
+            if hasattr(o, "trade_mode") and o.trade_mode and o.trade_mode == TradeMode.PAPER
+        ]
+
+        total_orders = len(all_db_orders)
+        buy_orders = sum(1 for o in all_db_orders if o.side.lower() == "buy")
+        sell_orders = sum(1 for o in all_db_orders if o.side.lower() == "sell")
+
+        def get_status_value(order):
+            """Safely get status value from order"""
+            if hasattr(order.status, "value"):
+                return order.status.value.lower()
+            return str(order.status).lower()
+
+        completed_orders = [o for o in all_db_orders if get_status_value(o) == "closed"]
+        pending_orders = [o for o in all_db_orders if get_status_value(o) in ["pending", "ongoing"]]
+        cancelled_orders = [o for o in all_db_orders if get_status_value(o) == "cancelled"]
+        rejected_orders = [o for o in all_db_orders if get_status_value(o) == "failed"]
+
+        success_rate = (len(completed_orders) / total_orders * 100) if total_orders > 0 else 0.0
 
         # Count re-entry orders (orders with entry_type="REENTRY" in metadata)
         reentry_count = sum(
-            1 for order in orders_data if order.get("metadata", {}).get("entry_type") == "REENTRY"
+            1
+            for db_order in all_db_orders
+            if getattr(db_order, "order_metadata", None)
+            and getattr(db_order, "order_metadata", {}).get("entry_type") == "REENTRY"
         )
 
         order_statistics = {
             "total_orders": total_orders,
-            "buy_orders": stats.get("buy_orders", 0),
-            "sell_orders": stats.get("sell_orders", 0),
-            "completed_orders": stats.get("completed_orders", 0),
-            "pending_orders": stats.get("pending_orders", 0),
-            "cancelled_orders": stats.get("cancelled_orders", 0),
-            "rejected_orders": stats.get("rejected_orders", 0),
+            "buy_orders": buy_orders,
+            "sell_orders": sell_orders,
+            "completed_orders": len(completed_orders),
+            "pending_orders": len(pending_orders),
+            "cancelled_orders": len(cancelled_orders),
+            "rejected_orders": len(rejected_orders),
             "success_rate": success_rate,
             "reentry_orders": reentry_count,
         }
 
-        return PaperTradingPortfolio(
+        return PaginatedPaperTradingPortfolio(
             account=account,
             holdings=holdings,
-            recent_orders=recent_orders,
+            recent_orders=PaginatedPaperTradingOrders(
+                items=recent_orders,
+                total=total_orders_count,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+            ),
             order_statistics=order_statistics,
         )
 
@@ -465,11 +749,27 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {str(e)}") from e
 
 
-@router.get("/history", response_model=TradeHistory)
+@router.get("/history", response_model=PaginatedTradeHistory)
 def get_paper_trading_history(  # noqa: PLR0915
+    positions_page: Annotated[
+        int,
+        Query(ge=1, description="Page number for closed positions (1-based)"),
+    ] = 1,
+    positions_page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of closed positions per page"),
+    ] = 10,
+    transactions_page: Annotated[
+        int,
+        Query(ge=1, description="Page number for transactions (1-based)"),
+    ] = 1,
+    transactions_page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of transactions per page"),
+    ] = 10,
     current: Users = Depends(get_current_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
-) -> TradeHistory:
+) -> PaginatedTradeHistory:
     """
     Get complete paper trading transaction history
 
@@ -485,7 +785,7 @@ def get_paper_trading_history(  # noqa: PLR0915
 
         # Build transactions from Orders
         fee_rate = getattr(PnlCalculationService, "DEFAULT_FEE_RATE", 0.0)
-        orders = orders_repo.list(current.id)
+        orders, _ = orders_repo.list(current.id)
         transactions_db: list[PaperTradingTransaction] = []
         for o in orders:
             try:
@@ -512,8 +812,6 @@ def get_paper_trading_history(  # noqa: PLR0915
 
         # Build closed positions from Positions (strictly from Positions table)
         closed_positions_db: list[ClosedPosition] = []
-        from src.infrastructure.db.models import Positions as PositionsModel
-
         db_positions = (
             db.query(PositionsModel)
             .filter(
@@ -601,21 +899,51 @@ def get_paper_trading_history(  # noqa: PLR0915
             except Exception:
                 continue
 
-        # Use only DB-backed trade history; no file-based fallback
-        transactions_out = transactions_db
-        closed_positions_out = closed_positions_db
+        # Apply pagination to closed positions
+        closed_positions_sorted = sorted(
+            closed_positions_db,
+            key=lambda p: p.sell_date,
+            reverse=True,
+        )
+        total_positions_count = len(closed_positions_sorted)
+        positions_offset = (positions_page - 1) * positions_page_size
+        paginated_positions = closed_positions_sorted[
+            positions_offset : positions_offset + positions_page_size
+        ]
+        positions_total_pages = (
+            (total_positions_count + positions_page_size - 1) // positions_page_size
+            if total_positions_count > 0
+            else 0
+        )
 
-        # Upsert PnL from whichever source we used
-        _upsert_pnl_from_closed_positions(current.id, closed_positions_out, db)
+        # Apply pagination to transactions
+        transactions_sorted = sorted(
+            transactions_db,
+            key=lambda t: t.timestamp,
+            reverse=True,
+        )
+        total_transactions_count = len(transactions_sorted)
+        transactions_offset = (transactions_page - 1) * transactions_page_size
+        paginated_transactions = transactions_sorted[
+            transactions_offset : transactions_offset + transactions_page_size
+        ]
+        transactions_total_pages = (
+            (total_transactions_count + transactions_page_size - 1) // transactions_page_size
+            if total_transactions_count > 0
+            else 0
+        )
 
-        total_trades = len(closed_positions_out)
-        profitable_trades = sum(1 for p in closed_positions_out if p.realized_pnl > 0)
-        losing_trades = sum(1 for p in closed_positions_out if p.realized_pnl < 0)
-        breakeven_trades = sum(1 for p in closed_positions_out if p.realized_pnl == 0)
+        # Upsert PnL from all closed positions (before pagination)
+        _upsert_pnl_from_closed_positions(current.id, closed_positions_db, db)
 
-        total_profit = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl > 0)
-        total_loss = sum(p.realized_pnl for p in closed_positions_out if p.realized_pnl < 0)
-        net_pnl = sum(p.realized_pnl for p in closed_positions_out)
+        total_trades = len(closed_positions_db)
+        profitable_trades = sum(1 for p in closed_positions_db if p.realized_pnl > 0)
+        losing_trades = sum(1 for p in closed_positions_db if p.realized_pnl < 0)
+        breakeven_trades = sum(1 for p in closed_positions_db if p.realized_pnl == 0)
+
+        total_profit = sum(p.realized_pnl for p in closed_positions_db if p.realized_pnl > 0)
+        total_loss = sum(p.realized_pnl for p in closed_positions_db if p.realized_pnl < 0)
+        net_pnl = sum(p.realized_pnl for p in closed_positions_db)
 
         win_rate = (profitable_trades / total_trades * 100) if total_trades > 0 else 0.0
         avg_profit = total_profit / profitable_trades if profitable_trades > 0 else 0.0
@@ -632,12 +960,24 @@ def get_paper_trading_history(  # noqa: PLR0915
             "net_pnl": net_pnl,
             "avg_profit_per_trade": avg_profit,
             "avg_loss_per_trade": avg_loss,
-            "total_transactions": len(transactions_out or []),
+            "total_transactions": len(transactions_db),
         }
 
-        return TradeHistory(
-            transactions=transactions_out or [],
-            closed_positions=closed_positions_out or [],
+        return PaginatedTradeHistory(
+            transactions=PaginatedTransactions(
+                items=paginated_transactions,
+                total=total_transactions_count,
+                page=transactions_page,
+                page_size=transactions_page_size,
+                total_pages=transactions_total_pages,
+            ),
+            closed_positions=PaginatedClosedPositions(
+                items=paginated_positions,
+                total=total_positions_count,
+                page=positions_page,
+                page_size=positions_page_size,
+                total_pages=positions_total_pages,
+            ),
             statistics=statistics,
         )
 

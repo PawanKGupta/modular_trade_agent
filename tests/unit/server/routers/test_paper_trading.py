@@ -9,6 +9,20 @@ from server.app.routers import paper_trading
 from src.infrastructure.db.models import UserRole
 
 
+@pytest.fixture(autouse=True)
+def _no_network_price_and_history_fetch(monkeypatch):
+    """Prevent unit tests from hitting live price/history sources.
+
+    Individual tests can still override these via patch().
+    """
+
+    def _dummy_ticker(_symbol: str):
+        return SimpleNamespace(info={})
+
+    monkeypatch.setattr(paper_trading.yf, "Ticker", _dummy_ticker, raising=True)
+    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *a, **k: None, raising=True)
+
+
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
@@ -90,7 +104,7 @@ def test_get_paper_trading_portfolio_path_not_exists(monkeypatch, tmp_path):
     assert result.account.initial_capital == 0.0
     assert result.account.available_cash == 0.0
     assert len(result.holdings) == 0
-    assert len(result.recent_orders) == 0
+    assert len(result.recent_orders.items) == 0
     assert result.order_statistics["total_orders"] == 0
 
 
@@ -163,6 +177,39 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Router now reads recent orders from the database; stub OrdersRepository.list()
+    # to return DB-like objects for paper-trading orders.
+    from datetime import datetime  # noqa: PLC0415
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            orders = [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    order_id="order1",
+                    broker_order_id=None,
+                    symbol="RELIANCE.NS",
+                    side="buy",
+                    quantity=10,
+                    order_type="market",
+                    status=SimpleNamespace(value="closed"),
+                    avg_price=2500.0,
+                    price=None,
+                    placed_at=datetime(2025, 1, 1, 10, 0, 0),
+                    filled_at=datetime(2025, 1, 1, 10, 1, 0),
+                    trade_mode=paper_trading.TradeMode.PAPER,
+                    order_metadata=None,
+                    metadata=None,
+                )
+            ]
+            return orders, len(orders)
+
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+
     # Mock yfinance
     mock_ticker = MagicMock()
     mock_ticker.info = {"currentPrice": 2600.0}
@@ -170,7 +217,7 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
     def mock_yf_ticker(symbol):
         return mock_ticker
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -194,8 +241,8 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
         assert len(result.holdings) == 1
         assert result.holdings[0].symbol == "RELIANCE.NS"
         assert result.holdings[0].quantity == 10
-        assert len(result.recent_orders) == 1
-        assert result.recent_orders[0].order_id == "order1"
+        assert len(result.recent_orders.items) == 1
+        assert result.recent_orders.items[0].order_id == "order1"
 
 
 def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
@@ -231,8 +278,12 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    # Mock yfinance to fail
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    # Mock yfinance to fail (patch the router module alias directly)
+    # and avoid any historical-data fetches during target calculations.
+    with (
+        patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
+        patch("server.app.routers.paper_trading.fetch_ohlcv_yf", return_value=None),
+    ):
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {}  # No price info
         mock_ticker_class.return_value = mock_ticker_instance
@@ -244,8 +295,8 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
 
         result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
 
-        # Should fallback to stored price
-        assert result.holdings[0].current_price == 2600.0
+        # Router falls back to avg_price when live fetch fails
+        assert result.holdings[0].current_price == 2500.0
 
 
 def test_get_paper_trading_portfolio_with_target_prices(monkeypatch):
@@ -282,7 +333,7 @@ def test_get_paper_trading_portfolio_with_target_prices(monkeypatch):
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock yfinance
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -344,8 +395,8 @@ def test_get_paper_trading_history_path_not_exists(mock_db, monkeypatch):
 
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
-    assert len(result.transactions) == 0
-    assert len(result.closed_positions) == 0
+    assert len(result.transactions.items) == 0
+    assert len(result.closed_positions.items) == 0
     assert result.statistics["total_trades"] == 0
 
 
@@ -367,8 +418,8 @@ def test_get_paper_trading_history_empty(mock_db, monkeypatch):
 
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
-    assert len(result.transactions) == 0
-    assert len(result.closed_positions) == 0
+    assert len(result.transactions.items) == 0
+    assert len(result.closed_positions.items) == 0
     assert result.statistics["total_trades"] == 0
 
 
@@ -414,8 +465,8 @@ def test_get_paper_trading_history_with_transactions(mock_db, monkeypatch):
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
     # With mocked db returning empty results, expect empty history
-    assert len(result.transactions) == 0
-    assert len(result.closed_positions) == 0
+    assert len(result.transactions.items) == 0
+    assert len(result.closed_positions.items) == 0
     assert result.statistics["total_trades"] == 0
 
 
@@ -481,8 +532,8 @@ def test_get_paper_trading_history_multiple_positions(mock_db, monkeypatch):
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
     # With mocked db returning empty results, expect empty history
-    assert len(result.transactions) == 0
-    assert len(result.closed_positions) == 0
+    assert len(result.transactions.items) == 0
+    assert len(result.closed_positions.items) == 0
     assert result.statistics["total_trades"] == 0
 
 
@@ -528,7 +579,7 @@ def test_get_paper_trading_history_partial_sell(mock_db, monkeypatch):
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
     # With mocked db returning empty results, expect empty history
-    assert len(result.closed_positions) == 0
+    assert len(result.closed_positions.items) == 0
 
 
 @pytest.mark.skip(reason="Monkeypatching Path.exists breaks pytest's internal error reporting")
@@ -596,7 +647,58 @@ def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker"):
+    # Router now calculates order stats from DB orders; stub OrdersRepository.list()
+    # to return paper-trading orders that match the expected stats.
+    from datetime import datetime  # noqa: PLC0415
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            orders = [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    order_id="order1",
+                    broker_order_id=None,
+                    symbol="RELIANCE.NS",
+                    side="buy",
+                    quantity=10,
+                    order_type="market",
+                    status=SimpleNamespace(value="closed"),
+                    avg_price=2500.0,
+                    price=None,
+                    placed_at=datetime(2025, 1, 1, 10, 0, 0),
+                    filled_at=datetime(2025, 1, 1, 10, 1, 0),
+                    trade_mode=paper_trading.TradeMode.PAPER,
+                    order_metadata={"entry_type": "REENTRY"},
+                    metadata=None,
+                ),
+                SimpleNamespace(
+                    id=2,
+                    user_id=user_id,
+                    order_id="order2",
+                    broker_order_id=None,
+                    symbol="TCS.NS",
+                    side="sell",
+                    quantity=5,
+                    order_type="limit",
+                    status=SimpleNamespace(value="pending"),
+                    avg_price=None,
+                    price=3500.0,
+                    placed_at=datetime(2025, 1, 1, 11, 0, 0),
+                    filled_at=None,
+                    trade_mode=paper_trading.TradeMode.PAPER,
+                    order_metadata=None,
+                    metadata=None,
+                ),
+            ]
+            return orders, len(orders)
+
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+
+    with patch("server.app.routers.paper_trading.yf.Ticker"):
 
         def mock_path_exists(self):
             return False if "active_sell_orders.json" in str(self) else True
@@ -648,7 +750,7 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2750.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -704,7 +806,7 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2400.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -754,7 +856,7 @@ def test_get_paper_trading_portfolio_return_percentage_zero_initial_capital(monk
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker"):
+    with patch("server.app.routers.paper_trading.yf.Ticker"):
 
         def mock_path_exists(self):
             return False if "active_sell_orders.json" in str(self) else True
@@ -808,7 +910,7 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
 
     call_count = [0]
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
 
         def create_mock_ticker(symbol):
             call_count[0] += 1
@@ -887,7 +989,7 @@ def test_get_paper_trading_portfolio_portfolio_value_calculation(monkeypatch):
 
     call_count = [0]
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
 
         def create_mock_ticker(ticker_symbol):
             call_count[0] += 1
@@ -949,7 +1051,7 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -1012,7 +1114,7 @@ def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
 
     call_count = [0]
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
 
         def create_mock_ticker(ticker_symbol):
             call_count[0] += 1
@@ -1087,7 +1189,7 @@ def test_get_paper_trading_portfolio_holding_pnl_percentage_calculation(monkeypa
 
     call_count = [0]
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
 
         def create_mock_ticker(ticker_symbol):
             call_count[0] += 1
@@ -1158,7 +1260,7 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -1211,7 +1313,7 @@ def test_get_paper_trading_portfolio_market_value_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -1264,7 +1366,7 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -1317,7 +1419,7 @@ def test_get_paper_trading_portfolio_zero_quantity_holding(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance
@@ -1329,12 +1431,8 @@ def test_get_paper_trading_portfolio_zero_quantity_holding(monkeypatch):
 
         result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
 
-        # With zero quantity, all values should be zero
-        holding = result.holdings[0]
-        assert holding.cost_basis == 0.0
-        assert holding.market_value == 0.0
-        assert holding.pnl == 0.0
-        assert holding.pnl_percentage == 0.0
+        # Router skips positions with qty <= 0
+        assert len(result.holdings) == 0
         assert result.account.portfolio_value == 0.0
 
 
@@ -1372,7 +1470,7 @@ def test_get_paper_trading_portfolio_zero_average_price(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
         mock_ticker_class.return_value = mock_ticker_instance

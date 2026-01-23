@@ -46,7 +46,10 @@ class TestSchedulerThreadSafety:
                 mock_session_local.return_value = mock_thread_db
 
                 # Mock get_user_logger to avoid actual logger initialization
-                with patch("src.application.services.multi_user_trading_service.get_user_logger"):
+                with patch(
+                    "src.application.services.multi_user_trading_service.get_user_logger",
+                    create=True,
+                ):
                     # Start scheduler in a thread
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
@@ -94,7 +97,8 @@ class TestSchedulerThreadSafety:
                     mock_repo_class.return_value = mock_repo
 
                     with patch(
-                        "src.application.services.multi_user_trading_service.get_user_logger"
+                        "src.application.services.multi_user_trading_service.get_user_logger",
+                        create=True,
                     ):
                         # Run scheduler for a short time
                         thread = threading.Thread(
@@ -135,7 +139,10 @@ class TestSchedulerThreadSafety:
                 mock_repo.get_by_task_name.return_value = mock_schedule
                 mock_repo_class.return_value = mock_repo
 
-                with patch("src.application.services.multi_user_trading_service.get_user_logger"):
+                with patch(
+                    "src.application.services.multi_user_trading_service.get_user_logger",
+                    create=True,
+                ):
                     # This should not raise InvalidRequestError or session conflicts
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
@@ -163,7 +170,10 @@ class TestSchedulerThreadSafety:
             return mock_session
 
         with patch("src.infrastructure.db.session.SessionLocal", side_effect=create_session):
-            with patch("src.application.services.multi_user_trading_service.get_user_logger"):
+            with patch(
+                "src.application.services.multi_user_trading_service.get_user_logger",
+                create=True,
+            ):
                 # Start two scheduler threads
                 thread1 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,

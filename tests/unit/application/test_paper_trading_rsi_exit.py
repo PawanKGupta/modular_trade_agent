@@ -40,6 +40,7 @@ def paper_adapter(db_session, test_user):
     ):
         mock_broker = MagicMock()
         mock_broker.connect.return_value = True
+        mock_broker.check_and_execute_pending_orders.return_value = {"executed": 0, "pending": 0}
         mock_broker.get_holdings.return_value = []
         mock_broker.get_available_balance.return_value = MagicMock(amount=100000.0)
         mock_broker_class.return_value = mock_broker
@@ -289,9 +290,9 @@ class TestRSIExitConditionCheckPaper:
 
             paper_adapter._monitor_sell_orders()
 
-        # Verify order was removed (RSI exit triggered)
+        # Current behavior: RSI exit triggers a market sell attempt and
+        # removes the order from tracking.
         assert "RELIANCE" not in paper_adapter.active_sell_orders
-        # Verify market order was placed
         assert paper_adapter.broker.place_order.called
 
     @patch("core.data_fetcher.fetch_ohlcv_yf")
@@ -564,5 +565,6 @@ class TestRSIExitErrorHandlingPaper:
         # Should handle failure gracefully
         paper_adapter._monitor_sell_orders()
 
-        # Verify place_order was called (even if it returns None)
+        # Current behavior: if place_order does not raise, the order is removed from tracking.
+        assert "RELIANCE" not in paper_adapter.active_sell_orders
         assert paper_adapter.broker.place_order.called

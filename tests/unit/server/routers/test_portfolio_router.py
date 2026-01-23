@@ -1,6 +1,10 @@
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
+from server.app.routers import broker as broker_router
 from server.app.routers import paper_trading as paper_trading_router
 from server.app.routers import portfolio as portfolio_router
 from src.infrastructure.db.models import TradeMode
@@ -115,7 +119,7 @@ def test_create_portfolio_snapshot_inserts_record(monkeypatch):
     monkeypatch.setattr(
         paper_trading_router,
         "get_paper_trading_portfolio",
-        lambda db, current: _make_portfolio_source(),
+        lambda page=1, page_size=10, db=None, current=None: _make_portfolio_source(),
     )
 
     class PositionsQuery:
@@ -165,3 +169,280 @@ def test_create_portfolio_snapshot_inserts_record(monkeypatch):
     assert isinstance(fake_db.added, portfolio_router.PortfolioSnapshot)
     assert fake_db.added.user_id == 5
     assert fake_db.added.open_positions_count == 1
+
+
+def test_create_portfolio_snapshot_updates_existing_record(monkeypatch):
+    _patch_settings_repo(monkeypatch, TradeMode.PAPER)
+    monkeypatch.setattr(portfolio_router, "PortfolioSnapshot", DummyPortfolioSnapshot)
+    monkeypatch.setattr(portfolio_router, "Positions", DummyPositions)
+    monkeypatch.setattr(
+        paper_trading_router,
+        "get_paper_trading_portfolio",
+        lambda page=1, page_size=10, db=None, current=None: _make_portfolio_source(),
+    )
+
+    existing = DummyPortfolioSnapshot(
+        user_id=5,
+        date=date(2025, 1, 10),
+        total_value=0.0,
+        invested_value=0.0,
+        available_cash=0.0,
+        unrealized_pnl=0.0,
+        realized_pnl=0.0,
+        open_positions_count=0,
+        closed_positions_count=0,
+        total_return=0.0,
+        daily_return=0.0,
+        snapshot_type="eod",
+    )
+
+    class PositionsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def count(self):
+            return 2
+
+    class SnapshotQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one_or_none(self):
+            return existing
+
+    class FakeSnapshotDB:
+        def __init__(self):
+            self.added = []
+            self.committed = 0
+            self.refreshed = []
+
+        def query(self, model):
+            if model is portfolio_router.Positions:
+                return PositionsQuery()
+            return SnapshotQuery()
+
+        def add(self, obj):
+            self.added.append(obj)
+
+        def commit(self):
+            self.committed += 1
+
+        def refresh(self, obj):
+            self.refreshed.append(obj)
+
+    fake_db = FakeSnapshotDB()
+
+    response = portfolio_router.create_portfolio_snapshot(
+        snapshot_date=date(2025, 1, 10),
+        db=fake_db,
+        current=SimpleNamespace(id=5),
+    )
+
+    assert response["status"] == "updated"
+    assert response["date"] == "2025-01-10"
+    assert fake_db.committed == 1
+    assert existing.total_value == 700.0
+    assert existing.invested_value == 500.0
+    assert existing.available_cash == 150.0
+    assert existing.unrealized_pnl == 30.0
+    assert existing.realized_pnl == 20.0
+    assert existing.open_positions_count == 1
+    assert existing.closed_positions_count == 2
+
+
+def test_create_portfolio_snapshot_broker_mode_uses_broker_portfolio(monkeypatch):
+    _patch_settings_repo(monkeypatch, TradeMode.BROKER)
+    monkeypatch.setattr(portfolio_router, "PortfolioSnapshot", DummyPortfolioSnapshot)
+    monkeypatch.setattr(portfolio_router, "Positions", DummyPositions)
+    monkeypatch.setattr(
+        broker_router,
+        "get_broker_portfolio",
+        lambda db=None, current=None: _make_portfolio_source(),
+    )
+
+    class PositionsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def count(self):
+            return 0
+
+    class SnapshotQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one_or_none(self):
+            return None
+
+    class FakeSnapshotDB:
+        def __init__(self):
+            self.added = None
+            self.committed = 0
+
+        def query(self, model):
+            if model is portfolio_router.Positions:
+                return PositionsQuery()
+            return SnapshotQuery()
+
+        def add(self, obj):
+            self.added = obj
+
+        def commit(self):
+            self.committed += 1
+
+    fake_db = FakeSnapshotDB()
+
+    response = portfolio_router.create_portfolio_snapshot(
+        snapshot_date=date(2025, 1, 10),
+        db=fake_db,
+        current=SimpleNamespace(id=5),
+    )
+
+    assert response["status"] == "created"
+    assert fake_db.committed == 1
+    assert fake_db.added.open_positions_count == 1
+
+
+@pytest.mark.parametrize("status_code", [404, 500])
+def test_create_portfolio_snapshot_paper_http_exception_creates_empty(monkeypatch, status_code: int):
+    _patch_settings_repo(monkeypatch, TradeMode.PAPER)
+    monkeypatch.setattr(portfolio_router, "PortfolioSnapshot", DummyPortfolioSnapshot)
+    monkeypatch.setattr(portfolio_router, "Positions", DummyPositions)
+
+    def _raise(*_a, **_k):
+        raise HTTPException(status_code=status_code, detail="x")
+
+    monkeypatch.setattr(paper_trading_router, "get_paper_trading_portfolio", _raise)
+
+    class PositionsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def count(self):
+            return 0
+
+    class SnapshotQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one_or_none(self):
+            return None
+
+    class FakeSnapshotDB:
+        def __init__(self):
+            self.added = None
+            self.committed = False
+
+        def query(self, model):
+            if model is portfolio_router.Positions:
+                return PositionsQuery()
+            return SnapshotQuery()
+
+        def add(self, obj):
+            self.added = obj
+
+        def commit(self):
+            self.committed = True
+
+    fake_db = FakeSnapshotDB()
+
+    response = portfolio_router.create_portfolio_snapshot(
+        snapshot_date=date(2025, 1, 10),
+        db=fake_db,
+        current=SimpleNamespace(id=5),
+    )
+
+    assert response["status"] == "created"
+    assert fake_db.committed is True
+    assert fake_db.added.open_positions_count == 0
+
+
+def test_create_portfolio_snapshot_paper_http_exception_other_is_reraised(monkeypatch):
+    _patch_settings_repo(monkeypatch, TradeMode.PAPER)
+    monkeypatch.setattr(portfolio_router, "PortfolioSnapshot", DummyPortfolioSnapshot)
+    monkeypatch.setattr(portfolio_router, "Positions", DummyPositions)
+
+    def _raise(*_a, **_k):
+        raise HTTPException(status_code=400, detail="bad")
+
+    monkeypatch.setattr(paper_trading_router, "get_paper_trading_portfolio", _raise)
+
+    class PositionsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def count(self):
+            return 0
+
+    class SnapshotQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one_or_none(self):
+            return None
+
+    class FakeSnapshotDB:
+        def query(self, model):
+            if model is portfolio_router.Positions:
+                return PositionsQuery()
+            return SnapshotQuery()
+
+    with pytest.raises(HTTPException):
+        portfolio_router.create_portfolio_snapshot(
+            snapshot_date=date(2025, 1, 10),
+            db=FakeSnapshotDB(),
+            current=SimpleNamespace(id=5),
+        )
+
+
+def test_create_portfolio_snapshot_paper_generic_exception_creates_empty(monkeypatch):
+    _patch_settings_repo(monkeypatch, TradeMode.PAPER)
+    monkeypatch.setattr(portfolio_router, "PortfolioSnapshot", DummyPortfolioSnapshot)
+    monkeypatch.setattr(portfolio_router, "Positions", DummyPositions)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("fs")
+
+    monkeypatch.setattr(paper_trading_router, "get_paper_trading_portfolio", _boom)
+
+    class PositionsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def count(self):
+            return 0
+
+    class SnapshotQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def one_or_none(self):
+            return None
+
+    class FakeSnapshotDB:
+        def __init__(self):
+            self.added = None
+            self.committed = False
+
+        def query(self, model):
+            if model is portfolio_router.Positions:
+                return PositionsQuery()
+            return SnapshotQuery()
+
+        def add(self, obj):
+            self.added = obj
+
+        def commit(self):
+            self.committed = True
+
+    fake_db = FakeSnapshotDB()
+
+    response = portfolio_router.create_portfolio_snapshot(
+        snapshot_date=date(2025, 1, 10),
+        db=fake_db,
+        current=SimpleNamespace(id=5),
+    )
+
+    assert response["status"] == "created"
+    assert fake_db.committed is True
+    assert fake_db.added.open_positions_count == 0

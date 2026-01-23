@@ -39,10 +39,20 @@ export interface ListOrdersParams {
 	reason?: string;
 	from_date?: string;
 	to_date?: string;
+	page?: number;
+	page_size?: number;
 }
 
-export async function listOrders(params?: ListOrdersParams): Promise<Order[]> {
-	const { data } = await api.get<Order[]>('/user/orders/', { params });
+export interface PaginatedOrdersResponse {
+	items: Order[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
+export async function listOrders(params?: ListOrdersParams): Promise<PaginatedOrdersResponse> {
+	const { data } = await api.get<PaginatedOrdersResponse>('/user/orders/', { params });
 	return data;
 }
 

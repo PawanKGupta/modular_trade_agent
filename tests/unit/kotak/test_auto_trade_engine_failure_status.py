@@ -74,7 +74,8 @@ class TestFailureStatusPromotion:
         }
 
         # Mock no existing failed orders
-        auto_trade_engine.orders_repo.list.return_value = []
+        # Some code paths expect OrdersRepository.list() to return (items, total_count)
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_new_order = Mock()
         mock_new_order.id = 1
         auto_trade_engine.orders_repo.create_amo.return_value = mock_new_order
@@ -103,7 +104,8 @@ class TestFailureStatusPromotion:
         }
 
         # Mock no existing failed orders
-        auto_trade_engine.orders_repo.list.return_value = []
+        # Some code paths expect OrdersRepository.list() to return (items, total_count)
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_new_order = Mock()
         mock_new_order.id = 1
         auto_trade_engine.orders_repo.create_amo.return_value = mock_new_order
@@ -136,7 +138,7 @@ class TestFailureStatusPromotion:
         mock_existing_order.id = 1
         mock_existing_order.symbol = "RELIANCE"
         mock_existing_order.status = DbOrderStatus.FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_existing_order], 1)
         auto_trade_engine.orders_repo.mark_failed = Mock(return_value=mock_existing_order)
 
         auto_trade_engine._add_failed_order(failed_order)
@@ -158,7 +160,7 @@ class TestFailureStatusPromotion:
         mock_order.id = 1
         mock_order.symbol = "RELIANCE"
         mock_order.status = DbOrderStatus.FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_order], 1)
         auto_trade_engine.orders_repo.mark_cancelled = Mock(return_value=mock_order)
 
         auto_trade_engine._remove_failed_order("RELIANCE")
@@ -225,7 +227,7 @@ class TestFailureStatusPromotion:
         mock_order.retry_count = 1
         mock_order.status = DbOrderStatus.FAILED
 
-        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_order], 1)
 
         failed_orders = auto_trade_engine._get_failed_orders()
 
@@ -250,7 +252,7 @@ class TestFailureStatusPromotion:
         mock_existing_order.id = 1
         mock_existing_order.symbol = "RELIANCE-BE"  # Different suffix
         mock_existing_order.status = DbOrderStatus.FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_existing_order], 1)
         auto_trade_engine.orders_repo.mark_failed = Mock(return_value=mock_existing_order)
 
         auto_trade_engine._add_failed_order(failed_order)
@@ -285,7 +287,7 @@ class TestFailureStatusPromotion:
         }
 
         # Mock no existing orders
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_new_order = Mock()
         auto_trade_engine.orders_repo.create_amo.return_value = mock_new_order
         auto_trade_engine.orders_repo.mark_failed.side_effect = Exception("DB error")
@@ -300,7 +302,7 @@ class TestFailureStatusPromotion:
     def test_remove_failed_order_not_found(self, auto_trade_engine):
         """Test removing failed order when none exists"""
         # Mock no failed orders
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
 
         # Should not raise exception
         auto_trade_engine._remove_failed_order("RELIANCE")

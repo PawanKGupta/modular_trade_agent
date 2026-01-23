@@ -1996,8 +1996,23 @@ class PaperTradingEngineAdapter:
             # This includes ONGOING and CLOSED orders which indicate a position was opened
             from src.infrastructure.db.models import OrderStatus
 
-            today_orders = orders_repo.list(self.user_id, status=None)
-            for order in today_orders:
+            today_orders_result = orders_repo.list(self.user_id, status=None)
+
+            # `OrdersRepository.list()` has returned different shapes over time
+            # (plain list vs (items, total) for pagination). Normalize here.
+            today_orders = today_orders_result
+            if isinstance(today_orders_result, tuple) and today_orders_result:
+                today_orders = today_orders_result[0]
+            elif (
+                isinstance(today_orders_result, list)
+                and len(today_orders_result) == 2
+                and isinstance(today_orders_result[0], list)
+            ):
+                today_orders = today_orders_result[0]
+            elif isinstance(today_orders_result, dict) and "items" in today_orders_result:
+                today_orders = today_orders_result.get("items")
+
+            for order in (today_orders or []):
                 if (
                     order.side == "buy"
                     and order.placed_at

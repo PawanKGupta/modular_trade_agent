@@ -2011,16 +2011,23 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     except (ValueError, TypeError):
                         pass
 
+                # Extract price - only set if > 0 (market orders should have None)
+                price_value = None
+                prc = item.get("prc") or item.get("price")
+                if prc is not None:
+                    try:
+                        prc_float = float(prc)
+                        if prc_float > 0:
+                            price_value = Money.from_float(prc_float)
+                    except (ValueError, TypeError):
+                        pass  # Invalid price, leave as None
+
                 order = Order(
                     symbol=symbol,
                     quantity=int(item.get("qty") or item.get("quantity", 0)),
                     order_type=self._parse_order_type(order_type),
                     transaction_type=self._parse_transaction_type(transaction_type),
-                    price=(
-                        Money.from_float(float(item.get("prc") or item.get("price", 0)))
-                        if (item.get("prc") or item.get("price"))
-                        else None
-                    ),
+                    price=price_value,  # Will be None for market orders or if price is 0/invalid
                     order_id=str(order_id),
                     status=self._parse_order_status(order_status),
                     placed_at=placed_at,

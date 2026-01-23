@@ -161,7 +161,7 @@ class TestCategory1HappyPathPaperTrading:
         assert placed_count >= 1
 
         # Verify buy order in database (paper trading may create order immediately)
-        all_orders = orders_repo.list(user_id)
+        all_orders, _ = orders_repo.list(user_id)
         buy_orders = [o for o in all_orders if o.side == "buy"]
         # Paper trading may execute immediately, so check for either pending or executed
         assert len(buy_orders) >= 1
@@ -185,7 +185,7 @@ class TestCategory1HappyPathPaperTrading:
         service.run_sell_monitor()
 
         # Verify sell order placed (paper trading)
-        all_orders_sell = orders_repo.list(user_id)
+        all_orders_sell, _ = orders_repo.list(user_id)
         sell_orders = [o for o in all_orders_sell if o.side == "sell"]
         # May be 0 if not yet placed, or >= 1 if placed
         assert len(sell_orders) >= 0
@@ -317,7 +317,7 @@ class TestCategory2BuyOrderEdgeCasesPaperTrading:
 
         # Verify order NOT saved (should fail before database save)
         # Or if saved, should be FAILED status (RETRY_PENDING merged into FAILED)
-        all_orders = orders_repo.list(user_id)
+        all_orders, _ = orders_repo.list(user_id)
         buy_orders = [o for o in all_orders if o.side == "buy"]
         # Order should not be placed due to insufficient balance
         # If order was saved, it should be FAILED status

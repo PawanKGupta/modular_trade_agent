@@ -89,7 +89,12 @@ def add_missing_position(
     positions_repo = PositionsRepository(db)
 
     # Check if order already exists
-    existing_orders = orders_repo.list(user_id)
+    existing_orders_result = orders_repo.list(user_id)
+    existing_orders = (
+        existing_orders_result[0]
+        if isinstance(existing_orders_result, tuple)
+        else existing_orders_result
+    )
     for order in existing_orders:
         if (
             order.symbol.upper() == symbol.upper()

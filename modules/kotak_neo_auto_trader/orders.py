@@ -4,7 +4,6 @@ Orders Management Module for Kotak Neo API
 Handles order retrieval, tracking, placement, and GTT orders
 """
 
-from typing import Optional, Dict, List
 import os
 
 # Use existing project logger
@@ -52,7 +51,7 @@ class KotakNeoOrders:
         variety: str = "AMO",
         exchange: str = "NSE",
         remarks: str = "",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """
         Place an equity order (defaults to AMO for after-market).
         Attempts multiple method names and adapts payload to method signature.
@@ -134,7 +133,7 @@ class KotakNeoOrders:
                 "disclosed_quantity": ["disclosedQuantity", "discQty"],
             }
 
-            def call_method(name: str) -> Optional[Dict]:
+            def call_method(name: str) -> dict | None:
                 if not hasattr(client, name):
                     return None
                 method = getattr(client, name)
@@ -205,7 +204,7 @@ class KotakNeoOrders:
         variety: str = "AMO",
         exchange: str = "NSE",
         product: str = "CNC",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         return self.place_equity_order(
             symbol=symbol,
             quantity=quantity,
@@ -224,7 +223,7 @@ class KotakNeoOrders:
         variety: str = "AMO",
         exchange: str = "NSE",
         product: str = "CNC",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         return self.place_equity_order(
             symbol=symbol,
             quantity=quantity,
@@ -243,7 +242,7 @@ class KotakNeoOrders:
         variety: str = "AMO",
         exchange: str = "NSE",
         product: str = "CNC",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         return self.place_equity_order(
             symbol=symbol,
             quantity=quantity,
@@ -262,7 +261,7 @@ class KotakNeoOrders:
         variety: str = "AMO",
         exchange: str = "NSE",
         product: str = "CNC",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         return self.place_equity_order(
             symbol=symbol,
             quantity=quantity,
@@ -275,12 +274,12 @@ class KotakNeoOrders:
         )
 
     # -------------------- GTT Placement (unsupported) --------------------
-    def place_gtt_order(self, *args, **kwargs) -> Optional[Dict]:
+    def place_gtt_order(self, *args, **kwargs) -> dict | None:
         """Disabled: Kotak Neo API does not support GTT for this integration."""
         logger.warning("GTT orders are not supported by Kotak Neo API; operation disabled.")
         return None
 
-    def place_gtt_buy(self, *args, **kwargs) -> Optional[Dict]:
+    def place_gtt_buy(self, *args, **kwargs) -> dict | None:
         """Disabled: Kotak Neo API does not support GTT for this integration."""
         logger.warning("GTT orders are not supported by Kotak Neo API; operation disabled.")
         return None
@@ -295,7 +294,7 @@ class KotakNeoOrders:
         trigger_price: float = 0,
         validity: str = "DAY",
         order_type: str = "L",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Modify an existing order's price and/or quantity."""
         client = self.auth.get_client()
         if not client:
@@ -344,7 +343,7 @@ class KotakNeoOrders:
             return None
 
     @handle_reauth
-    def cancel_order(self, order_id: str) -> Optional[Dict]:
+    def cancel_order(self, order_id: str) -> dict | None:
         """Cancel an order by ID, trying multiple SDK method names/params."""
         client = self.auth.get_client()
         if not client:
@@ -353,7 +352,7 @@ class KotakNeoOrders:
 
         try:
 
-            def call_method(name: str) -> Optional[Dict]:
+            def call_method(name: str) -> dict | None:
                 if not hasattr(client, name):
                     return None
                 method = getattr(client, name)
@@ -414,7 +413,7 @@ class KotakNeoOrders:
 
     # -------------------- Retrieval --------------------
     @handle_reauth
-    def get_orders(self) -> Optional[Dict]:
+    def get_orders(self) -> dict | None:
         """Get all existing regular orders (not GTT) with fallbacks and raw logging."""
         client = self.auth.get_client()
         if not client:
@@ -424,7 +423,19 @@ class KotakNeoOrders:
             for name in method_names:
                 try:
                     if hasattr(client, name):
-                        return getattr(client, name)()
+                        # Wrap SDK call with timeout to prevent indefinite hangs
+                        from modules.kotak_neo_auto_trader.utils.timeout_utils import (
+                            call_with_timeout_and_fallback,
+                        )
+
+                        result = call_with_timeout_and_fallback(
+                            func=lambda: getattr(client, name)(),
+                            timeout=30.0,  # 30 second timeout
+                            timeout_error_message=f"get_orders() via {name} timed out",
+                            fallback_value=None,
+                        )
+                        if result is not None:
+                            return result
                 except Exception:
                     continue
             return None
@@ -520,7 +531,7 @@ class KotakNeoOrders:
             logger.error(f" Error getting orders: {e}")
             return None
 
-    def get_order_history(self, order_id: str = None) -> Optional[Dict]:
+    def get_order_history(self, order_id: str = None) -> dict | None:
         """
         Get order history for specific order or all orders
 
@@ -596,7 +607,7 @@ class KotakNeoOrders:
 
     # GTT retrieval not supported; rely only on open orders via get_orders/get_pending_orders
 
-    def get_pending_orders(self) -> Optional[List[Dict]]:
+    def get_pending_orders(self) -> list[dict] | None:
         """
         Get only pending orders (not executed/cancelled)
 
@@ -654,7 +665,7 @@ class KotakNeoOrders:
 
         return pending_orders if pending_orders else None
 
-    def get_executed_orders(self) -> Optional[List[Dict]]:
+    def get_executed_orders(self) -> list[dict] | None:
         """
         Get only executed orders
 
@@ -680,7 +691,7 @@ class KotakNeoOrders:
 
         return executed_orders if executed_orders else None
 
-    def get_orders_summary(self) -> Dict:
+    def get_orders_summary(self) -> dict:
         """
         Get complete orders summary including all types
 
@@ -702,7 +713,7 @@ class KotakNeoOrders:
 
         return summary
 
-    def search_orders_by_symbol(self, symbol: str) -> Optional[List[Dict]]:
+    def search_orders_by_symbol(self, symbol: str) -> list[dict] | None:
         """
         Search orders by trading symbol
 

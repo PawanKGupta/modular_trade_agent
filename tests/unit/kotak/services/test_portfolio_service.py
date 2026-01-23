@@ -276,7 +276,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.symbol = "TCS-EQ"
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_db_order])
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -301,7 +301,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.symbol = "INFY-EQ"
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_db_order])
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -325,7 +325,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.symbol = "WIPRO-EQ"
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_db_order])
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -356,7 +356,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.symbol = "INFY-EQ"
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_db_order])
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -509,7 +509,7 @@ class TestPortfolioServiceCheckCapacity:
         mock_db_order.symbol = "TCS-EQ"
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_db_order])
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         mock_config = Mock()
         mock_config.max_portfolio_size = 6
@@ -551,7 +551,7 @@ class TestPortfolioServiceCheckCapacity:
             mock_db_orders.append(mock_order)
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=mock_db_orders)
+        mock_orders_repo.list = Mock(return_value=(mock_db_orders, len(mock_db_orders)))
 
         mock_config = Mock()
         mock_config.max_portfolio_size = 6
@@ -593,7 +593,7 @@ class TestPortfolioServiceCheckCapacity:
             mock_db_orders.append(mock_order)
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=mock_db_orders)
+        mock_orders_repo.list = Mock(return_value=(mock_db_orders, len(mock_db_orders)))
 
         mock_config = Mock()
         mock_config.max_portfolio_size = 6

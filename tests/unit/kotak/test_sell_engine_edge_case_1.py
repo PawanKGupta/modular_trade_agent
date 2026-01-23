@@ -38,9 +38,21 @@ class TestSellOrderUpdateAfterReentry:
             manager.orders.modify_order = Mock(return_value={"stat": "Ok"})
             manager.orders.cancel_order = Mock(return_value={"stat": "Ok"})
             manager.orders.place_limit_sell = Mock(return_value={"nOrdNo": "NEW123"})
+            # Prevent cleanup paths from iterating over bare Mock objects
+            manager.orders.get_executed_orders = Mock(return_value=[])
             manager.orders.get_orders = Mock(
                 return_value={"data": []}
             )  # Mock for run_at_market_open optimization
+
+            # Avoid network/data-fetch paths during unit tests
+            manager._get_previous_day_rsi10 = Mock(return_value=25.0)
+
+            # Make tick-size rounding tolerant to mocked inputs
+            manager.round_to_tick_size = Mock(
+                side_effect=lambda price, exchange="NSE", **_kwargs: (
+                    price if isinstance(price, (int, float)) else 0.0
+                )
+            )
             manager.active_sell_orders = {}
             manager.lowest_ema9 = {}
             return manager

@@ -1,16 +1,20 @@
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from typing import Annotated
 
 # ruff: noqa: B008
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import asc, desc
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Positions, TradeMode, Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_audit_repository import PnlAuditRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
+from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 from ..core.deps import get_current_user, get_db
-from ..schemas.pnl import DailyPnl, PnlSummary
+from ..schemas.pnl import ClosedPositionDetail, DailyPnl, PaginatedClosedPositions, PnlSummary
 from ..services.pnl_calculation_service import PnlCalculationService
 
 try:
@@ -307,6 +311,43 @@ def daily_pnl(
     pnl_repo = PnlRepository(db)
     pnl_records = pnl_repo.range(current.id, start, end)
 
+    # Get closed positions for the date range to extract symbols and trade counts
+    positions_repo = PositionsRepository(db)
+    closed_positions_qry = db.query(Positions).filter(
+        Positions.user_id == current.id,
+        Positions.closed_at.isnot(None),  # noqa: E711
+    )
+    # Filter by date range
+    start_datetime = datetime.combine(start, datetime.min.time())
+    end_datetime = datetime.combine(end, datetime.max.time())
+    closed_positions_qry = closed_positions_qry.filter(
+        Positions.closed_at >= start_datetime,
+        Positions.closed_at <= end_datetime,
+    )
+
+    # Optional trade_mode filter
+    if mode is not None:
+        orders_repo = OrdersRepository(db)
+        all_orders = orders_repo.list(current.id)[0]  # Returns (orders, count)
+        buy_order_symbols = {
+            order.symbol
+            for order in all_orders
+            if order.side == "buy" and getattr(order, "trade_mode", None) == mode
+        }
+        closed_positions_qry = closed_positions_qry.filter(Positions.symbol.in_(buy_order_symbols))
+
+    closed_positions = closed_positions_qry.all()
+
+    # Group closed positions by date
+    symbols_by_date: dict[date, list[str]] = defaultdict(list)
+    trades_count_by_date: dict[date, int] = defaultdict(int)
+    for pos in closed_positions:
+        if pos.closed_at:
+            closed_date = pos.closed_at.date()
+            if closed_date >= start and closed_date <= end:
+                symbols_by_date[closed_date].append(pos.symbol)
+                trades_count_by_date[closed_date] += 1
+
     series: list[DailyPnl] = []
 
     # If we have PnlDaily records, use them (includes realized + unrealized - fees)
@@ -316,7 +357,19 @@ def daily_pnl(
             total_pnl = (
                 (record.realized_pnl or 0.0) + (record.unrealized_pnl or 0.0) - (record.fees or 0.0)
             )
-            series.append(DailyPnl(date=record.date, pnl=round(float(total_pnl), 2)))
+            # Get unique symbols for this date
+            symbols_list = list(set(symbols_by_date.get(record.date, [])))
+            series.append(
+                DailyPnl(
+                    date=record.date,
+                    pnl=round(float(total_pnl), 2),
+                    realized_pnl=round(float(record.realized_pnl or 0.0), 2),
+                    unrealized_pnl=round(float(record.unrealized_pnl or 0.0), 2),
+                    fees=round(float(record.fees or 0.0), 2),
+                    trades_count=trades_count_by_date.get(record.date, 0),
+                    symbols=symbols_list if symbols_list else None,
+                )
+            )
     else:
         # Fallback: calculate from positions dynamically
         service = PnlCalculationService(db)
@@ -325,7 +378,18 @@ def daily_pnl(
         # Filter by requested range and build daily series from DB closed trades
         for d, val in realized_by_date.items():
             if d >= start and d <= end:
-                series.append(DailyPnl(date=d, pnl=round(float(val or 0.0), 2)))
+                symbols_list = list(set(symbols_by_date.get(d, [])))
+                series.append(
+                    DailyPnl(
+                        date=d,
+                        pnl=round(float(val or 0.0), 2),
+                        realized_pnl=round(float(val or 0.0), 2),
+                        unrealized_pnl=None,
+                        fees=None,
+                        trades_count=trades_count_by_date.get(d, 0),
+                        symbols=symbols_list if symbols_list else None,
+                    )
+                )
 
     # Fallback: if DB has no realized data, derive from paper-trading transactions SELL entries
     if len(series) == 0:
@@ -349,7 +413,18 @@ def daily_pnl(
                             if day >= start and day <= end:
                                 daily_map[day] = daily_map.get(day, 0.0) + pnl
                 for d, val in sorted(daily_map.items()):
-                    series.append(DailyPnl(date=d, pnl=round(val, 2)))
+                    symbols_list = list(set(symbols_by_date.get(d, [])))
+                    series.append(
+                        DailyPnl(
+                            date=d,
+                            pnl=round(val, 2),
+                            realized_pnl=round(val, 2),
+                            unrealized_pnl=None,
+                            fees=None,
+                            trades_count=trades_count_by_date.get(d, 0),
+                            symbols=symbols_list if symbols_list else None,
+                        )
+                    )
         except Exception:
             pass
 
@@ -362,11 +437,30 @@ def daily_pnl(
             found = False
             for i, item in enumerate(series):
                 if item.date == today:
-                    series[i] = DailyPnl(date=today, pnl=round(item.pnl + unrealized_today, 2))
+                    new_pnl = item.pnl + unrealized_today
+                    series[i] = DailyPnl(
+                        date=today,
+                        pnl=round(new_pnl, 2),
+                        realized_pnl=item.realized_pnl,
+                        unrealized_pnl=round(unrealized_today, 2) if unrealized_today else item.unrealized_pnl,
+                        fees=item.fees,
+                        trades_count=item.trades_count,
+                        symbols=item.symbols,
+                    )
                     found = True
                     break
             if not found:
-                series.append(DailyPnl(date=today, pnl=round(unrealized_today, 2)))
+                series.append(
+                    DailyPnl(
+                        date=today,
+                        pnl=round(unrealized_today, 2),
+                        realized_pnl=None,
+                        unrealized_pnl=round(unrealized_today, 2),
+                        fees=None,
+                        trades_count=0,
+                        symbols=None,
+                    )
+                )
 
     # Sort by date ascending for chart consistency
     series.sort(key=lambda x: x.date)
@@ -605,3 +699,120 @@ def backfill_pnl(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to backfill P&L: {str(e)}") from e
+
+
+def _get_stock_name(symbol: str) -> str | None:
+    """Get stock name from yfinance for display purposes."""
+    try:
+        import yfinance as yf  # noqa: PLC0415
+
+        # Remove broker suffixes like -EQ, -BE for ticker lookup
+        base_symbol = symbol.split("-")[0] if "-" in symbol else symbol
+        ticker = f"{base_symbol}.NS"
+
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        # Try multiple fields for stock name
+        name = (
+            info.get("longName")
+            or info.get("shortName")
+            or info.get("name")
+            or base_symbol
+        )
+        return name if name and name != base_symbol else None
+    except Exception:
+        return None
+
+
+@router.get("/closed-positions", response_model=PaginatedClosedPositions)
+def get_closed_positions(
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 10,
+    trade_mode: str | None = Query(default=None, description="Filter by 'paper' or 'broker'"),
+    sort_by: str = Query(
+        default="closed_at", description="Sort field: closed_at, symbol, realized_pnl, opened_at"
+    ),
+    sort_order: str = Query(default="desc", description="Sort order: asc or desc"),
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get paginated closed positions with stock names for PnL page.
+
+    Returns closed positions sorted by the specified field with pagination support.
+    """
+    # Parse trade_mode
+    mode: TradeMode | None = None
+    if trade_mode and isinstance(trade_mode, str):
+        try:
+            mode = TradeMode(trade_mode.lower())
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail="Invalid trade_mode. Use 'paper' or 'broker'."
+            )
+
+    # Build base query
+    qry = db.query(Positions).filter(
+        Positions.user_id == current.id,
+        Positions.closed_at.isnot(None),  # noqa: E711
+    )
+
+    # Filter by trade_mode if specified (match via buy order)
+    if mode is not None:
+        orders_repo = OrdersRepository(db)
+        # Get all buy orders for this user
+        all_orders = orders_repo.list(current.id)[0]  # Returns (orders, count)
+        buy_order_symbols = {
+            order.symbol
+            for order in all_orders
+            if order.side == "buy" and getattr(order, "trade_mode", None) == mode
+        }
+        qry = qry.filter(Positions.symbol.in_(buy_order_symbols))
+
+    # Calculate total count before pagination
+    total_count = qry.count()
+
+    # Apply sorting
+    sort_field_map = {
+        "closed_at": Positions.closed_at,
+        "opened_at": Positions.opened_at,
+        "symbol": Positions.symbol,
+        "realized_pnl": Positions.realized_pnl,
+    }
+    sort_field = sort_field_map.get(sort_by, Positions.closed_at)
+    sort_func = desc if sort_order.lower() == "desc" else asc
+    qry = qry.order_by(sort_func(sort_field))
+
+    # Apply pagination
+    offset = (page - 1) * page_size
+    positions = qry.offset(offset).limit(page_size).all()
+
+    # Convert to response models with stock names
+    items: list[ClosedPositionDetail] = []
+    for pos in positions:
+        stock_name = _get_stock_name(pos.symbol)
+        items.append(
+            ClosedPositionDetail(
+                id=pos.id,
+                symbol=pos.symbol,
+                stock_name=stock_name,
+                quantity=float(pos.quantity) if pos.quantity else 0.0,
+                avg_price=float(pos.avg_price) if pos.avg_price else 0.0,
+                exit_price=float(pos.exit_price) if pos.exit_price else None,
+                opened_at=pos.opened_at.isoformat() if pos.opened_at else "",
+                closed_at=pos.closed_at.isoformat() if pos.closed_at else "",
+                realized_pnl=float(pos.realized_pnl) if pos.realized_pnl is not None else None,
+                realized_pnl_pct=float(pos.realized_pnl_pct) if pos.realized_pnl_pct is not None else None,
+                exit_reason=pos.exit_reason,
+            )
+        )
+
+    total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 0
+
+    return PaginatedClosedPositions(
+        items=items,
+        total=total_count,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )

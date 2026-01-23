@@ -360,7 +360,7 @@ class PortfolioService:
 
                 from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
 
-                db_orders = self.orders_repo.list(self.user_id)
+                db_orders, _ = self.orders_repo.list(self.user_id)
                 now = ist_now()
                 # Normalize to IST for consistent comparison
                 if now.tzinfo is None:

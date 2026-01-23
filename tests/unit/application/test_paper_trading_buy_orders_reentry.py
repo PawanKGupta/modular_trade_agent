@@ -597,7 +597,10 @@ class TestPaperTradingRunBuyOrdersWithReentry:
 
         # Get the order from database
         orders_repo = OrdersRepository(db_session)
-        all_orders = orders_repo.list(test_user.id)
+        all_orders_result = orders_repo.list(test_user.id)
+        all_orders = (
+            all_orders_result[0] if isinstance(all_orders_result, tuple) else all_orders_result
+        )
         assert len(all_orders) > 0, f"No orders found in database. Summary: {summary}"
 
         # Find the re-entry order

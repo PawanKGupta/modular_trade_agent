@@ -35,7 +35,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_stale_order.placed_at = monday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -72,7 +72,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_recent_order.placed_at = tuesday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_recent_order])
+        mock_orders_repo.list = Mock(return_value=([mock_recent_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -108,7 +108,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_stale_order.placed_at = friday_4pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -144,7 +144,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_order.placed_at = monday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_order])
+        mock_orders_repo.list = Mock(return_value=([mock_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -179,7 +179,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_stale_order.placed_at = monday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -222,7 +222,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_recent_order.placed_at = tuesday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order, mock_recent_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order, mock_recent_order], 2))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -258,7 +258,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_ongoing_order.placed_at = old_date
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_ongoing_order])
+        mock_orders_repo.list = Mock(return_value=([mock_ongoing_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -289,7 +289,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_order_no_date.placed_at = None  # No placed_at
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_order_no_date])
+        mock_orders_repo.list = Mock(return_value=([mock_order_no_date], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -323,7 +323,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_order.placed_at = monday_2pm_naive
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_order])
+        mock_orders_repo.list = Mock(return_value=([mock_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -354,7 +354,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_order.placed_at = datetime(2025, 1, 6, 14, 0, 0, tzinfo=IST)
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_order])
+        mock_orders_repo.list = Mock(return_value=([mock_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -398,7 +398,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_stale_order.placed_at = old_time
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order], 1))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -451,7 +451,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_recent_order.placed_at = tuesday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order, mock_recent_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order, mock_recent_order], 2))
 
         service = PortfolioService(
             portfolio=mock_portfolio,
@@ -492,7 +492,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         mock_recent_order.placed_at = tuesday_2pm
 
         mock_orders_repo = Mock()
-        mock_orders_repo.list = Mock(return_value=[mock_stale_order, mock_recent_order])
+        mock_orders_repo.list = Mock(return_value=([mock_stale_order, mock_recent_order], 2))
 
         mock_config = Mock()
         mock_config.max_portfolio_size = 6

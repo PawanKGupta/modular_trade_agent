@@ -39,6 +39,20 @@ class TestDetectManualSellsFromOrders:
     def mock_orders_repo(self):
         """Mock OrdersRepository."""
         repo = Mock()
+
+        # SellOrderManager expects orders_repo.list(...) -> (items, total_count).
+        # Many tests set list.return_value to a plain list; wrap it automatically.
+        def _list_side_effect(*_args, **_kwargs):
+            configured = repo.list.return_value
+            if isinstance(configured, tuple):
+                return configured
+            if isinstance(configured, Mock):
+                return ([], 0)
+            items = configured or []
+            return (items, len(items))
+
+        repo.list = Mock(side_effect=_list_side_effect)
+        repo.list.return_value = ([], 0)
         return repo
 
     @pytest.fixture
@@ -84,7 +98,7 @@ class TestDetectManualSellsFromOrders:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"  # System order
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Mock orders response with manual sell
         all_orders_response = {
@@ -249,7 +263,7 @@ class TestDetectManualSellsFromOrders:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -818,7 +832,7 @@ class TestDetectManualSellsFromOrders:
         mock_positions_repo.get_by_symbol.return_value = position
 
         # No system buy order found (manual buy position)
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         all_orders_response = {
             "data": [

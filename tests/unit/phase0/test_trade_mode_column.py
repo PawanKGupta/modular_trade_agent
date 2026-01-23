@@ -24,6 +24,17 @@ from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 
+def _orders_list_items(list_result):
+    """Normalize OrdersRepository.list() output to just the list of orders.
+
+    Some implementations return (items, total_count) while others return items.
+    """
+
+    if isinstance(list_result, tuple) and len(list_result) == 2:
+        return list_result[0]
+    return list_result
+
+
 @pytest.fixture
 def db_session():
     """Create in-memory test database"""
@@ -187,7 +198,7 @@ class TestTradeModeColumn:
         )
         session.commit()
 
-        orders = orders_repo.list(user_id)
+        orders = _orders_list_items(orders_repo.list(user_id))
 
         assert len(orders) >= 2
         # Find our orders
@@ -214,7 +225,7 @@ class TestTradeModeColumn:
         )
         session.commit()
 
-        orders = orders_repo.list(user_id, status=OrderStatus.PENDING)
+        orders = _orders_list_items(orders_repo.list(user_id, status=OrderStatus.PENDING))
 
         assert len(orders) >= 1
         found_order = next((o for o in orders if o.id == order.id), None)
@@ -410,7 +421,7 @@ class TestTradeModeEdgeCases:
         session.commit()
 
         # Query should be fast (indexed)
-        all_orders = orders_repo.list(user_id)
+        all_orders = _orders_list_items(orders_repo.list(user_id))
         paper_orders = [o for o in all_orders if o.trade_mode == TradeMode.PAPER]
         broker_orders = [o for o in all_orders if o.trade_mode == TradeMode.BROKER]
 

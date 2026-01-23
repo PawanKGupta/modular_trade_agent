@@ -10,8 +10,9 @@ Manages profit-taking sell orders with EMA9 target tracking:
 
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from datetime import time as dt_time
 from decimal import ROUND_UP, Decimal
 from pathlib import Path
@@ -43,13 +44,37 @@ except ImportError:
     send_telegram = None
 
 try:
-    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-    from src.infrastructure.db.timezone_utils import ist_now
+    import pandas as pd
+except ImportError:
+    pd = None
+
+try:
+    from src.infrastructure.persistence.targets_repository import TargetsRepository
+except ImportError:
+    TargetsRepository = None
+
+try:
+    from sqlalchemy import select
+
+    from src.infrastructure.db.models import (
+        Orders,
+        Positions,
+        TradeMode,
+    )
+    from src.infrastructure.db.models import (
+        OrderStatus as DbOrderStatus,
+    )
+    from src.infrastructure.db.timezone_utils import IST, ist_now
     from src.infrastructure.db.transaction import transaction
 except ImportError:
     DbOrderStatus = None
     ist_now = None
     transaction = None
+    Orders = None
+    Positions = None
+    TradeMode = None
+    IST = None
+    select = None
 
 try:
     from . import config
@@ -148,9 +173,8 @@ class SellOrderManager:
         self.targets_repo = None
         if self.positions_repo and hasattr(self.positions_repo, "db"):
             try:
-                from src.infrastructure.persistence.targets_repository import TargetsRepository
-
-                self.targets_repo = TargetsRepository(self.positions_repo.db)
+                if TargetsRepository is not None:
+                    self.targets_repo = TargetsRepository(self.positions_repo.db)
                 logger.debug("TargetsRepository initialized for sell order manager")
             except Exception as e:
                 logger.debug(f"TargetsRepository not available: {e}")
@@ -387,7 +411,6 @@ class SellOrderManager:
 
         side = (o.get("trnsTp") or "").upper()  # B/S
         order_type = o.get("prcTp")  # MKT/L
-        from .utils.order_field_extractor import OrderFieldExtractor
 
         filled_qty = int(OrderFieldExtractor.get_filled_quantity(o))
         cancelled_qty = int(o.get("cnlQty") or 0)
@@ -476,23 +499,27 @@ class SellOrderManager:
                 return True
             return False
 
-    @staticmethod
-    def round_to_tick_size(price: float, exchange: str = "NSE") -> float:
+    def round_to_tick_size(
+        self, price: float, exchange: str = "NSE", symbol: str | None = None
+    ) -> float:
         """
-        Round price to exchange-specific tick size
+        Round price to exchange-specific tick size.
 
-        NSE Tick Size Rules (Cash Equity Segment):
-        - All price ranges: Rs 0.05 (as per NSE circular)
+        Uses tick size from scrip master if available, otherwise falls back to
+        hardcoded exchange/price-based rules.
 
-        BSE Tick Size Rules:
+        NSE Tick Size Rules (Cash Equity Segment - Fallback):
+        - Price < Rs 1000: Rs 0.05
+        - Price >= Rs 1000: Rs 0.10
+
+        BSE Tick Size Rules (Fallback):
         - Rs 0 to Rs 10: Rs 0.01
-        - Rs 10+ to Rs 20: Rs 0.05
-        - Rs 20+ to Rs 50: Rs 0.05
-        - Rs 50+: Rs 0.05
+        - Rs 10+: Rs 0.05
 
         Args:
             price: Price to round
             exchange: Exchange name ("NSE" or "BSE")
+            symbol: Optional trading symbol (e.g., 'RELIANCE-EQ') to lookup tick size from scrip master
 
         Returns:
             Price rounded to valid tick size (rounded UP to next valid tick)
@@ -500,21 +527,29 @@ class SellOrderManager:
         if price <= 0:
             return price
 
-        # Determine tick size based on exchange and price
-        if exchange.upper() == "BSE":
-            # BSE has price-dependent tick sizes
-            if price < 10:
-                tick_size = 0.01
+        # Try to get tick size from scrip master if symbol is provided
+        tick_size = None
+        if symbol and self.scrip_master:
+            try:
+                tick_size = self.scrip_master.get_tick_size(symbol, exchange=exchange)
+            except Exception as e:
+                logger.debug(f"Error getting tick size from scrip master for {symbol}: {e}")
+
+        # Fall back to hardcoded rules if scrip master doesn't have tick size
+        if tick_size is None or tick_size <= 0:
+            if exchange.upper() == "BSE":
+                # BSE has price-dependent tick sizes
+                if price < 10:
+                    tick_size = 0.01
+                else:
+                    tick_size = 0.05
+            # NSE tick size rules (cash equity segment)
+            # 0-1000: Rs 0.05
+            # 1000+: Rs 0.10
+            elif price >= 1000:
+                tick_size = 0.10
             else:
                 tick_size = 0.05
-        # NSE tick size rules (cash equity segment)
-        # 0-100: Rs 0.05
-        # 100-1000: Rs 0.05
-        # 1000+: Rs 0.10
-        elif price >= 1000:
-            tick_size = 0.10
-        else:
-            tick_size = 0.05
 
         # Round UP to next valid tick (ceiling)
         # Use decimal arithmetic to avoid floating point precision issues
@@ -600,7 +635,7 @@ class SellOrderManager:
                 # Try to get ticker and placed_symbol from most recent ONGOING order
                 if self.orders_repo and DbOrderStatus:
                     try:
-                        ongoing_orders = self.orders_repo.list(
+                        ongoing_orders, _ = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
                         )
                         for order in ongoing_orders:
@@ -912,10 +947,8 @@ class SellOrderManager:
             existing_sell_symbols = set()
             if self.orders_repo:
                 try:
-                    from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                     # Get all pending/ongoing sell orders from database
-                    all_orders = self.orders_repo.list(self.user_id)
+                    all_orders, _ = self.orders_repo.list(self.user_id)
                     for order in all_orders:
                         if order.side.lower() == "sell" and order.status in {
                             DbOrderStatus.PENDING,
@@ -942,10 +975,8 @@ class SellOrderManager:
 
                 if self.orders_repo:
                     try:
-                        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
-
                         # Try to get ticker from most recent buy order
-                        ongoing_orders = self.orders_repo.list(
+                        ongoing_orders, _ = self.orders_repo.list(
                             self.user_id, status=DbOrderStatus.ONGOING
                         )
                         for order in ongoing_orders:
@@ -1121,7 +1152,7 @@ class SellOrderManager:
                         # Check if there's a system buy order (orig_source != 'manual') for this symbol
                         # that was executed around the time the position was opened
                         # Get all buy orders for this symbol (no status filter)
-                        buy_orders = self.orders_repo.list(self.user_id)
+                        buy_orders, _ = self.orders_repo.list(self.user_id)
 
                         # Filter for buy orders matching this symbol
                         for buy_order in buy_orders:
@@ -1168,10 +1199,6 @@ class SellOrderManager:
                 # Note: We only skip on the same day to avoid false positives from historical data
                 # that might have incorrect timestamps or be from previous trading sessions.
                 try:
-                    from datetime import datetime
-
-                    from src.infrastructure.db.timezone_utils import IST
-
                     sell_order_time = None
                     time_str = (
                         OrderFieldExtractor.get_order_time(order)
@@ -1299,9 +1326,6 @@ class SellOrderManager:
                     try:
                         # Get execution time from normalized/extracted fields
                         execution_time = None
-                        from datetime import datetime
-
-                        from src.infrastructure.db.timezone_utils import IST
 
                         # Prefer normalized executed_at (exCfmTm) if available
                         if "norm" in locals() and norm.get("executed_at"):
@@ -1542,7 +1566,7 @@ class SellOrderManager:
                     if self.orders_repo and position_obj.opened_at:
                         try:
                             if DbOrderStatus:
-                                buy_orders = self.orders_repo.list(
+                                buy_orders, _ = self.orders_repo.list(
                                     self.user_id,
                                     status=DbOrderStatus.ONGOING,
                                 )
@@ -1573,8 +1597,6 @@ class SellOrderManager:
                                         order_execution_time = buy_order.filled_at
 
                                     if order_execution_time:
-                                        from src.infrastructure.db.timezone_utils import IST
-
                                         if order_execution_time.tzinfo is None:
                                             order_execution_time = order_execution_time.replace(
                                                 tzinfo=IST
@@ -1688,8 +1710,18 @@ class SellOrderManager:
                 if self.portfolio:
                     try:
                         holdings_response = self.portfolio.get_holdings()
+                        # If API call failed (returned None), skip reconciliation
+                        if holdings_response is None:
+                            logger.warning(
+                                "Holdings API returned None (API error). "
+                                "Skipping reconciliation to avoid incorrectly closing positions."
+                            )
+                            return stats
                     except Exception as e:
-                        logger.debug(f"Failed to fetch holdings for reconciliation: {e}")
+                        logger.warning(
+                            f"Failed to fetch holdings for reconciliation: {e}. "
+                            "Skipping reconciliation to avoid incorrect position closures."
+                        )
                         return stats
                 else:
                     logger.debug(
@@ -1701,9 +1733,20 @@ class SellOrderManager:
                 logger.debug("Invalid holdings response for reconciliation")
                 return stats
 
+            # Check if API call failed (empty dict or missing "data" key indicates API error)
+            # Valid response should have "data" key even if it's an empty list (means no holdings)
+            # Empty dict {} without "data" key indicates API failure, not "all positions sold"
+            if not holdings_response or "data" not in holdings_response:
+                logger.warning(
+                    "Holdings API returned empty/invalid response (missing 'data' key). "
+                    "Skipping reconciliation to avoid incorrectly closing positions. "
+                    "This may indicate an API error or connection issue."
+                )
+                return stats
+
             holdings_data = holdings_response.get("data", [])
-            # Note: Empty holdings_data is valid - means all positions were sold
-            # We still need to check positions to detect manual full sells
+            # Note: Empty holdings_data list is valid - means all positions were sold
+            # But empty dict response indicates API failure and should be skipped
 
             # Create broker holdings map: {symbol or base_symbol: quantity}
             broker_holdings_map = {}
@@ -1785,12 +1828,75 @@ class SellOrderManager:
                     )
                     try:
                         if ist_now:
+                            # Try to find exit price from executed sell orders for this symbol
+                            exit_price = None
+                            sell_order_id = None
+                            if self.orders_repo:
+                                try:
+                                    # Search for executed sell orders around the time of closure
+                                    all_orders, _ = self.orders_repo.list(self.user_id)
+                                    # Filter matching sell orders
+                                    matching_orders = [
+                                        order
+                                        for order in all_orders
+                                        if (
+                                            order.symbol == symbol
+                                            and order.side.lower() == "sell"
+                                            and order.execution_price is not None
+                                            and order.status.value
+                                            in ("closed", "ongoing")  # Executed orders
+                                        )
+                                    ]
+
+                                    # Sort by execution_time (most recent first), fallback to placed_at
+                                    matching_orders.sort(
+                                        key=lambda o: (
+                                            o.execution_time or o.placed_at or datetime.min
+                                        ),
+                                        reverse=True,
+                                    )
+
+                                    # Use the most recent matching order within 24 hours
+                                    now_time = ist_now()
+                                    if now_time.tzinfo is not None:
+                                        now_time = now_time.replace(tzinfo=None)
+
+                                    for order in matching_orders:
+                                        order_time = order.execution_time or order.placed_at
+                                        if order_time:
+                                            # Normalize timezone for comparison
+                                            if order_time.tzinfo is not None:
+                                                order_time = order_time.replace(tzinfo=None)
+                                            time_diff = abs((order_time - now_time).total_seconds())
+                                            if time_diff < 86400:  # Within 24 hours
+                                                exit_price = order.execution_price
+                                                sell_order_id = order.id
+                                                logger.info(
+                                                    f"Found executed sell order {order.id} for manual sell detection: "
+                                                    f"exit_price={exit_price}, sell_order_id={sell_order_id}"
+                                                )
+                                                break
+                                        else:
+                                            # No timestamp available, but order is executed - use most recent one anyway
+                                            exit_price = order.execution_price
+                                            sell_order_id = order.id
+                                            logger.info(
+                                                f"Found executed sell order {order.id} for manual sell detection (no timestamp): "
+                                                f"exit_price={exit_price}, sell_order_id={sell_order_id}"
+                                            )
+                                            break
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Could not find exit price from orders for {symbol}: {e}"
+                                    )
+
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 closed_at=ist_now(),
-                                exit_price=None,  # Manual sell, price unknown
+                                exit_price=exit_price,  # Use found price or None
                                 exit_reason="MANUAL",  # Phase 0.2: Manual sell
+                                sell_order_id=sell_order_id,  # Link to sell order if found
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -1882,8 +1988,6 @@ class SellOrderManager:
             return False
 
         try:
-            from datetime import timedelta
-
             if not ist_now:
                 return False
 
@@ -1910,7 +2014,7 @@ class SellOrderManager:
             cutoff_time = now - timedelta(minutes=minutes)
 
             # Get all buy orders for this user
-            orders = self.orders_repo.list(self.user_id)
+            orders, _ = self.orders_repo.list(self.user_id)
 
             # Filter for buy orders matching this symbol
             for order in orders:
@@ -1948,6 +2052,167 @@ class SellOrderManager:
         except Exception as e:
             logger.debug(f"Error checking recent executed orders for {symbol}: {e}")
             return False
+
+    def _cancel_orphaned_sell_orders(self) -> dict[str, int]:
+        """
+        Cancel sell orders that have no corresponding open positions.
+
+        Safety checks:
+        - Only cancels PENDING orders (not ONGOING/executing orders)
+        - Skips orders for positions closed within last 5 minutes (race condition protection)
+        - Only cancels system-created orders (not manual orders)
+        - Handles broker API failures gracefully
+
+        Returns:
+            Dict with stats: {'checked': int, 'cancelled': int, 'skipped': int, 'errors': int}
+        """
+        if not self.orders_repo or not self.positions_repo or not self.user_id:
+            logger.debug(
+                "Repositories or user_id not available, skipping orphaned sell order cleanup"
+            )
+            return {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        stats = {"checked": 0, "cancelled": 0, "skipped": 0, "errors": 0}
+
+        try:
+            if not ist_now:
+                return stats
+
+            now = ist_now()
+
+            # Get all PENDING sell orders (not ONGOING - those might be executing)
+            sell_orders, _ = self.orders_repo.list(self.user_id)
+            sell_orders = [
+                o
+                for o in sell_orders
+                if o.side.lower() == "sell"
+                and o.status == DbOrderStatus.PENDING  # Only PENDING, not ONGOING
+            ]
+
+            if not sell_orders:
+                logger.debug("No pending sell orders found for orphaned order cleanup")
+                return stats
+
+            # Get all positions (open and recently closed)
+            all_positions = self.positions_repo.list(self.user_id)
+            open_position_symbols = {
+                pos.symbol.upper() for pos in all_positions if pos.closed_at is None
+            }
+
+            # Track recently closed positions (within last 5 minutes) for race condition protection
+            recently_closed = {}
+            for pos in all_positions:
+                if pos.closed_at:
+                    # Handle timezone mismatch: ensure both datetimes are timezone-aware
+                    closed_at = pos.closed_at
+                    if closed_at.tzinfo is None:
+                        # Naive datetime: assume it's in IST (database convention)
+                        from src.infrastructure.db.timezone_utils import IST
+
+                        closed_at = closed_at.replace(tzinfo=IST)
+                    elif closed_at.tzinfo != now.tzinfo:
+                        # Different timezone: convert to IST
+                        closed_at = closed_at.astimezone(now.tzinfo)
+
+                    closed_age = (now - closed_at).total_seconds() / 60
+                    if closed_age < 5:  # Closed within last 5 minutes
+                        recently_closed[pos.symbol.upper()] = closed_age
+
+            logger.info(
+                f"Checking {len(sell_orders)} pending sell orders against "
+                f"{len(open_position_symbols)} open positions..."
+            )
+
+            cancelled_orders = []
+
+            for order in sell_orders:
+                stats["checked"] += 1
+                order_symbol = order.symbol.upper()
+                base_symbol = extract_base_symbol(order_symbol).upper()
+
+                # Safety check 1: Skip manual orders
+                if order.order_metadata and isinstance(order.order_metadata, dict):
+                    source = order.order_metadata.get("source", "")
+                    if "manual" in source.lower():
+                        logger.debug(f"Skipping {order_symbol}: Manual sell order")
+                        stats["skipped"] += 1
+                        continue
+
+                # Safety check 2: Check if position exists (open or recently closed)
+                has_open_position = (
+                    order_symbol in open_position_symbols or base_symbol in open_position_symbols
+                )
+
+                # Check if position was recently closed (race condition protection)
+                recently_closed_age = recently_closed.get(order_symbol) or recently_closed.get(
+                    base_symbol
+                )
+
+                if has_open_position:
+                    # Position exists - order is valid
+                    continue
+                elif recently_closed_age is not None:
+                    # Position was closed recently - might be race condition
+                    logger.debug(
+                        f"Skipping {order_symbol}: Position closed {recently_closed_age:.1f} minutes ago. "
+                        f"Order may still be valid. Will check on next cycle."
+                    )
+                    stats["skipped"] += 1
+                    continue
+                else:
+                    # Orphaned sell order - no corresponding position
+                    logger.warning(
+                        f"Found orphaned sell order: {order_symbol} "
+                        f"(Order ID: {order.broker_order_id}, DB ID: {order.id}). "
+                        f"No open position found. Cancelling..."
+                    )
+
+                    try:
+                        # Cancel via broker API if broker_order_id exists
+                        if order.broker_order_id and self.orders:
+                            try:
+                                cancel_result = self.orders.cancel_order(order.broker_order_id)
+                                if cancel_result:
+                                    logger.info(
+                                        f"Cancelled orphaned sell order {order.broker_order_id} for {order_symbol}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Failed to cancel orphaned sell order {order.broker_order_id} "
+                                        f"via broker API. Will still mark as cancelled in DB."
+                                    )
+                            except Exception as cancel_error:
+                                logger.warning(
+                                    f"Error cancelling orphaned sell order {order.broker_order_id} "
+                                    f"via broker API: {cancel_error}. Will still mark as cancelled in DB."
+                                )
+
+                        # Update database order status (even if broker cancellation failed)
+                        self.orders_repo.mark_cancelled(
+                            order,
+                            cancelled_reason="Orphaned sell order: No corresponding open position found",
+                        )
+
+                        stats["cancelled"] += 1
+                        cancelled_orders.append(order_symbol)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error cancelling orphaned sell order {order.id} for {order_symbol}: {e}"
+                        )
+                        stats["errors"] += 1
+
+            if stats["cancelled"] > 0:
+                logger.info(
+                    f"Orphaned sell order cleanup complete: {stats['checked']} checked, "
+                    f"{stats['cancelled']} cancelled, {stats['skipped']} skipped, "
+                    f"{stats['errors']} errors. Cancelled symbols: {', '.join(cancelled_orders)}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error during orphaned sell order cleanup: {e}", exc_info=True)
+
+        return stats
 
     def _reconcile_single_symbol(
         self, symbol: str, holdings_response: dict[str, Any] | None = None
@@ -2135,8 +2400,6 @@ class SellOrderManager:
         Returns:
             EMA9 value (current or yesterday's fallback) or None if all attempts fail
         """
-        import time
-
         # Try calculating EMA9 with retries
         for attempt in range(max_retries + 1):
             try:
@@ -2227,11 +2490,6 @@ class SellOrderManager:
                 logger.error("No symbol found in trade entry")
                 return None
 
-            # Ensure symbol has exchange suffix
-            if not symbol.endswith(("-EQ", "-BE", "-BL", "-BZ")):
-                symbol = f"{symbol}-EQ"
-
-            # Try to get correct trading symbol from scrip master
             # Use user's trading config preference for exchange (from database UserTradingConfig)
             # Falls back to config.DEFAULT_EXCHANGE if strategy_config not available
             exchange = (
@@ -2239,21 +2497,96 @@ class SellOrderManager:
                 if self.strategy_config
                 else config.DEFAULT_EXCHANGE
             )
-            if self.scrip_master and self.scrip_master.symbol_map:
-                correct_symbol = self.scrip_master.get_trading_symbol(symbol, exchange=exchange)
-                if correct_symbol:
-                    logger.debug(
-                        f"Resolved {symbol} -> {correct_symbol} via scrip master ({exchange})"
-                    )
-                    symbol = correct_symbol
+
+            # Resolve symbol and reject T2T segments - only allow -EQ segment stocks
+            # IMPORTANT: Only -EQ segment symbols are supported for trading
+            # T2T segments (-BE, -BL, -BZ) are rejected as they are not supported
+            if any(symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                # Reject T2T segment symbols
+                logger.error(
+                    f"Cannot place sell order for {symbol}: T2T segment stock (-BE/-BL/-BZ) "
+                    f"which is not supported. Only -EQ segment stocks are allowed for trading."
+                )
+                return None
+
+            # If symbol already has -EQ suffix, validate it exists in scrip master
+            if symbol.upper().endswith("-EQ"):
+                if self.scrip_master and self.scrip_master.symbol_map:
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if instrument and instrument.get("symbol"):
+                        # Symbol exists in scrip master, use as-is
+                        logger.debug(
+                            f"Symbol {symbol} already has -EQ suffix and exists in scrip master ({exchange})"
+                        )
+                    else:
+                        logger.warning(
+                            f"Symbol {symbol} not found in scrip master ({exchange}). "
+                            f"Using as-is (not validated)."
+                        )
+                # Continue with symbol as-is (already -EQ)
+            # Symbol doesn't have suffix - resolve to -EQ variant via scrip master
+            elif self.scrip_master and self.scrip_master.symbol_map:
+                # First, try to get -EQ variant explicitly
+                eq_symbol = f"{symbol}-EQ"
+                instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+
+                if instrument and instrument.get("symbol"):
+                    resolved = instrument["symbol"]
+                    # Double-check it's -EQ (safety check)
+                    if resolved.upper().endswith("-EQ"):
+                        logger.debug(
+                            f"Resolved {symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
+                        )
+                        symbol = resolved
+                    else:
+                        logger.warning(f"Expected -EQ variant but got {resolved} for {symbol}")
+                else:
+                    # If -EQ not found, try base symbol (might resolve to something else)
+                    instrument = self.scrip_master.get_instrument(symbol, exchange=exchange)
+                    if instrument and instrument.get("symbol"):
+                        resolved = instrument["symbol"]
+
+                        # Check if resolved symbol is T2T segment - reject it
+                        if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                            logger.error(
+                                f"Cannot place sell order for {symbol}: resolves to T2T segment {resolved} "
+                                f"which is not supported. Only -EQ segment stocks are allowed for trading. "
+                                f"The stock may only be available in T2T segment on {exchange}."
+                            )
+                            return None
+
+                        # Check if it's -EQ
+                        if resolved.upper().endswith("-EQ"):
+                            logger.debug(
+                                f"Resolved {symbol} -> {resolved} via scrip master ({exchange})"
+                            )
+                            symbol = resolved
+                        else:
+                            # Resolved to something unexpected - default to -EQ suffix
+                            logger.warning(
+                                f"Symbol {symbol} resolved to unexpected format: {resolved}. "
+                                f"Defaulting to {symbol}-EQ"
+                            )
+                            symbol = f"{symbol}-EQ"
+                    else:
+                        # Symbol not found in scrip master - default to -EQ suffix
+                        logger.warning(
+                            f"Symbol {symbol} not found in scrip master ({exchange}). "
+                            f"Defaulting to {symbol}-EQ"
+                        )
+                        symbol = f"{symbol}-EQ"
+            else:
+                # Scrip master not available - default to -EQ suffix
+                logger.warning(f"Scrip master not available. Defaulting {symbol} to {symbol}-EQ")
+                symbol = f"{symbol}-EQ"
 
             qty = trade.get("qty", 0)
             if qty <= 0:
                 logger.warning(f"Invalid quantity {qty} for {symbol}")
                 return None
 
-            # Round price to valid tick size
-            rounded_price = self.round_to_tick_size(target_price)
+            # Round price to valid tick size (use symbol to get tick size from scrip master)
+            rounded_price = self.round_to_tick_size(target_price, exchange=exchange, symbol=symbol)
             if rounded_price != target_price:
                 logger.debug(
                     f"Rounded price from Rs {target_price:.4f} to Rs {rounded_price:.2f} (tick size)"
@@ -2423,8 +2756,15 @@ class SellOrderManager:
             True if successful
         """
         try:
-            # Round price to valid tick size
-            rounded_price = self.round_to_tick_size(new_price)
+            # Determine exchange from symbol or use default
+            exchange = (
+                self.strategy_config.default_exchange
+                if self.strategy_config
+                else config.DEFAULT_EXCHANGE
+            )
+
+            # Round price to valid tick size (use symbol to get tick size from scrip master)
+            rounded_price = self.round_to_tick_size(new_price, exchange=exchange, symbol=symbol)
             if rounded_price != new_price:
                 logger.debug(
                     f"Rounded price from Rs {new_price:.4f} to Rs {rounded_price:.2f} (tick size)"
@@ -2881,7 +3221,7 @@ class SellOrderManager:
                 return 0
 
             # Query for pending reentry orders for this symbol
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             reentry_orders = [
                 db_order
                 for db_order in all_orders
@@ -2997,7 +3337,7 @@ class SellOrderManager:
                 return 0
 
             # Query for ONGOING buy orders for this symbol
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             ongoing_buy_orders = [
                 db_order
                 for db_order in all_orders
@@ -3052,6 +3392,135 @@ class SellOrderManager:
             )
 
         return closed_count
+
+    def _reopen_positions_for_cancelled_sell_orders(self) -> None:
+        """
+        Reopen positions that were closed by sell orders that were later cancelled.
+
+        This handles the case where:
+        1. A sell order executes and closes a position
+        2. The sell order is then cancelled (e.g., by broker or manual intervention)
+        3. The stock is still in holdings (position should be reopened)
+
+        This ensures database consistency with actual broker holdings.
+        """
+        if (
+            not self.orders_repo
+            or not self.positions_repo
+            or not self.user_id
+            or not self.portfolio
+        ):
+            return
+
+        try:
+            # Find all cancelled sell orders that were executed (have execution_time)
+            stmt = select(Orders).where(
+                Orders.user_id == self.user_id,
+                Orders.side == "sell",
+                Orders.status == DbOrderStatus.CANCELLED,
+                Orders.execution_time.isnot(None),  # Only orders that executed before cancellation
+            )
+            cancelled_executed_sell_orders = self.orders_repo.db.execute(stmt).scalars().all()
+
+            if not cancelled_executed_sell_orders:
+                return
+
+            # Get broker holdings to check if stocks are still there
+            holdings_response = self._get_holdings()
+            if not holdings_response or "data" not in holdings_response:
+                logger.debug("Could not fetch holdings to check for position reopening")
+                return
+
+            holdings_data = holdings_response.get("data", [])
+            holdings_dict = {}
+            for holding in holdings_data:
+                # Use same field mapping as portfolio.py for consistency
+                symbol = (
+                    holding.get("tradingSymbol")
+                    or holding.get("symbol")
+                    or holding.get("instrumentName")
+                    or holding.get("securitySymbol")
+                    or holding.get("securityname")
+                    or ""
+                ).upper()
+                qty = int(
+                    holding.get("quantity")
+                    or holding.get("qty")
+                    or holding.get("netQuantity")
+                    or holding.get("holdingsQuantity")
+                    or 0
+                )
+                if symbol and qty > 0:
+                    holdings_dict[symbol] = qty
+
+            reopened_count = 0
+
+            for order in cancelled_executed_sell_orders:
+                try:
+                    # Find position that was closed by this order
+                    stmt = select(Positions).where(
+                        Positions.user_id == self.user_id,
+                        Positions.sell_order_id == order.id,
+                        Positions.closed_at.isnot(None),  # Only closed positions
+                    )
+                    closed_position = self.positions_repo.db.execute(stmt).scalar_one_or_none()
+
+                    if not closed_position:
+                        continue
+
+                    # Check if stock is still in holdings
+                    symbol_key = closed_position.symbol.upper()
+                    # Try both full symbol and base symbol
+                    holding_qty = holdings_dict.get(symbol_key)
+                    if holding_qty is None:
+                        # Try base symbol (remove -EQ suffix)
+                        base_symbol = extract_base_symbol(symbol_key).upper()
+                        holding_qty = holdings_dict.get(base_symbol)
+
+                    if holding_qty and holding_qty > 0:
+                        # Stock is still in holdings - reopen the position
+                        logger.warning(
+                            f"Reopening position {closed_position.symbol} because sell order "
+                            f"{order.broker_order_id} was cancelled but stock is still in holdings "
+                            f"(qty: {holding_qty})"
+                        )
+
+                        # Reopen position: clear closed_at and restore quantity
+                        closed_position.closed_at = None
+                        closed_position.quantity = float(holding_qty)
+                        # Clear exit details since position is reopened
+                        closed_position.exit_price = None
+                        closed_position.exit_reason = None
+                        closed_position.exit_rsi = None
+                        closed_position.realized_pnl = None
+                        closed_position.realized_pnl_pct = None
+                        closed_position.sell_order_id = None
+
+                        self.positions_repo.db.commit()
+                        reopened_count += 1
+                        logger.info(
+                            f"Reopened position {closed_position.symbol} with quantity {holding_qty}"
+                        )
+                    else:
+                        logger.debug(
+                            f"Position {closed_position.symbol} was closed by cancelled order "
+                            f"{order.broker_order_id}, but stock is not in holdings - position remains closed"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Error checking/reopening position for cancelled sell order "
+                        f"{order.broker_order_id}: {e}",
+                        exc_info=True,
+                    )
+
+            if reopened_count > 0:
+                logger.info(f"Reopened {reopened_count} position(s) for cancelled sell orders")
+
+        except Exception as e:
+            logger.error(
+                f"Error in _reopen_positions_for_cancelled_sell_orders: {e}",
+                exc_info=True,
+            )
 
     def _update_trade_history_for_manual_sell(
         self, symbol: str, sell_info: dict[str, Any], remaining_qty: int
@@ -3210,7 +3679,48 @@ class SellOrderManager:
                 if is_rejected or is_cancelled:
                     status = OrderStatusParser.parse_status(broker_order)
 
+                    # Update database order status first (before any special case handling)
+                    if self.orders_repo and self.user_id:
+                        try:
+                            # Find the database order
+                            db_order = self.orders_repo.get_by_broker_order_id(
+                                self.user_id, str(order_id)
+                            )
+                            if not db_order:
+                                # Try by order_id as fallback
+                                db_order = self.orders_repo.get_by_order_id(
+                                    self.user_id, str(order_id)
+                                )
+
+                            if db_order:
+                                if is_rejected:
+                                    rejection_reason = (
+                                        OrderFieldExtractor.get_rejection_reason(broker_order)
+                                        or "Rejected by broker"
+                                    )
+                                    self.orders_repo.mark_rejected(db_order, rejection_reason)
+                                    logger.info(
+                                        f"Updated sell order {order_id} status to FAILED in database: "
+                                        f"{rejection_reason}"
+                                    )
+                                elif is_cancelled:
+                                    cancelled_reason = (
+                                        OrderFieldExtractor.get_rejection_reason(broker_order)
+                                        or "Cancelled"
+                                    )
+                                    self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+                                    logger.info(
+                                        f"Updated sell order {order_id} status to CANCELLED in database: "
+                                        f"{cancelled_reason}"
+                                    )
+                        except Exception as e:
+                            logger.error(
+                                f"Error updating sell order {order_id} status in database: {e}",
+                                exc_info=True,
+                            )
+
                     # For cancelled orders, check if position still exists
+                    cancelled_with_open_position = False
                     if is_cancelled and self.positions_repo and self.user_id:
                         try:
                             full_symbol = symbol.upper()
@@ -3218,15 +3728,19 @@ class SellOrderManager:
                             if position and position.closed_at is None:
                                 # Position still open - need to re-place sell order
                                 cancelled_symbols_with_positions.append((symbol, order_info))
+                                cancelled_with_open_position = True
                                 logger.info(
                                     f"Order {order_id} for {symbol} was cancelled but position still exists. "
                                     f"Will re-place sell order."
                                 )
-                                continue
                         except Exception as e:
                             logger.debug(
                                 f"Error checking position for cancelled order {symbol}: {e}"
                             )
+
+                    # Skip further processing if cancelled with open position (we'll re-place)
+                    if cancelled_with_open_position:
+                        continue
 
                     # Check if rejection is due to circuit limit breach (only for rejected, not cancelled)
                     if is_rejected:
@@ -3280,6 +3794,11 @@ class SellOrderManager:
         for symbol in rejected_symbols:
             self._remove_from_tracking(symbol)
 
+        # Check for cancelled sell orders that closed positions but stock is still in holdings
+        # This handles the case where a sell order executed, closed the position, but then was cancelled
+        if self.positions_repo and self.user_id and self.portfolio:
+            self._reopen_positions_for_cancelled_sell_orders()
+
         # Re-place sell orders for cancelled orders with open positions
         for symbol, order_info in cancelled_symbols_with_positions:
             try:
@@ -3324,6 +3843,241 @@ class SellOrderManager:
 
         if rejected_symbols:
             logger.info(f"Cleaned up {len(rejected_symbols)} invalid orders from tracking")
+
+    def _reconcile_stale_pending_sell_orders(self) -> dict[str, int]:
+        """
+        Reconcile stale PENDING sell orders in database with broker status.
+
+        Only processes broker orders (TradeMode.BROKER or NULL for legacy).
+        Paper trading orders are excluded as they're handled separately by PaperTradingServiceAdapter.
+
+        This handles orders that are PENDING in database but may have been rejected/cancelled
+        at the broker (e.g., if service was restarted or order wasn't in active_sell_orders).
+
+        Edge Cases Handled:
+        - Orders executed but not in broker response: Check holdings/position status
+        - Broker API failures: Gracefully skip if API unavailable
+        - Recently placed orders (< 1 hour): Don't mark as stale
+        - Orders in active_sell_orders: Skip (already being monitored)
+        - Orders with executed quantity: Skip (already processed)
+        - Orders with closed positions: Likely executed, skip marking as failed
+        - Trade mode filtering: Only process broker orders, skip paper trading
+
+        Returns:
+            Dict with stats: {'checked': int, 'updated': int, 'skipped': int, 'failed': int}
+        """
+        stats = {"checked": 0, "updated": 0, "skipped": 0, "failed": 0}
+
+        if not self.orders_repo or not self.user_id:
+            return stats
+
+        try:
+            # Get all PENDING sell orders from database
+            pending_sell_orders, _ = self.orders_repo.list(
+                self.user_id, status=DbOrderStatus.PENDING
+            )
+
+            # Filter for sell orders only
+            pending_sell_orders = [
+                o for o in pending_sell_orders if o.side and o.side.lower() == "sell"
+            ]
+
+            # EDGE CASE: Filter by trade_mode - only process broker orders
+            # SellOrderManager is for real broker trading, so skip paper trading orders
+            # Paper trading orders are handled by PaperTradingServiceAdapter separately
+            # Include orders with TradeMode.BROKER or NULL (legacy orders - assume broker)
+            broker_orders_only = [
+                o
+                for o in pending_sell_orders
+                if o.trade_mode is None or o.trade_mode == TradeMode.BROKER
+            ]
+
+            if not broker_orders_only:
+                logger.debug("No broker sell orders to reconcile (paper orders excluded)")
+                return stats
+
+            # Get set of order IDs already in active_sell_orders (skip these)
+            active_order_ids = {
+                str(info.get("order_id", ""))
+                for info in self.active_sell_orders.values()
+                if info.get("order_id")
+            }
+
+            # Filter out orders already in active tracking
+            pending_sell_orders = [
+                o
+                for o in broker_orders_only
+                if str(o.broker_order_id or o.order_id or "") not in active_order_ids
+            ]
+
+            if not pending_sell_orders:
+                return stats
+
+            # Fetch current orders from broker (with timeout handling)
+            try:
+                all_orders = self.orders.get_orders()
+                if not all_orders or "data" not in all_orders:
+                    logger.debug("Could not fetch broker orders for stale order reconciliation")
+                    return stats  # Don't update anything if broker API fails
+            except Exception as e:
+                logger.warning(f"Broker API failed during stale order reconciliation: {e}")
+                return stats  # Gracefully skip if API unavailable
+
+            broker_orders = all_orders["data"]
+            now = datetime.now()
+
+            for db_order in pending_sell_orders:
+                stats["checked"] += 1
+                order_id = db_order.broker_order_id or db_order.order_id
+                if not order_id:
+                    stats["skipped"] += 1
+                    continue
+
+                order_id_str = str(order_id)
+
+                try:
+                    # Edge Case: Check if order has execution_qty > 0 (already processed)
+                    if db_order.execution_qty and float(db_order.execution_qty) > 0:
+                        stats["skipped"] += 1
+                        logger.debug(
+                            f"Skipping order {order_id_str}: Already has execution_qty "
+                            f"({db_order.execution_qty}) - likely already processed"
+                        )
+                        continue
+
+                    # Edge Case: Check if position is closed (order likely executed)
+                    if self.positions_repo:
+                        try:
+                            position = self.positions_repo.get_by_symbol(
+                                self.user_id, db_order.symbol
+                            )
+                            if position and position.closed_at is not None:
+                                stats["skipped"] += 1
+                                logger.debug(
+                                    f"Skipping order {order_id_str} ({db_order.symbol}): "
+                                    f"Position is closed (order likely executed)"
+                                )
+                                continue
+                        except Exception as e:
+                            logger.debug(f"Error checking position for order {order_id_str}: {e}")
+
+                    # Find this order in broker orders FIRST
+                    # Check broker status before age check - cancelled/rejected orders should be
+                    # synced immediately regardless of age
+                    broker_order = self._find_order_in_broker_orders(order_id_str, broker_orders)
+
+                    if broker_order:
+                        # Order exists in broker - check its status
+                        is_rejected = OrderStatusParser.is_rejected(broker_order)
+                        is_cancelled = OrderStatusParser.is_cancelled(broker_order)
+
+                        # IMPORTANT: Sync cancelled/rejected orders immediately (skip age check)
+                        if is_rejected or is_cancelled:
+                            if is_rejected:
+                                rejection_reason = (
+                                    OrderFieldExtractor.get_rejection_reason(broker_order)
+                                    or "Rejected by broker"
+                                )
+                                self.orders_repo.mark_rejected(db_order, rejection_reason)
+                                stats["updated"] += 1
+                                logger.info(
+                                    f"Reconciled sell order {order_id_str} ({db_order.symbol}): "
+                                    f"Updated from PENDING to FAILED - {rejection_reason}"
+                                )
+                            elif is_cancelled:
+                                cancelled_reason = (
+                                    OrderFieldExtractor.get_rejection_reason(broker_order)
+                                    or "Cancelled"
+                                )
+                                self.orders_repo.mark_cancelled(db_order, cancelled_reason)
+                                stats["updated"] += 1
+                                logger.info(
+                                    f"Reconciled sell order {order_id_str} ({db_order.symbol}): "
+                                    f"Updated from PENDING to CANCELLED - {cancelled_reason}"
+                                )
+                            # Continue to next order - don't apply age check for cancelled/rejected
+                            continue
+
+                        # Order is still PENDING/OPEN at broker - apply age check
+                        # Edge Case: Don't check orders placed < 1 hour ago (too recent)
+                        if db_order.placed_at:
+                            age_hours = (now - db_order.placed_at).total_seconds() / 3600
+                            if age_hours < 1.0:
+                                stats["skipped"] += 1
+                                logger.debug(
+                                    f"Skipping order {order_id_str}: Too recent ({age_hours:.1f}h old), "
+                                    f"still PENDING/OPEN at broker"
+                                )
+                                continue
+
+                        # Order exists but is still PENDING/OPEN and > 1 hour old
+                        stats["skipped"] += 1
+                        logger.debug(f"Skipping order {order_id_str}: Still PENDING/OPEN at broker")
+                    # Order not found in broker - could be executed/rejected/cancelled
+                    # Only mark as stale if > 12 hours old
+                    elif db_order.placed_at:
+                        age_hours = (now - db_order.placed_at).total_seconds() / 3600
+
+                        if age_hours > 12:
+                            # Order is > 12h old and not in broker - likely failed
+                            # But first double-check: if position is closed, order was executed
+                            should_mark_failed = True
+                            if self.positions_repo:
+                                try:
+                                    position = self.positions_repo.get_by_symbol(
+                                        self.user_id, db_order.symbol
+                                    )
+                                    if position and position.closed_at is not None:
+                                        # Position closed - order likely executed
+                                        should_mark_failed = False
+                                        stats["skipped"] += 1
+                                        logger.debug(
+                                            f"Skipping order {order_id_str}: Position closed, "
+                                            f"order likely executed"
+                                        )
+                                except Exception:
+                                    pass  # Continue with marking as failed
+
+                            if should_mark_failed:
+                                self.orders_repo.mark_failed(
+                                    db_order,
+                                    f"Stale order - not found in broker after {age_hours:.1f} hours",
+                                )
+                                stats["updated"] += 1
+                                logger.warning(
+                                    f"Reconciled stale sell order {order_id_str} "
+                                    f"({db_order.symbol}): Order >12h old and not found in broker - "
+                                    "marked as FAILED"
+                                )
+                        else:
+                            stats["skipped"] += 1
+                            logger.debug(
+                                f"Skipping order {order_id_str}: Not in broker but only "
+                                f"{age_hours:.1f}h old (may be executing)"
+                            )
+                    else:
+                        stats["skipped"] += 1
+                        logger.debug(f"Skipping order {order_id_str}: No placed_at timestamp")
+
+                except Exception as e:
+                    stats["failed"] += 1
+                    logger.error(
+                        f"Error reconciling stale sell order {order_id_str}: {e}",
+                        exc_info=True,
+                    )
+
+            if stats["updated"] > 0:
+                logger.info(
+                    f"Reconciled {stats['updated']} stale pending sell orders "
+                    f"(checked {stats['checked']}, skipped {stats['skipped']}, "
+                    f"failed {stats['failed']})"
+                )
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Error during stale sell order reconciliation: {e}", exc_info=True)
+            return stats
 
     def _find_order_in_broker_orders(
         self, order_id: str, broker_orders: list[dict[str, Any]]
@@ -3495,6 +4249,155 @@ class SellOrderManager:
                     price = OrderFieldExtractor.get_price(order)
                     order_id = OrderFieldExtractor.get_order_id(order)
 
+                    # BUG FIX: Broker API may not return price for pending orders
+                    # Fallback to database price if broker price is 0.0
+                    if price == 0.0 and self.orders_repo and self.user_id and order_id:
+                        try:
+                            # First, try to find price in broker order response (might be in different field)
+                            # Check for limit price fields that might not be checked by OrderFieldExtractor
+                            limit_price = (
+                                order.get("limitPrice")
+                                or order.get("limit_price")
+                                or order.get("lmtPrc")
+                                or order.get("triggerPrice")
+                                or order.get("trigger_price")
+                                or order.get("trgPrc")
+                                or 0.0
+                            )
+
+                            if limit_price and limit_price > 0:
+                                price = float(limit_price)
+                                logger.debug(
+                                    f"Using limit price from broker response for {symbol} order {order_id}: Rs {price:.2f}"
+                                )
+                                # Sync this price to database if different
+                                try:
+                                    db_order = self.orders_repo.get_by_broker_order_id(
+                                        self.user_id, order_id
+                                    )
+                                    if db_order and (db_order.price is None or abs(float(db_order.price) - price) > 0.01):
+                                        db_order.price = price
+                                        self.orders_repo.update(db_order)
+                                        logger.debug(
+                                            f"Updated database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                        )
+                                except Exception as sync_error:
+                                    # Don't fail the main flow if sync fails
+                                    logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
+                            else:
+                                # Fallback to database price
+                                db_order = self.orders_repo.get_by_broker_order_id(
+                                    self.user_id, order_id
+                                )
+                                if db_order and db_order.price is not None and db_order.price > 0:
+                                    db_price = float(db_order.price)
+
+                                    # STALENESS DETECTION (read-only, no side effects)
+                                    is_stale = False
+                                    staleness_reason = None
+
+                                    # Check 1: Database order was updated more than 5 minutes ago
+                                    if db_order.updated_at:
+                                        from datetime import datetime
+
+                                        age_minutes = (
+                                            datetime.now(UTC) - db_order.updated_at
+                                        ).total_seconds() / 60
+                                        if age_minutes > 5:
+                                            is_stale = True
+                                            staleness_reason = f"Database order updated {age_minutes:.1f} minutes ago"
+
+                                    # Check 2: Broker order timestamp is newer than database update
+                                    if not is_stale and db_order.updated_at:
+                                        broker_order_time = OrderFieldExtractor.get_order_time(
+                                            order
+                                        )
+                                        if broker_order_time:
+                                            try:
+                                                from dateutil import parser
+
+                                                broker_time = parser.parse(broker_order_time)
+                                                if broker_time.tzinfo is None:
+                                                    from src.infrastructure.db.timezone_utils import (
+                                                        IST,
+                                                    )
+
+                                                    broker_time = broker_time.replace(tzinfo=IST)
+
+                                                if broker_time.tzinfo != UTC:
+                                                    broker_time = broker_time.astimezone(UTC)
+
+                                                if broker_time > db_order.updated_at:
+                                                    is_stale = True
+                                                    staleness_reason = "Broker order timestamp is newer than database update"
+                                            except Exception:
+                                                # Ignore parsing errors - not critical
+                                                pass
+
+                                    if is_stale:
+                                        # Try to extract price from broker order (even if 0.0, check other fields)
+                                        broker_price = OrderFieldExtractor.get_price(order)
+                                        broker_limit_price = (
+                                            order.get("limitPrice")
+                                            or order.get("limit_price")
+                                            or order.get("lmtPrc")
+                                            or 0.0
+                                        )
+
+                                        # If we found a price in broker response, use it and update DB
+                                        if broker_limit_price and broker_limit_price > 0:
+                                            fresh_price = float(broker_limit_price)
+                                            try:
+                                                # Only update if price actually changed (avoid unnecessary writes)
+                                                if abs(float(db_order.price) - fresh_price) > 0.01:
+                                                    db_order.price = fresh_price
+                                                    self.orders_repo.update(db_order)  # auto_commit=True by default
+                                                    logger.info(
+                                                        f"Synced stale price for {symbol} order {order_id}: "
+                                                        f"Rs {db_price:.2f} -> Rs {fresh_price:.2f} ({staleness_reason})"
+                                                    )
+                                                    price = fresh_price  # Use the synced price
+                                                else:
+                                                    # Price unchanged, just refresh timestamp to mark as checked
+                                                    self.orders_repo.update(db_order)
+                                                    logger.debug(
+                                                        f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                        f"(price unchanged: Rs {db_price:.2f}, {staleness_reason})"
+                                                    )
+                                                    price = db_price  # Use database price (unchanged)
+                                            except Exception as sync_error:
+                                                # Don't fail the main flow if sync fails
+                                                logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
+                                                price = db_price  # Fallback to database price
+                                        else:
+                                            # No price in broker response, just refresh timestamp
+                                            try:
+                                                self.orders_repo.update(db_order)
+                                                logger.debug(
+                                                    f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                    f"(no broker price available, {staleness_reason})"
+                                                )
+                                            except Exception:
+                                                pass  # Non-critical
+                                            price = db_price
+                                    else:
+                                        # Fresh database price - use it
+                                        price = db_price
+                                        logger.debug(
+                                            f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                        )
+
+                        except (AttributeError, ValueError, TypeError) as e:
+                            # Expected errors (missing field, wrong type, etc.)
+                            logger.debug(
+                                f"Could not fetch database price for order {order_id}: {e}"
+                            )
+                        except Exception as e:
+                            # Unexpected errors (database connection, etc.)
+                            logger.warning(
+                                f"Unexpected error fetching database price for order {order_id}: {e}"
+                            )
+
                     if symbol and qty > 0:
                         existing_orders[symbol.upper()] = {
                             "order_id": order_id,
@@ -3537,6 +4440,14 @@ class SellOrderManager:
                 f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
                 f"and {reconciliation_stats['closed']} manual full sells. "
                 f"Positions table updated accordingly."
+            )
+
+        # Cleanup orphaned sell orders (no corresponding open positions)
+        orphaned_stats = self._cancel_orphaned_sell_orders()
+        if orphaned_stats["cancelled"] > 0:
+            logger.info(
+                f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
+                f"({orphaned_stats['skipped']} skipped due to safety checks)"
             )
 
         open_positions = self.get_open_positions()
@@ -3587,8 +4498,11 @@ class SellOrderManager:
                 continue
 
             # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
-            if symbol.upper() in existing_orders:
-                existing = existing_orders[symbol.upper()]
+            # BUG FIX: existing_orders uses base symbols (e.g., "INDIAGLYCO") but symbol from positions
+            # is full symbol (e.g., "INDIAGLYCO-EQ"). Extract base symbol for lookup.
+            base_symbol = extract_base_symbol(symbol).upper()
+            if base_symbol in existing_orders:
+                existing = existing_orders[base_symbol]
                 existing_qty = existing["qty"]
                 existing_price = existing["price"]
 
@@ -3819,9 +4733,10 @@ class SellOrderManager:
             if previous_rsi is not None:
                 # Check if NaN - use simple check since pandas may not be imported
                 try:
-                    import pandas as pd
-
-                    is_na = pd.isna(previous_rsi)
+                    if pd is not None:
+                        is_na = pd.isna(previous_rsi)
+                    else:
+                        raise AttributeError("pandas not available")
                 except (ImportError, AttributeError):
                     # Fallback: check if value is None or NaN-like
                     is_na = previous_rsi is None or (
@@ -3867,9 +4782,10 @@ class SellOrderManager:
                     if current_rsi is not None:
                         # Check if NaN - use simple check since pandas may not be imported
                         try:
-                            import pandas as pd
-
-                            is_na = pd.isna(current_rsi)
+                            if pd is not None:
+                                is_na = pd.isna(current_rsi)
+                            else:
+                                raise AttributeError("pandas not available")
                         except (ImportError, AttributeError):
                             # Fallback: check if value is None or NaN-like
                             is_na = current_rsi is None or (
@@ -3930,10 +4846,31 @@ class SellOrderManager:
             # Skip stocks that are no longer in trade (position closed manually or by other process)
             if self.positions_repo and self.user_id:
                 try:
-                    full_symbol = (
-                        symbol.upper()
-                    )  # symbol is already full symbol from active_sell_orders
-                    position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
+                    # BUG FIX: active_sell_orders uses base symbol (e.g., "INDIAGLYCO")
+                    # but positions table uses full symbol (e.g., "INDIAGLYCO-EQ")
+                    # Try multiple symbol formats to find the position
+                    base_symbol = symbol.upper()
+                    position = None
+
+                    # First, try using placed_symbol from order_info if available (most reliable)
+                    placed_symbol = order_info.get("placed_symbol")
+                    if placed_symbol:
+                        position = self.positions_repo.get_by_symbol(
+                            self.user_id, placed_symbol.upper()
+                        )
+
+                    # If not found, try the symbol as-is (in case it's already full symbol)
+                    if not position:
+                        position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+                    # If still not found, try common full symbol variants
+                    if not position:
+                        for suffix in ["-EQ", "-BE", "-BL"]:
+                            full_symbol = f"{base_symbol}{suffix}"
+                            position = self.positions_repo.get_by_symbol(self.user_id, full_symbol)
+                            if position:
+                                break
+
                     if not position or position.closed_at is not None:
                         logger.debug(
                             f"Skipping {symbol}: Position is closed or doesn't exist "
@@ -3963,7 +4900,16 @@ class SellOrderManager:
             result["ema9"] = current_ema9
 
             # Round EMA9 to tick size BEFORE comparing (avoid unnecessary updates)
-            rounded_ema9 = self.round_to_tick_size(current_ema9)
+            # Use broker symbol (placed_symbol) if available, otherwise use symbol
+            symbol_for_tick_size = broker_sym or symbol
+            exchange_for_tick_size = (
+                self.strategy_config.default_exchange
+                if self.strategy_config
+                else config.DEFAULT_EXCHANGE
+            )
+            rounded_ema9 = self.round_to_tick_size(
+                current_ema9, exchange=exchange_for_tick_size, symbol=symbol_for_tick_size
+            )
 
             # Check if ROUNDED EMA9 is lower than lowest seen
             # Initialize lowest_ema9 from target_price if not set
@@ -4268,6 +5214,14 @@ class SellOrderManager:
 
         # Clean up any rejected/cancelled orders before monitoring
         self._cleanup_rejected_orders()
+
+        # Reconcile stale pending sell orders from database
+        # (check orders in DB that aren't in active_sell_orders)
+        reconciliation_stats = self._reconcile_stale_pending_sell_orders()
+        if reconciliation_stats.get("updated", 0) > 0:
+            logger.info(
+                f"Reconciled {reconciliation_stats['updated']} stale pending sell orders from database"
+            )
 
         # Check for circuit expansion and retry waiting orders
         circuit_retried = self._check_and_retry_circuit_expansion()

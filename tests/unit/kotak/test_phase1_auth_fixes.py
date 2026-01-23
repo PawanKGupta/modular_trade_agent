@@ -145,7 +145,9 @@ class TestProactiveSessionValidation(unittest.TestCase):
         mock_client = Mock()
         auth.client = mock_client
 
-        with patch.object(auth, "force_relogin", return_value=True) as mock_reauth:
+        # get_client() calls _force_relogin_impl() directly while holding the lock
+        # (to avoid deadlock), so patch that implementation hook.
+        with patch.object(auth, "_force_relogin_impl", return_value=True) as mock_reauth:
             result = auth.get_client()
 
             # Should trigger re-auth
@@ -354,6 +356,10 @@ class TestSharedSessionManagerValidation(unittest.TestCase):
         mock_auth.get_client.return_value = None  # But client is None
 
         self.manager._sessions[user_id] = mock_auth
+
+        # If cooldown is active, manager should return existing session even when
+        # client is temporarily None (re-auth in progress).
+        self.manager._last_reauth_time[user_id] = time.time()
 
         # Should NOT clear session if it's valid (Phase -1 fix)
         session = self.manager.get_or_create_session(user_id, str(self.env_path))
@@ -594,6 +600,10 @@ class TestSellMonitoringWebApiRaceCondition(unittest.TestCase):
         mock_auth.get_client.return_value = None  # Client None (during re-auth)
 
         self.manager._sessions[user_id] = mock_auth
+
+        # Simulate a recent re-auth so SharedSessionManager stays in cooldown window
+        # and does not clear the session just because client is temporarily None.
+        self.manager._last_reauth_time[user_id] = time.time()
 
         # Simulate Web API thread checking session
         def web_api_thread():

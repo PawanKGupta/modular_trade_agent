@@ -29,6 +29,18 @@ from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
+def _orders_list_items(list_result):
+    """Normalize OrdersRepository.list() output to just the list of orders.
+
+    Some call sites in the codebase expect `list()` to return `(items, total_count)`.
+    These tests run against whichever contract is currently active.
+    """
+
+    if isinstance(list_result, tuple) and len(list_result) == 2:
+        return list_result[0]
+    return list_result
+
+
 @pytest.fixture
 def db_session():
     """Create in-memory test database"""
@@ -57,7 +69,17 @@ def db_session():
 @pytest.fixture
 def pnl_service(db_session):
     session, _ = db_session
-    return PnlCalculationService(session)
+    service = PnlCalculationService(session)
+
+    # Ensure the PnL service always iterates actual Order objects, even if
+    # OrdersRepository.list() returns (items, total_count) in some environments.
+    original_list = service.orders_repo.list
+
+    def list_items(*args, **kwargs):
+        return _orders_list_items(original_list(*args, **kwargs))
+
+    service.orders_repo.list = list_items
+    return service
 
 
 @pytest.fixture

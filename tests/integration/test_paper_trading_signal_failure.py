@@ -41,10 +41,10 @@ def test_user(db_session):
 
 
 @pytest.fixture
-def paper_broker_adapter(db_session):
+def paper_broker_adapter(db_session, test_user):
     """Create paper trading broker adapter with db_session"""
     config = PaperTradingConfig.default()
-    return PaperTradingBrokerAdapter(config=config, db_session=db_session)
+    return PaperTradingBrokerAdapter(user_id=test_user.id, config=config, db_session=db_session)
 
 
 @pytest.fixture
@@ -199,7 +199,7 @@ class TestPaperTradingOrderFailureSync:
         """Test that sync works gracefully when db_session is None"""
         # Create adapter without db_session
         config = PaperTradingConfig.default()
-        adapter = PaperTradingBrokerAdapter(config=config, db_session=None)
+        adapter = PaperTradingBrokerAdapter(user_id=test_user.id, config=config, db_session=None)
 
         # Create paper trading order
         paper_order = Order(

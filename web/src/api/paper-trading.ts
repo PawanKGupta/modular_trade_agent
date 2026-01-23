@@ -56,10 +56,18 @@ export interface PaperTradingOrder {
 	};
 }
 
+export interface PaginatedPaperTradingOrders {
+	items: PaperTradingOrder[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
 export interface PaperTradingPortfolio {
 	account: PaperTradingAccount;
 	holdings: PaperTradingHolding[];
-	recent_orders: PaperTradingOrder[];
+	recent_orders: PaginatedPaperTradingOrders;
 	order_statistics: {
 		total_orders: number;
 		buy_orders: number;
@@ -117,18 +125,50 @@ export interface TradeHistoryStatistics {
 	total_transactions: number;
 }
 
+export interface PaginatedClosedPositions {
+	items: ClosedPosition[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
+export interface PaginatedTransactions {
+	items: PaperTradingTransaction[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
 export interface TradeHistory {
-	transactions: PaperTradingTransaction[];
-	closed_positions: ClosedPosition[];
+	transactions: PaginatedTransactions;
+	closed_positions: PaginatedClosedPositions;
 	statistics: TradeHistoryStatistics;
 }
 
-export async function getPaperTradingPortfolio(): Promise<PaperTradingPortfolio> {
-	const res = await api.get('/user/paper-trading/portfolio');
+export interface GetPaperTradingPortfolioParams {
+	page?: number;
+	page_size?: number;
+}
+
+export interface GetPaperTradingHistoryParams {
+	positions_page?: number;
+	positions_page_size?: number;
+	transactions_page?: number;
+	transactions_page_size?: number;
+}
+
+export async function getPaperTradingPortfolio(
+	params?: GetPaperTradingPortfolioParams
+): Promise<PaperTradingPortfolio> {
+	const res = await api.get('/user/paper-trading/portfolio', { params });
 	return res.data;
 }
 
-export async function getPaperTradingHistory(): Promise<TradeHistory> {
-	const res = await api.get('/user/paper-trading/history');
+export async function getPaperTradingHistory(
+	params?: GetPaperTradingHistoryParams
+): Promise<TradeHistory> {
+	const res = await api.get('/user/paper-trading/history', { params });
 	return res.data;
 }

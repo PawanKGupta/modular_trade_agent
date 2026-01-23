@@ -43,41 +43,47 @@ vi.mock('@/api/paper-trading', () => ({
 					distance_to_target: 2.36,
 				},
 			],
-			recent_orders: [
-				{
-					order_id: 'ord_1',
-					symbol: 'APOLLOHOSP',
-					transaction_type: 'BUY',
-					order_type: 'MARKET',
-					quantity: 100,
-					status: 'COMPLETE',
-					execution_price: 150.0,
-					created_at: '2024-11-26T09:00:00',
-					executed_at: '2024-11-26T09:00:01',
-				},
-				{
-					order_id: 'ord_2',
-					symbol: 'TATASTEEL',
-					transaction_type: 'BUY',
-					order_type: 'LIMIT',
-					quantity: 200,
-					status: 'COMPLETE',
-					execution_price: 120.0,
-					created_at: '2024-11-26T09:15:00',
-					executed_at: '2024-11-26T09:30:00',
-				},
-				{
-					order_id: 'ord_3',
-					symbol: 'RELIANCE',
-					transaction_type: 'SELL',
-					order_type: 'MARKET',
-					quantity: 50,
-					status: 'PENDING',
-					execution_price: null,
-					created_at: '2024-11-26T10:00:00',
-					executed_at: null,
-				},
-			],
+			recent_orders: {
+				items: [
+					{
+						order_id: 'ord_1',
+						symbol: 'APOLLOHOSP',
+						transaction_type: 'BUY',
+						order_type: 'MARKET',
+						quantity: 100,
+						status: 'COMPLETE',
+						execution_price: 150.0,
+						created_at: '2024-11-26T09:00:00',
+						executed_at: '2024-11-26T09:00:01',
+					},
+					{
+						order_id: 'ord_2',
+						symbol: 'TATASTEEL',
+						transaction_type: 'BUY',
+						order_type: 'LIMIT',
+						quantity: 200,
+						status: 'COMPLETE',
+						execution_price: 120.0,
+						created_at: '2024-11-26T09:15:00',
+						executed_at: '2024-11-26T09:30:00',
+					},
+					{
+						order_id: 'ord_3',
+						symbol: 'RELIANCE',
+						transaction_type: 'SELL',
+						order_type: 'MARKET',
+						quantity: 50,
+						status: 'PENDING',
+						execution_price: null,
+						created_at: '2024-11-26T10:00:00',
+						executed_at: null,
+					},
+				],
+				total: 3,
+				total_pages: 1,
+				page: 1,
+				page_size: 10,
+			},
 			order_statistics: {
 				total_orders: 3,
 				buy_orders: 2,
@@ -158,9 +164,9 @@ describe('PaperTradingPage', () => {
 			expect(screen.getByText(/Holdings \(2\)/i)).toBeInTheDocument();
 
 			// Check table headers include new columns
-			// Note: "Target" column is hidden on mobile (md:table-cell), so use getByRole to find it even if hidden
-			expect(screen.getByRole('columnheader', { name: 'Target' })).toBeInTheDocument();
-			expect(screen.getByRole('columnheader', { name: 'To Target' })).toBeInTheDocument();
+			// Note: these columns are hidden on small screens
+			expect(screen.getByRole('columnheader', { name: 'Target', hidden: true })).toBeInTheDocument();
+			expect(screen.getByRole('columnheader', { name: 'To Target', hidden: true })).toBeInTheDocument();
 
 			// Check holdings data (use getAllByText since symbols appear in both holdings and orders)
 			const apolloElements = screen.getAllByText('APOLLOHOSP');
@@ -180,7 +186,7 @@ describe('PaperTradingPage', () => {
 
 		await waitFor(() => {
 			// Check orders section
-			expect(screen.getByText(/Recent Orders \(Last 50\)/i)).toBeInTheDocument();
+			expect(screen.getByText(/Recent Orders \(3\)/i)).toBeInTheDocument();
 
 			// Check table headers include both Side and Type columns
 			expect(screen.getByText('Side')).toBeInTheDocument();

@@ -250,7 +250,7 @@ class IndividualServiceManager:
 
         from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
 
-        timeout_minutes = 5  # All tasks use 5 minute timeout
+        timeout_minutes = 2  # Reduced from 5 to 2 minutes for faster recovery from stuck executions
 
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
 
@@ -587,12 +587,18 @@ class IndividualServiceManager:
                 )
 
     def _execute_task_once(self, user_id: int, task_name: str, execution_id: int) -> None:
-        """Execute a task once in a separate thread"""
+        """Execute a task once in a separate thread with timeout protection"""
         start_time = time.time()
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
 
+        # Maximum execution time: 5 minutes for all tasks
+        MAX_EXECUTION_TIME = 300  # 5 minutes
+
         try:
-            logger.info(f"Executing task once: {task_name}", action="run_once")
+            logger.info(
+                f"Executing task once: {task_name} (timeout: {MAX_EXECUTION_TIME}s)",
+                action="run_once",
+            )
 
             # Get user context
             settings = self._settings_repo.get_by_user_id(user_id)
@@ -623,37 +629,89 @@ class IndividualServiceManager:
                         f"paper trading mode."
                     )
 
-            # Execute task based on task_name
-            result = self._execute_task_logic(
-                user_id=user_id,
-                task_name=task_name,
-                broker_creds=broker_creds,
-                strategy_config=strategy_config,
-                settings=settings,
-            )
+            # Execute task with timeout protection
+            result = None
+            task_exception = [None]  # Use list to allow assignment from nested function
+            task_completed = threading.Event()
 
-            # Update execution record
-            duration = time.time() - start_time
-            self._update_execution_status(
-                user_id=user_id,
-                execution_id=execution_id,
-                status="success",
-                duration=duration,
-                details=result,
-                task_name=task_name,
-            )
+            def _run_task():
+                """Run task logic in separate thread for timeout control"""
+                try:
+                    nonlocal result
+                    result = self._execute_task_logic(
+                        user_id=user_id,
+                        task_name=task_name,
+                        broker_creds=broker_creds,
+                        strategy_config=strategy_config,
+                        settings=settings,
+                    )
+                except Exception as e:
+                    task_exception[0] = e
+                finally:
+                    task_completed.set()
 
-            # Update last execution time
-            self._status_repo.update_last_execution(user_id, task_name)
+            # Start task execution in a daemon thread
+            task_thread = threading.Thread(target=_run_task, daemon=True, name=f"Task-{task_name}")
+            task_thread.start()
 
-            logger.info(
-                f"Task execution completed: {task_name} (duration: {duration:.2f}s)",
-                action="run_once",
-            )
+            # Wait for completion or timeout
+            if task_completed.wait(timeout=MAX_EXECUTION_TIME):
+                # Task completed (success or exception)
+                if task_exception[0]:
+                    raise task_exception[0]
 
-            # Send notification for successful execution
-            self._notify_service_execution_completed(user_id, task_name, "success", duration)
+                # Task completed successfully
+                duration = time.time() - start_time
+                self._update_execution_status(
+                    user_id=user_id,
+                    execution_id=execution_id,
+                    status="success",
+                    duration=duration,
+                    details=result,
+                    task_name=task_name,
+                )
 
+                # Update last execution time
+                self._status_repo.update_last_execution(user_id, task_name)
+
+                logger.info(
+                    f"Task execution completed: {task_name} (duration: {duration:.2f}s)",
+                    action="run_once",
+                )
+
+                # Send notification for successful execution
+                self._notify_service_execution_completed(user_id, task_name, "success", duration)
+            else:
+                # TIMEOUT: Task exceeded maximum execution time
+                duration = time.time() - start_time
+                timeout_msg = (
+                    f"Task '{task_name}' exceeded maximum execution time ({MAX_EXECUTION_TIME}s)"
+                )
+                logger.error(timeout_msg, action="run_once", task_name=task_name)
+
+                self._update_execution_status(
+                    user_id=user_id,
+                    execution_id=execution_id,
+                    status="failed",
+                    duration=duration,
+                    details={
+                        "error": timeout_msg,
+                        "error_type": "TimeoutError",
+                        "timeout_seconds": MAX_EXECUTION_TIME,
+                    },
+                    task_name=task_name,
+                )
+
+                # Send notification for timeout
+                self._notify_service_execution_completed(
+                    user_id, task_name, "failed", duration, timeout_msg
+                )
+
+                raise TimeoutError(timeout_msg)
+
+        except TimeoutError:
+            # Re-raise timeout errors (already handled above)
+            raise
         except Exception as e:
             duration = time.time() - start_time
             error_details = {"error": str(e), "error_type": type(e).__name__}

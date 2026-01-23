@@ -148,7 +148,8 @@ class PriceService:
         """
         Get historical OHLCV data for a ticker.
 
-        This method wraps fetch_ohlcv_yf() with caching support.
+        This method uses the shared OHLCV cache (shared across all users) for maximum efficiency.
+        Falls back to direct fetch_ohlcv_yf() if caching is disabled.
         Maintains exact same behavior as direct fetch_ohlcv_yf() calls.
 
         Args:
@@ -167,38 +168,27 @@ class PriceService:
             >>> df = service.get_price('RELIANCE.NS', days=30)
             >>> print(df.head())
         """
-        # Create cache key
-        cache_key = f"{ticker}_{days}_{interval}_{end_date}_{add_current_day}"
-
-        # Phase 4.2: Use adaptive TTL if caching enabled
+        # Use shared cache if enabled (shared across all users - paper + broker)
         if self.enable_caching:
-            adaptive_ttl = self.get_adaptive_ttl(data_type="historical")
-        else:
-            adaptive_ttl = self.historical_cache_ttl
+            from core.data_fetcher import get_cached_ohlcv
 
-        # Check cache first (with adaptive TTL)
-        if self._cache:
-            cached_data = self._cache.get_historical(cache_key, ttl_seconds=adaptive_ttl)
-            if cached_data is not None:
-                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for {ticker}")
-                return cached_data.copy()
+            return get_cached_ohlcv(
+                ticker=ticker,
+                days=days,
+                interval=interval,
+                add_current_day=add_current_day,
+                end_date=end_date,
+            )
 
-        # Fetch from yfinance (same as original fetch_ohlcv_yf call)
+        # Fallback to direct fetch if caching is disabled
         try:
-            df = fetch_ohlcv_yf(
+            return fetch_ohlcv_yf(
                 ticker=ticker,
                 days=days,
                 interval=interval,
                 end_date=end_date,
                 add_current_day=add_current_day,
             )
-
-            # Cache the result
-            if self._cache and df is not None:
-                self._cache.set_historical(cache_key, df)
-
-            return df
-
         except Exception as e:
             logger.error(f"Failed to fetch historical price data for {ticker}: {e}")
             return None
@@ -244,7 +234,9 @@ class PriceService:
         if self._cache:
             cached_price = self._cache.get_realtime(cache_key, ttl_seconds=adaptive_ttl)
             if cached_price is not None:
-                logger.debug(f"Cache hit (adaptive TTL: {adaptive_ttl}s) for real-time price: {symbol}")
+                logger.debug(
+                    f"Cache hit (adaptive TTL: {adaptive_ttl}s) for real-time price: {symbol}"
+                )
                 return cached_price
 
         # Try LivePriceManager/LivePriceCache first (real-time WebSocket prices)
@@ -297,9 +289,7 @@ class PriceService:
         logger.warning(f"Could not get real-time price for {symbol}")
         return None
 
-    def subscribe_to_symbols(
-        self, symbols: list[str], service_id: str = "default"
-    ) -> bool:
+    def subscribe_to_symbols(self, symbols: list[str], service_id: str = "default") -> bool:
         """
         Subscribe to real-time price updates for symbols.
 
@@ -327,9 +317,7 @@ class PriceService:
 
             # Find symbols that need new subscriptions (not already subscribed)
             symbols_to_subscribe = [
-                symbol
-                for symbol in normalized_symbols
-                if symbol not in self._subscribed_symbols
+                symbol for symbol in normalized_symbols if symbol not in self._subscribed_symbols
             ]
 
             # Track all symbols for this service (even if already subscribed)
@@ -372,9 +360,7 @@ class PriceService:
             logger.error(f"Failed to subscribe to symbols: {e}")
             return False
 
-    def unsubscribe_from_symbols(
-        self, symbols: list[str], service_id: str = "default"
-    ) -> bool:
+    def unsubscribe_from_symbols(self, symbols: list[str], service_id: str = "default") -> bool:
         """
         Unsubscribe from real-time price updates for symbols.
 
@@ -521,17 +507,16 @@ class PriceService:
             else:  # pre_market
                 # Pre-market: medium TTL
                 return int(self._base_historical_ttl * 1.5)  # 1.5x base (7.5 min)
-        else:  # realtime
-            # Real-time data TTL based on market state
-            if market_state == "open":
-                # Market open: shorter TTL for fresher prices
-                return int(self._base_realtime_ttl * 0.7)  # 70% of base (21 sec)
-            elif market_state == "post_market":
-                # Market closed: longer TTL (prices won't change)
-                return int(self._base_realtime_ttl * 5)  # 5x base (2.5 min)
-            else:  # pre_market
-                # Pre-market: medium TTL
-                return int(self._base_realtime_ttl * 2)  # 2x base (1 min)
+        # Real-time data TTL based on market state
+        elif market_state == "open":
+            # Market open: shorter TTL for fresher prices
+            return int(self._base_realtime_ttl * 0.7)  # 70% of base (21 sec)
+        elif market_state == "post_market":
+            # Market closed: longer TTL (prices won't change)
+            return int(self._base_realtime_ttl * 5)  # 5x base (2.5 min)
+        else:  # pre_market
+            # Pre-market: medium TTL
+            return int(self._base_realtime_ttl * 2)  # 2x base (1 min)
 
     def warm_cache_for_positions(
         self, positions: list[dict[str, Any]] | dict[str, list[dict[str, Any]]]
@@ -562,7 +547,12 @@ class PriceService:
             # List of trades: extract unique symbols
             symbols = list(
                 set(
-                    trade.get("symbol", "").upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                    trade.get("symbol", "")
+                    .upper()
+                    .replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
                     for trade in positions
                     if trade.get("symbol")
                 )
@@ -588,15 +578,11 @@ class PriceService:
                 logger.debug(f"Error warming cache for {symbol}: {e}")
                 failed += 1
 
-        logger.info(
-            f"Cache warming complete: {warmed} positions warmed, {failed} failed"
-        )
+        logger.info(f"Cache warming complete: {warmed} positions warmed, {failed} failed")
 
         return {"warmed": warmed, "failed": failed}
 
-    def warm_cache_for_recommendations(
-        self, recommendations: list[Any]
-    ) -> dict[str, int]:
+    def warm_cache_for_recommendations(self, recommendations: list[Any]) -> dict[str, int]:
         """
         Warm cache for recommendation symbols.
 
@@ -643,9 +629,7 @@ class PriceService:
                 logger.debug(f"Error warming cache for recommendation: {e}")
                 failed += 1
 
-        logger.info(
-            f"Cache warming complete: {warmed} recommendations warmed, {failed} failed"
-        )
+        logger.info(f"Cache warming complete: {warmed} recommendations warmed, {failed} failed")
 
         return {"warmed": warmed, "failed": failed}
 

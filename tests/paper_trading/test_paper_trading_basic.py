@@ -47,9 +47,9 @@ def paper_config():
 
 
 @pytest.fixture
-def broker(paper_config):
+def broker(paper_config, db_session):
     """Create paper trading broker"""
-    broker = PaperTradingBrokerAdapter(paper_config)
+    broker = PaperTradingBrokerAdapter(user_id=1, config=paper_config, db_session=db_session)
     yield broker
     # Cleanup
     broker.reset()
@@ -310,10 +310,10 @@ class TestAccountLimits:
 class TestPersistence:
     """Test state persistence"""
 
-    def test_state_persists_after_disconnect(self, paper_config):
+    def test_state_persists_after_disconnect(self, paper_config, db_session):
         """Test state persists after disconnect and reconnect"""
         # Session 1
-        broker1 = PaperTradingBrokerAdapter(paper_config)
+        broker1 = PaperTradingBrokerAdapter(user_id=1, config=paper_config, db_session=db_session)
         broker1.connect()
         broker1.price_provider.set_mock_price("INFY", 1450.00)
         broker1.price_provider.set_mock_price("INFY.NS", 1450.00)
@@ -328,7 +328,7 @@ class TestPersistence:
         broker1.disconnect()
 
         # Session 2
-        broker2 = PaperTradingBrokerAdapter(paper_config)
+        broker2 = PaperTradingBrokerAdapter(user_id=1, config=paper_config, db_session=db_session)
         broker2.connect()
 
         # Check holding persisted

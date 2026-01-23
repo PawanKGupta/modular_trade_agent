@@ -34,11 +34,15 @@ class TestReentryDuringSellOrderUpdate:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_positions_repo):
         """Create SellOrderManager with mocked dependencies"""
-        manager = SellOrderManager(
-            auth=mock_auth,
-            positions_repo=mock_positions_repo,
-            user_id=1,
-        )
+        # Avoid scrip-master background download and keep unit tests offline/stable
+        from unittest.mock import patch
+
+        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster"):
+            manager = SellOrderManager(
+                auth=mock_auth,
+                positions_repo=mock_positions_repo,
+                user_id=1,
+            )
         manager.get_existing_sell_orders = MagicMock(return_value={})
         manager.get_current_ema9 = MagicMock(return_value=100.0)
         manager.orders = MagicMock()
@@ -46,6 +50,11 @@ class TestReentryDuringSellOrderUpdate:
         manager.orders.get_orders = MagicMock(
             return_value={"data": []}
         )  # Mock for run_at_market_open optimization
+        manager.orders.get_executed_orders = MagicMock(return_value=[])
+
+        # Prevent RSI cache init from fetching OHLCV/indicators
+        manager._get_previous_day_rsi10 = MagicMock(return_value=25.0)
+
         manager._register_order = MagicMock()
         return manager
 
@@ -69,14 +78,18 @@ class TestReentryDuringSellOrderUpdate:
             opened_at=ist_now(),
         )
 
+        # NOTE: run_at_market_open compares base symbols against existing_orders.
+        # Use base symbol here and provide placed_symbol for broker symbol.
+
         # Mock get_open_positions to return initial quantity
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
+                    "symbol": "RELIANCE",
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,  # Stale quantity
                     "entry_price": 100.0,
+                    "placed_symbol": "RELIANCE-EQ",
                 }
             ]
         )
@@ -84,7 +97,7 @@ class TestReentryDuringSellOrderUpdate:
         # Mock existing sell order with LOWER quantity (triggers update path)
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE-EQ": {  # Full symbol after migration
+                "RELIANCE": {
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,
@@ -102,9 +115,7 @@ class TestReentryDuringSellOrderUpdate:
         # Verify position was re-read with lock
         # Note: Called twice - once for re-read before update, once for _reconcile_single_symbol()
         assert mock_positions_repo.get_by_symbol_for_update.call_count == 2
-        mock_positions_repo.get_by_symbol_for_update.assert_any_call(
-            1, "RELIANCE-EQ"
-        )  # Full symbol after migration
+        mock_positions_repo.get_by_symbol_for_update.assert_any_call(1, "RELIANCE")
 
         # Verify sell order was updated with latest quantity (110, not 100)
         sell_manager.update_sell_order.assert_called_once()
@@ -117,10 +128,11 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
+                    "symbol": "RELIANCE",
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,
                     "entry_price": 100.0,
+                    "placed_symbol": "RELIANCE-EQ",
                 }
             ]
         )
@@ -128,7 +140,7 @@ class TestReentryDuringSellOrderUpdate:
         # Mock existing sell order with LOWER quantity (triggers update path)
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE-EQ": {  # Full symbol after migration
+                "RELIANCE": {
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,
@@ -200,17 +212,18 @@ class TestReentryDuringSellOrderUpdate:
         sell_manager.get_open_positions = MagicMock(
             return_value=[
                 {
-                    "symbol": "RELIANCE-EQ",  # Full symbol after migration
+                    "symbol": "RELIANCE",
                     "ticker": "RELIANCE.NS",
                     "qty": 100.0,
                     "entry_price": 100.0,
+                    "placed_symbol": "RELIANCE-EQ",
                 }
             ]
         )
 
         sell_manager.get_existing_sell_orders = MagicMock(
             return_value={
-                "RELIANCE-EQ": {  # Full symbol after migration
+                "RELIANCE": {
                     "order_id": "SELL123",
                     "qty": 90,  # Existing order has LESS quantity (triggers qty > existing_qty)
                     "price": 100.0,

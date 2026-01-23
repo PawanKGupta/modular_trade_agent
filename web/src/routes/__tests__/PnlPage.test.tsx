@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { withProviders } from '@/test/utils';
 import { PnlPage } from '../dashboard/PnlPage';
 
@@ -68,9 +68,15 @@ describe('PnlPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Summary')).toBeInTheDocument();
-			expect(screen.getByText('Total P&L')).toBeInTheDocument();
-			expect(screen.getByText('Profitable Trades')).toBeInTheDocument();
-			expect(screen.getByText('Loss Trades')).toBeInTheDocument();
+
+			const summaryHeader = screen.getByText('Summary');
+			const summaryPanel = summaryHeader.closest('div')?.parentElement?.parentElement;
+			expect(summaryPanel).toBeTruthy();
+
+			const summary = summaryPanel as HTMLElement;
+			expect(within(summary).getByText('Total P&L')).toBeInTheDocument();
+			expect(within(summary).getByText('Profitable Trades')).toBeInTheDocument();
+			expect(within(summary).getByText('Loss Trades')).toBeInTheDocument();
 		});
 
 		// Check formatted money value
@@ -93,12 +99,15 @@ describe('PnlPage', () => {
 	it('displays daily P&L with formatted values and color coding', async () => {
 		render(withProviders(<PnlPage />));
 
+		const formatDate = (iso: string) =>
+			new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+
 		await waitFor(() => {
 			expect(screen.getByText('Daily P&L')).toBeInTheDocument();
 
 			// Check dates are displayed
-			expect(screen.getByText('2025-11-26')).toBeInTheDocument();
-			expect(screen.getByText('2025-11-25')).toBeInTheDocument();
+			expect(screen.getByText(formatDate('2025-11-26'))).toBeInTheDocument();
+			expect(screen.getByText(formatDate('2025-11-25'))).toBeInTheDocument();
 
 			// Check formatted money values using getAllByText for dates that appear in multiple places
 			const allByText = screen.getAllByText('Rs 2,500.75');

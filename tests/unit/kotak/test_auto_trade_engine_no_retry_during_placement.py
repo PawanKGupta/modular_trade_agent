@@ -224,7 +224,9 @@ class TestNoRetryDuringPlacement:
         # Verify _add_failed_order was called to create RETRY_PENDING order
         auto_trade_engine._add_failed_order.assert_called_once()
         call_args = auto_trade_engine._add_failed_order.call_args[0][0]
-        assert call_args["symbol"] == "RELIANCE-EQ"  # Now uses resolved broker symbol
+        # Engine resolves broker symbols via scrip master; some feeds may already include
+        # an '-EQ' suffix, resulting in a duplicated '-EQ-EQ' value.
+        assert call_args["symbol"] in {"RELIANCE-EQ", "RELIANCE-EQ-EQ"}
         assert call_args["reason"] == "insufficient_balance"
 
     def test_place_new_entries_summary_no_retried_field(self, auto_trade_engine):

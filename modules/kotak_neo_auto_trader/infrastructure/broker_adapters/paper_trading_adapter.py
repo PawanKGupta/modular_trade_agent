@@ -42,7 +42,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             order: Order that failed
             failure_type: 'rejected', 'failed', or 'cancelled'
             reason: Reason for failure
-            user_id: User ID for DB sync (optional)
+            user_id: User ID for DB sync (deprecated, always uses adapter's user_id)
         """
         if not self.db_session:
             # No database integration available, skip sync
@@ -52,19 +52,46 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             from src.infrastructure.persistence.orders_repository import OrdersRepository
 
             repo = OrdersRepository(self.db_session)
-            # Try user_id argument first, then order.user_id if present
-            resolved_user_id = user_id
-            if resolved_user_id is None:
-                resolved_user_id = getattr(order, "user_id", None)
-            if resolved_user_id is None:
-                logger.warning(
-                    f"[PaperTrading] Cannot sync order failure to DB: user_id missing for order {getattr(order, 'order_id', None)}"
-                )
-                return
-            db_order = repo.get_by_broker_order_id(resolved_user_id, order.order_id)
+
+            # ALWAYS use adapter's user_id (source of truth)
+            # Since user_id is mandatory in adapter, all orders belong to this user
+            user_id = self.user_id
+
+            # Handle potential duplicate broker_order_id (similar to _sync_order_execution_to_db)
+            try:
+                db_order = repo.get_by_broker_order_id(user_id, order.order_id)
+            except Exception as e:
+                # MultipleResultsFound - handle gracefully
+                if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                    logger.error(
+                        f"[PaperTrading] Multiple orders found with broker_order_id={order.order_id} "
+                        f"for user_id={user_id}. This indicates a data integrity issue. "
+                        f"Using first match and logging error."
+                    )
+                    # Fallback: Get all matching orders and use the first one
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Orders
+
+                    stmt = select(Orders).where(
+                        Orders.user_id == user_id,
+                        Orders.broker_order_id == order.order_id,
+                    )
+                    matching_orders = self.db_session.execute(stmt).scalars().all()
+                    if matching_orders:
+                        db_order = matching_orders[0]
+                        logger.warning(
+                            f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates"
+                        )
+                    else:
+                        db_order = None
+                else:
+                    raise
+
             if not db_order:
                 logger.debug(
-                    f"[PaperTrading] DB order not found for sync: {order.order_id} (may be pre-DB integration order)"
+                    f"[PaperTrading] DB order not found for sync: {order.order_id} "
+                    f"(may be pre-DB integration order)"
                 )
                 return
             if failure_type == "rejected":
@@ -73,6 +100,80 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 repo.mark_failed(db_order, reason or "Paper trading failure")
             elif failure_type == "cancelled":
                 repo.mark_cancelled(db_order, reason or "Paper trading cancelled")
+
+                # If this is a sell order that closed a position, check if we need to reopen it
+                # Check if order was executed (has execution_time) before being cancelled
+                if db_order.side == "sell" and db_order.execution_time is not None:
+                    # Check if a position was closed by this order
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Positions
+                    from src.infrastructure.persistence.positions_repository import (
+                        PositionsRepository,
+                    )
+
+                    positions_repo = PositionsRepository(self.db_session)
+
+                    # Find position that was closed by this order
+                    stmt = select(Positions).where(
+                        Positions.user_id == user_id,
+                        Positions.sell_order_id == db_order.id,
+                        Positions.closed_at.isnot(None),  # Only check closed positions
+                    )
+                    closed_position = self.db_session.execute(stmt).scalar_one_or_none()
+
+                    if closed_position:
+                        # Check if stock is still in holdings (broker's portfolio)
+                        try:
+                            # Normalize symbol for broker lookup
+                            from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                                normalize_symbol,
+                            )
+
+                            broker_symbol = normalize_symbol(closed_position.symbol)
+                            # Remove -EQ suffix if present for broker lookup
+                            if broker_symbol.endswith("-EQ"):
+                                broker_symbol = broker_symbol[:-3]
+
+                            holding = self.get_holding(broker_symbol)
+
+                            if holding and holding.quantity > 0:
+                                # Stock is still in holdings - reopen the position
+                                logger.warning(
+                                    f"[PaperTrading] Reopening position {closed_position.symbol} "
+                                    f"because sell order {order.order_id} was cancelled but stock "
+                                    f"is still in holdings (qty: {holding.quantity})"
+                                )
+
+                                # Reopen position: clear closed_at and restore quantity
+                                closed_position.closed_at = None
+                                closed_position.quantity = float(holding.quantity)
+                                # Clear exit details since position is reopened
+                                closed_position.exit_price = None
+                                closed_position.exit_reason = None
+                                closed_position.exit_rsi = None
+                                closed_position.realized_pnl = None
+                                closed_position.realized_pnl_pct = None
+                                closed_position.sell_order_id = None
+
+                                self.db_session.commit()
+                                logger.info(
+                                    f"[PaperTrading] Reopened position {closed_position.symbol} "
+                                    f"with quantity {holding.quantity}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"[PaperTrading] Position {closed_position.symbol} was closed "
+                                    f"by cancelled order {order.order_id}, but stock is not in "
+                                    f"holdings - position remains closed"
+                                )
+                        except Exception as reopen_ex:
+                            logger.warning(
+                                f"[PaperTrading] Failed to check/reopen position for cancelled "
+                                f"sell order {order.order_id}: {reopen_ex}",
+                                exc_info=True,
+                            )
+
             logger.debug(
                 f"[PaperTrading] Synced order failure to DB: {order.order_id} ({failure_type})"
             )
@@ -81,6 +182,416 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             logger.warning(
                 f"[PaperTrading] Failed to sync order failure to DB: {ex}", exc_info=True
             )
+
+    def _sync_order_execution_to_db(
+        self, order: Order, execution_price: Money, trade_info: dict | None = None
+    ) -> None:
+        """
+        Sync paper trading order execution to database (orders and positions tables).
+
+        This updates:
+        - Order status to ONGOING (for buy orders) or CLOSED (for sell orders)
+        - Creates/updates position in positions table (for buy orders)
+        - Updates/closes position in positions table (for sell orders)
+
+        Args:
+            order: Order that executed
+            execution_price: Execution price
+            trade_info: Trade info dict (for sell orders, contains entry_price, realized_pnl, etc.)
+        """
+        if not self.db_session:
+            # No database integration available, skip sync
+            return
+
+        try:
+            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            orders_repo = OrdersRepository(self.db_session)
+            positions_repo = PositionsRepository(self.db_session)
+
+            # ALWAYS use adapter's user_id (source of truth)
+            # Since user_id is mandatory in adapter, all orders belong to this user
+            user_id = self.user_id
+
+            # Get database order by broker_order_id (with user_id filter for safety)
+            # Handle potential duplicate broker_order_id gracefully
+            db_order = None
+            try:
+                db_order = orders_repo.get_by_broker_order_id(user_id, order.order_id)
+            except Exception as e:
+                # MultipleResultsFound - handle gracefully
+                if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                    logger.error(
+                        f"[PaperTrading] Multiple orders found with broker_order_id={order.order_id} "
+                        f"for user_id={user_id}. This indicates a data integrity issue. "
+                        f"Using first match and logging error."
+                    )
+                    # Fallback: Get all matching orders and use the first one
+                    from sqlalchemy import select
+
+                    from src.infrastructure.db.models import Orders
+
+                    stmt = select(Orders).where(
+                        Orders.user_id == user_id,
+                        Orders.broker_order_id == order.order_id,
+                    )
+                    matching_orders = self.db_session.execute(stmt).scalars().all()
+                    if matching_orders:
+                        db_order = matching_orders[0]
+                        logger.warning(
+                            f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates"
+                        )
+                else:
+                    raise
+
+            # If not found, try direct query (still with user_id filter)
+            if not db_order:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import Orders
+
+                stmt = select(Orders).where(
+                    Orders.user_id == user_id, Orders.broker_order_id == order.order_id
+                )
+                try:
+                    db_order = self.db_session.execute(stmt).scalar_one_or_none()
+                except Exception as e:
+                    # Handle MultipleResultsFound in fallback query too
+                    if "Multiple" in str(type(e).__name__) or "Multiple" in str(e):
+                        logger.error(
+                            f"[PaperTrading] Multiple orders found in fallback query with broker_order_id={order.order_id} "
+                            f"for user_id={user_id}. Using first match."
+                        )
+                        matching_orders = self.db_session.execute(stmt).scalars().all()
+                        if matching_orders:
+                            db_order = matching_orders[0]
+                            logger.warning(
+                                f"[PaperTrading] Using first order (id={db_order.id}) from {len(matching_orders)} duplicates in fallback"
+                            )
+                    else:
+                        raise
+
+            if not db_order:
+                logger.warning(
+                    f"[PaperTrading] DB order not found for execution sync: {order.order_id}. "
+                    f"Order executed in file but not tracked in DB. "
+                    f"Using adapter's user_id ({user_id}) for position tracking."
+                )
+                # Try to create position directly from order data if db_order not found
+                # This handles edge cases where order was created before DB integration
+                # Always use adapter's user_id (already set above)
+                if order.is_buy_order():
+                    try:
+                        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                            normalize_symbol,
+                        )
+
+                        # Extract symbol from order
+                        symbol = normalize_symbol(order.symbol)
+                        if symbol.endswith(".NS") or symbol.endswith(".BO"):
+                            symbol = symbol[:-3]
+
+                        # Check if position already exists
+                        existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+                        if existing_pos and existing_pos.closed_at is None:
+                            # Update existing position
+                            existing_qty = existing_pos.quantity
+                            existing_avg_price = existing_pos.avg_price
+                            execution_qty = float(order.quantity)
+                            execution_price_float = float(execution_price.amount)
+
+                            total_cost = (existing_qty * existing_avg_price) + (
+                                execution_qty * execution_price_float
+                            )
+                            new_qty = existing_qty + execution_qty
+                            new_avg_price = (
+                                total_cost / new_qty if new_qty > 0 else execution_price_float
+                            )
+
+                            positions_repo.upsert(
+                                user_id=user_id,
+                                symbol=symbol,
+                                quantity=new_qty,
+                                avg_price=new_avg_price,
+                                auto_commit=True,
+                            )
+                            logger.info(
+                                f"[PaperTrading] Created/updated position for {symbol} "
+                                f"from order {order.order_id} (no DB order found)"
+                            )
+                        else:
+                            # Create new position
+                            positions_repo.upsert(
+                                user_id=user_id,
+                                symbol=symbol,
+                                quantity=float(order.quantity),
+                                avg_price=float(execution_price.amount),
+                                opened_at=ist_now(),
+                                entry_rsi=29.5,  # Default RSI
+                                initial_entry_price=float(execution_price.amount),
+                                auto_commit=True,
+                            )
+                            logger.info(
+                                f"[PaperTrading] Created position for {symbol} "
+                                f"from order {order.order_id} (no DB order found)"
+                            )
+                    except Exception as create_ex:
+                        logger.warning(
+                            f"[PaperTrading] Failed to create position from order data: {create_ex}",
+                            exc_info=True,
+                        )
+                return
+
+            # VALIDATION: Ensure db_order.user_id matches adapter's user_id
+            # This prevents positions from being created with wrong user_id
+            if db_order.user_id != self.user_id:
+                logger.error(
+                    f"[PaperTrading] ⚠️ USER_ID MISMATCH for order {order.order_id}! "
+                    f"DB order has user_id={db_order.user_id}, but adapter user_id={self.user_id}. "
+                    f"Using adapter's user_id ({self.user_id}) to prevent incorrect position tracking."
+                )
+                # Use adapter's user_id as source of truth
+                user_id = self.user_id
+            else:
+                # user_id already set to self.user_id above, no change needed
+                pass
+
+            # Mark order as executed in database
+            execution_price_float = float(execution_price.amount)
+            execution_qty = float(order.quantity)
+
+            orders_repo.mark_executed(
+                db_order,
+                execution_price=execution_price_float,
+                execution_qty=execution_qty,
+                auto_commit=False,  # Commit after position update
+            )
+
+            # Extract symbol from database order (matches database format)
+            # Use symbol from db_order to ensure consistency with database
+            from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+                normalize_symbol,
+            )
+
+            symbol = (
+                normalize_symbol(db_order.symbol)
+                if db_order.symbol
+                else normalize_symbol(order.symbol)
+            )
+
+            # Normalize symbol: remove .NS/.BO suffix if present, keep broker suffixes like -EQ
+            if symbol.endswith(".NS") or symbol.endswith(".BO"):
+                symbol = symbol[:-3]
+
+            # Extract entry RSI from order metadata
+            entry_rsi = None
+            if db_order.order_metadata:
+                metadata = (
+                    db_order.order_metadata if isinstance(db_order.order_metadata, dict) else {}
+                )
+                # Priority: rsi_entry_level > entry_rsi > rsi10
+                if metadata.get("rsi_entry_level") is not None:
+                    entry_rsi = float(metadata["rsi_entry_level"])
+                elif metadata.get("entry_rsi") is not None:
+                    entry_rsi = float(metadata["entry_rsi"])
+                elif metadata.get("rsi10") is not None:
+                    entry_rsi = float(metadata["rsi10"])
+
+            # Default to 29.5 if no RSI data available (assume entry at RSI < 30)
+            if entry_rsi is None:
+                entry_rsi = 29.5
+
+            if order.is_buy_order():
+                # BUY ORDER: Create or update position
+                existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+
+                if existing_pos and existing_pos.closed_at is None:
+                    # Update existing open position (reentry)
+                    existing_qty = existing_pos.quantity
+                    existing_avg_price = existing_pos.avg_price
+
+                    # Calculate new average price
+                    total_cost = (existing_qty * existing_avg_price) + (
+                        execution_qty * execution_price_float
+                    )
+                    new_qty = existing_qty + execution_qty
+                    new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price_float
+
+                    # Update reentry tracking
+                    reentry_count = (existing_pos.reentry_count or 0) + 1
+                    reentries_array = []
+                    if existing_pos.reentries:
+                        if isinstance(existing_pos.reentries, dict):
+                            reentries_array = list(existing_pos.reentries.get("reentries", []))
+                        elif isinstance(existing_pos.reentries, list):
+                            reentries_array = list(existing_pos.reentries)
+
+                    # Add new reentry entry
+                    reentry_data = {
+                        "qty": int(execution_qty),
+                        "level": None,  # Will be set if available in metadata
+                        "rsi": float(entry_rsi),
+                        "price": float(execution_price_float),
+                        "time": ist_now().isoformat(),
+                        "placed_at": (
+                            db_order.placed_at.date().isoformat()
+                            if db_order.placed_at
+                            else ist_now().date().isoformat()
+                        ),
+                        "order_id": order.order_id,
+                    }
+
+                    # Extract reentry level from metadata if available
+                    if db_order.order_metadata:
+                        metadata = (
+                            db_order.order_metadata
+                            if isinstance(db_order.order_metadata, dict)
+                            else {}
+                        )
+                        if metadata.get("rsi_level") is not None:
+                            reentry_data["level"] = int(metadata["rsi_level"])
+
+                    reentries_array.append(reentry_data)
+
+                    # Update position
+                    positions_repo.upsert(
+                        user_id=user_id,
+                        symbol=symbol,
+                        quantity=new_qty,
+                        avg_price=new_avg_price,
+                        reentry_count=reentry_count,
+                        reentries={"reentries": reentries_array},
+                        last_reentry_price=execution_price_float,
+                        auto_commit=False,  # Commit with order
+                    )
+                    logger.debug(
+                        f"[PaperTrading] Updated position for {symbol}: "
+                        f"qty {existing_qty} -> {new_qty}, "
+                        f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}, "
+                        f"reentry_count: {reentry_count}"
+                    )
+                else:
+                    # Create new position
+                    positions_repo.upsert(
+                        user_id=user_id,
+                        symbol=symbol,
+                        quantity=execution_qty,
+                        avg_price=execution_price_float,
+                        opened_at=ist_now(),
+                        entry_rsi=entry_rsi,
+                        initial_entry_price=execution_price_float,
+                        auto_commit=False,  # Commit with order
+                    )
+                    logger.debug(
+                        f"[PaperTrading] Created position for {symbol}: "
+                        f"qty={execution_qty}, price=Rs {execution_price_float:.2f}, "
+                        f"entry_rsi={entry_rsi:.2f}"
+                    )
+
+            else:
+                # SELL ORDER: Update or close position
+                existing_pos = positions_repo.get_by_symbol(user_id, symbol)
+                if not existing_pos:
+                    logger.warning(
+                        f"[PaperTrading] Sell order executed for {symbol} but no position found in DB. "
+                        f"Order {order.order_id} executed in file but position not tracked."
+                    )
+                elif existing_pos.closed_at is None:
+                    # Validate execution quantity doesn't exceed position quantity
+                    if execution_qty > existing_pos.quantity:
+                        logger.warning(
+                            f"[PaperTrading] Sell order quantity ({execution_qty}) exceeds "
+                            f"position quantity ({existing_pos.quantity}) for {symbol}. "
+                            f"Using position quantity instead."
+                        )
+                        execution_qty = existing_pos.quantity
+
+                    # Calculate remaining quantity
+                    remaining_qty = existing_pos.quantity - execution_qty
+
+                    if remaining_qty <= 0:
+                        # Close position completely
+                        exit_price = execution_price_float
+                        exit_reason = "PAPER_TRADE_SELL"
+                        realized_pnl = trade_info.get("realized_pnl", 0.0) if trade_info else None
+                        realized_pnl_pct = None
+                        if (
+                            realized_pnl is not None
+                            and existing_pos.avg_price
+                            and execution_qty > 0
+                        ):
+                            # Use execution_qty (sold quantity) instead of full position quantity
+                            # Convert to float to avoid type mismatch (Decimal vs float)
+                            realized_pnl_float = (
+                                float(realized_pnl) if realized_pnl is not None else 0.0
+                            )
+                            cost_basis = float(existing_pos.avg_price) * float(execution_qty)
+                            realized_pnl_pct = (
+                                (realized_pnl_float / cost_basis * 100) if cost_basis > 0 else 0.0
+                            )
+
+                        # Convert realized_pnl to float if it's a Decimal or other type
+                        realized_pnl_float = (
+                            float(realized_pnl) if realized_pnl is not None else None
+                        )
+
+                        positions_repo.mark_closed(
+                            user_id=user_id,
+                            symbol=symbol,
+                            closed_at=ist_now(),
+                            exit_price=exit_price,
+                            exit_reason=exit_reason,
+                            realized_pnl=realized_pnl_float,
+                            realized_pnl_pct=realized_pnl_pct,
+                            sell_order_id=db_order.id,
+                            auto_commit=False,  # Commit with order
+                        )
+                        realized_pnl_display = (
+                            float(realized_pnl) if realized_pnl is not None else 0.0
+                        )
+                        logger.debug(
+                            f"[PaperTrading] Closed position for {symbol}: "
+                            f"exit_price=Rs {exit_price:.2f}, realized_pnl=Rs {realized_pnl_display:.2f}"
+                        )
+                    else:
+                        # Partial sell - update quantity
+                        positions_repo.upsert(
+                            user_id=user_id,
+                            symbol=symbol,
+                            quantity=remaining_qty,
+                            avg_price=existing_pos.avg_price,  # Keep same avg price
+                            auto_commit=False,  # Commit with order
+                        )
+                        logger.debug(
+                            f"[PaperTrading] Updated position for {symbol}: "
+                            f"qty {existing_pos.quantity} -> {remaining_qty} (partial sell)"
+                        )
+
+            # Commit both order and position updates together
+            self.db_session.commit()
+            logger.debug(
+                f"[PaperTrading] Synced order execution to DB: {order.order_id} "
+                f"({order.transaction_type.value} {order.symbol})"
+            )
+
+        except Exception as ex:
+            # Don't fail order processing if database sync fails
+            # Note: Order execution in file already happened, so we only rollback DB transaction
+            # This is intentional - paper trading should work even if DB is unavailable
+            logger.warning(
+                f"[PaperTrading] Failed to sync order execution to DB: {ex}. "
+                f"Order {order.order_id} executed in file but not synced to database. "
+                f"This may cause position tracking inconsistencies.",
+                exc_info=True,
+            )
+            # Rollback DB transaction on error (file execution already happened, which is fine)
+            try:
+                if self.db_session.in_transaction():
+                    self.db_session.rollback()
+            except Exception as rollback_ex:
+                logger.debug(f"[PaperTrading] Rollback failed: {rollback_ex}")
 
     """
     Paper trading adapter implementing IBrokerGateway
@@ -96,6 +607,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     def __init__(
         self,
+        user_id: int,
         config: PaperTradingConfig | None = None,
         storage_path: str | None = None,
         db_session=None,
@@ -104,10 +616,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         Initialize paper trading adapter
 
         Args:
+            user_id: User ID for generating user-specific order IDs (required)
             config: Paper trading configuration (uses default if None)
             storage_path: Custom storage path (optional)
             db_session: Database session for syncing order failures (optional)
         """
+        if user_id is None:
+            raise ValueError("user_id is required for PaperTradingBrokerAdapter")
+
         # Configuration
         self.config = config or PaperTradingConfig.default()
 
@@ -117,6 +633,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Database session for syncing order failures to database
         self.db_session = db_session
+
+        # User ID for generating unique order IDs (required)
+        self.user_id = user_id
 
         # Components
         self.price_provider = PriceProvider(
@@ -161,21 +680,57 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             self._restore_state()
 
     def _restore_state(self) -> None:
-        """Restore portfolio from storage"""
-        holdings = self.store.get_all_holdings()
+        """Restore portfolio from database (source of truth)"""
+        # Load holdings from database positions table instead of files
+        if self.db_session and self.user_id:
+            try:
+                from src.infrastructure.persistence.positions_repository import PositionsRepository
 
-        for symbol, holding_data in holdings.items():
-            holding = Holding(
-                symbol=symbol,
-                exchange=Exchange[holding_data.get("exchange", "NSE")],
-                quantity=holding_data["quantity"],
-                average_price=Money(holding_data["average_price"]),
-                current_price=Money(holding_data["current_price"]),
-                last_updated=datetime.fromisoformat(holding_data["last_updated"]),
+                positions_repo = PositionsRepository(self.db_session)
+                open_positions = positions_repo.list(self.user_id)
+                open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+                # Clear existing holdings and reload from database
+                self.portfolio._holdings.clear()
+
+                for pos in open_positions:
+                    # Normalize symbol (remove -EQ suffix for PortfolioManager)
+                    symbol = (
+                        pos.symbol.replace("-EQ", "")
+                        .replace("-BE", "")
+                        .replace("-BL", "")
+                        .replace("-BZ", "")
+                        .upper()
+                    )
+
+                    holding = Holding(
+                        symbol=symbol,
+                        exchange=Exchange.NSE,  # Default, could be extracted from symbol if needed
+                        quantity=int(pos.quantity),
+                        average_price=Money(pos.avg_price),
+                        current_price=Money(pos.avg_price),  # Will be updated by price_provider
+                        last_updated=pos.opened_at or datetime.now(),
+                    )
+                    self.portfolio._holdings[symbol] = holding
+
+                logger.info(
+                    f"✅ Restored {len(self.portfolio._holdings)} holdings from database for user {self.user_id}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to restore holdings from database: {e}", exc_info=True)
+                # Do not fall back to file-based holdings. Database is the single source of truth.
+                self.portfolio._holdings.clear()
+                logger.error(
+                    "[PaperTrading] Holdings restore failed; not falling back to files. "
+                    "Holdings will remain empty until DB is available."
+                )
+        else:
+            # Database is required; do not fall back to file-based holdings.
+            self.portfolio._holdings.clear()
+            logger.error(
+                "[PaperTrading] Database session/user_id missing; cannot restore holdings. "
+                "Not falling back to files."
             )
-            self.portfolio._holdings[symbol] = holding
-
-        logger.info(f"?? Restored {len(holdings)} holdings")
 
     # ===== CONNECTION MANAGEMENT =====
 
@@ -241,6 +796,53 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         try:
             # Mark as placed
             order.place(order_id)
+
+            # Persist MARKET orders to DB *before* they may execute immediately.
+            # This prevents execution sync warnings like:
+            # "DB order not found for execution sync ... Order executed in file but not tracked in DB"
+            if (
+                self.db_session
+                and self.user_id
+                and (not order.is_amo_order())
+                and order.order_type == OrderType.MARKET
+            ):
+                try:
+                    from src.infrastructure.db.models import TradeMode
+                    from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                    repo = OrdersRepository(self.db_session)
+
+                    # Safety: avoid duplicates (e.g., if another layer already created it)
+                    existing = repo.get_by_broker_order_id(self.user_id, order_id)
+                    if not existing:
+                        # Extract metadata if present
+                        order_metadata = None
+                        if hasattr(order, "metadata") and isinstance(order.metadata, dict):
+                            order_metadata = order.metadata
+                        elif hasattr(order, "_metadata") and isinstance(order._metadata, dict):
+                            order_metadata = order._metadata
+
+                        repo.create_amo(
+                            user_id=self.user_id,
+                            symbol=order.symbol,
+                            side=order.transaction_type.value.lower(),
+                            order_type=order.order_type.value.lower(),
+                            quantity=float(order.quantity),
+                            price=float(order.price.amount) if order.price else None,
+                            order_id=order_id,
+                            broker_order_id=order_id,
+                            entry_type=(order_metadata or {}).get("entry_type"),
+                            order_metadata=order_metadata,
+                            reason="Market order placed",
+                            trade_mode=TradeMode.PAPER,
+                        )
+                except Exception as db_ex:
+                    # Don't block trading if DB insert fails, but log loudly
+                    logger.warning(
+                        f"[PaperTrading] Failed to create DB order for MARKET {order.symbol} "
+                        f"(order_id={order_id}): {db_ex}",
+                        exc_info=True,
+                    )
 
             # Save order
             self._save_order(order)
@@ -327,9 +929,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 self._sync_order_failure_to_db(order, "rejected", error)
                 return
 
-        # For sell orders, validate quantity
+        # For sell orders, validate quantity from database (source of truth)
         if order.is_sell_order():
-            can_sell, error = self.portfolio.can_sell(order.symbol, order.quantity)
+            can_sell, error = self._can_sell_from_database(order.symbol, order.quantity)
             if not can_sell:
                 logger.warning(f"[WARN]? Cannot sell: {error}")
                 order.reject(error)
@@ -350,23 +952,42 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Record transaction with P&L info
             self._record_transaction(order, execution_price, trade_info)
 
+            # Sync successful execution to database (orders and positions tables)
+            self._sync_order_execution_to_db(order, execution_price, trade_info)
+
             logger.info(
                 f"? Order executed: {order.symbol} "
                 f"{order.quantity} @ Rs {execution_price.amount:.2f}"
             )
         else:
             # Order execution failed or pending
-            msg = (
-                f"[WARN]? Order execution failed for {order.symbol}: {message}. "
-                f"Order remains in {order.status.value} status."
+            # "Price below limit" and "Price above limit" are NOT failures - they're expected
+            # for limit orders that haven't reached their target price yet
+            is_price_limit_message = (
+                "price below limit" in message.lower() or "price above limit" in message.lower()
             )
-            if order.symbol in self._warned_symbols:
-                logger.info(msg)  # Downgrade repeat warnings to INFO to reduce log noise
+
+            if is_price_limit_message:
+                # This is expected behavior for limit orders - don't mark as failed
+                # Order should remain PENDING/ONGOING and will be checked again
+                logger.debug(
+                    f"Limit order {order.symbol} not yet executable: {message}. "
+                    f"Order remains in {order.status.value} status and will be checked again."
+                )
+                # Don't sync to DB as failure - order is still valid and pending
             else:
-                logger.warning(msg)
-                self._warned_symbols.add(order.symbol)
-            # Sync failure to DB
-            self._sync_order_failure_to_db(order, "failed", message)
+                # Actual failure (rejection, insufficient funds, etc.)
+                msg = (
+                    f"[WARN]? Order execution failed for {order.symbol}: {message}. "
+                    f"Order remains in {order.status.value} status."
+                )
+                if order.symbol in self._warned_symbols:
+                    logger.info(msg)  # Downgrade repeat warnings to INFO to reduce log noise
+                else:
+                    logger.warning(msg)
+                    self._warned_symbols.add(order.symbol)
+                # Sync actual failure to DB
+                self._sync_order_failure_to_db(order, "failed", message)
 
         # Save updated order
         self._save_order(order)
@@ -586,33 +1207,299 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
     # ===== PORTFOLIO MANAGEMENT =====
 
+    def _can_sell_from_database(self, symbol: str, quantity: int) -> tuple[bool, str]:
+        """
+        Check if sell order is valid using database positions (source of truth).
+
+        Args:
+            symbol: Stock symbol (may have -EQ suffix)
+            quantity: Quantity to sell
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.can_sell(symbol, quantity)
+
+        try:
+            from sqlalchemy import select
+
+            from src.infrastructure.db.models import Positions
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db_session)
+
+            # Debug: Log what we're searching for
+            logger.debug(
+                f"[PaperTrading] Validating sell order: symbol={symbol}, quantity={quantity}, user_id={self.user_id}"
+            )
+
+            # Normalize symbol to uppercase for consistent matching
+            symbol_upper = symbol.upper()
+
+            # Try exact symbol match first (case-insensitive)
+            position = positions_repo.get_by_symbol(self.user_id, symbol_upper)
+            if position:
+                logger.debug(
+                    f"[PaperTrading] Found position with exact match: {position.symbol}, qty={position.quantity}"
+                )
+
+            # If not found, try with -EQ suffix (database stores with suffix)
+            if not position and not symbol_upper.endswith("-EQ"):
+                try_symbol = f"{symbol_upper}-EQ"
+                position = positions_repo.get_by_symbol(self.user_id, try_symbol)
+                if position:
+                    logger.debug(
+                        f"[PaperTrading] Found position with -EQ suffix: {position.symbol}, qty={position.quantity}"
+                    )
+
+            # If still not found, try without suffix (in case database has base symbol)
+            if not position:
+                base_symbol = (
+                    symbol_upper.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
+                if base_symbol != symbol_upper:
+                    position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+                    if position:
+                        logger.debug(
+                            f"[PaperTrading] Found position without suffix: {position.symbol}, qty={position.quantity}"
+                        )
+
+            # If still not found, try fuzzy match using LIKE (for edge cases)
+            if not position:
+                base_symbol = (
+                    symbol_upper.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
+                stmt = (
+                    select(Positions)
+                    .where(
+                        Positions.user_id == self.user_id,
+                        Positions.symbol.ilike(f"{base_symbol}%"),  # Case-insensitive LIKE
+                        Positions.closed_at.is_(None),
+                    )
+                    .order_by(Positions.opened_at.desc())
+                    .limit(1)
+                )
+                result = self.db_session.execute(stmt).first()
+                position = result[0] if result else None
+                if position:
+                    logger.debug(
+                        f"[PaperTrading] Found position with LIKE match: {position.symbol}, qty={position.quantity}"
+                    )
+
+            if not position or position.closed_at is not None:
+                # Debug: List all open positions for this user to help diagnose
+                all_positions = positions_repo.list(self.user_id)
+                open_positions = [p for p in all_positions if p.closed_at is None]
+                logger.warning(
+                    f"[PaperTrading] No holding found for {symbol} (user_id={self.user_id}). "
+                    f"Open positions: {[f'{p.symbol}(qty={p.quantity})' for p in open_positions]}"
+                )
+                return False, f"No holding found for {symbol}"
+
+            if position.quantity < quantity:
+                logger.warning(
+                    f"[PaperTrading] Insufficient quantity for {symbol}: Have {position.quantity}, trying to sell {quantity}"
+                )
+                return False, (
+                    f"Insufficient quantity: Have {position.quantity}, trying to sell {quantity}"
+                )
+
+            logger.debug(
+                f"[PaperTrading] Sell validation passed: {symbol}, qty={quantity}, available={position.quantity}"
+            )
+            return True, ""
+        except Exception as e:
+            logger.warning(
+                f"Error checking database for sell validation: {e}, falling back to PortfolioManager"
+            )
+            # Fallback to PortfolioManager
+            return self.portfolio.can_sell(symbol, quantity)
+
+    def _get_holdings_from_database(self) -> list[Holding]:
+        """
+        Get all holdings from database positions table (source of truth).
+
+        Returns:
+            List of Holding objects
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.get_all_holdings()
+
+        try:
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db_session)
+            open_positions = positions_repo.list(self.user_id)
+            open_positions = [pos for pos in open_positions if pos.closed_at is None]
+
+            holdings = []
+            for pos in open_positions:
+                # Normalize symbol (remove -EQ suffix for Holding object)
+                symbol = (
+                    pos.symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
+
+                holding = Holding(
+                    symbol=symbol,
+                    exchange=Exchange.NSE,  # Default, could be extracted from symbol if needed
+                    quantity=int(pos.quantity),
+                    average_price=Money(pos.avg_price),
+                    current_price=Money(pos.avg_price),  # Will be updated by price_provider
+                    last_updated=pos.opened_at or datetime.now(),
+                )
+                holdings.append(holding)
+
+            return holdings
+        except Exception as e:
+            logger.warning(
+                f"Error loading holdings from database: {e}, falling back to PortfolioManager"
+            )
+            # Fallback to PortfolioManager
+            return self.portfolio.get_all_holdings()
+
+    def _get_holding_from_database(self, symbol: str) -> Holding | None:
+        """
+        Get holding for symbol from database positions table (source of truth).
+
+        Args:
+            symbol: Stock symbol (may have -EQ suffix)
+
+        Returns:
+            Holding object or None
+        """
+        if not self.db_session or not self.user_id:
+            # Fallback to PortfolioManager if database not available
+            return self.portfolio.get_holding(symbol)
+
+        try:
+            from sqlalchemy import select
+
+            from src.infrastructure.db.models import Positions
+            from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+            positions_repo = PositionsRepository(self.db_session)
+
+            # Try exact symbol match first
+            position = positions_repo.get_by_symbol(self.user_id, symbol)
+
+            # If not found, try with -EQ suffix (database stores with suffix)
+            if not position and not symbol.endswith("-EQ"):
+                position = positions_repo.get_by_symbol(self.user_id, f"{symbol}-EQ")
+
+            # If still not found, try without suffix (in case database has base symbol)
+            if not position:
+                base_symbol = (
+                    symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
+                if base_symbol != symbol:
+                    position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+
+            # If still not found, try fuzzy match using LIKE (for edge cases)
+            if not position:
+                base_symbol = (
+                    symbol.replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                    .upper()
+                )
+                stmt = (
+                    select(Positions)
+                    .where(
+                        Positions.user_id == self.user_id,
+                        Positions.symbol.like(f"{base_symbol}%"),
+                        Positions.closed_at.is_(None),
+                    )
+                    .order_by(Positions.opened_at.desc())
+                    .limit(1)
+                )
+                result = self.db_session.execute(stmt).first()
+                position = result[0] if result else None
+
+            if not position or position.closed_at is not None:
+                return None
+
+            # Normalize symbol (remove -EQ suffix for Holding object)
+            holding_symbol = (
+                position.symbol.replace("-EQ", "")
+                .replace("-BE", "")
+                .replace("-BL", "")
+                .replace("-BZ", "")
+                .upper()
+            )
+
+            holding = Holding(
+                symbol=holding_symbol,
+                exchange=Exchange.NSE,  # Default
+                quantity=int(position.quantity),
+                average_price=Money(position.avg_price),
+                current_price=Money(position.avg_price),  # Will be updated by price_provider
+                last_updated=position.opened_at or datetime.now(),
+            )
+
+            return holding
+        except Exception as e:
+            logger.warning(
+                f"Error loading holding from database for {symbol}: {e}, falling back to PortfolioManager"
+            )
+            # Fallback to PortfolioManager
+            return self.portfolio.get_holding(symbol)
+
     def get_holdings(self) -> list[Holding]:
-        """Get all holdings"""
+        """Get all holdings from database (source of truth)"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        # Update current prices
-        holdings = self.portfolio.get_all_holdings()
-        symbols = [h.symbol for h in holdings]
+        # Load holdings from database positions table
+        holdings = self._get_holdings_from_database()
 
+        # Update current prices
+        symbols = [h.symbol for h in holdings]
         if symbols:
             prices = self.price_provider.get_prices(symbols)
-            self.portfolio.update_prices(prices)
+            # Update prices in holdings
+            for holding in holdings:
+                if holding.symbol in prices:
+                    holding.current_price = Money(prices[holding.symbol])
+                    holding.last_updated = datetime.now()
 
         return holdings
 
     def get_holding(self, symbol: str) -> Holding | None:
-        """Get holding for symbol"""
+        """Get holding for symbol from database (source of truth)"""
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        holding = self.portfolio.get_holding(symbol)
+        # Load from database first
+        holding = self._get_holding_from_database(symbol)
+
+        # Fallback to PortfolioManager if database not available
+        if not holding:
+            holding = self.portfolio.get_holding(symbol)
 
         if holding:
             # Update current price
             price = self.price_provider.get_price(symbol)
             if price:
-                self.portfolio.update_price(symbol, Money(price))
+                holding.current_price = Money(price)
+                holding.last_updated = datetime.now()
 
         return holding
 
@@ -671,10 +1558,59 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
     # ===== HELPER METHODS =====
 
     def _generate_order_id(self) -> str:
-        """Generate unique order ID"""
-        self._order_counter += 1
+        """
+        Generate unique order ID with user_id to prevent collisions across users.
+
+        Format: PT{timestamp}U{user_id}{counter:04d}
+        Example: PT20260109U10001 (for user_id=1, counter=1 on 2026-01-09)
+
+        The counter is checked against the database to ensure uniqueness even after service restarts.
+        """
         timestamp = datetime.now().strftime("%Y%m%d")
-        return f"PT{timestamp}{self._order_counter:04d}"
+
+        # Check database for highest counter value for today to prevent duplicates after restart
+        if self.db_session and self.user_id:
+            try:
+                from sqlalchemy import select
+
+                from src.infrastructure.db.models import Orders
+
+                # Get all orders for today with this user_id
+                today_prefix = f"PT{timestamp}U{self.user_id}"
+                stmt = select(Orders.broker_order_id).where(
+                    Orders.broker_order_id.like(f"{today_prefix}%"),
+                    Orders.user_id == self.user_id,
+                )
+                existing_orders = self.db_session.execute(stmt).scalars().all()
+
+                if existing_orders:
+                    # Extract counter from each order ID and find max
+                    # Format: PT20260109U1{counter:04d}
+                    max_counter = 0
+                    prefix_len = len(today_prefix)
+                    for order_id in existing_orders:
+                        if order_id and len(order_id) > prefix_len:
+                            try:
+                                counter_str = order_id[prefix_len : prefix_len + 4]
+                                counter = int(counter_str)
+                                max_counter = max(max_counter, counter)
+                            except (ValueError, IndexError):
+                                # Skip invalid order IDs
+                                continue
+
+                    if max_counter > 0:
+                        # Start from max + 1
+                        self._order_counter = max(self._order_counter, max_counter + 1)
+            except Exception as e:
+                # If database check fails, log warning and continue with current counter
+                logger.warning(
+                    f"[PaperTrading] Failed to check database for order ID counter: {e}. "
+                    f"Using current counter value."
+                )
+
+        self._order_counter += 1
+        # Include user_id in order ID to ensure uniqueness across users
+        return f"PT{timestamp}U{self.user_id}{self._order_counter:04d}"
 
     def _save_order(self, order: Order) -> None:
         """Save order to storage"""

@@ -165,3 +165,113 @@ def test_get_notification_count(monkeypatch, current_user):
         current_user=current_user,
     )
     assert result == {"unread_count": 7}
+
+
+def test_get_unread_notifications_serializes(monkeypatch, current_user):
+    notifications = [
+        DummyNotification(id=1, user_id=current_user.id, read=False, read_at=None),
+        DummyNotification(id=2, user_id=current_user.id, read=False, read_at=datetime(2025, 1, 2, 12, 0)),
+    ]
+
+    class FakeRepo:
+        def __init__(self, db):
+            self.db = db
+
+        def get_unread(self, *, user_id, limit):
+            assert user_id == current_user.id
+            assert limit == 2
+            return notifications
+
+    monkeypatch.setattr(
+        notifications_router,
+        "NotificationRepository",
+        _RepoFactory(lambda db: FakeRepo(db)),
+    )
+
+    result = notifications_router.get_unread_notifications(
+        limit=2,
+        db=SimpleNamespace(),
+        current_user=current_user,
+    )
+
+    assert result[0]["read_at"] is None
+    assert result[1]["read_at"] == "2025-01-02T12:00:00"
+
+
+def test_mark_notification_read_success(monkeypatch, current_user):
+    updated = DummyNotification(
+        id=1,
+        user_id=current_user.id,
+        read=True,
+        read_at=datetime(2025, 1, 3, 9, 0),
+    )
+
+    class FakeRepo:
+        def __init__(self, db):
+            pass
+
+        def get(self, notification_id):
+            assert notification_id == 1
+            return DummyNotification(id=1, user_id=current_user.id)
+
+        def mark_read(self, notification_id):
+            assert notification_id == 1
+            return updated
+
+    monkeypatch.setattr(
+        notifications_router,
+        "NotificationRepository",
+        _RepoFactory(lambda db: FakeRepo(db)),
+    )
+
+    result = notifications_router.mark_notification_read(
+        notification_id=1,
+        db=SimpleNamespace(),
+        current_user=current_user,
+    )
+    assert result == {"id": 1, "read": True, "read_at": "2025-01-03T09:00:00"}
+
+
+@pytest.mark.parametrize(
+    "callable_name, kwargs",
+    [
+        ("get_notifications", {"type": None, "level": None, "read": None, "limit": 1}),
+        ("get_unread_notifications", {"limit": 1}),
+        ("get_notification_count", {}),
+        ("mark_notification_read", {"notification_id": 1}),
+        ("mark_all_notifications_read", {}),
+    ],
+)
+def test_notifications_router_500_paths(monkeypatch, current_user, callable_name: str, kwargs: dict):
+    class FakeRepo:
+        def __init__(self, db):
+            pass
+
+        def list(self, **_k):
+            raise RuntimeError("boom")
+
+        def get_unread(self, **_k):
+            raise RuntimeError("boom")
+
+        def count_unread(self, **_k):
+            raise RuntimeError("boom")
+
+        def get(self, _id):
+            raise RuntimeError("boom")
+
+        def mark_read(self, _id):
+            raise RuntimeError("boom")
+
+        def mark_all_read(self, **_k):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        notifications_router,
+        "NotificationRepository",
+        _RepoFactory(lambda db: FakeRepo(db)),
+    )
+
+    fn = getattr(notifications_router, callable_name)
+    with pytest.raises(HTTPException) as excinfo:
+        fn(db=SimpleNamespace(), current_user=current_user, **kwargs)
+    assert excinfo.value.status_code == 500

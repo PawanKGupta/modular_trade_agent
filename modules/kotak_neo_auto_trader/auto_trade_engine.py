@@ -341,7 +341,7 @@ class AutoTradeEngine:
             open_positions = [p for p in open_positions if p.closed_at is None]
 
             # Get buy orders for these positions to reconstruct trade metadata
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             buy_orders = [o for o in all_orders if o.side.lower() == "buy"]
 
             # Convert positions to trades format
@@ -517,7 +517,7 @@ class AutoTradeEngine:
                 entry_rsi=entry_rsi,  # Set entry RSI for new positions
             )
         elif status == "closed":
-            # Close position
+            # Close position using mark_closed() to ensure exit details are populated
             pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
             if pos:
                 try:
@@ -526,8 +526,47 @@ class AutoTradeEngine:
                     )
                 except:
                     exit_time = datetime.now()
-                pos.closed_at = exit_time
-                self.positions_repo.db.commit()
+
+                # Extract exit details from trade dictionary if available
+                exit_price = trade.get("exit_price")
+                exit_reason = trade.get("exit_reason", "HISTORY_IMPORT")
+                exit_rsi = trade.get("exit_rsi10")  # May be "exit_rsi10" in trade dict
+                realized_pnl = trade.get("pnl")  # May be "pnl" in trade dict
+                sell_order_id_str = trade.get("sell_order_id")
+
+                # Try to find sell_order_id if provided (may be string or int)
+                sell_order_id = None
+                if sell_order_id_str and self.orders_repo:
+                    try:
+                        # If it's already an int, use it directly (assume it's a DB ID)
+                        if isinstance(sell_order_id_str, int):
+                            sell_order_id = sell_order_id_str
+                        else:
+                            # Try to find order by broker_order_id or order_id (string match)
+                            all_orders, _ = self.orders_repo.list(self.user_id)
+                            for order in all_orders:
+                                if str(getattr(order, "broker_order_id", None) or "") == str(
+                                    sell_order_id_str
+                                ) or str(getattr(order, "order_id", None) or "") == str(
+                                    sell_order_id_str
+                                ):
+                                    sell_order_id = order.id
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Could not find sell_order_id {sell_order_id_str}: {e}")
+
+                # Use mark_closed() to properly set all exit details
+                self.positions_repo.mark_closed(
+                    user_id=self.user_id,
+                    symbol=pos.symbol,
+                    closed_at=exit_time,
+                    exit_price=exit_price,
+                    exit_reason=exit_reason,
+                    exit_rsi=exit_rsi,
+                    realized_pnl=realized_pnl,
+                    sell_order_id=sell_order_id,
+                    auto_commit=True,
+                )
 
     def _save_trades_history(self, data: dict[str, Any]) -> None:
         """
@@ -606,7 +645,7 @@ class AutoTradeEngine:
                 logger.warning(f"Error getting failed orders from repository: {e}")
                 # Fallback: Check status manually
 
-                all_orders = self.orders_repo.list(self.user_id)
+                all_orders, _ = self.orders_repo.list(self.user_id)
                 failed_orders = []
                 for order in all_orders:
                     if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
@@ -665,7 +704,7 @@ class AutoTradeEngine:
 
                 # Phase 6: Check for existing failed orders using status instead of metadata
 
-                existing_orders = self.orders_repo.list(self.user_id)
+                existing_orders, _ = self.orders_repo.list(self.user_id)
                 existing_failed_orders = [
                     o
                     for o in existing_orders
@@ -841,7 +880,7 @@ class AutoTradeEngine:
         if self.orders_repo and self.user_id:
             # Phase 6: Use repository-based storage with status-based lookup
 
-            all_orders = self.orders_repo.list(self.user_id)
+            all_orders, _ = self.orders_repo.list(self.user_id)
             for order in all_orders:
                 # Phase 6: Check status instead of metadata
                 if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
@@ -952,6 +991,15 @@ class AutoTradeEngine:
             recs = []
             for _, row in df_buy.iterrows():
                 ticker = str(row.get("ticker", "")).strip().upper()
+
+                # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                # and may not be suitable for mean reversion strategies
+                if "ETF" in ticker:
+                    logger.debug(
+                        f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                    )
+                    continue
+
                 last_close = float(row.get("last_close", 0) or 0)
                 # Phase 11: Load execution_capital from CSV if available
                 execution_capital = row.get("execution_capital")
@@ -969,16 +1017,18 @@ class AutoTradeEngine:
                         priority_score = float(priority_score) if priority_score != "" else None
                     except (ValueError, TypeError):
                         priority_score = None
-                else:
-                    # Fallback to combined_score if priority_score not available
-                    combined_score = row.get("combined_score")
-                    if combined_score is not None:
-                        try:
-                            priority_score = float(combined_score) if combined_score != "" else None
-                        except (ValueError, TypeError):
-                            priority_score = None
                     else:
-                        priority_score = None
+                        # Fallback to combined_score if priority_score not available
+                        combined_score = row.get("combined_score")
+                        if combined_score is not None:
+                            try:
+                                priority_score = (
+                                    float(combined_score) if combined_score != "" else None
+                                )
+                            except (ValueError, TypeError):
+                                priority_score = None
+                        else:
+                            priority_score = None
 
                 # ML Confidence Boost: When ML is enabled, boost priority_score based on ML confidence
                 # This ensures high-confidence ML predictions get prioritized even if technical scores are lower
@@ -1022,6 +1072,15 @@ class AutoTradeEngine:
             recs = []
             for _, row in df_buy.iterrows():
                 ticker = str(row.get("ticker", "")).strip().upper()
+
+                # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                # and may not be suitable for mean reversion strategies
+                if "ETF" in ticker:
+                    logger.debug(
+                        f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                    )
+                    continue
+
                 last_close = float(row.get("last_close", 0) or 0)
                 # Phase 11: Load execution_capital from CSV if available
                 execution_capital = row.get("execution_capital")
@@ -1125,6 +1184,25 @@ class AutoTradeEngine:
                 else:
                     logger.info(f"Loaded {len(signals)} signals from database (Signals table)")
 
+                    # PERFORMANCE FIX: Batch load user signal statuses to avoid N+1 query problem
+                    # Load all user signal statuses in a single query instead of one per signal
+                    signal_ids = [signal.id for signal in signals]
+                    user_statuses_dict = {}
+                    if signal_ids:
+                        from sqlalchemy import select
+
+                        from src.infrastructure.db.models import UserSignalStatus
+
+                        user_statuses = self.db.execute(
+                            select(UserSignalStatus.signal_id, UserSignalStatus.status).where(
+                                UserSignalStatus.user_id == self.user_id,
+                                UserSignalStatus.signal_id.in_(signal_ids),
+                            )
+                        ).all()
+                        user_statuses_dict = {
+                            signal_id: status for signal_id, status in user_statuses
+                        }
+
                     # Filter signals by effective status (considering per-user status)
                     # Only include ACTIVE signals - skip TRADED, REJECTED, and EXPIRED
                     active_signals = []
@@ -1133,7 +1211,7 @@ class AutoTradeEngine:
                         # IMPORTANT: EXPIRED base status cannot be overridden by user status
                         # However, TRADED/REJECTED user status takes precedence over EXPIRED base status
                         # (from our recent fix - user actions are preserved even when base expires)
-                        user_status = signals_repo.get_user_signal_status(signal.id, self.user_id)
+                        user_status = user_statuses_dict.get(signal.id)
 
                         # Determine effective status:
                         # 1. If user has TRADED, REJECTED, or FAILED override, use that (completed actions take precedence)
@@ -1202,6 +1280,15 @@ class AutoTradeEngine:
 
                             # Convert symbol to ticker format (add .NS if not present)
                             ticker = signal.symbol.upper()
+
+                            # Exclude ETFs (Exchange Traded Funds) - they behave differently from stocks
+                            # and may not be suitable for mean reversion strategies
+                            if "ETF" in ticker:
+                                logger.debug(
+                                    f"Skipping {ticker}: ETF excluded from trading (mean reversion strategy)"
+                                )
+                                continue
+
                             if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
                                 ticker = f"{ticker}.NS"
 
@@ -2070,7 +2157,7 @@ class AutoTradeEngine:
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
-                existing_orders = self.orders_repo.list(self.user_id)
+                existing_orders, _ = self.orders_repo.list(self.user_id)
                 for existing_order in existing_orders:
                     # Check if symbol matches (including variants)
                     order_symbol_base = (
@@ -2384,14 +2471,18 @@ class AutoTradeEngine:
         Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
         If scrip master is not available or symbol is not found, raises an error.
 
+        IMPORTANT: Only resolves to -EQ segment symbols. T2T segments (-BE, -BL, -BZ)
+        are rejected as they are not supported for trading.
+
         Args:
-            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-BE")
+            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-EQ")
 
         Returns:
-            Resolved broker symbol (e.g., "SALSTEEL-BE")
+            Resolved broker symbol (e.g., "SALSTEEL-EQ") - ONLY -EQ symbols
 
         Raises:
-            ValueError: If scrip master is not available or symbol cannot be resolved
+            ValueError: If scrip master is not available, symbol cannot be resolved,
+                       or only T2T segment available (no -EQ variant)
         """
         # Get exchange from user's trading config (from database UserTradingConfig)
         # This is the user's preference stored in their trading configuration
@@ -2404,25 +2495,32 @@ class AutoTradeEngine:
 
         # If symbol already has suffix, validate it exists in scrip master
         if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
-            # Validate that this symbol exists in scrip master
+            # Reject T2T segments - only -EQ is allowed
+            if any(base_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                raise ValueError(
+                    f"Symbol {base_symbol} is a T2T segment stock (-BE/-BL/-BZ) which is not supported. "
+                    f"Only -EQ segment stocks are allowed for trading."
+                )
+
+            # Validate that -EQ symbol exists in scrip master
             if self.scrip_master and self.scrip_master.symbol_map:
                 instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
                 if instrument and instrument.get("symbol"):
                     # Symbol exists in scrip master, use as-is
                     logger.debug(
-                        f"Symbol {base_symbol} already has suffix and exists in scrip master ({exchange})"
+                        f"Symbol {base_symbol} already has -EQ suffix and exists in scrip master ({exchange})"
                     )
                     return base_symbol
                 else:
                     # Symbol has suffix but not in scrip master - this is an error
                     raise ValueError(
-                        f"Symbol {base_symbol} has suffix but not found in scrip master ({exchange}). "
+                        f"Symbol {base_symbol} not found in scrip master ({exchange}). "
                         f"Please verify the symbol is correct."
                     )
             else:
-                # Scrip master not available, but symbol has suffix - assume it's valid
+                # Scrip master not available, but symbol has -EQ suffix - assume it's valid
                 logger.warning(
-                    f"Scrip master not available, but symbol {base_symbol} has suffix. "
+                    f"Scrip master not available, but symbol {base_symbol} has -EQ suffix. "
                     f"Using as-is (not validated)."
                 )
                 return base_symbol
@@ -2435,14 +2533,46 @@ class AutoTradeEngine:
             )
 
         try:
-            # Use configurable exchange for symbol resolution
+            # First, try to get -EQ variant explicitly
+            eq_symbol = f"{base_symbol}-EQ"
+            instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+
+            if instrument and instrument.get("symbol"):
+                resolved = instrument["symbol"]
+                # Double-check it's -EQ (safety check)
+                if resolved.upper().endswith("-EQ"):
+                    logger.info(
+                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
+                    )
+                    return resolved
+                else:
+                    logger.warning(f"Expected -EQ variant but got {resolved} for {base_symbol}")
+
+            # If -EQ not found, try base symbol (might resolve to something else)
             instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
             if instrument and instrument.get("symbol"):
                 resolved = instrument["symbol"]
-                logger.info(
-                    f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - single source of truth"
-                )
-                return resolved
+
+                # Check if resolved symbol is T2T segment - reject it
+                if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
+                    raise ValueError(
+                        f"Symbol {base_symbol} resolves to T2T segment {resolved} which is not supported. "
+                        f"Only -EQ segment stocks are allowed for trading. "
+                        f"The stock may only be available in T2T segment on {exchange}."
+                    )
+
+                # Check if it's -EQ
+                if resolved.upper().endswith("-EQ"):
+                    logger.info(
+                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange})"
+                    )
+                    return resolved
+                else:
+                    # Resolved to something unexpected
+                    raise ValueError(
+                        f"Symbol {base_symbol} resolved to unexpected format: {resolved}. "
+                        f"Expected -EQ segment symbol."
+                    )
             else:
                 # Symbol not found in scrip master
                 raise ValueError(
@@ -2502,52 +2632,30 @@ class AutoTradeEngine:
                 f"Market is closed - using {order_variety} order variety for {broker_symbol}"
             )
 
-        # Determine if this is a BE/BL/BZ segment stock (trade-to-trade)
-        # These segments require LIMIT orders, not MARKET orders
-        is_t2t_segment = any(broker_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
-
-        # For T2T segments, use limit order at current price + 1% buffer
-        use_limit_order = is_t2t_segment
-        limit_price = close * 1.01 if use_limit_order else 0.0
-
-        if use_limit_order:
-            logger.info(
-                f"Using LIMIT order for {broker_symbol} (T2T segment) @ Rs {limit_price:.2f}"
-            )
-
         # Symbol should already be resolved from place_new_entries() via scrip master
         # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
         # If symbol doesn't have suffix, it means resolution failed earlier - this is an error
         place_symbol = broker_symbol
 
         # Validate that symbol has suffix (means it was resolved by scrip master)
-        has_suffix = any(place_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"])
+        # T2T segment stocks (-BE, -BL, -BZ) are filtered out earlier in analysis phase
+        has_suffix = place_symbol.upper().endswith("-EQ")
         if not has_suffix:
             logger.error(
-                f"Symbol {place_symbol} does not have suffix. "
+                f"Symbol {place_symbol} does not have -EQ suffix. "
                 f"This indicates scrip master resolution failed earlier. "
                 f"Cannot place order without proper symbol resolution."
             )
             return (False, None)
 
-        # Place order with scrip master resolved symbol
-        if use_limit_order:
-            trial = self.orders.place_limit_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                price=limit_price,
-                variety=order_variety,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
-        else:
-            trial = self.orders.place_market_buy(
-                symbol=place_symbol,
-                quantity=qty,
-                variety=order_variety,
-                exchange=config.DEFAULT_EXCHANGE,
-                product=config.DEFAULT_PRODUCT,
-            )
+        # Place order with scrip master resolved symbol (all MARKET orders - T2T support removed)
+        trial = self.orders.place_market_buy(
+            symbol=place_symbol,
+            quantity=qty,
+            variety=order_variety,
+            exchange=config.DEFAULT_EXCHANGE,
+            product=config.DEFAULT_PRODUCT,
+        )
 
         # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
         if isinstance(trial, dict) and "error" not in trial:
@@ -2682,18 +2790,17 @@ class AutoTradeEngine:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
-        order_type = "LIMIT" if use_limit_order else "MARKET"
+        order_type = "MARKET"  # All buy orders are MARKET orders (T2T support removed)
 
         # Phase 9: Send notification for order placed successfully
         if self.telegram_notifier and self.telegram_notifier.enabled:
             try:
-                limit_price = limit_price if use_limit_order else None
                 self.telegram_notifier.notify_order_placed(
                     symbol=actual_symbol,  # Use actual resolved symbol format
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
-                    price=limit_price,
+                    price=None,  # MARKET orders don't have prices
                     user_id=self.user_id,
                 )
             except Exception as e:
@@ -2736,7 +2843,7 @@ class AutoTradeEngine:
                 qty=qty,
                 order_type=order_type,
                 variety=config.DEFAULT_VARIETY,
-                price=limit_price if use_limit_order else 0.0,
+                price=0.0,  # MARKET orders use price=0
                 entry_type=entry_type,
                 order_metadata=order_metadata,
             )
@@ -2911,7 +3018,7 @@ class AutoTradeEngine:
                         if self.orders_repo and self.user_id:
                             try:
                                 # Find the order in database
-                                all_orders = self.orders_repo.list(self.user_id)
+                                all_orders, _ = self.orders_repo.list(self.user_id)
                                 db_order = None
                                 for order in all_orders:
                                     if (
@@ -3348,7 +3455,7 @@ class AutoTradeEngine:
                     )
                     # Database fallback: Check for pending/ongoing buy orders
                     if self.orders_repo and self.user_id:
-                        existing_orders = self.orders_repo.list(self.user_id)
+                        existing_orders, _ = self.orders_repo.list(self.user_id)
                         for existing_order in existing_orders:
                             if (
                                 existing_order.symbol == symbol
@@ -3538,7 +3645,7 @@ class AutoTradeEngine:
                     # Import here to ensure it's available
                     from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 
-                    all_orders = self.orders_repo.list(self.user_id)
+                    all_orders, _ = self.orders_repo.list(self.user_id)
                     reentry_orders_from_db = [
                         db_order
                         for db_order in all_orders
@@ -3715,11 +3822,16 @@ class AutoTradeEngine:
 
             summary["total_orders"] = len(amo_orders)
 
-            # 2. Process each AMO order
+            # PERFORMANCE FIX: Pre-fetch prices and calculate EMA9 for all orders in parallel
+            # This reduces total time from N*3-4s to ~3-4s for all orders
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
             from .market_data import KotakNeoMarketData
 
             market_data = KotakNeoMarketData(self.auth)
 
+            # Prepare order data for parallel processing
+            order_data = []
             for order in amo_orders:
                 symbol = order.get("symbol", order.get("tradingSymbol", ""))
                 original_qty = int(order.get("quantity", 0))
@@ -3732,19 +3844,6 @@ class AutoTradeEngine:
                 # Extract base symbol (remove -EQ suffix if present)
                 base_symbol = symbol.replace("-EQ", "")
 
-                logger.info(f"Processing {base_symbol}: current qty={original_qty}")
-
-                # 3. Fetch pre-market price
-                premarket_price = market_data.get_ltp(symbol, exchange="NSE")
-
-                if not premarket_price or premarket_price <= 0:
-                    logger.warning(f"{base_symbol}: Pre-market price not available, skipping")
-                    summary["price_unavailable"] += 1
-                    continue
-
-                logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
-
-                # 3.5. Check if pre-market price is above EMA9-1% (cancel order if so)
                 # Get ticker from order metadata or construct from symbol
                 ticker = None
                 if self.orders_repo and self.user_id:
@@ -3754,23 +3853,101 @@ class AutoTradeEngine:
                             ticker = db_order.order_metadata.get(
                                 "ticker"
                             ) or db_order.order_metadata.get("original_ticker")
-                    except Exception as e:
-                        logger.debug(f"Error fetching order metadata for {base_symbol}: {e}")
+                    except Exception:
+                        pass  # Ignore errors - will construct ticker below
 
                 # Construct ticker if not found in metadata
                 if not ticker:
                     ticker = f"{base_symbol}.NS"
 
-                # Calculate EMA9
-                ema9 = None
-                try:
-                    ema9 = self.indicator_service.calculate_ema9_realtime(
-                        ticker=ticker,
-                        broker_symbol=symbol,
-                        current_ltp=premarket_price,
-                    )
-                except Exception as e:
-                    logger.warning(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                order_data.append(
+                    {
+                        "order": order,
+                        "symbol": symbol,
+                        "base_symbol": base_symbol,
+                        "ticker": ticker,
+                        "order_id": order_id,
+                        "original_qty": original_qty,
+                    }
+                )
+
+            # Fetch prices and calculate EMA9 for all orders in parallel
+            price_results = {}
+            ema9_results = {}
+            if order_data:
+                logger.info(
+                    f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
+                )
+
+                def fetch_price_and_ema9(order_info):
+                    """Fetch price and calculate EMA9 for a single order"""
+                    symbol = order_info["symbol"]
+                    base_symbol = order_info["base_symbol"]
+                    ticker = order_info["ticker"]
+                    order_id = order_info["order_id"]
+                    result = {
+                        "order_id": order_id,
+                        "price": None,
+                        "ema9": None,
+                    }
+                    try:
+                        # Fetch pre-market price
+                        price = market_data.get_ltp(symbol, exchange="NSE")
+                        if price and price > 0:
+                            result["price"] = price
+
+                            # Calculate EMA9 using fetched price
+                            try:
+                                ema9 = self.indicator_service.calculate_ema9_realtime(
+                                    ticker=ticker,
+                                    broker_symbol=symbol,
+                                    current_ltp=price,
+                                )
+                                if ema9 and ema9 > 0:
+                                    result["ema9"] = ema9
+                            except Exception as e:
+                                logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                    except Exception as e:
+                        logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
+
+                    return order_id, result
+
+                with ThreadPoolExecutor(max_workers=min(10, len(order_data))) as executor:
+                    future_to_order = {
+                        executor.submit(fetch_price_and_ema9, o): o for o in order_data
+                    }
+                    for future in as_completed(future_to_order):
+                        order_id, result = future.result()
+                        price_results[order_id] = result["price"]
+                        ema9_results[order_id] = result["ema9"]
+
+                logger.info(
+                    f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
+                    f"{len([e for e in ema9_results.values() if e is not None])}/{len(order_data)} EMA9 values"
+                )
+
+            # Process each AMO order using pre-fetched prices and EMA9 values
+            for order_info in order_data:
+                order = order_info["order"]
+                symbol = order_info["symbol"]
+                base_symbol = order_info["base_symbol"]
+                order_id = order_info["order_id"]
+                original_qty = order_info["original_qty"]
+
+                logger.info(f"Processing {base_symbol}: current qty={original_qty}")
+
+                # Use pre-fetched pre-market price
+                premarket_price = price_results.get(order_id)
+
+                if not premarket_price or premarket_price <= 0:
+                    logger.warning(f"{base_symbol}: Pre-market price not available, skipping")
+                    summary["price_unavailable"] += 1
+                    continue
+
+                logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                # Use pre-calculated EMA9
+                ema9 = ema9_results.get(order_id)
 
                 # Check if pre-market price > EMA9 - 1%
                 if ema9 and ema9 > 0:
@@ -4022,7 +4199,7 @@ class AutoTradeEngine:
                     WHERE user_id = :user_id
                     AND symbol = :symbol
                     AND side = 'buy'
-                    AND status IN ('amo', 'ongoing')
+                    AND status IN ('pending', 'ongoing')
                 """
                 )
                 for symbol in symbols_to_check:
@@ -4526,7 +4703,7 @@ class AutoTradeEngine:
             existing_db_order = None
             if self.orders_repo and self.user_id:
                 try:
-                    existing_orders = self.orders_repo.list(self.user_id)
+                    existing_orders, _ = self.orders_repo.list(self.user_id)
                     for existing_order in existing_orders:
                         order_symbol_base = (
                             existing_order.symbol.upper()

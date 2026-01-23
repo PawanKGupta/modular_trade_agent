@@ -21,7 +21,6 @@ except ImportError:
 try:
     from .sell_engine import SellOrderManager
     from .utils.order_field_extractor import OrderFieldExtractor
-    from .utils.symbol_utils import extract_base_symbol
 except ImportError:
     from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
@@ -193,6 +192,15 @@ class UnifiedOrderMonitor:
 
             loaded_count = 0
             for order in pending_orders:
+                # CRITICAL FIX: Safeguard - only process buy orders
+                # This prevents sell orders from being incorrectly tracked as buy orders
+                if order.side and order.side.lower() != "buy":
+                    logger.warning(
+                        f"Skipping non-buy order {order.id} ({order.side}) "
+                        f"in load_pending_buy_orders()"
+                    )
+                    continue
+
                 order_id = order.broker_order_id or order.order_id
                 if not order_id:
                     logger.warning(f"Order {order.id} has no broker_order_id, skipping")
@@ -377,15 +385,20 @@ class UnifiedOrderMonitor:
         if self.orders_repo and self.user_id:
             try:
                 # Get ONGOING buy orders with missing execution price
-                ongoing_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+                ongoing_orders, _ = self.orders_repo.list(
+                    self.user_id, status=DbOrderStatus.ONGOING
+                )
                 for order in ongoing_orders:
                     # Filter for buy orders only
                     if order.side and order.side.lower() != "buy":
                         continue
 
-                    # Only add if missing execution price and not already in active_buy_orders
+                    # BUG FIX: Include orders WITH execution_price to check for missing positions
+                    # Previously only orders WITHOUT execution_price were checked, causing
+                    # positions to never be created for executed orders that already had
+                    # execution_price
                     order_id = order.broker_order_id or order.order_id
-                    if order_id and order_id not in orders_to_check and not order.execution_price:
+                    if order_id and order_id not in orders_to_check:
                         orders_to_check[str(order_id)] = {
                             "symbol": order.symbol,
                             "quantity": order.quantity,
@@ -395,7 +408,8 @@ class UnifiedOrderMonitor:
                             "placed_at": order.placed_at,
                         }
                         logger.debug(
-                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - missing execution price"
+                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - "
+                            f"execution_price={'present' if order.execution_price else 'missing'}"
                         )
             except Exception as e:
                 logger.error(f"Error loading ONGOING orders for sync: {e}", exc_info=True)
@@ -481,7 +495,6 @@ class UnifiedOrderMonitor:
                     # If symbol appears in holdings, order likely executed while service was down
                     symbol = order_info.get("symbol", "")
                     full_symbol = symbol.upper() if symbol else ""  # symbol is already full symbol
-                    base_symbol = extract_base_symbol(symbol).upper() if symbol else ""
 
                     if full_symbol and holdings_data is not None:
                         try:
@@ -673,7 +686,57 @@ class UnifiedOrderMonitor:
                                         )
                             else:
                                 # Order not in holdings either - might be rejected/cancelled
-                                # or holdings API unavailable
+                                # or holdings API unavailable, OR already executed days ago
+                                # Check if order has execution_price/qty in DB but no position
+                                # exists
+                                if self.orders_repo and order_info.get("db_order_id"):
+                                    try:
+                                        db_order = self.orders_repo.get(order_info["db_order_id"])
+                                        if (
+                                            db_order
+                                            and db_order.status == DbOrderStatus.ONGOING
+                                            and db_order.execution_price
+                                            and db_order.execution_price > 0
+                                            and db_order.execution_qty
+                                            and db_order.execution_qty > 0
+                                        ):
+                                            # Order has execution data and is ONGOING
+                                            # Check if position exists
+                                            symbol = order_info.get("symbol", "")
+                                            full_symbol = (
+                                                symbol.upper() if symbol else ""
+                                            )  # symbol is already full symbol
+                                            if full_symbol and self.positions_repo:
+                                                # Always call _create_position_from_executed_order
+                                                # It handles both creating new positions and updating
+                                                # existing ones (including reentries)
+                                                existing_pos = self.positions_repo.get_by_symbol(
+                                                    self.user_id, full_symbol
+                                                )
+                                                action = (
+                                                    "updating existing position"
+                                                    if existing_pos
+                                                    else "creating position"
+                                                )
+                                                logger.info(
+                                                    f"Order {order_id} has execution data. "
+                                                    f"{action.capitalize()} from DB order data."
+                                                )
+                                                with transaction(self.orders_repo.db):
+                                                    self._create_position_from_executed_order(
+                                                        order_id,
+                                                        order_info,
+                                                        float(db_order.execution_price),
+                                                        float(db_order.execution_qty),
+                                                    )
+                                                stats["executed"] += 1
+                                                order_ids_to_remove.append(order_id)
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Error checking/creating position for order "
+                                            f"{order_id}: {e}"
+                                        )
+
                                 placed_at = order_info.get("placed_at")
                                 if placed_at:
                                     logger.debug(
@@ -691,6 +754,55 @@ class UnifiedOrderMonitor:
                                 logger.debug(f"Buy order {order_id} not found in broker orders")
                     else:
                         # No portfolio access or symbol info - use original behavior
+                        # But still check if order has execution data and needs position creation
+                        if self.orders_repo and order_info.get("db_order_id"):
+                            try:
+                                db_order = self.orders_repo.get(order_info["db_order_id"])
+                                if (
+                                    db_order
+                                    and db_order.status == DbOrderStatus.ONGOING
+                                    and db_order.execution_price
+                                    and db_order.execution_price > 0
+                                    and db_order.execution_qty
+                                    and db_order.execution_qty > 0
+                                ):
+                                    # Order has execution data and is ONGOING
+                                    # Check if position exists
+                                    symbol = order_info.get("symbol", "")
+                                    full_symbol = (
+                                        symbol.upper() if symbol else ""
+                                    )  # symbol is already full symbol
+                                    if full_symbol and self.positions_repo:
+                                        # Always call _create_position_from_executed_order
+                                        # It handles both creating new positions and updating
+                                        # existing ones (including reentries)
+                                        existing_pos = self.positions_repo.get_by_symbol(
+                                            self.user_id, full_symbol
+                                        )
+                                        action = (
+                                            "updating existing position"
+                                            if existing_pos
+                                            else "creating position"
+                                        )
+                                        logger.info(
+                                            f"Order {order_id} has execution data "
+                                            f"(holdings API unavailable). "
+                                            f"{action.capitalize()} from DB order data."
+                                        )
+                                        with transaction(self.orders_repo.db):
+                                            self._create_position_from_executed_order(
+                                                order_id,
+                                                order_info,
+                                                float(db_order.execution_price),
+                                                float(db_order.execution_qty),
+                                            )
+                                        stats["executed"] += 1
+                                        order_ids_to_remove.append(order_id)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Error checking/creating position for order {order_id}: {e}"
+                                )
+
                         placed_at = order_info.get("placed_at")
                         if placed_at:
                             logger.debug(f"Buy order {order_id} not found in broker orders")
@@ -901,6 +1013,27 @@ class UnifiedOrderMonitor:
             execution_price: Execution price
             execution_qty: Execution quantity
         """
+        # EDGE CASE FIX #1: Validate execution_price and execution_qty at the start
+        if not execution_price or execution_price <= 0:
+            logger.error(
+                f"Invalid execution_price: {execution_price} for order {order_id}. "
+                f"Cannot create position. This will prevent sell order placement."
+            )
+            self._position_creation_metrics["failed_invalid_data"] = (
+                self._position_creation_metrics.get("failed_invalid_data", 0) + 1
+            )
+            return
+
+        if not execution_qty or execution_qty <= 0:
+            logger.error(
+                f"Invalid execution_qty: {execution_qty} for order {order_id}. "
+                f"Cannot create position. This will prevent sell order placement."
+            )
+            self._position_creation_metrics["failed_invalid_data"] = (
+                self._position_creation_metrics.get("failed_invalid_data", 0) + 1
+            )
+            return
+
         # Issue #1 Fix: Enhanced validation with structured logging and alerting
         if not self.positions_repo or not self.user_id:
             # Issue #1 Fix: Track metrics
@@ -1070,6 +1203,74 @@ class UnifiedOrderMonitor:
                 execution_time = db_order.filled_at
             elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:
                 execution_time = db_order.execution_time
+
+            # EDGE CASE FIX #2: Check if this order was already processed to prevent duplicate position updates
+            if existing_pos:
+                # Check if order_id is already in reentries (indicates order was already processed)
+                reentries_to_check = []
+                if existing_pos.reentries:
+                    if isinstance(existing_pos.reentries, dict):
+                        reentries_to_check = list(existing_pos.reentries.get("reentries", []))
+                    elif isinstance(existing_pos.reentries, list):
+                        reentries_to_check = list(existing_pos.reentries)
+
+                # Check if order_id matches any reentry
+                order_already_processed = any(
+                    r.get("order_id") == order_id for r in reentries_to_check
+                )
+
+                # Also check if position opened_at matches execution_time (within 1 hour window)
+                # This handles cases where order was processed but reentry tracking wasn't set
+                # IMPORTANT: Only skip if it's likely the FIRST order (no reentries exist yet)
+                # For reentries, position quantity should be > execution_qty (includes previous orders)
+                if not order_already_processed and existing_pos.opened_at and execution_time:
+                    time_diff = abs((existing_pos.opened_at - execution_time).total_seconds())
+                    # If position was opened within 1 hour of order execution, check if it's the first order
+                    if time_diff < 3600:  # 1 hour window
+                        # Only skip if:
+                        # 1. Position quantity matches execution_qty (likely first order, not reentry)
+                        # 2. AND no reentries exist yet (confirms it's the first order)
+                        # For reentries, position quantity should be > execution_qty
+                        qty_match = abs(existing_pos.quantity - execution_qty) <= max(
+                            execution_qty * 0.1, 1
+                        )
+                        has_no_reentries = (
+                            not existing_pos.reentries
+                            or (
+                                isinstance(existing_pos.reentries, list)
+                                and len(existing_pos.reentries) == 0
+                            )
+                            or (
+                                isinstance(existing_pos.reentries, dict)
+                                and len(existing_pos.reentries.get("reentries", [])) == 0
+                            )
+                        )
+
+                        # Only skip if quantities match AND no reentries exist (first order scenario)
+                        if qty_match and has_no_reentries:
+                            logger.info(
+                                f"Order {order_id} for {full_symbol} appears to have already been processed "
+                                f"(first order, no reentries). "
+                                f"Position opened_at={existing_pos.opened_at}, "
+                                f"order execution_time={execution_time}, "
+                                f"time_diff={time_diff:.0f}s, qty_match={qty_match}. "
+                                f"Skipping duplicate position update."
+                            )
+                            return
+                        elif qty_match and not has_no_reentries:
+                            # Position has reentries but quantities match - likely a reentry with same qty
+                            # This is valid, proceed with reentry update
+                            logger.debug(
+                                f"Order {order_id} for {full_symbol}: quantities match but reentries exist. "
+                                f"This is likely a reentry order. Proceeding with position update."
+                            )
+
+                if order_already_processed:
+                    logger.info(
+                        f"Order {order_id} for {full_symbol} already processed (found in reentries). "
+                        f"Skipping duplicate position update."
+                    )
+                    return
 
             # Create or update position
             if existing_pos:
@@ -1486,6 +1687,11 @@ class UnifiedOrderMonitor:
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
 
+            # Note: Order status is already correct (ONGOING = executed order)
+            # According to design: PENDING → ONGOING (when executed) → CLOSED (when sold)
+            # If order has execution_price and status is ONGOING, that's the correct state.
+            # We're only fixing the missing position creation here.
+
         except ValueError as e:
             # Issue #1 Fix: Track metrics and send alert
             self._position_creation_metrics["failed_exception"] += 1
@@ -1685,14 +1891,25 @@ class UnifiedOrderMonitor:
             self.load_pending_buy_orders()
 
         # Fetch broker orders once for both buy and sell order checking
+        # Note: get_orders() is already wrapped with timeout (30s) in orders.py
         broker_orders = None
         try:
             orders_response = self.orders.get_orders() if self.orders else None
-            broker_orders = orders_response.get("data", []) if orders_response else []
+            if orders_response is None:
+                # Timeout or error occurred - log and continue with empty orders list
+                logger.warning(
+                    "get_orders() returned None (likely timeout or error). "
+                    "Continuing monitoring with empty orders list."
+                )
+                broker_orders = []
+            else:
+                broker_orders = orders_response.get("data", []) if orders_response else []
         except ValueError as e:
             logger.error(f"Invalid data when fetching broker orders: {e}", exc_info=True)
+            broker_orders = []
         except Exception as e:
             logger.error(f"Unexpected error fetching broker orders: {e}", exc_info=True)
+            broker_orders = []
 
         # Monitor buy orders (new functionality) - check for executions first
         buy_stats = self.check_buy_order_status(broker_orders=broker_orders)
@@ -1760,7 +1977,7 @@ class UnifiedOrderMonitor:
 
             # Get all ONGOING buy orders executed today
             # We'll check orders that have execution_time >= today_start
-            all_orders = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+            all_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
 
             newly_executed_orders = []
             skipped_orders = []
@@ -1867,6 +2084,62 @@ class UnifiedOrderMonitor:
                         )
                         continue
 
+                    # FIX: Ensure position exists before placing sell order
+                    # If position doesn't exist or is closed, create it from the executed order
+                    # This handles cases where buy order executed but position was never created
+                    # (e.g., if order was ONGOING when service started)
+                    existing_position = None
+                    if self.positions_repo:
+                        try:
+                            # First check for open position
+                            existing_position = self.positions_repo.get_by_symbol(
+                                self.user_id, full_symbol
+                            )
+                            # If no open position, check if closed position exists
+                            if not existing_position:
+                                existing_position = self.positions_repo.get_by_symbol_any(
+                                    self.user_id, full_symbol, include_closed=True
+                                )
+                        except Exception as pos_check_err:
+                            logger.warning(
+                                f"Error checking position for {full_symbol}: {pos_check_err}"
+                            )
+
+                    # Create position if missing or closed
+                    if not existing_position or (
+                        existing_position and existing_position.closed_at is not None
+                    ):
+                        # Position doesn't exist or is closed - create new position from executed order
+                        # This ensures position exists before placing sell order
+                        logger.info(
+                            f"Position missing or closed for {full_symbol} (order {db_order.broker_order_id}). "
+                            f"Creating position before placing sell order."
+                        )
+                        try:
+                            # Use existing _create_position_from_executed_order method
+                            # This handles reentry logic, closed positions, and transactions correctly
+                            order_info = {
+                                "symbol": full_symbol,
+                                "db_order_id": db_order.id,
+                            }
+                            self._create_position_from_executed_order(
+                                str(db_order.broker_order_id or db_order.order_id),
+                                order_info,
+                                execution_price,
+                                execution_qty,
+                            )
+                            logger.info(
+                                f"Created/updated position for {full_symbol} from ONGOING order "
+                                f"{db_order.broker_order_id}"
+                            )
+                        except Exception as pos_create_err:
+                            logger.error(
+                                f"Failed to create position for {full_symbol}: {pos_create_err}. "
+                                f"Skipping sell order placement.",
+                                exc_info=True,
+                            )
+                            continue
+
                     # Get execution time for this order (normalize to IST)
                     order_execution_time = (
                         getattr(db_order, "execution_time", None) or db_order.filled_at
@@ -1897,7 +2170,7 @@ class UnifiedOrderMonitor:
                     if not ema9:
                         logger.error(
                             f"Issue #3: Skipping {full_symbol}: Failed to calculate EMA9 after retries "
-                            f"and fallback. Position exists but sell order cannot be placed."
+                            f"and fallback. Sell order cannot be placed."
                         )
                         continue
 
