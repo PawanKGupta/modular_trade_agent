@@ -277,14 +277,15 @@ cd web; npx playwright install chromium; npm run test:e2e
 - PUT `/api/v1/user/settings`
 
 ### Orders
-- GET `/api/v1/user/orders/` — Query params: `status=pending|ongoing|failed|closed|cancelled`, `reason=<partial_match>`, `from_date=YYYY-MM-DD`, `to_date=YYYY-MM-DD`
-  - Returns: list of orders for the authenticated user, filtered by status if provided
+- GET `/api/v1/user/orders/` — Query params: `status=pending|ongoing|failed|closed|cancelled`, `reason=<partial_match>`, `from_date=YYYY-MM-DD`, `to_date=YYYY-MM-DD`, `page=<1-based>`, `page_size=<int>`
+  - Returns: paginated orders for the authenticated user, filtered by status if provided
+  - Response shape: `{ items: Order[], total: number, page: number, page_size: number, total_pages: number }`
   - Response fields include: `id`, `symbol`, `side`, `quantity`, `price`, `status`, `reason`, `entry_type`, `is_manual`, `retry_count`, `execution_price`, `execution_qty`, `execution_time`, `created_at`, etc.
   - `entry_type`: `"initial"`, `"reentry"`, `"manual"`, or `null` — indicates the type of entry
   - `is_manual`: `boolean` — `true` if order was placed manually (derived from `orig_source='manual'`), `false` otherwise
   - Note: `status=pending` includes orders previously marked as `amo` or `pending_execution`
   - Note: `status=failed` includes orders previously marked as `failed`, `retry_pending`, or `rejected`
-  - Note: Use `side=buy` or `side=sell` to filter by order type (SELL status removed)
+  - Note: SELL is not a status; use the returned `side` field to distinguish buy vs sell orders
 - POST `/api/v1/user/orders/{id}/retry` — Retry a failed order
   - Returns: updated order with incremented retry_count and all order fields including `entry_type` and `is_manual`
 - DELETE `/api/v1/user/orders/{id}` — Drop a failed order from retry queue

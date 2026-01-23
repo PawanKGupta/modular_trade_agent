@@ -184,7 +184,7 @@ All API endpoints use the `/api/v1` prefix. Here are the main endpoints:
 
 ### Trading
 - `GET /api/v1/signals/buying-zone` - Get buying zone signals
-- `GET /api/v1/user/orders` - Get orders
+- `GET /api/v1/user/orders/` - List orders (paginated)
 - `GET /api/v1/user/targets` - Get targets
 - `GET /api/v1/user/pnl` - Get P&L data
 - `POST /api/v1/user/paper-trading/execute` - Execute paper trade

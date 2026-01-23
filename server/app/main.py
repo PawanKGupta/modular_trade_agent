@@ -254,7 +254,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-app = FastAPI(title="Rebound API", version="1.0.0", debug=True)
+app = FastAPI(title="Rebound API", version="26.1.1", debug=True)
 _unified_tasks = []
 
 # Configure file logging to capture errors for analysis
