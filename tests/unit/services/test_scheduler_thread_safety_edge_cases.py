@@ -167,7 +167,10 @@ class TestSchedulerThreadSafetyEdgeCases:
                 mock_thread_db = MagicMock(spec=Session)
                 mock_session_local.return_value = mock_thread_db
 
-                with patch("src.application.services.multi_user_trading_service.get_user_logger"):
+                with patch(
+                    "src.application.services.multi_user_trading_service.get_user_logger",
+                    create=True,
+                ):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
                         args=(mock_service, 1),
@@ -258,7 +261,8 @@ class TestSchedulerThreadSafetyEdgeCases:
                     mock_repo_class.return_value = mock_repo
 
                     with patch(
-                        "src.application.services.multi_user_trading_service.get_user_logger"
+                        "src.application.services.multi_user_trading_service.get_user_logger",
+                        create=True,
                     ):
                         # Run scheduler briefly
                         thread = threading.Thread(
@@ -309,7 +313,8 @@ class TestSchedulerThreadSafetyEdgeCases:
                         mock_status_repo_class.return_value = mock_status_repo
 
                         with patch(
-                            "src.application.services.multi_user_trading_service.get_user_logger"
+                            "src.application.services.multi_user_trading_service.get_user_logger",
+                            create=True,
                         ):
                             thread = threading.Thread(
                                 target=self.service._run_paper_trading_scheduler,
@@ -343,7 +348,10 @@ class TestSchedulerThreadSafetyEdgeCases:
             return session
 
         with patch("src.infrastructure.db.session.SessionLocal", side_effect=create_session):
-            with patch("src.application.services.multi_user_trading_service.get_user_logger"):
+            with patch(
+                "src.application.services.multi_user_trading_service.get_user_logger",
+                create=True,
+            ):
                 threads = []
                 for i, service in enumerate(services):
                     thread = threading.Thread(

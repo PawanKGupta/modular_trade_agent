@@ -226,6 +226,8 @@ class TestMultiUserTradingService:
             ) as mock_thread_class,
             patch(
                 "src.application.services.multi_user_trading_service.get_user_logger"
+            ,
+                create=True,
             ) as mock_get_logger,
         ):
             mock_service = MagicMock()
@@ -338,7 +340,8 @@ class TestMultiUserTradingService:
                 "src.application.services.multi_user_trading_service.threading.Thread"
             ) as mock_thread_class,
             patch(
-                "src.application.services.multi_user_trading_service.get_user_logger"
+                "src.application.services.multi_user_trading_service.get_user_logger",
+                create=True,
             ) as mock_get_logger,
         ):
             mock_service = MagicMock()
@@ -593,6 +596,9 @@ class TestMultiUserTradingService:
         service._service_status_repo = MagicMock()
         results = []
 
+        # Use a plain int user_id to avoid any ORM object reuse across threads.
+        user_id = 12345
+
         # Mock TradingService to avoid actual initialization
         with (
             patch(
@@ -650,7 +656,7 @@ class TestMultiUserTradingService:
 
             def start_service():
                 try:
-                    result = service.start_service(sample_user_with_settings.id)
+                    result = service.start_service(user_id)
                     results.append(("start", result))
                 except Exception as e:
                     results.append(("start_error", str(e)))
@@ -658,7 +664,7 @@ class TestMultiUserTradingService:
             def stop_service():
                 time.sleep(0.1)  # Small delay
                 try:
-                    result = service.stop_service(sample_user_with_settings.id)
+                    result = service.stop_service(user_id)
                     results.append(("stop", result))
                 except Exception as e:
                     results.append(("stop_error", str(e)))
