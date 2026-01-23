@@ -17,7 +17,6 @@ import {
 	type ReauthHistoryResponse,
 	type AuthErrorsResponse,
 } from '@/api/monitoring';
-import { formatTimeAgo } from '@/utils/time';
 
 function formatDuration(seconds: number): string {
 	if (seconds < 60) {
@@ -175,8 +174,7 @@ export function MonitoringDashboardPage() {
 		);
 	}
 
-	const { summary, alerts, recent_task_executions, recent_reauth_events, running_tasks } =
-		dashboard;
+	const { summary, alerts, recent_task_executions, recent_reauth_events } = dashboard;
 
 	return (
 		<div className="p-2 sm:p-4 space-y-4 sm:space-y-6">
