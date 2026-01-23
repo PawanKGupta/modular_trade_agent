@@ -107,10 +107,18 @@ vi.mock('@/api/signals', () => ({
 }));
 
 vi.mock('@/api/orders', () => ({
-	listOrders: vi.fn(() => Promise.resolve([
-		{ id: 1, symbol: 'RELIANCE.NS', status: 'pending' },
-		{ id: 2, symbol: 'TCS.NS', status: 'pending' },
-	])),
+	listOrders: vi.fn(() =>
+		Promise.resolve({
+			items: [
+				{ id: 1, symbol: 'RELIANCE.NS', side: 'buy', quantity: 1, price: 1, status: 'pending', created_at: null, updated_at: null },
+				{ id: 2, symbol: 'TCS.NS', side: 'buy', quantity: 1, price: 1, status: 'pending', created_at: null, updated_at: null },
+			],
+			total: 2,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		})
+	),
 }));
 
 vi.mock('@/api/notifications', () => ({
@@ -537,13 +545,21 @@ describe('DashboardHome', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('0')).toBeInTheDocument();
+			expect(screen.getByText('Active Signals')).toBeInTheDocument();
+			const activeSignalsCard = screen.getByText('Active Signals').closest('div')?.parentElement;
+			expect(activeSignalsCard).toHaveTextContent('0');
 		});
 	});
 
 	it('handles zero open orders', async () => {
 		const ordersApi = await import('@/api/orders');
-		vi.mocked(ordersApi.listOrders).mockResolvedValueOnce([]);
+		vi.mocked(ordersApi.listOrders).mockResolvedValueOnce({
+			items: [],
+			total: 0,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		});
 
 		render(
 			withProviders(
@@ -555,9 +571,9 @@ describe('DashboardHome', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Open Orders')).toBeInTheDocument();
-			// The count should be 0, but we check the card exists
 			const openOrdersCard = screen.getByText('Open Orders').closest('div')?.parentElement;
 			expect(openOrdersCard).toBeInTheDocument();
+			expect(openOrdersCard).toHaveTextContent('0');
 		});
 	});
 

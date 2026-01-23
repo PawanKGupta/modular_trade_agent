@@ -319,34 +319,49 @@ http.post(API('/auth/refresh'), async () => {
 		return HttpResponse.json({ message: 'Portfolio snapshot created successfully' });
 	}),
 	http.options(API('/user/portfolio/snapshot'), async () => HttpResponse.json({ ok: true })),
-	// orders
-	http.get(API('/user/orders'), async ({ request }) => {
-		const url = new URL(request.url);
-		const status = url.searchParams.get('status') ?? 'pending';
-		const now = new Date().toISOString();
-		const byStatus: Record<string, unknown[]> = {
-			pending: [ // Merged: AMO + PENDING_EXECUTION
-				{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
-				{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
-			],
-			ongoing: [
-				{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', created_at: now, updated_at: now },
-			],
-			failed: [ // Merged: FAILED + RETRY_PENDING + REJECTED
-				{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, created_at: now, updated_at: now },
-			],
-			closed: [
-				{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', created_at: now, updated_at: now },
-			],
-			cancelled: [
-				{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', created_at: now, updated_at: now },
-			],
-			// Note: SELL status removed - use side='sell' to identify sell orders
-			// Example sell order:
-			// { id: 601, symbol: 'ICICIBANK', side: 'sell', quantity: 5, price: 900, status: 'pending', reason: 'Sell order placed at EMA9 target', created_at: now, updated_at: now },
-		};
-		return HttpResponse.json(byStatus[status] ?? []);
-	}),
+	// orders (paginated)
+	...([API('/user/orders'), API('/user/orders/')].map((url) =>
+		http.get(url, async ({ request }) => {
+			const reqUrl = new URL(request.url);
+			const status = reqUrl.searchParams.get('status') ?? 'pending';
+			const page = Number(reqUrl.searchParams.get('page') ?? '1');
+			const pageSize = Number(reqUrl.searchParams.get('page_size') ?? '50');
+			const now = new Date().toISOString();
+
+			const byStatus: Record<string, any[]> = {
+				pending: [
+					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
+					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
+				],
+				ongoing: [
+					{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', created_at: now, updated_at: now },
+				],
+				failed: [
+					{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, created_at: now, updated_at: now },
+				],
+				closed: [
+					{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', created_at: now, updated_at: now },
+				],
+				cancelled: [
+					{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', created_at: now, updated_at: now },
+				],
+			};
+
+			const itemsAll = byStatus[status] ?? [];
+			const start = (page - 1) * pageSize;
+			const items = itemsAll.slice(start, start + pageSize);
+			const total = itemsAll.length;
+			const total_pages = Math.max(1, Math.ceil(total / pageSize));
+
+			return HttpResponse.json({
+				items,
+				total,
+				page,
+				page_size: pageSize,
+				total_pages,
+			});
+		})
+	)),
 	// pnl
 	http.get(API('/user/pnl/daily'), async () => {
 		return HttpResponse.json([
