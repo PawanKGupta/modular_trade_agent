@@ -45,6 +45,8 @@ jobs:
   integration-concurrency-postgres:
     name: Integration Concurrency (Postgres)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         postgres-version: [14, 16]
