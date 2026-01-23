@@ -341,8 +341,13 @@ def test_ensure_db_schema_cleans_orphans_and_auto_restores(monkeypatch: pytest.M
 
     import sys
 
-    sys.modules["src.application.services.individual_service_manager"] = mod_ism
-    sys.modules["src.application.services.multi_user_trading_service"] = mod_muts
+    # Ensure these module substitutions are reverted after the test.
+    monkeypatch.setitem(
+        sys.modules, "src.application.services.individual_service_manager", mod_ism
+    )
+    monkeypatch.setitem(
+        sys.modules, "src.application.services.multi_user_trading_service", mod_muts
+    )
 
     asyncio.run(main.ensure_db_schema())
 

@@ -114,7 +114,7 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     # Mock yfinance to return a DIFFERENT price than stored.
     # Also stub OHLCV fetch used for EMA9 target calculation to avoid real downloads.
     with (
-        patch("yfinance.Ticker") as mock_ticker_class,
+        patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
         patch("server.app.routers.paper_trading.fetch_ohlcv_yf") as mock_fetch_ohlcv,
     ):
         mock_ticker = MagicMock()
