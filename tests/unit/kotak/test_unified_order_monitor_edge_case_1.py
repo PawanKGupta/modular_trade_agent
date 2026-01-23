@@ -5,6 +5,7 @@ Tests that unified_order_monitor updates sell orders immediately when reentry ex
 """
 
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -80,7 +81,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position = Mock()
         existing_position.quantity = 35.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime(2026, 1, 1, 9, 15, 0, tzinfo=UTC)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None  # Position is open
         existing_position.reentry_count = 0
@@ -171,7 +172,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position = Mock()
         existing_position.quantity = 35.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime(2026, 1, 1, 9, 15, 0, tzinfo=UTC)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None  # Position is open
         existing_position.reentry_count = 0
@@ -223,7 +224,7 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
         existing_position = Mock()
         existing_position.quantity = 35.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime(2026, 1, 1, 9, 15, 0, tzinfo=UTC)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None  # Position is open
         existing_position.reentry_count = 0

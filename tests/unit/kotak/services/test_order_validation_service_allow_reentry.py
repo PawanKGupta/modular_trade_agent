@@ -50,7 +50,7 @@ class TestOrderValidationServiceAllowReentry:
         mock_position.quantity = 10.0
 
         mock_orders_repo.db = Mock()  # Mock db session
-        mock_orders_repo.list = Mock(return_value=[])
+        mock_orders_repo.list = Mock(return_value=([], 0))
 
         # Mock PositionsRepository
         mock_positions_repo = Mock()
@@ -108,7 +108,7 @@ class TestOrderValidationServiceAllowReentry:
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.status = "PENDING"
 
-        mock_orders_repo.list = Mock(return_value=[mock_order])
+        mock_orders_repo.list = Mock(return_value=([mock_order], 1))
 
         service = OrderValidationService(orders_repo=mock_orders_repo, user_id=1)
 

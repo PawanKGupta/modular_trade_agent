@@ -39,6 +39,8 @@ class TestManualBuyOrderFiltering:
     def mock_orders_repo(self):
         """Mock OrdersRepository."""
         repo = Mock()
+        # UnifiedOrderMonitor expects orders_repo.list(...) -> (items, total_count)
+        repo.list = Mock(return_value=([], 0))
         return repo
 
     @pytest.fixture
@@ -118,7 +120,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.order_metadata = {"ticker": "TCS.NS"}
         self._setup_order_attributes(system_buy_order, price=3000.0, qty=10.0)
 
-        mock_orders_repo.list.return_value = [manual_buy_order, system_buy_order]
+        mock_orders_repo.list.return_value = ([manual_buy_order, system_buy_order], 2)
 
         # Setup mocks for sell manager
         self._setup_sell_manager_mocks(mock_sell_manager)
@@ -145,7 +147,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
-        mock_orders_repo.list.return_value = [manual_buy_order]
+        mock_orders_repo.list.return_value = ([manual_buy_order], 1)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -170,7 +172,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.order_metadata = {"ticker": "RELIANCE.NS"}
         self._setup_order_attributes(system_buy_order)
 
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -195,7 +197,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.order_metadata = {"ticker": "RELIANCE.NS"}
         self._setup_order_attributes(system_buy_order)
 
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -219,7 +221,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
-        mock_orders_repo.list.return_value = [manual_buy_order]
+        mock_orders_repo.list.return_value = ([manual_buy_order], 1)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -243,7 +245,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
-        mock_orders_repo.list.return_value = [manual_buy_order]
+        mock_orders_repo.list.return_value = ([manual_buy_order], 1)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -273,7 +275,7 @@ class TestManualBuyOrderFiltering:
         manual_buy2.execution_time = execution_time
         manual_buy2.filled_at = execution_time
 
-        mock_orders_repo.list.return_value = [manual_buy1, manual_buy2]
+        mock_orders_repo.list.return_value = ([manual_buy1, manual_buy2], 2)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
@@ -305,7 +307,7 @@ class TestManualBuyOrderFiltering:
         system_buy.order_metadata = {"ticker": "TCS.NS"}
         self._setup_order_attributes(system_buy, price=3000.0, qty=10.0)
 
-        mock_orders_repo.list.return_value = [manual_buy, system_buy]
+        mock_orders_repo.list.return_value = ([manual_buy, system_buy], 2)
         self._setup_sell_manager_mocks(mock_sell_manager)
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()

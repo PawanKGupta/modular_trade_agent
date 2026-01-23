@@ -34,6 +34,18 @@ from src.infrastructure.persistence.positions_repository import PositionsReposit
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
 
+def _list_orders(orders_repo: OrdersRepository, user_id: int, **kwargs):
+    """Normalize OrdersRepository.list() return shape.
+
+    Production code returns (items, total_count); older tests sometimes assumed just items.
+    """
+
+    result = orders_repo.list(user_id, **kwargs)
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[0]
+    return result
+
+
 @pytest.fixture
 def db_session():
     """Create in-memory test database"""
@@ -223,14 +235,21 @@ def mock_engine(db_session, mock_broker):
             AutoTradeEngine, "parse_symbol_for_broker", side_effect=parse_symbol
         )
 
+        # Speed up integration tests: production clamps verification waits (e.g., 15s).
+        patcher3 = patch(
+            "modules.kotak_neo_auto_trader.auto_trade_engine.time.sleep", return_value=None
+        )
+
         patcher1.start()
         patcher2.start()
+        patcher3.start()
 
         try:
             yield engine
         finally:
             patcher1.stop()
             patcher2.stop()
+            patcher3.stop()
 
 
 class TestCategory1HappyPath:
@@ -305,7 +324,7 @@ class TestCategory1HappyPath:
         assert summary["placed"] == 1
 
         # Verify buy order in database
-        all_orders = orders_repo.list(user_id)
+        all_orders = _list_orders(orders_repo, user_id)
         buy_orders = [o for o in all_orders if o.side == "buy"]
         assert len(buy_orders) == 1
         assert buy_orders[0].symbol == "RELIANCE-EQ"
@@ -317,7 +336,7 @@ class TestCategory1HappyPath:
 
         # Step 3: EOD Cleanup (6:00 PM) - Simulate cleanup
         # Pending orders should remain untouched
-        all_orders_after_eod = orders_repo.list(user_id)
+        all_orders_after_eod = _list_orders(orders_repo, user_id)
         buy_orders_after_eod = [o for o in all_orders_after_eod if o.side == "buy"]
         assert len(buy_orders_after_eod) == 1
         assert buy_orders_after_eod[0].status == OrderStatus.PENDING
@@ -417,7 +436,7 @@ class TestCategory1HappyPath:
         orders_placed = sell_manager.run_at_market_open()
 
         # Verify sell order placed
-        all_orders_sell = orders_repo.list(user_id)
+        all_orders_sell = _list_orders(orders_repo, user_id)
         sell_orders = [o for o in all_orders_sell if o.side == "sell"]
         assert len(sell_orders) >= 1
         assert sell_orders[0].status == OrderStatus.PENDING
@@ -573,7 +592,7 @@ class TestCategory1HappyPath:
         ), f"Expected 3 orders placed, got {summary.get('placed', 0)}. Summary: {summary}"
 
         # Verify 3 buy orders created
-        all_orders = orders_repo.list(user_id)
+        all_orders = _list_orders(orders_repo, user_id)
         buy_orders = [o for o in all_orders if o.side == "buy"]
         assert len(buy_orders) == 3
 
@@ -637,7 +656,7 @@ class TestCategory1HappyPath:
         sell_manager.orders = mock_broker
 
         # Each position should have independent sell order
-        all_orders_sell = orders_repo.list(user_id)
+        all_orders_sell = _list_orders(orders_repo, user_id)
         sell_orders = [o for o in all_orders_sell if o.side == "sell"]
         # Note: Actual count depends on implementation
         assert len(sell_orders) >= 0  # At least 0, may be placed later
@@ -697,7 +716,7 @@ class TestCategory2BuyOrderEdgeCases:
         assert summary.get("placed", 0) == 0
 
         # Verify order saved with REJECTED status
-        all_orders = orders_repo.list(user_id)
+        all_orders = _list_orders(orders_repo, user_id)
         orders = [o for o in all_orders if o.side == "buy"]
         # Note: Implementation may vary, but order should be tracked
         # Check if any order exists with rejection reason
@@ -775,7 +794,7 @@ class TestCategory2BuyOrderEdgeCases:
         assert summary.get("placed", 0) == 0
 
         # Verify order saved with FAILED status (retry-pending orders use FAILED status)
-        failed_orders = orders_repo.list(user_id, status=OrderStatus.FAILED)
+        failed_orders = _list_orders(orders_repo, user_id, status=OrderStatus.FAILED)
         assert len(failed_orders) >= 1
 
         # Ensure the failed order has first_failed_at set (required for retry)
@@ -851,7 +870,7 @@ class TestCategory2BuyOrderEdgeCases:
         # Check if order was placed by looking at the database
         # The retry should create a new PENDING order or update the existing FAILED order to PENDING
         session.commit()  # Ensure all changes are committed
-        all_orders_after = orders_repo.list(user_id, status=OrderStatus.PENDING)
+        all_orders_after = _list_orders(orders_repo, user_id, status=OrderStatus.PENDING)
         pending_orders_after = [o for o in all_orders_after if o.side == "buy"]
 
         # The retry should have placed at least one order
@@ -861,7 +880,7 @@ class TestCategory2BuyOrderEdgeCases:
             assert True
         else:
             # Order was not placed - check why
-            all_failed_after = orders_repo.list(user_id, status=OrderStatus.FAILED)
+            all_failed_after = _list_orders(orders_repo, user_id, status=OrderStatus.FAILED)
             failed_orders_after = [o for o in all_failed_after if o.side == "buy"]
             assert (
                 False
@@ -875,7 +894,7 @@ class TestCategory2BuyOrderEdgeCases:
             retried_order = orders_repo.get_by_broker_order_id(user_id, "AMO12345")
             if retried_order is None:
                 # Get any pending order for this symbol
-                all_orders = orders_repo.list(user_id, side="buy")
+                all_orders = _list_orders(orders_repo, user_id, side="buy")
                 retried_order = next(
                     (
                         o
@@ -941,7 +960,7 @@ class TestCategory2BuyOrderEdgeCases:
         assert summary2.get("placed", 0) == 0
 
         # Verify only one order in database
-        all_orders = orders_repo.list(user_id)
+        all_orders = _list_orders(orders_repo, user_id)
         buy_orders = [o for o in all_orders if o.side == "buy"]
         assert len(buy_orders) == 1
 
@@ -1038,7 +1057,7 @@ class TestCategory3EODCleanupEdgeCases:
         assert summary["placed"] == 1
 
         # Verify pending order exists
-        all_orders_before = orders_repo.list(user_id, status=OrderStatus.PENDING)
+        all_orders_before = _list_orders(orders_repo, user_id, status=OrderStatus.PENDING)
         pending_orders_before = [o for o in all_orders_before if o.side == "buy"]
         assert len(pending_orders_before) == 1
 
@@ -1047,7 +1066,7 @@ class TestCategory3EODCleanupEdgeCases:
         # The key is that pending orders should remain
 
         # Verify pending order still exists after cleanup
-        all_orders_after = orders_repo.list(user_id, status=OrderStatus.PENDING)
+        all_orders_after = _list_orders(orders_repo, user_id, status=OrderStatus.PENDING)
         pending_orders_after = [o for o in all_orders_after if o.side == "buy"]
         assert len(pending_orders_after) == 1
 
@@ -1105,7 +1124,7 @@ class TestCategory4PremarketRetryEdgeCases:
         assert summary1.get("placed", 0) == 0
 
         # Verify order saved with FAILED status (retry-pending orders use FAILED status)
-        failed_orders = orders_repo.list(user_id, status=OrderStatus.FAILED)
+        failed_orders = _list_orders(orders_repo, user_id, status=OrderStatus.FAILED)
         assert len(failed_orders) >= 1
 
         # Premarket retry - still insufficient balance
@@ -1114,7 +1133,7 @@ class TestCategory4PremarketRetryEdgeCases:
         assert retry_summary.get("placed", 0) == 0
 
         # Verify order still in FAILED status
-        still_pending = orders_repo.list(user_id, status=OrderStatus.FAILED)
+        still_pending = _list_orders(orders_repo, user_id, status=OrderStatus.FAILED)
         assert len(still_pending) >= 1
 
 
@@ -1165,7 +1184,7 @@ class TestCategory5SellOrderEdgeCases:
         # The key is that order should be saved for circuit expansion retry
 
         # Verify no sell order created (or created with special status)
-        all_orders_sell = orders_repo.list(user_id)
+        all_orders_sell = _list_orders(orders_repo, user_id)
         sell_orders = [o for o in all_orders_sell if o.side == "sell"]
         # Implementation dependent - may be 0 or 1 with special status
 

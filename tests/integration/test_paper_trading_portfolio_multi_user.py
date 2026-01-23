@@ -153,7 +153,7 @@ class TestPaperTradingPortfolioMultiUser:
         )
 
         # Mock PaperTradeReporter
-        mock_reporter = pytest.Mock()
+        mock_reporter = MagicMock()
         mock_reporter.order_statistics.return_value = {
             "total_orders": 1,
             "buy_orders": 1,
@@ -172,13 +172,13 @@ class TestPaperTradingPortfolioMultiUser:
         monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
 
         # Mock yfinance
-        mock_ticker = pytest.Mock()
+        mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 100.0}
         monkeypatch.setattr("yfinance.Ticker", lambda symbol: mock_ticker)
 
         # Mock SettingsRepository
-        mock_settings_repo = pytest.Mock()
-        mock_settings_repo.get_by_user_id.return_value = pytest.Mock(trade_mode=TradeMode.PAPER)
+        mock_settings_repo = MagicMock()
+        mock_settings_repo.get_by_user_id.return_value = MagicMock(trade_mode=TradeMode.PAPER)
         monkeypatch.setattr(
             "server.app.routers.paper_trading.SettingsRepository",
             lambda db: mock_settings_repo,
@@ -219,7 +219,7 @@ class TestPaperTradingPortfolioMultiUser:
         )
 
         # Mock PaperTradeReporter
-        mock_reporter = pytest.Mock()
+        mock_reporter = MagicMock()
         mock_reporter.order_statistics.return_value = {
             "total_orders": 0,
             "buy_orders": 0,
@@ -238,13 +238,13 @@ class TestPaperTradingPortfolioMultiUser:
         monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
 
         # Mock yfinance
-        mock_ticker = pytest.Mock()
+        mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 100.0}
         monkeypatch.setattr("yfinance.Ticker", lambda symbol: mock_ticker)
 
         # Mock SettingsRepository (User 2 is in broker mode)
-        mock_settings_repo = pytest.Mock()
-        mock_settings_repo.get_by_user_id.return_value = pytest.Mock(trade_mode=TradeMode.BROKER)
+        mock_settings_repo = MagicMock()
+        mock_settings_repo.get_by_user_id.return_value = MagicMock(trade_mode=TradeMode.BROKER)
         monkeypatch.setattr(
             "server.app.routers.paper_trading.SettingsRepository",
             lambda db: mock_settings_repo,

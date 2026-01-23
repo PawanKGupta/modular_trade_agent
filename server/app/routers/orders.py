@@ -43,6 +43,16 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _normalize_repo_list_result(result):
+    """Normalize OrdersRepository.list() result across legacy/new call signatures."""
+    # Some call sites/tests expect (items, total_count), while the current
+    # OrdersRepository.list() returns a plain list of Orders.
+    if isinstance(result, tuple) and len(result) == 2:
+        items, total_count = result
+        return items, int(total_count) if total_count is not None else len(items)
+    return result, len(result)
+
+
 def _is_order_monitoring_active(user_id: int, db: Session) -> bool:
     """
     Check if order monitoring is active (unified service or sell_monitor individual service).
@@ -174,7 +184,15 @@ def list_orders(  # noqa: PLR0912, PLR0913
         offset = (page - 1) * page_size
 
         # Get paginated orders and total count
-        items, total_count = repo.list(current.id, db_status, limit=page_size, offset=offset)
+        # The underlying OrdersRepository.list() may or may not support limit/offset.
+        try:
+            result = repo.list(current.id, db_status, limit=page_size, offset=offset)
+            items, total_count = _normalize_repo_list_result(result)
+        except TypeError:
+            # Fallback: fetch all and slice
+            all_items = repo.list(current.id, status=db_status)
+            total_count = len(all_items)
+            items = all_items[offset : offset + page_size]
 
         # Apply additional filters
         if reason:
@@ -549,7 +567,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 }
             else:
                 # Sync all paper trading orders - just refresh from DB
-                all_orders, _ = repo.list(current.id, status=None)
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
                 paper_orders = []
                 for o in all_orders:
                     o_trade_mode_value = (
@@ -692,7 +710,7 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
                 orders_to_sync = [order]
             else:
                 # Sync all pending/ongoing orders
-                all_orders, _ = repo.list(current.id, status=None)
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
                 orders_to_sync = [
                     o
                     for o in all_orders

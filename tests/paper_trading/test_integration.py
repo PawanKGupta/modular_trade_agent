@@ -172,10 +172,22 @@ class TestPaperTradingIntegration:
         assert response.success is True
         assert response.order_id is not None
 
-    def test_persistence_across_sessions(self, config):
-        """Test data persists across broker sessions"""
+    def test_persistence_across_sessions(self, config, db_session):
+        """Test data persists across broker sessions.
+
+        PaperTradingBrokerAdapter restores holdings from the database (positions table)
+        and does not fall back to file-based holdings.
+        """
+        from src.infrastructure.db.models import Users
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user = Users(email="paper_integration@example.com", password_hash="x", created_at=ist_now())
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
         # Session 1
-        broker1 = PaperTradingBrokerAdapter(user_id=1, config=config)
+        broker1 = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker1.connect()
         broker1.price_provider.set_mock_price("INFY", 1450.00)
         broker1.price_provider.set_mock_price("INFY.NS", 1450.00)
@@ -190,11 +202,12 @@ class TestPaperTradingIntegration:
         broker1.disconnect()
 
         # Session 2
-        broker2 = PaperTradingBrokerAdapter(user_id=1, config=config)
+        broker2 = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker2.connect()
 
         holdings = broker2.get_holdings()
         assert len(holdings) == 1
+        assert holdings[0].symbol == "INFY"
 
         broker2.reset()
 

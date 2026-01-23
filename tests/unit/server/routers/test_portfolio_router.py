@@ -115,7 +115,7 @@ def test_create_portfolio_snapshot_inserts_record(monkeypatch):
     monkeypatch.setattr(
         paper_trading_router,
         "get_paper_trading_portfolio",
-        lambda db, current: _make_portfolio_source(),
+        lambda page=1, page_size=10, db=None, current=None: _make_portfolio_source(),
     )
 
     class PositionsQuery:

@@ -12,14 +12,24 @@ class DummyOrdersRepository:
     def __init__(self, *, orders=None):
         self._orders = {o.id: o for o in (orders or [])}
 
-    def list(self, user_id, status):
-        return list(self._orders.values())
+    def list(self, user_id, status=None, *, limit=50, offset=0):
+        items = list(self._orders.values())
+        if status is not None:
+            items = [o for o in items if getattr(o, "status", None) == status]
+        total_count = len(items)
+        return items[offset : offset + limit], total_count
 
     def get(self, order_id):
         return self._orders.get(order_id)
 
     def update(self, order):
         return order
+
+    def mark_cancelled(self, order, cancelled_reason=None):
+        order.status = DbOrderStatus.CANCELLED
+        order.reason = cancelled_reason or "Cancelled"
+        order.closed_at = datetime(2024, 1, 1, 12, 0, 0)
+        return self.update(order)
 
 
 class DummySettingsRepository:
@@ -70,8 +80,8 @@ def test_list_orders_filters_and_formats(monkeypatch):
         current=current,
     )
 
-    assert len(response) == 1
-    result = response[0]
+    assert len(response.items) == 1
+    result = response.items[0]
     assert result.trade_mode_display == "Paper"
     assert result.reason == "Matching reason"
     assert result.is_manual is True

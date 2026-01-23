@@ -10,6 +10,7 @@ Scenario:
 """
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -90,9 +91,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Existing position after partial sell (50 shares remaining)
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 50.0  # After partial sell
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -123,8 +125,12 @@ class TestPartialSellReentryRace:
 
         # Mock DB order with metadata
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}  # Reentry at RSI 18
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 
@@ -162,9 +168,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Position after partial sell
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 50.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -189,8 +196,12 @@ class TestPartialSellReentryRace:
 
         order_info = {"symbol": "RELIANCE-EQ", "db_order_id": 1}
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 
@@ -220,9 +231,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Position after partial sell
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 50.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -247,8 +259,12 @@ class TestPartialSellReentryRace:
 
         order_info = {"symbol": "RELIANCE-EQ", "db_order_id": 1}
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 
@@ -277,9 +293,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Position after large partial sell
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 30.0  # After selling 70 shares
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -304,8 +321,12 @@ class TestPartialSellReentryRace:
 
         order_info = {"symbol": "RELIANCE-EQ", "db_order_id": 1}
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 
@@ -337,9 +358,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Position after partial sell
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 50.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -356,8 +378,12 @@ class TestPartialSellReentryRace:
 
         order_info = {"symbol": "RELIANCE-EQ", "db_order_id": 1}
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 
@@ -385,9 +411,10 @@ class TestPartialSellReentryRace:
         """
         # Setup: Position after partial sell
         existing_position = Mock()
+        existing_position.symbol = "RELIANCE-EQ"
         existing_position.quantity = 50.0
         existing_position.avg_price = 9.00
-        existing_position.opened_at = Mock()
+        existing_position.opened_at = datetime.utcnow() - timedelta(days=1)
         existing_position.entry_rsi = 25.0
         existing_position.closed_at = None
         existing_position.reentry_count = 0
@@ -415,8 +442,12 @@ class TestPartialSellReentryRace:
 
         order_info = {"symbol": "RELIANCE-EQ", "db_order_id": 1}
         db_order = Mock()
+        db_order.symbol = "RELIANCE-EQ"
         db_order.order_metadata = {"entry_rsi": 18.0}
-        mock_orders_repo.get_by_id = Mock(return_value=db_order)
+        db_order.filled_at = datetime.utcnow()
+        db_order.execution_time = None
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get_by_broker_order_id = Mock(return_value=None)
         mock_orders_repo.mark_executed = Mock(return_value=True)
         mock_orders_repo.db = Mock()
 

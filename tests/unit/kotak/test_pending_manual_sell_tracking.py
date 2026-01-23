@@ -48,8 +48,13 @@ class TestDetectPendingManualSellOrders:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_positions_repo, mock_orders_repo, mock_orders):
         """Create SellOrderManager instance with mocks."""
-        with patch(
-            "modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio",
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio",
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster",
+            ),
         ):
             manager = SellOrderManager(
                 auth=mock_auth,
@@ -81,7 +86,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Mock get_open_positions
         sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
@@ -131,7 +136,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
@@ -253,7 +258,7 @@ class TestDetectPendingManualSellOrders:
         mock_positions_repo.get_by_symbol.return_value = position
 
         # No system buy order (manual buy position)
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 
@@ -333,7 +338,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
 

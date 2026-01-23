@@ -135,7 +135,10 @@ class TestReentryTrackingInOrders:
             orders_repo.db.commit()
 
         # Query all orders
-        all_orders = orders_repo.list(user_id)
+        all_orders_result = orders_repo.list(user_id)
+        all_orders = (
+            all_orders_result[0] if isinstance(all_orders_result, tuple) else all_orders_result
+        )
         assert len(all_orders) == 4  # initial (closed) + 3 reentry orders
 
         # Query reentry orders only
@@ -217,7 +220,10 @@ class TestReentryTrackingInOrders:
         )  # All are initial, not reentry
 
         # Verify: Only 1 order exists in database (the initial one)
-        all_orders = orders_repo.list(user_id)
+        all_orders_result = orders_repo.list(user_id)
+        all_orders = (
+            all_orders_result[0] if isinstance(all_orders_result, tuple) else all_orders_result
+        )
         assert len(all_orders) == 1
         assert all_orders[0].id == initial_order.id
         assert all_orders[0].status == OrderStatus.ONGOING

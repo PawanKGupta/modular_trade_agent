@@ -1,7 +1,3 @@
-import io
-import json
-import sys
-import types
 from types import SimpleNamespace
 
 import pytest
@@ -74,34 +70,22 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
         def info(self):
             return {"currentPrice": 115.0}
 
-    fake_module = types.ModuleType("yfinance")
-    fake_module.Ticker = FakeTicker
-    monkeypatch.setitem(sys.modules, "yfinance", fake_module)
-
-    def fake_open(*args, **kwargs):
-        return io.StringIO(json.dumps({"ABC": {"target_price": 130.0}}))
-
-    monkeypatch.setattr(paper_trading_router, "open", fake_open, raising=False)
+    # paper_trading_router already imports yfinance as `yf`; patch that directly.
+    monkeypatch.setattr(paper_trading_router.yf, "Ticker", FakeTicker)
 
     # Mock PositionsRepository and OrdersRepository for db=None case
     def mock_positions_repo(db):
-        repo = SimpleNamespace()
-        repo.list = lambda user_id: []
-        return repo
+        return SimpleNamespace(list=lambda user_id=None, **kwargs: [])
 
     def mock_orders_repo(db):
-        repo = SimpleNamespace()
-        repo.list = lambda user_id: []
-        return repo
+        # Router expects (orders, total_count)
+        return SimpleNamespace(list=lambda *args, **kwargs: ([], 0))
 
-    monkeypatch.setattr(
-        "src.infrastructure.persistence.positions_repository.PositionsRepository",
-        mock_positions_repo,
-    )
-    monkeypatch.setattr(
-        "server.app.routers.paper_trading.OrdersRepository",
-        mock_orders_repo,
-    )
+    monkeypatch.setattr(paper_trading_router, "PositionsRepository", mock_positions_repo)
+    monkeypatch.setattr(paper_trading_router, "OrdersRepository", mock_orders_repo)
+
+    # Avoid any accidental EMA9 fallback network calls
+    monkeypatch.setattr(paper_trading_router, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
 
     result = paper_trading_router.get_paper_trading_portfolio(
         db=None,  # Use None to trigger file-based fallback
@@ -111,4 +95,5 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
     assert result.account.total_pnl == pytest.approx(120.0 + 45.0)
     assert len(result.holdings) == 1
     assert result.holdings[0].symbol == "ABC"
-    assert result.holdings[0].target_price == 130.0
+    # Router loads target prices only from DB sell orders (no file fallback).
+    assert result.holdings[0].target_price is None

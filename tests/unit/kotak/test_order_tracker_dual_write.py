@@ -44,7 +44,7 @@ class TestOrderTrackerDualWrite:
         repo.get_by_order_id = Mock(return_value=None)
         repo.create_amo = Mock()
         repo.update = Mock()
-        repo.list = Mock(return_value=[])
+        repo.list = Mock(return_value=([], 0))
         repo.mark_rejected = Mock()
         repo.mark_cancelled = Mock()
         return repo
@@ -160,7 +160,7 @@ class TestOrderTrackerDualWrite:
         mock_order.last_status_check = datetime.now()
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
-        mock_orders_repo.list.return_value = [mock_order]
+        mock_orders_repo.list.return_value = ([mock_order], 1)
 
         orders = order_tracker_with_db.get_pending_orders()
 
@@ -335,7 +335,7 @@ class TestOrderTrackerDualWrite:
         mock_order2.rejection_reason = None
         mock_order2.execution_qty = None
 
-        mock_orders_repo.list.return_value = [mock_order1, mock_order2]
+        mock_orders_repo.list.return_value = ([mock_order1, mock_order2], 2)
 
         # Filter by PENDING status
         orders = order_tracker_with_db.get_pending_orders(status_filter="PENDING")
@@ -376,7 +376,7 @@ class TestOrderTrackerDualWrite:
         mock_order2.rejection_reason = None
         mock_order2.execution_qty = None
 
-        mock_orders_repo.list.return_value = [mock_order1, mock_order2]
+        mock_orders_repo.list.return_value = ([mock_order1, mock_order2], 2)
 
         # Filter by symbol
         orders = order_tracker_with_db.get_pending_orders(symbol_filter="RELIANCE")
@@ -430,7 +430,7 @@ class TestOrderTrackerDualWrite:
     def test_get_pending_orders_empty_db(self, order_tracker_with_db, mock_orders_repo):
         """Test that empty DB returns empty (doesn't fallback to JSON)"""
         # Mock empty DB
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         orders = order_tracker_with_db.get_pending_orders()
 
@@ -503,7 +503,7 @@ class TestOrderTrackerDualWrite:
     def test_remove_pending_order_not_found(self, order_tracker_with_db, mock_orders_repo):
         """Test removing order when not found"""
         # Mock no orders in DB
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         result = order_tracker_with_db.remove_pending_order("ORDER123")
 
@@ -637,7 +637,7 @@ class TestOrderTrackerDualWrite:
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
 
-        mock_orders_repo.list.return_value = [mock_order]
+        mock_orders_repo.list.return_value = ([mock_order], 1)
 
         orders = order_tracker_with_db.get_pending_orders(status_filter="PENDING")
 
@@ -662,7 +662,7 @@ class TestOrderTrackerDualWrite:
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
 
-        mock_orders_repo.list.return_value = [mock_order]
+        mock_orders_repo.list.return_value = ([mock_order], 1)
 
         orders = order_tracker_with_db.get_pending_orders(status_filter="OPEN")
 

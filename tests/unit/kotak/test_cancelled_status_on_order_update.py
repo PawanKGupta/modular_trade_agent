@@ -114,7 +114,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 10  # Old quantity
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = 1
 
@@ -188,7 +188,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 20  # Same quantity
         existing_order.price = 2400.0  # Old price
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = 1
 
@@ -248,7 +248,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 15  # Old quantity
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = (
             0  # May not exist on broker
@@ -295,7 +295,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 12
         existing_order.price = 2450.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = 0
 
@@ -340,7 +340,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 18
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = 0
 
@@ -385,7 +385,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 20
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
 
         # Mock recommendation
         rec = Recommendation(
@@ -427,7 +427,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 20
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
 
         # Mock indicators to prevent real data fetch
@@ -487,7 +487,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 20
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
 
         # Mock indicators to prevent real data fetch
@@ -547,7 +547,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 20  # Same quantity
         existing_order.price = 2500.0  # Same price
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
 
         # Mock same parameters (no change)
         # Ensure the calculated quantity matches existing order quantity (20)
@@ -609,7 +609,7 @@ class TestCancelledStatusOnOrderUpdate:
         existing_order.quantity = 10
         existing_order.price = 2500.0
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders.get_pending_orders.return_value = []
         auto_trade_engine.orders.cancel_pending_buys_for_symbol.return_value = 1
 

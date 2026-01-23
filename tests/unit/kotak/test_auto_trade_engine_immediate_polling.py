@@ -72,11 +72,12 @@ class TestImmediateOrderVerification:
 
         auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,
+            )
 
         assert is_valid is True
         assert reason is None
@@ -99,7 +100,7 @@ class TestImmediateOrderVerification:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = "ORDER123"
-        auto_trade_engine.orders_repo.list.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_db_order], 1)
         auto_trade_engine.orders_repo.mark_rejected = Mock()
 
         # Mock telegram_notifier (new implementation uses this instead of send_telegram)
@@ -108,11 +109,12 @@ class TestImmediateOrderVerification:
         mock_telegram_notifier.notify_order_rejection = Mock(return_value=True)
         auto_trade_engine.telegram_notifier = mock_telegram_notifier
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,  # Avoid long sleep via patch
+            )
 
         assert is_valid is False
         assert reason == "Insufficient balance"
@@ -140,11 +142,12 @@ class TestImmediateOrderVerification:
 
         auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,
+            )
 
         assert is_valid is True
         assert reason is None
@@ -154,11 +157,12 @@ class TestImmediateOrderVerification:
         # Mock broker orders response - order not found
         auto_trade_engine.orders.get_orders.return_value = {"data": []}
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,
+            )
 
         # Should assume valid if not found (normal for AMO orders)
         assert is_valid is True
@@ -179,11 +183,12 @@ class TestImmediateOrderVerification:
         """Test verification when broker API fails"""
         auto_trade_engine.orders.get_orders.return_value = None
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,
+            )
 
         # Should assume valid on API error (don't block on verification failures)
         assert is_valid is True
@@ -193,11 +198,12 @@ class TestImmediateOrderVerification:
         """Test verification handles exceptions gracefully"""
         auto_trade_engine.orders.get_orders.side_effect = Exception("Broker API error")
 
-        is_valid, reason = auto_trade_engine._verify_order_placement(
-            order_id="ORDER123",
-            symbol="RELIANCE",
-            wait_seconds=0,  # Skip wait for test
-        )
+        with patch("time.sleep"):
+            is_valid, reason = auto_trade_engine._verify_order_placement(
+                order_id="ORDER123",
+                symbol="RELIANCE",
+                wait_seconds=0,
+            )
 
         # Should assume valid on exception (don't block on verification failures)
         assert is_valid is True
@@ -247,15 +253,18 @@ class TestImmediateOrderVerification:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = "ORDER123"
-        auto_trade_engine.orders_repo.list.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_db_order], 1)
         auto_trade_engine.orders_repo.mark_rejected.side_effect = Exception("DB error")
 
         # Mock telegram
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram"):
+        with (
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram"),
+            patch("time.sleep"),
+        ):
             is_valid, reason = auto_trade_engine._verify_order_placement(
                 order_id="ORDER123",
                 symbol="RELIANCE",
-                wait_seconds=0,  # Skip wait for test
+                wait_seconds=0,  # Avoid long sleep via patch
             )
 
             # Should still return rejection even if DB update fails
@@ -279,18 +288,21 @@ class TestImmediateOrderVerification:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = "ORDER123"
-        auto_trade_engine.orders_repo.list.return_value = [mock_db_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_db_order], 1)
         auto_trade_engine.orders_repo.mark_rejected = Mock()
 
         # Mock telegram to fail
-        with patch(
-            "modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram",
-            side_effect=Exception("Telegram error"),
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram",
+                side_effect=Exception("Telegram error"),
+            ),
+            patch("time.sleep"),
         ):
             is_valid, reason = auto_trade_engine._verify_order_placement(
                 order_id="ORDER123",
                 symbol="RELIANCE",
-                wait_seconds=0,  # Skip wait for test
+                wait_seconds=0,  # Avoid long sleep via patch
             )
 
             # Should still return rejection even if telegram fails
@@ -312,15 +324,18 @@ class TestImmediateOrderVerification:
         auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
 
         # Mock database - order not found
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         auto_trade_engine.orders_repo.mark_rejected = Mock()
 
         # Mock telegram
-        with patch("modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram"):
+        with (
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.send_telegram"),
+            patch("time.sleep"),
+        ):
             is_valid, reason = auto_trade_engine._verify_order_placement(
                 order_id="ORDER123",
                 symbol="RELIANCE",
-                wait_seconds=0,  # Skip wait for test
+                wait_seconds=0,  # Avoid long sleep via patch
             )
 
             # Should still return rejection even if order not in DB

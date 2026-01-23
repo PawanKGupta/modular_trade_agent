@@ -37,12 +37,28 @@ class TestSellOrderDBPersistence:
             manager.orders_repo = Mock()
             manager.orders = Mock()
             manager.scrip_master = Mock()
+            # Ensure scrip master behaves like a real mapping (avoid Mock __contains__ issues)
+            manager.scrip_master.symbol_map = {
+                "ASTERDM-EQ": True,
+                "EMKAY-EQ": True,
+                "RELIANCE-EQ": True,
+                "TCS-EQ": True,
+                "SALSTEEL-EQ": True,
+                "TEST-EQ": True,
+                "FAIL-EQ": True,
+                "NOID-EQ": True,
+            }
             # Mock get_trading_symbol to return the symbol as-is
             manager.scrip_master.get_trading_symbol = Mock(
-                side_effect=lambda symbol, exchange: symbol
+                side_effect=lambda symbol, exchange=None, **kwargs: symbol
             )
             manager.strategy_config = Mock()
             manager.strategy_config.default_exchange = "NSE"
+
+            # Avoid internal tick-size logic pulling Mock values from other dependencies
+            manager.round_to_tick_size = Mock(
+                side_effect=lambda price, *args, **kwargs: float(price)
+            )
             return manager
 
     def test_place_sell_order_persists_to_db_happy_path(self, sell_manager):
@@ -101,8 +117,8 @@ class TestSellOrderDBPersistence:
         sell_manager.orders.place_limit_sell = Mock(return_value=mock_response)
 
         trade = {
-            "symbol": "EMKAY-BE",
-            "placed_symbol": "EMKAY-BE",
+            "symbol": "EMKAY-EQ",
+            "placed_symbol": "EMKAY-EQ",
             "ticker": "EMKAY.NS",
             "qty": 376,
         }
@@ -176,13 +192,14 @@ class TestSellOrderDBPersistence:
         sell_manager.orders_repo.create_amo = Mock()
 
         trade = {
-            "symbol": "SALSTEEL-BE",
-            "placed_symbol": "SALSTEEL-BE",
+            "symbol": "SALSTEEL-EQ",
+            "placed_symbol": "SALSTEEL-EQ",
             "ticker": "SALSTEEL.NS",
             "qty": 100,
         }
 
-        sell_manager.place_sell_order(trade, target_price=37.43)
+        order_id = sell_manager.place_sell_order(trade, target_price=37.43)
+        assert order_id == "67890"
 
         # Verify metadata completeness
         call_kwargs = sell_manager.orders_repo.create_amo.call_args[1]
@@ -196,7 +213,7 @@ class TestSellOrderDBPersistence:
         # Verify values
         assert metadata["ticker"] == "SALSTEEL.NS"
         assert metadata["base_symbol"] == "SALSTEEL"
-        assert metadata["full_symbol"] == "SALSTEEL-BE"
+        assert metadata["full_symbol"] == "SALSTEEL-EQ"
 
     def test_place_sell_order_handles_different_order_id_formats(self, sell_manager):
         """Test that order ID extraction works for different response formats"""

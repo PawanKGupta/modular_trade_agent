@@ -30,7 +30,10 @@ class TestExitReasonInOrderMetadata:
     @pytest.fixture
     def mock_auth(self):
         """Mock KotakNeoAuth."""
-        return Mock()
+        auth = Mock()
+        # Prevent downstream components from treating auth as "not authenticated"
+        auth.client = Mock()
+        return auth
 
     @pytest.fixture
     def mock_positions_repo(self):
@@ -52,7 +55,10 @@ class TestExitReasonInOrderMetadata:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_positions_repo, mock_orders_repo, mock_broker_orders):
         """Create SellOrderManager with mocks."""
-        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio"):
+        with (
+            patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio"),
+            patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster"),
+        ):
             manager = SellOrderManager(
                 auth=mock_auth,
                 positions_repo=mock_positions_repo,
@@ -62,6 +68,12 @@ class TestExitReasonInOrderMetadata:
             manager.orders = mock_broker_orders
             manager.scrip_master = Mock()
             manager.scrip_master.symbol_map = {}
+            # round_to_tick_size() may consult scrip master; default Mock breaks `<= 0` checks
+            manager.scrip_master.get_tick_size = Mock(return_value=None)
+            manager.strategy_config = Mock()
+            manager.strategy_config.default_exchange = "NSE"
+            # Not relevant to these tests; keep disabled to avoid side effects.
+            manager.targets_repo = None
             return manager
 
     def test_place_sell_order_stores_target_hit_in_metadata(
@@ -126,7 +138,9 @@ class TestManualSellExitReasonRetrieval:
     @pytest.fixture
     def mock_auth(self):
         """Mock KotakNeoAuth."""
-        return Mock()
+        auth = Mock()
+        auth.client = Mock()
+        return auth
 
     @pytest.fixture
     def mock_positions_repo(self):
@@ -179,7 +193,8 @@ class TestManualSellExitReasonRetrieval:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        # Sell engine expects OrdersRepository.list() to return (items, total_count)
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Setup: Sell order with TARGET_HIT in metadata
         sell_order = Mock(spec=Orders)
@@ -235,7 +250,8 @@ class TestManualSellExitReasonRetrieval:
         system_buy_order.symbol = "TCS-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        # Sell engine expects OrdersRepository.list() to return (items, total_count)
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Setup: Sell order NOT found in DB
         mock_orders_repo.get_by_broker_order_id.return_value = None
@@ -286,7 +302,8 @@ class TestManualSellExitReasonRetrieval:
         system_buy_order.symbol = "INFY-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        # Sell engine expects OrdersRepository.list() to return (items, total_count)
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Setup: Sell order found but with NO metadata
         sell_order = Mock(spec=Orders)
@@ -339,7 +356,8 @@ class TestManualSellExitReasonRetrieval:
         system_buy_order.symbol = "WIPRO-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        # Sell engine expects OrdersRepository.list() to return (items, total_count)
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Setup: get_by_broker_order_id raises exception
         mock_orders_repo.get_by_broker_order_id.side_effect = Exception("DB error")
@@ -377,7 +395,9 @@ class TestExitReasonIntegration:
     @pytest.fixture
     def mock_auth(self):
         """Mock KotakNeoAuth."""
-        return Mock()
+        auth = Mock()
+        auth.client = Mock()
+        return auth
 
     @pytest.fixture
     def mock_positions_repo(self):
@@ -400,7 +420,10 @@ class TestExitReasonIntegration:
     @pytest.fixture
     def sell_manager(self, mock_auth, mock_positions_repo, mock_orders_repo, mock_broker_orders):
         """Create SellOrderManager with mocks."""
-        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio"):
+        with (
+            patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoPortfolio"),
+            patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster"),
+        ):
             manager = SellOrderManager(
                 auth=mock_auth,
                 positions_repo=mock_positions_repo,
@@ -410,7 +433,11 @@ class TestExitReasonIntegration:
             manager.orders = mock_broker_orders
             manager.scrip_master = Mock()
             manager.scrip_master.symbol_map = {}
+            manager.scrip_master.get_tick_size = Mock(return_value=None)
             manager.get_open_positions = Mock(return_value=[])
+            manager.strategy_config = Mock()
+            manager.strategy_config.default_exchange = "NSE"
+            manager.targets_repo = None
             return manager
 
     def test_end_to_end_target_hit_exit_reason(
@@ -447,7 +474,8 @@ class TestExitReasonIntegration:
         system_buy_order.symbol = "MARUTI-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        # Sell engine expects OrdersRepository.list() to return (items, total_count)
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Step 3: Setup sell order with metadata
         sell_order = Mock(spec=Orders)

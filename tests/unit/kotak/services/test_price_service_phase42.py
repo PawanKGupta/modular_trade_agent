@@ -6,14 +6,11 @@ Tests verify adaptive TTL and cache warming strategies.
 Phase 4.2: Enhanced Caching Strategy
 """
 
-from datetime import datetime, time as dt_time
+from datetime import time as dt_time
 from unittest.mock import Mock, patch
-
-import pytest
 
 from modules.kotak_neo_auto_trader.services.price_service import (
     PriceService,
-    get_price_service,
 )
 
 
@@ -132,8 +129,8 @@ class TestPriceServiceAdaptiveTTL:
 class TestPriceServiceCacheWarming:
     """Test cache warming strategies in PriceService"""
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_positions_list_format(self, mock_fetch_ohlcv_yf):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_positions_list_format(self, mock_get_cached_ohlcv):
         """Test warming cache for positions in list format"""
         import pandas as pd
 
@@ -148,7 +145,7 @@ class TestPriceServiceCacheWarming:
                 "volume": [1000] * 10,
             }
         )
-        mock_fetch_ohlcv_yf.return_value = mock_df
+        mock_get_cached_ohlcv.return_value = mock_df
 
         service = PriceService(enable_caching=True)
 
@@ -162,10 +159,10 @@ class TestPriceServiceCacheWarming:
 
         assert stats["warmed"] == 2
         assert stats["failed"] == 0
-        assert mock_fetch_ohlcv_yf.call_count == 2
+        assert mock_get_cached_ohlcv.call_count == 2
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_positions_dict_format(self, mock_fetch_ohlcv_yf):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_positions_dict_format(self, mock_get_cached_ohlcv):
         """Test warming cache for positions in dict format (grouped by symbol)"""
         import pandas as pd
 
@@ -180,15 +177,13 @@ class TestPriceServiceCacheWarming:
                 "volume": [1000] * 10,
             }
         )
-        mock_fetch_ohlcv_yf.return_value = mock_df
+        mock_get_cached_ohlcv.return_value = mock_df
 
         service = PriceService(enable_caching=True)
 
         # Positions as dict grouped by symbol
         positions = {
-            "RELIANCE": [
-                {"symbol": "RELIANCE-EQ", "ticker": "RELIANCE.NS", "qty": 10}
-            ],
+            "RELIANCE": [{"symbol": "RELIANCE-EQ", "ticker": "RELIANCE.NS", "qty": 10}],
             "TATA": [{"symbol": "TATA-EQ", "ticker": "TATA.NS", "qty": 20}],
         }
 
@@ -196,13 +191,13 @@ class TestPriceServiceCacheWarming:
 
         assert stats["warmed"] == 2
         assert stats["failed"] == 0
-        assert mock_fetch_ohlcv_yf.call_count == 2
+        assert mock_get_cached_ohlcv.call_count == 2
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_positions_handles_failures(self, mock_fetch_ohlcv_yf):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_positions_handles_failures(self, mock_get_cached_ohlcv):
         """Test that cache warming handles failures gracefully"""
         # Mock fetch to fail for some symbols
-        mock_fetch_ohlcv_yf.side_effect = [
+        mock_get_cached_ohlcv.side_effect = [
             None,  # First symbol fails
             None,  # Second symbol fails
         ]
@@ -218,6 +213,7 @@ class TestPriceServiceCacheWarming:
 
         assert stats["warmed"] == 0
         assert stats["failed"] == 2
+        assert mock_get_cached_ohlcv.call_count == 2
 
     def test_warm_cache_for_positions_empty_list(self):
         """Test that warming empty positions list returns zero stats"""
@@ -237,10 +233,8 @@ class TestPriceServiceCacheWarming:
         assert stats["warmed"] == 0
         assert stats["failed"] == 0
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_recommendations_with_ticker_attribute(
-        self, mock_fetch_ohlcv_yf
-    ):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_recommendations_with_ticker_attribute(self, mock_get_cached_ohlcv):
         """Test warming cache for recommendations with ticker attribute"""
         import pandas as pd
 
@@ -255,7 +249,7 @@ class TestPriceServiceCacheWarming:
                 "volume": [1000] * 10,
             }
         )
-        mock_fetch_ohlcv_yf.return_value = mock_df
+        mock_get_cached_ohlcv.return_value = mock_df
 
         service = PriceService(enable_caching=True)
 
@@ -268,10 +262,10 @@ class TestPriceServiceCacheWarming:
 
         assert stats["warmed"] == 2
         assert stats["failed"] == 0
-        assert mock_fetch_ohlcv_yf.call_count == 2
+        assert mock_get_cached_ohlcv.call_count == 2
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_recommendations_with_ticker_dict(self, mock_fetch_ohlcv_yf):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_recommendations_with_ticker_dict(self, mock_get_cached_ohlcv):
         """Test warming cache for recommendations as dicts with ticker key"""
         import pandas as pd
 
@@ -286,7 +280,7 @@ class TestPriceServiceCacheWarming:
                 "volume": [1000] * 10,
             }
         )
-        mock_fetch_ohlcv_yf.return_value = mock_df
+        mock_get_cached_ohlcv.return_value = mock_df
 
         service = PriceService(enable_caching=True)
 
@@ -300,12 +294,10 @@ class TestPriceServiceCacheWarming:
 
         assert stats["warmed"] == 2
         assert stats["failed"] == 0
-        assert mock_fetch_ohlcv_yf.call_count == 2
+        assert mock_get_cached_ohlcv.call_count == 2
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_warm_cache_for_recommendations_handles_missing_ticker(
-        self, mock_fetch_ohlcv_yf
-    ):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_warm_cache_for_recommendations_handles_missing_ticker(self, mock_get_cached_ohlcv):
         """Test that cache warming skips recommendations without ticker"""
         service = PriceService(enable_caching=True)
 
@@ -315,12 +307,26 @@ class TestPriceServiceCacheWarming:
             {"ticker": "TATA.NS", "symbol": "TATA"},  # Has ticker
         ]
 
+        # Return non-empty data for the one valid ticker
+        import pandas as pd
+
+        mock_get_cached_ohlcv.return_value = pd.DataFrame(
+            {
+                "date": pd.date_range("2024-01-01", periods=2),
+                "open": [100, 101],
+                "high": [110, 111],
+                "low": [90, 91],
+                "close": [105, 106],
+                "volume": [1000, 1100],
+            }
+        )
+
         stats = service.warm_cache_for_recommendations(recommendations)
 
-        # Only one recommendation has ticker, but fetch_ohlcv_yf not called because we skip missing ticker
-        assert mock_fetch_ohlcv_yf.call_count == 1
-        # The one with ticker should be warmed
-        assert stats["warmed"] >= 0  # Depends on mock return
+        # Only one recommendation has ticker
+        assert mock_get_cached_ohlcv.call_count == 1
+        assert stats["warmed"] == 1
+        assert stats["failed"] == 0
 
     def test_warm_cache_for_recommendations_empty_list(self):
         """Test that warming empty recommendations list returns zero stats"""
@@ -335,8 +341,8 @@ class TestPriceServiceCacheWarming:
 class TestPriceServiceAdaptiveTTLInUse:
     """Test that adaptive TTL is actually used in cache operations"""
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_get_price_uses_adaptive_ttl_market_open(self, mock_fetch_ohlcv_yf):
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_get_price_uses_adaptive_ttl_market_open(self, mock_get_cached_ohlcv):
         """Test that get_price() uses adaptive TTL during market hours"""
         import pandas as pd
 
@@ -351,7 +357,7 @@ class TestPriceServiceAdaptiveTTLInUse:
                 "volume": [1000] * 10,
             }
         )
-        mock_fetch_ohlcv_yf.return_value = mock_df
+        mock_get_cached_ohlcv.return_value = mock_df
 
         # Use real datetime for cache timestamp storage
         # The adaptive TTL is still calculated correctly
@@ -363,7 +369,7 @@ class TestPriceServiceAdaptiveTTLInUse:
         # First call: should fetch and cache
         df1 = service.get_price("RELIANCE.NS", days=365)
         assert df1 is not None
-        assert mock_fetch_ohlcv_yf.call_count == 1
+        assert mock_get_cached_ohlcv.call_count == 1
 
         # Verify adaptive TTL is calculated correctly for market open
         # (assuming test runs during non-market hours, we check the logic exists)
@@ -378,9 +384,7 @@ class TestPriceServiceAdaptiveTTLInUse:
         # But we verify adaptive TTL is available for use
 
     @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_realtime_price_uses_adaptive_ttl_post_market(
-        self, mock_datetime
-    ):
+    def test_get_realtime_price_uses_adaptive_ttl_post_market(self, mock_datetime):
         """Test that get_realtime_price() uses adaptive TTL after market close"""
         # Mock post-market time (4:00 PM)
         mock_datetime.now.return_value.time.return_value = dt_time(16, 0)
@@ -398,4 +402,3 @@ class TestPriceServiceAdaptiveTTLInUse:
 
         # Verify that the adaptive TTL would be used (cache check uses adaptive_ttl)
         # This is tested indirectly through the get_adaptive_ttl method
-

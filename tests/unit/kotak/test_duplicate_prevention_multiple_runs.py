@@ -75,7 +75,7 @@ class TestDuplicatePreventionMultipleRuns:
         existing_order.quantity = 20  # Must be int, not MagicMock
         existing_order.price = 2500.0  # Must be float, not MagicMock
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
 
         # Mock recommendation
         rec = Recommendation(
@@ -133,7 +133,7 @@ class TestDuplicatePreventionMultipleRuns:
         ticker = "RELIANCE.NS"
 
         # Mock no existing orders in database
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
 
         # Mock recommendation
         rec = Recommendation(
@@ -220,7 +220,7 @@ class TestDuplicatePreventionMultipleRuns:
         existing_order.quantity = 20  # Must be int, not MagicMock
         existing_order.price = 2500.0  # Must be float, not MagicMock
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
 
         # Mock recommendation
         rec = Recommendation(
@@ -281,7 +281,7 @@ class TestDuplicatePreventionMultipleRuns:
         existing_order.side = "buy"
         existing_order.status = DbOrderStatus.PENDING
 
-        auto_trade_engine.orders_repo.list.return_value = [existing_order]
+        auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders = None  # Simulate broker API unavailable
 
         # Check if active buy order exists

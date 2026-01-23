@@ -91,6 +91,23 @@ def _build_service(execute_results):
     return service
 
 
+def _normalize_orders_repo_list(service: PnlCalculationService) -> None:
+    """Ensure PnlCalculationService iterates a flat list of orders.
+
+    Some environments return `(items, total_count)` from OrdersRepository.list().
+    """
+
+    original_list = service.orders_repo.list
+
+    def list_items(*args, **kwargs):
+        result = original_list(*args, **kwargs)
+        if isinstance(result, tuple) and len(result) == 2:
+            return result[0]
+        return result
+
+    service.orders_repo.list = list_items
+
+
 def test_calculate_realized_pnl_filters_trade_mode(monkeypatch):
     position = _make_position(trade_mode=TradeMode.PAPER, realized_pnl=200.0)
     buy_order = _make_order(id=10, symbol="ABC", placed_at=position.opened_at)
@@ -170,6 +187,7 @@ def test_calculate_realized_pnl_returns_entries_by_date(db_session, sample_user)
 
 def test_calculate_realized_pnl_filters_by_trade_mode(db_session, sample_user):
     service = PnlCalculationService(db_session)
+    _normalize_orders_repo_list(service)
     now = datetime.utcnow()
     # Position without matching buy order (should be skipped when filtering)
     _create_position(
@@ -274,6 +292,7 @@ def test_calculate_daily_pnl_upserts_record(db_session, sample_user):
 
 def test_get_buy_order_returns_none_if_outside_window(db_session, sample_user):
     service = PnlCalculationService(db_session)
+    _normalize_orders_repo_list(service)
     order = _create_order(
         db_session,
         sample_user.id,

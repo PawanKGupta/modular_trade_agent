@@ -79,7 +79,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -121,7 +121,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         execution_time = ist_now() - timedelta(minutes=30)
 
@@ -166,7 +166,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Test with prc field (fallback)
         all_orders_response = {
@@ -209,7 +209,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         execution_time = ist_now() - timedelta(minutes=15)
 
@@ -254,7 +254,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -296,7 +296,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -338,7 +338,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -380,7 +380,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -427,7 +427,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [

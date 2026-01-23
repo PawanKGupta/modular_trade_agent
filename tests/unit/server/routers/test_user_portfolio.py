@@ -64,7 +64,7 @@ def test_get_portfolio_paper_mode(monkeypatch):
     mock_paper_portfolio.recent_orders = []
     mock_paper_portfolio.order_statistics = {}
 
-    def mock_get_paper_portfolio(db, current):
+    def mock_get_paper_portfolio(*, db, current, **kwargs):
         return mock_paper_portfolio
 
     monkeypatch.setattr(user, "get_paper_trading_portfolio", mock_get_paper_portfolio)
@@ -85,23 +85,32 @@ def test_get_portfolio_broker_mode(monkeypatch):
     repo.settings.trade_mode = TradeMode.BROKER
     monkeypatch.setattr(user, "SettingsRepository", lambda db: repo)
 
-    # Mock broker portfolio endpoint
-    mock_broker_portfolio = MagicMock()
-    mock_broker_portfolio.account.initial_capital = 200000.0
-    mock_broker_portfolio.account.available_cash = 100000.0
-    mock_broker_portfolio.holdings = []
-    mock_broker_portfolio.recent_orders = []
-    mock_broker_portfolio.order_statistics = {}
+    broker_portfolio = SimpleNamespace(
+        account={
+            "initial_capital": 200000.0,
+            "available_cash": 100000.0,
+            "total_pnl": 0.0,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "portfolio_value": 0.0,
+            "total_value": 0.0,
+            "return_percentage": 0.0,
+        },
+        holdings=[],
+        recent_orders=[],
+        order_statistics={},
+    )
 
-    def mock_get_broker_portfolio(db, current):
-        return mock_broker_portfolio
-
-    monkeypatch.setattr(user, "get_broker_portfolio", mock_get_broker_portfolio)
+    broker_portfolio_fn = MagicMock(return_value=broker_portfolio)
+    monkeypatch.setattr(user, "get_broker_portfolio", broker_portfolio_fn)
 
     db_session = MagicMock()
     result = user.get_portfolio(db=db_session, current=user_obj)
 
-    assert result == mock_broker_portfolio
+    broker_portfolio_fn.assert_called_once()
+    assert result.account.initial_capital == 200000.0
+    assert result.account.available_cash == 100000.0
+    assert result.recent_orders.total == 0
     assert repo.settings.trade_mode == TradeMode.BROKER
 
 
@@ -131,7 +140,7 @@ def test_get_portfolio_no_settings_defaults_to_paper(monkeypatch):
     mock_paper_portfolio.account.initial_capital = 0.0
     mock_paper_portfolio.holdings = []
 
-    def mock_get_paper_portfolio(db, current):
+    def mock_get_paper_portfolio(*, db, current, **kwargs):
         return mock_paper_portfolio
 
     monkeypatch.setattr(user, "get_paper_trading_portfolio", mock_get_paper_portfolio)
@@ -153,7 +162,7 @@ def test_get_portfolio_broker_mode_propagates_exception(monkeypatch):
     monkeypatch.setattr(user, "SettingsRepository", lambda db: repo)
 
     # Mock broker portfolio endpoint to raise exception
-    def mock_get_broker_portfolio(db, current):
+    def mock_get_broker_portfolio(*, db, current, **kwargs):
         raise HTTPException(status_code=400, detail="Broker credentials not configured")
 
     monkeypatch.setattr(user, "get_broker_portfolio", mock_get_broker_portfolio)

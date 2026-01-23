@@ -7,8 +7,6 @@ maintains backward compatibility with existing validation logic.
 
 from unittest.mock import Mock, patch
 
-import pytest
-
 from modules.kotak_neo_auto_trader.services.order_validation_service import (
     OrderValidationService,
     ValidationResult,
@@ -66,9 +64,7 @@ class TestValidationResult:
 
     def test_get_warning_summary(self):
         """Test get_warning_summary() method"""
-        result = ValidationResult(
-            is_valid=True, errors=[], warnings=["Warning 1", "Warning 2"]
-        )
+        result = ValidationResult(is_valid=True, errors=[], warnings=["Warning 1", "Warning 2"])
 
         summary = result.get_warning_summary()
         assert "Warning 1" in summary
@@ -164,9 +160,7 @@ class TestOrderValidationServiceCheckBalance:
     def test_check_balance_no_required_qty(self):
         """Test balance check without required quantity"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         service = OrderValidationService(portfolio=mock_portfolio)
 
@@ -266,9 +260,7 @@ class TestOrderValidationServiceGetAffordableQty:
     def test_get_affordable_qty_sufficient_cash(self):
         """Test getting affordable quantity with sufficient cash"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         service = OrderValidationService(portfolio=mock_portfolio)
 
@@ -313,9 +305,7 @@ class TestOrderValidationServiceCheckPortfolioCapacity:
     def test_check_portfolio_capacity_with_service(self):
         """Test portfolio capacity check with PortfolioService"""
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
 
         service = OrderValidationService(portfolio_service=mock_portfolio_service)
 
@@ -331,9 +321,7 @@ class TestOrderValidationServiceCheckPortfolioCapacity:
     def test_check_portfolio_capacity_at_limit(self):
         """Test portfolio capacity check at limit"""
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(False, 10, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(False, 10, 10))
 
         service = OrderValidationService(portfolio_service=mock_portfolio_service)
 
@@ -419,7 +407,7 @@ class TestOrderValidationServiceCheckDuplicateOrder:
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.status = "PENDING"  # Match PENDING value
 
-        mock_orders_repo.list = Mock(return_value=[mock_order])
+        mock_orders_repo.list = Mock(return_value=([mock_order], 1))
 
         service = OrderValidationService(
             orders=mock_orders, orders_repo=mock_orders_repo, user_id=1
@@ -464,7 +452,9 @@ class TestOrderValidationServiceCheckDuplicateOrder:
 class TestOrderValidationServiceCheckVolumeRatio:
     """Test check_volume_ratio() method"""
 
-    @patch("modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS")
+    @patch(
+        "modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS"
+    )
     def test_check_volume_ratio_valid(self, mock_tiers):
         """Test volume ratio check with valid ratio"""
         mock_tiers.return_value = [
@@ -477,15 +467,15 @@ class TestOrderValidationServiceCheckVolumeRatio:
         service = OrderValidationService()
 
         # 100 shares, 1M volume = 0.01% (well below 2% limit for Rs 2500)
-        is_valid, ratio, tier_info = service.check_volume_ratio(
-            100, 1000000.0, "RELIANCE", 2500.0
-        )
+        is_valid, ratio, tier_info = service.check_volume_ratio(100, 1000000.0, "RELIANCE", 2500.0)
 
         assert is_valid is True
         assert ratio is not None
         assert tier_info is not None
 
-    @patch("modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS")
+    @patch(
+        "modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS"
+    )
     def test_check_volume_ratio_invalid(self, mock_tiers):
         """Test volume ratio check with invalid ratio"""
         mock_tiers.return_value = [
@@ -498,9 +488,7 @@ class TestOrderValidationServiceCheckVolumeRatio:
         service = OrderValidationService()
 
         # 1000 shares, 1000 volume = 100% (exceeds 20% limit)
-        is_valid, ratio, tier_info = service.check_volume_ratio(
-            1000, 1000.0, "STOCK", 100.0
-        )
+        is_valid, ratio, tier_info = service.check_volume_ratio(1000, 1000.0, "STOCK", 100.0)
 
         assert is_valid is False
         assert ratio == 1.0  # 100%
@@ -510,9 +498,7 @@ class TestOrderValidationServiceCheckVolumeRatio:
         """Test volume ratio check with zero volume"""
         service = OrderValidationService()
 
-        is_valid, ratio, tier_info = service.check_volume_ratio(
-            100, 0.0, "STOCK", 100.0
-        )
+        is_valid, ratio, tier_info = service.check_volume_ratio(100, 0.0, "STOCK", 100.0)
 
         assert is_valid is False
         assert ratio is None
@@ -534,7 +520,10 @@ class TestOrderValidationServiceCheckVolumeRatio:
 
             # Test Rs 6000 stock (should use 2% limit)
             is_valid, ratio, tier_info = service.check_volume_ratio(
-                10000, 500000.0, "STOCK", 6000.0  # 2% ratio, at limit
+                10000,
+                500000.0,
+                "STOCK",
+                6000.0,  # 2% ratio, at limit
             )
 
             assert is_valid is True  # 2% is within 2% limit
@@ -542,7 +531,10 @@ class TestOrderValidationServiceCheckVolumeRatio:
 
             # Test Rs 300 stock (should use 20% limit)
             is_valid2, ratio2, tier_info2 = service.check_volume_ratio(
-                1000, 10000.0, "STOCK2", 300.0  # 10% ratio, within 20% limit
+                1000,
+                10000.0,
+                "STOCK2",
+                300.0,  # 10% ratio, within 20% limit
             )
 
             assert is_valid2 is True
@@ -556,14 +548,10 @@ class TestOrderValidationServiceValidateOrderPlacement:
     def test_validate_order_placement_all_valid(self):
         """Test comprehensive validation with all checks passing"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         mock_orders = Mock()
@@ -591,9 +579,7 @@ class TestOrderValidationServiceValidateOrderPlacement:
         mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 1000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         mock_orders = Mock()
@@ -619,14 +605,10 @@ class TestOrderValidationServiceValidateOrderPlacement:
     def test_validate_order_placement_portfolio_at_capacity(self):
         """Test validation with portfolio at capacity"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(False, 10, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(False, 10, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         mock_orders = Mock()
@@ -652,14 +634,10 @@ class TestOrderValidationServiceValidateOrderPlacement:
     def test_validate_order_placement_duplicate_order(self):
         """Test validation with duplicate order"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
         mock_portfolio_service.has_position = Mock(return_value=True)  # Already in holdings
 
         mock_orders = Mock()
@@ -682,7 +660,9 @@ class TestOrderValidationServiceValidateOrderPlacement:
         assert len(result.errors) > 0
         assert "Duplicate order" in result.get_error_summary()
 
-    @patch("modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS")
+    @patch(
+        "modules.kotak_neo_auto_trader.services.order_validation_service.POSITION_VOLUME_RATIO_TIERS"
+    )
     def test_validate_order_placement_invalid_volume_ratio(self, mock_tiers):
         """Test validation with invalid volume ratio"""
         mock_tiers.return_value = [
@@ -693,14 +673,10 @@ class TestOrderValidationServiceValidateOrderPlacement:
         ]
 
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 3, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 3, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         mock_orders = Mock()
@@ -756,14 +732,10 @@ class TestOrderValidationServiceValidateOrderPlacement:
     def test_validate_order_placement_data_included(self):
         """Test that validation result includes data"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         mock_portfolio_service = Mock()
-        mock_portfolio_service.check_portfolio_capacity = Mock(
-            return_value=(True, 5, 10)
-        )
+        mock_portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 5, 10))
         mock_portfolio_service.has_position = Mock(return_value=False)
 
         service = OrderValidationService(
@@ -791,9 +763,7 @@ class TestOrderValidationServiceBackwardCompatibility:
     def test_check_balance_backward_compatibility(self):
         """Test that check_balance() maintains backward compatibility"""
         mock_portfolio = Mock()
-        mock_portfolio.get_limits = Mock(
-            return_value={"data": {"cash": 100000.0}}
-        )
+        mock_portfolio.get_limits = Mock(return_value={"data": {"cash": 100000.0}})
 
         service = OrderValidationService(portfolio=mock_portfolio)
 
@@ -823,4 +793,3 @@ class TestOrderValidationServiceBackwardCompatibility:
         assert isinstance(result.errors, list)
         assert isinstance(result.warnings, list)
         assert isinstance(result.data, dict)
-

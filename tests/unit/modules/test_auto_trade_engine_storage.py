@@ -461,7 +461,8 @@ class TestSaveTradesHistory:
         self, auto_trade_engine_with_db, db_session, test_user, orders_repo
     ):
         """Test Fix #1: Closed position with sell_order_id resolution from string"""
-        from src.infrastructure.db.models import Orders, OrderStatus as DbOrderStatus
+        from src.infrastructure.db.models import Orders
+        from src.infrastructure.db.models import OrderStatus as DbOrderStatus
         from src.infrastructure.db.timezone_utils import ist_now
 
         # Create a sell order
@@ -702,7 +703,8 @@ class TestFailedOrders:
 
         # Verify failed order was stored (using status-based approach)
         orders_repo = OrdersRepository(db_session)
-        orders = orders_repo.list(test_user.id)
+        orders_result = orders_repo.list(test_user.id)
+        orders = orders_result[0] if isinstance(orders_result, tuple) else orders_result
         failed_orders = [
             o
             for o in orders

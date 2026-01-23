@@ -50,14 +50,18 @@ def test_orders_list_with_auth(client: TestClient):
     # initially empty
     r = client.get("/api/v1/user/orders", headers=headers)
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    payload = r.json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("items"), list)
 
     # Filter by status param (should still work and return list, possibly empty)
     r2 = client.get(
         "/api/v1/user/orders?status=pending", headers=headers
     )  # AMO merged into PENDING
     assert r2.status_code == 200
-    assert isinstance(r2.json(), list)
+    payload2 = r2.json()
+    assert isinstance(payload2, dict)
+    assert isinstance(payload2.get("items"), list)
 
 
 def test_orders_list_with_new_statuses(client: TestClient, db_session):
@@ -122,7 +126,9 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
     for status in ["failed"]:  # retry_pending and rejected merged into failed
         r = client.get(f"/api/v1/user/orders?status={status}", headers=headers)
         assert r.status_code == 200
-        assert isinstance(r.json(), list)
+        payload = r.json()
+        assert isinstance(payload, dict)
+        assert isinstance(payload.get("items"), list)
 
 
 def test_orders_response_includes_monitoring_fields(client: TestClient):
@@ -192,7 +198,9 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
     # Test filtering by pending (AMO/PENDING_EXECUTION merged into PENDING)
     r = client.get("/api/v1/user/orders?status=pending", headers=headers)
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    payload = r.json()
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("items"), list)
 
 
 def test_retry_order_success(client: TestClient, db_session):
@@ -431,10 +439,12 @@ def test_list_orders_with_filters(client: TestClient, db_session):
         headers=headers,
     )
     assert r.status_code == 200
-    data = r.json()
-    assert len(data) >= 1
+    payload = r.json()
+    assert isinstance(payload, dict)
+    items = payload.get("items", [])
+    assert len(items) >= 1
     # Check reason field
-    assert any("insufficient" in (o.get("reason") or "").lower() for o in data)
+    assert any("insufficient" in (o.get("reason") or "").lower() for o in items)
 
     # Filter by date range (using today's date)
     today = datetime.now().strftime("%Y-%m-%d")
@@ -443,7 +453,9 @@ def test_list_orders_with_filters(client: TestClient, db_session):
         headers=headers,
     )
     assert r2.status_code == 200
-    assert isinstance(r2.json(), list)
+    payload2 = r2.json()
+    assert isinstance(payload2, dict)
+    assert isinstance(payload2.get("items"), list)
 
 
 def test_orders_response_includes_entry_type_and_is_manual(client: TestClient, db_session):
@@ -513,7 +525,10 @@ def test_orders_response_includes_entry_type_and_is_manual(client: TestClient, d
     # Fetch orders via API
     r = client.get("/api/v1/user/orders", headers=headers)
     assert r.status_code == 200
-    orders = r.json()
+    payload = r.json()
+    assert isinstance(payload, dict)
+    assert "items" in payload
+    orders = payload["items"]
     assert isinstance(orders, list)
     assert len(orders) >= 3
 

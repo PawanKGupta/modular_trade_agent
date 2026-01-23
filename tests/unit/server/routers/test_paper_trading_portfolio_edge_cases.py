@@ -9,11 +9,11 @@ Tests cover:
 - Symbol format inconsistencies
 """
 
-import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from server.app.routers import paper_trading
@@ -28,7 +28,20 @@ class DummyUser:
 class DummyOrder(SimpleNamespace):
     """Simple order object that works with getattr()"""
 
-    pass
+    def __init__(self, **kwargs):
+        # The router expects these attributes to exist for stats/recent orders.
+        kwargs.setdefault("status", "closed")
+        kwargs.setdefault("price", 0.0)
+        kwargs.setdefault("avg_price", 0.0)
+        kwargs.setdefault("order_type", "market")
+        kwargs.setdefault("quantity", 0)
+        kwargs.setdefault("placed_at", datetime.now())
+        kwargs.setdefault("filled_at", None)
+        kwargs.setdefault("broker_order_id", None)
+        kwargs.setdefault("order_id", None)
+        kwargs.setdefault("metadata", None)
+        kwargs.setdefault("order_metadata", None)
+        super().__init__(**kwargs)
 
 
 class DummyPosition(SimpleNamespace):
@@ -82,6 +95,21 @@ class TestPaperTradingPortfolioEdgeCases:
         # Store the mock factory for use in tests
         self.mock_ticker_factory = lambda symbol: MagicMock(
             info={"currentPrice": 100.0, "regularMarketPrice": 100.0}
+        )
+
+        # Ensure unit tests never call out to yfinance/data fetchers.
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.yf.Ticker",
+            self.mock_ticker_factory,
+        )
+
+        def mock_fetch_ohlcv_yf(ticker, days=60, interval="1d"):
+            # Minimal dataframe for EMA calculation (no network).
+            return pd.DataFrame({"close": [100.0] * max(days, 10)})
+
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.fetch_ohlcv_yf",
+            mock_fetch_ohlcv_yf,
         )
 
         # Mock PositionsRepository - must return the same instance
@@ -171,7 +199,7 @@ class TestPaperTradingPortfolioEdgeCases:
 
         # Mock repositories - ensure they return the mocked objects
         self.mock_positions_repo.list.return_value = [user2_position]
-        self.mock_orders_repo.list.return_value = [user2_order]
+        self.mock_orders_repo.list.return_value = ([user2_order], 1)
 
         # Call endpoint for User 2 with yfinance mock
         user2 = DummyUser(id=user2_id)
@@ -210,7 +238,7 @@ class TestPaperTradingPortfolioEdgeCases:
 
         # No orders for this symbol
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = []
+        self.mock_orders_repo.list.return_value = ([], 0)
 
         # User is in paper mode - should assume paper trading
         self.mock_settings_repo.get_by_user_id.return_value = MagicMock(trade_mode=TradeMode.PAPER)
@@ -251,7 +279,7 @@ class TestPaperTradingPortfolioEdgeCases:
 
         # No orders for this symbol
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = []
+        self.mock_orders_repo.list.return_value = ([], 0)
 
         # User is in broker mode - should skip ambiguous position
         self.mock_settings_repo.get_by_user_id.return_value = MagicMock(trade_mode=TradeMode.BROKER)
@@ -286,7 +314,7 @@ class TestPaperTradingPortfolioEdgeCases:
         )
 
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = [broker_order]
+        self.mock_orders_repo.list.return_value = ([broker_order], 1)
 
         result = paper_trading.get_paper_trading_portfolio(db=self.db_session, current=self.user)
 
@@ -325,7 +353,7 @@ class TestPaperTradingPortfolioEdgeCases:
         }
 
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = [paper_order]
+        self.mock_orders_repo.list.return_value = ([paper_order], 1)
 
         # Should still work but log warning
         with patch("server.app.routers.paper_trading.logger") as mock_logger:
@@ -363,45 +391,25 @@ class TestPaperTradingPortfolioEdgeCases:
         )
 
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = [paper_order]
 
-        # Mock target prices with base symbol (RELIANCE)
-        with patch("yfinance.Ticker") as mock_ticker_class:
-            mock_ticker_instance = MagicMock()
-            mock_ticker_instance.info = {"currentPrice": 100.0, "regularMarketPrice": 100.0}
-            mock_ticker_class.return_value = mock_ticker_instance
+        # Target prices now come from DB sell orders (single source of truth).
+        sell_order = DummyOrder(
+            symbol="RELIANCE-EQ",
+            side="sell",
+            placed_at=position_time,
+            trade_mode=TradeMode.PAPER,
+            status="pending",
+            price=110.0,
+        )
 
-            # Mock Path.exists and open for active_sell_orders.json
-            # Need to check the actual path being used
-            target_prices_data = {"RELIANCE": {"target_price": 110.0}}
+        def list_side_effect(user_id, *args, **kwargs):
+            if kwargs.get("side") == "sell":
+                return ([sell_order], 1)
+            return ([paper_order], 1)
 
-            def mock_path_exists(self):
-                path_str = str(self)
-                # Return True for storage path and active_sell_orders.json
-                # to test file loading
-                if "active_sell_orders.json" in path_str:
-                    return True  # File exists
-                return True  # Storage path exists
+        self.mock_orders_repo.list.side_effect = list_side_effect
 
-            monkeypatch.setattr("pathlib.Path.exists", mock_path_exists)
-
-            # Mock builtins.open() since the code uses "with open(sell_orders_file) as f:"
-            original_open = (
-                __builtins__["open"] if isinstance(__builtins__, dict) else __builtins__.open
-            )
-
-            def mock_open_func(file_path, mode="r", *args, **kwargs):
-                file_path_str = str(file_path)
-                if "active_sell_orders.json" in file_path_str:
-                    return mock_open(read_data=json.dumps(target_prices_data))()
-                # For other files, use original open
-                return original_open(file_path, mode, *args, **kwargs)
-
-            monkeypatch.setattr("builtins.open", mock_open_func)
-
-            result = paper_trading.get_paper_trading_portfolio(
-                db=self.db_session, current=self.user
-            )
+        result = paper_trading.get_paper_trading_portfolio(db=self.db_session, current=self.user)
 
         # Should find target price using base symbol
         assert len(result.holdings) == 1
@@ -432,7 +440,7 @@ class TestPaperTradingPortfolioEdgeCases:
         )
 
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = [paper_order]
+        self.mock_orders_repo.list.return_value = ([paper_order], 1)
 
         with patch("yfinance.Ticker") as mock_ticker_class:
             mock_ticker_instance = MagicMock()
@@ -477,7 +485,7 @@ class TestPaperTradingPortfolioEdgeCases:
         )
 
         self.mock_positions_repo.list.return_value = [position]
-        self.mock_orders_repo.list.return_value = [paper_order]
+        self.mock_orders_repo.list.return_value = ([paper_order], 1)
 
         # User is in paper mode - should use fallback
         self.mock_settings_repo.get_by_user_id.return_value = MagicMock(trade_mode=TradeMode.PAPER)

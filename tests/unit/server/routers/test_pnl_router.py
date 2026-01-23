@@ -15,8 +15,23 @@ class FakePnlRecord:
         self.fees = fees
 
 
+class _FakeQuery:
+    def filter(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return []
+
+
+class _FakeDb:
+    """Minimal DB stub for router helpers that use SQLAlchemy-style `db.query()`."""
+
+    def query(self, *args, **kwargs):
+        return _FakeQuery()
+
+
 def test_daily_pnl_uses_repo_records(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=42)
 
     class RepoWithRecords:
@@ -45,7 +60,7 @@ def test_daily_pnl_uses_repo_records(monkeypatch):
 
 
 def test_daily_pnl_service_fallback_includes_unrealized(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=55)
 
     class EmptyRepo:
@@ -67,6 +82,13 @@ def test_daily_pnl_service_fallback_includes_unrealized(monkeypatch):
 
     monkeypatch.setattr(pnl_router, "PnlRepository", EmptyRepo)
     monkeypatch.setattr(pnl_router, "PnlCalculationService", ServiceStub)
+    # Router implementation may consult OrdersRepository for default ranges; stub it
+    # to avoid relying on a real SQLAlchemy Session/Engine.
+    monkeypatch.setattr(
+        pnl_router,
+        "OrdersRepository",
+        lambda db: SimpleNamespace(list=lambda user_id: ([], 0)),
+    )
     monkeypatch.setattr(
         pnl_router,
         "_calculate_unrealized_from_open_positions",
@@ -88,7 +110,7 @@ def test_daily_pnl_service_fallback_includes_unrealized(monkeypatch):
 
 
 def test_pnl_summary_uses_stats_and_unrealized(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=7)
 
     def fake_compute_stats(user_id, db, trade_mode):
@@ -125,7 +147,7 @@ def test_pnl_summary_uses_stats_and_unrealized(monkeypatch):
 
 
 def test_pnl_summary_fallback_to_paper_trading(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=9)
 
     def zero_stats(*args, **kwargs):
@@ -155,7 +177,7 @@ def test_pnl_summary_fallback_to_paper_trading(monkeypatch):
 
 
 def test_audit_history_filters(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=13)
     base_time = datetime(2024, 1, 1, 12, 0, 0)
 
@@ -196,7 +218,7 @@ def test_audit_history_filters(monkeypatch):
 
 
 def test_calculate_pnl_success_and_invalid_trade_mode(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=21)
     calc_date = date(2024, 3, 1)
 
@@ -235,7 +257,7 @@ def test_calculate_pnl_success_and_invalid_trade_mode(monkeypatch):
 
 
 def test_backfill_pnl_success_and_invalid_trade_mode(monkeypatch):
-    fake_db = object()
+    fake_db = _FakeDb()
     current = SimpleNamespace(id=33)
     start_date = date(2024, 3, 1)
     end_date = date(2024, 3, 5)

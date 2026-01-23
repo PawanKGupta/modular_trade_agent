@@ -102,7 +102,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         sell_order2.symbol = "TCS-EQ"
         sell_order2.status = DbOrderStatus.ONGOING
 
-        mock_orders_repo.list.return_value = [sell_order1, sell_order2]
+        mock_orders_repo.list.return_value = ([sell_order1, sell_order2], 2)
 
         result = sell_manager.get_positions_without_sell_orders()
 
@@ -141,7 +141,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         sell_order.symbol = "RELIANCE-EQ"
         sell_order.status = DbOrderStatus.PENDING
 
-        mock_orders_repo.list.return_value = [sell_order]
+        mock_orders_repo.list.return_value = ([sell_order], 1)
 
         # Mock EMA9 calculation
         sell_manager._get_ema9_with_retry = Mock(side_effect=lambda *args, **kwargs: 2500.0)
@@ -172,7 +172,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         pos.closed_at = None
 
         mock_positions_repo.list.return_value = [pos]
-        mock_orders_repo.list.return_value = []  # No sell orders
+        mock_orders_repo.list.return_value = ([], 0)  # No sell orders
 
         # Mock EMA9 calculation failure
         sell_manager._get_ema9_with_retry = Mock(return_value=None)
@@ -193,7 +193,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         pos.closed_at = None
 
         mock_positions_repo.list.return_value = [pos]
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         # Mock EMA9 calculation success
         sell_manager._get_ema9_with_retry = Mock(return_value=2500.0)
@@ -221,7 +221,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         closed_pos.closed_at = datetime.now()
 
         mock_positions_repo.list.return_value = [open_pos, closed_pos]
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         sell_manager._get_ema9_with_retry = Mock(return_value=2500.0)
 
@@ -262,7 +262,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         pos.closed_at = None
 
         mock_positions_repo.list.return_value = [pos]
-        mock_orders_repo.list.return_value = []  # No sell orders
+        mock_orders_repo.list.return_value = ([], 0)  # No sell orders
 
         # Mock buy order with metadata
         buy_order = Mock(spec=Orders)
@@ -298,7 +298,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         pos.closed_at = None
 
         mock_positions_repo.list.return_value = [pos]
-        mock_orders_repo.list.return_value = []
+        mock_orders_repo.list.return_value = ([], 0)
 
         # Mock EMA9 calculation to raise exception
         sell_manager._get_ema9_with_retry = Mock(side_effect=Exception("Network error"))

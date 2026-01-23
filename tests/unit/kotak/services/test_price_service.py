@@ -100,9 +100,9 @@ class TestPriceService:
         assert len(result) == 5
         mock_fetch.assert_called_once()
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
-    def test_get_price_with_caching(self, mock_fetch):
-        """Test that caching works for historical data"""
+    @patch("core.data_fetcher.get_cached_ohlcv")
+    def test_get_price_with_caching(self, mock_get_cached):
+        """Test that PriceService delegates to the shared OHLCV cache when enabled."""
         mock_df = pd.DataFrame(
             {
                 "date": pd.date_range("2024-01-01", periods=5),
@@ -113,19 +113,19 @@ class TestPriceService:
                 "volume": [1000, 1100, 1200, 1300, 1400],
             }
         )
-        mock_fetch.return_value = mock_df
+        mock_get_cached.return_value = mock_df
 
         service = PriceService(enable_caching=True)
 
-        # First call - should fetch from API
+        # Calls should delegate to core.data_fetcher.get_cached_ohlcv
         result1 = service.get_price("RELIANCE.NS", days=30)
         assert result1 is not None
-        assert mock_fetch.call_count == 1
+        assert mock_get_cached.call_count == 1
 
-        # Second call - should use cache
+        # Second call still delegates; caching behavior lives in core.data_fetcher
         result2 = service.get_price("RELIANCE.NS", days=30)
         assert result2 is not None
-        assert mock_fetch.call_count == 1  # Should not call again
+        assert mock_get_cached.call_count == 2
 
     @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
     def test_get_price_fallback_on_error(self, mock_fetch):
@@ -193,31 +193,19 @@ class TestPriceService:
         assert result is False
 
     def test_clear_cache(self):
-        """Test clearing cache"""
+        """Test clearing internal in-memory cache."""
         service = PriceService(enable_caching=True)
 
-        # Add some data to cache
-        with patch(
-            "modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf"
-        ) as mock_fetch:
-            mock_df = pd.DataFrame({"close": [100]})
-            mock_fetch.return_value = mock_df
-
-            service.get_price("RELIANCE.NS", days=30)
+        # Populate internal cache directly (PriceService.get_price uses shared cache)
+        assert service._cache is not None
+        service._cache.set_historical("key1", pd.DataFrame({"close": [100]}))
+        service._cache.set_realtime("RELIANCE", 2500.50)
 
         # Clear cache
         service.clear_cache()
 
-        # Verify cache is empty (next call should fetch again)
-        with patch(
-            "modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf"
-        ) as mock_fetch:
-            mock_df = pd.DataFrame({"close": [100]})
-            mock_fetch.return_value = mock_df
-
-            service.get_price("RELIANCE.NS", days=30)
-            # Should call fetch again after cache clear
-            assert mock_fetch.call_count >= 1
+        assert service._cache.get_historical("key1", ttl_seconds=300) is None
+        assert service._cache.get_realtime("RELIANCE", ttl_seconds=30) is None
 
 
 class TestPriceServiceBackwardCompatibility:

@@ -29,7 +29,7 @@ def mock_db_session():
 def mock_orders_repo():
     """Mock OrdersRepository"""
     repo = Mock()
-    repo.list = Mock(return_value=[])
+    repo.list = Mock(return_value=([], 0))
     repo.get_by_broker_order_id = Mock(return_value=None)
     repo.get_by_order_id = Mock(return_value=None)
     repo.create_amo = Mock(return_value=Mock())
@@ -129,7 +129,7 @@ class TestOrderTrackerDBOnlyModePhase11:
             mock_db_order.rejection_reason = None
             mock_db_order.execution_qty = None
 
-            mock_orders_repo.list.return_value = [mock_db_order]
+            mock_orders_repo.list.return_value = ([mock_db_order], 1)
 
             tracker = OrderTracker(
                 data_dir=temp_data_dir,

@@ -41,8 +41,16 @@ def mock_paper_broker():
     broker = MagicMock()
     broker.is_connected.return_value = True
     broker.get_holdings.return_value = []
+    broker.get_all_orders.return_value = []
     broker.get_available_balance.return_value = MagicMock(amount=100000.0)
     broker.place_order.return_value = "PAPER_ORDER_123"
+
+    # Provide a stable in-memory "account" shape for balance checks
+    broker.store.get_account.return_value = {"available_cash": 1_000_000_000.0}
+    broker.store.storage_path = "paper_trading/test"
+
+    # Provide a stable price provider for prefetch (doesn't affect sizing, just avoids MagicMock quirks)
+    broker.price_provider.get_prices.return_value = {}
     return broker
 
 
@@ -365,7 +373,7 @@ class TestPaperTradingEngineAdapter:
 
         assert summary["attempted"] == 1
         # Order should be placed but with adjusted quantity
-        assert summary["placed"] == 1
+        assert summary["placed"] == 1, summary
         assert mock_paper_broker.place_order.called
 
         # Verify order quantity was adjusted (should be ~20 shares for 50000/2500)
@@ -601,7 +609,6 @@ class TestPaperTradingSellMonitoring:
     def adapter_with_holdings(self, db_session, test_user):
         """Create adapter with mock holdings for sell monitoring tests"""
         from config.strategy_config import StrategyConfig
-        from src.infrastructure.db.models import Positions, TradeMode
         from src.infrastructure.persistence.positions_repository import PositionsRepository
 
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
@@ -620,7 +627,6 @@ class TestPaperTradingSellMonitoring:
             symbol="RELIANCE-EQ",
             quantity=40.0,
             avg_price=2500.0,
-            trade_mode=TradeMode.PAPER,
         )
 
         # Create TCS position
@@ -629,13 +635,22 @@ class TestPaperTradingSellMonitoring:
             symbol="TCS-EQ",
             quantity=30.0,
             avg_price=3500.0,
-            trade_mode=TradeMode.PAPER,
         )
 
         db_session.commit()
 
         # Mock broker methods
-        mock_broker.get_holdings.return_value = []
+        # PaperTradingServiceAdapter._place_sell_orders() uses broker.get_holdings() as the
+        # source of truth for what to place exits for.
+        mock_reliance_holding = MagicMock()
+        mock_reliance_holding.symbol = pos1.symbol
+        mock_reliance_holding.quantity = int(pos1.quantity)
+
+        mock_tcs_holding = MagicMock()
+        mock_tcs_holding.symbol = pos2.symbol
+        mock_tcs_holding.quantity = int(pos2.quantity)
+
+        mock_broker.get_holdings.return_value = [mock_reliance_holding, mock_tcs_holding]
         mock_broker.place_order.return_value = "SELL_ORDER_123"
         mock_broker.get_pending_orders.return_value = []
 
@@ -658,8 +673,9 @@ class TestPaperTradingSellMonitoring:
     def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):
         """Test that sell orders are placed at frozen EMA9 target"""
         from unittest.mock import patch
-        from src.infrastructure.persistence.orders_repository import OrdersRepository
+
         from src.infrastructure.db.models import OrderStatus, TradeMode
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
 
         # Mock EMA9 calculation
         def mock_calculate_ema9(ticker):
@@ -672,6 +688,7 @@ class TestPaperTradingSellMonitoring:
         # Mock broker.place_order to save orders to database
         def mock_place_order(order):
             from src.infrastructure.db.models import Orders
+
             db_order = Orders(
                 user_id=test_user.id,
                 symbol=order.symbol,
@@ -696,9 +713,12 @@ class TestPaperTradingSellMonitoring:
 
         # Verify sell orders were placed at frozen targets - query database
         orders_repo = OrdersRepository(db_session)
+        db_orders, _ = orders_repo.list(test_user.id)
         active_sell_orders = [
-            o for o in orders_repo.list(test_user.id)
-            if o.side == "sell" and o.status in [OrderStatus.PENDING, OrderStatus.ONGOING]
+            o
+            for o in db_orders
+            if o.side == "sell"
+            and o.status in [OrderStatus.PENDING, OrderStatus.ONGOING]
             and o.trade_mode == TradeMode.PAPER
         ]
         assert len(active_sell_orders) == 2
@@ -720,8 +740,9 @@ class TestPaperTradingSellMonitoring:
     def test_sell_orders_not_duplicated(self, db_session, test_user, adapter_with_holdings):
         """Test that sell orders are not duplicated if already active"""
         from unittest.mock import patch
-        from src.infrastructure.persistence.orders_repository import OrdersRepository
+
         from src.infrastructure.db.models import Orders, OrderStatus, TradeMode
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
 
         # Pre-populate active sell order in database
         existing_order = Orders(
@@ -738,6 +759,19 @@ class TestPaperTradingSellMonitoring:
         db_session.add(existing_order)
         db_session.commit()
 
+        # PaperTradingServiceAdapter prevents duplicates based on in-memory tracking and
+        # broker pending orders (not DB). Seed in-memory state to reflect a previously
+        # tracked sell order.
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "EXISTING_ORDER",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+
         def mock_calculate_ema9(ticker):
             if "RELIANCE" in ticker:
                 return 2650.0  # Different EMA9 (should NOT update)
@@ -748,6 +782,7 @@ class TestPaperTradingSellMonitoring:
         # Mock broker.place_order to save orders to database
         def mock_place_order(order):
             from src.infrastructure.db.models import Orders
+
             db_order = Orders(
                 user_id=test_user.id,
                 symbol=order.symbol,
@@ -765,17 +800,20 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.place_order = mock_place_order
 
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9
+        with (
+            patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),
+            patch.object(adapter_with_holdings, "_initialize_rsi10_cache_paper", return_value=None),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file", return_value=None),
         ):
             adapter_with_holdings._place_sell_orders()
 
         # Verify RELIANCE order still has original frozen target (not duplicated)
         orders_repo = OrdersRepository(db_session)
+        db_orders, _ = orders_repo.list(test_user.id)
         reliance_orders = [
-            o for o in orders_repo.list(test_user.id)
-            if o.side == "sell" and "RELIANCE" in o.symbol
-            and o.trade_mode == TradeMode.PAPER
+            o
+            for o in db_orders
+            if o.side == "sell" and "RELIANCE" in o.symbol and o.trade_mode == TradeMode.PAPER
         ]
         # Should have only one RELIANCE order (the existing one)
         assert len(reliance_orders) == 1
@@ -784,9 +822,9 @@ class TestPaperTradingSellMonitoring:
 
         # TCS should have new order
         tcs_orders = [
-            o for o in orders_repo.list(test_user.id)
-            if o.side == "sell" and "TCS" in o.symbol
-            and o.trade_mode == TradeMode.PAPER
+            o
+            for o in db_orders
+            if o.side == "sell" and "TCS" in o.symbol and o.trade_mode == TradeMode.PAPER
         ]
         assert len(tcs_orders) == 1
         assert tcs_orders[0].price == 3600.0
@@ -864,12 +902,6 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
 
         # Mock get_all_orders to return pending order
-        from modules.kotak_neo_auto_trader.domain import (
-            Order,
-            OrderStatus,
-            OrderType,
-            TransactionType,
-        )
 
         pending_order = MagicMock()
         pending_order.symbol = "RELIANCE"
@@ -1285,25 +1317,33 @@ class TestPaperTradingSellMonitoring:
         adapter.shutdown_requested = True
         assert adapter.shutdown_requested is True
 
-    @pytest.mark.skip(reason="File-based sell order tracking is deprecated. Orders are now tracked in database only.")
+    @pytest.mark.skip(
+        reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
+    )
     def test_load_sell_orders_from_file(self, db_session, test_user, tmp_path):
         """Test loading sell orders from file on startup - DEPRECATED"""
         # File-based tracking removed - orders are now tracked in database only
         pass
 
-    @pytest.mark.skip(reason="File-based sell order tracking is deprecated. Orders are now tracked in database only.")
+    @pytest.mark.skip(
+        reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
+    )
     def test_load_sell_orders_from_file_filters_stale_orders(self, db_session, test_user, tmp_path):
         """Test that stale orders (no holdings, no pending) are filtered out - DEPRECATED"""
         # File-based tracking removed - orders are now tracked in database only
         pass
 
-    @pytest.mark.skip(reason="File-based sell order tracking is deprecated. Orders are now tracked in database only.")
+    @pytest.mark.skip(
+        reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
+    )
     def test_load_sell_orders_from_file_keeps_pending_orders(self, db_session, test_user, tmp_path):
         """Test that orders with pending broker orders are kept even without holdings - DEPRECATED"""
         # File-based tracking removed - orders are now tracked in database only
         pass
 
-    @pytest.mark.skip(reason="File-based sell order tracking is deprecated. Orders are now tracked in database only.")
+    @pytest.mark.skip(
+        reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
+    )
     def test_load_sell_orders_from_file_missing_file(self, db_session, test_user, tmp_path):
         """Test that missing file doesn't cause error - DEPRECATED"""
         # File-based tracking removed - orders are now tracked in database only
@@ -1337,8 +1377,10 @@ class TestPaperTradingSellMonitoring:
                 return 3600.0
             return None
 
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9
+        with (
+            patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),
+            patch.object(adapter_with_holdings, "_initialize_rsi10_cache_paper", return_value=None),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file", return_value=None),
         ):
             adapter_with_holdings._place_sell_orders()
 
@@ -1349,8 +1391,8 @@ class TestPaperTradingSellMonitoring:
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
 
         # TCS should have new order
-        assert "TCS" in adapter_with_holdings.active_sell_orders
-        assert adapter_with_holdings.active_sell_orders["TCS"]["target_price"] == 3600.0
+        assert "TCS-EQ" in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.active_sell_orders["TCS-EQ"]["target_price"] == 3600.0
 
     def test_place_sell_orders_skips_pending_broker_orders(
         self, db_session, test_user, adapter_with_holdings
@@ -1378,8 +1420,10 @@ class TestPaperTradingSellMonitoring:
                 return 3600.0
             return None
 
-        with patch.object(
-            adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9
+        with (
+            patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),
+            patch.object(adapter_with_holdings, "_initialize_rsi10_cache_paper", return_value=None),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file", return_value=None),
         ):
             adapter_with_holdings._place_sell_orders()
 
@@ -1389,15 +1433,19 @@ class TestPaperTradingSellMonitoring:
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
 
         # TCS should have new order
-        assert "TCS" in adapter_with_holdings.active_sell_orders
+        assert "TCS-EQ" in adapter_with_holdings.active_sell_orders
 
-    @pytest.mark.skip(reason="File-based sell order tracking is deprecated. Orders are now tracked in database only.")
+    @pytest.mark.skip(
+        reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
+    )
     def test_initialize_loads_sell_orders(self, db_session, test_user, tmp_path):
         """Test that initialize() calls _load_sell_orders_from_file() - DEPRECATED"""
         # File-based tracking removed - orders are now tracked in database only
         pass
 
-    @pytest.mark.skip(reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring.")
+    @pytest.mark.skip(
+        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
+    )
     def test_update_sell_order_quantity_after_reentry(
         self, db_session, test_user, adapter_with_holdings
     ):
@@ -1473,7 +1521,9 @@ class TestPaperTradingSellMonitoring:
         )
         assert adapter_with_holdings.active_sell_orders["TCS"]["qty"] == 30  # Unchanged
 
-    @pytest.mark.skip(reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring.")
+    @pytest.mark.skip(
+        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
+    )
     def test_update_sell_order_quantity_recalculates_target(
         self, db_session, test_user, adapter_with_holdings
     ):
@@ -1535,7 +1585,9 @@ class TestPaperTradingSellMonitoring:
         new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
         assert float(new_order.price.amount) == new_target
 
-    @pytest.mark.skip(reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring.")
+    @pytest.mark.skip(
+        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
+    )
     def test_update_sell_order_quantity_no_update_if_quantity_same(
         self, db_session, test_user, adapter_with_holdings
     ):
@@ -1543,7 +1595,9 @@ class TestPaperTradingSellMonitoring:
         # Method renamed to _update_sell_order_quantity_by_db_order and requires database order object
         pass
 
-    @pytest.mark.skip(reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring.")
+    @pytest.mark.skip(
+        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
+    )
     def test_update_sell_order_quantity_no_update_if_quantity_decreased(
         self, db_session, test_user, adapter_with_holdings
     ):

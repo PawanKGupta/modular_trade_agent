@@ -83,12 +83,14 @@ class DummyOrdersRepo:
 
         self.db = MockDB() if db is None else db
 
-    def list(self, user_id, status=None):
-        self.list_calls.append((user_id, status))
-        orders = self.orders_by_user.get(user_id, [])
+    def list(self, user_id, status=None, *, limit=50, offset=0):
+        self.list_calls.append((user_id, status, limit, offset))
+        all_orders = self.orders_by_user.get(user_id, [])
         if status:
-            orders = [o for o in orders if o.status == status]
-        return orders
+            all_orders = [o for o in all_orders if o.status == status]
+        total_count = len(all_orders)
+        paginated = all_orders[offset : offset + limit]
+        return paginated, total_count
 
     def get(self, order_id):
         self.get_calls.append(order_id)
@@ -194,11 +196,11 @@ def test_list_orders_no_filters(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 2
-    assert result[0].symbol == "RELIANCE.NS"
-    assert result[1].symbol == "TCS.NS"
+    assert len(result.items) == 2
+    assert result.items[0].symbol == "RELIANCE.NS"
+    assert result.items[1].symbol == "TCS.NS"
     assert len(orders_repo.list_calls) == 1
-    assert orders_repo.list_calls[0] == (42, None)
+    assert orders_repo.list_calls[0] == (42, None, 50, 0)
 
 
 def test_list_orders_filter_by_status(orders_repo, current_user):
@@ -208,8 +210,8 @@ def test_list_orders_filter_by_status(orders_repo, current_user):
 
     result = orders.list_orders(status="pending", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].status == "pending"
+    assert len(result.items) == 1
+    assert result.items[0].status == "pending"
     assert orders_repo.list_calls[0][1] == OrderStatus.PENDING
 
 
@@ -221,8 +223,8 @@ def test_list_orders_filter_by_reason(orders_repo, current_user):
 
     result = orders.list_orders(reason="funds", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert "funds" in result[0].reason.lower()
+    assert len(result.items) == 1
+    assert "funds" in result.items[0].reason.lower()
 
 
 def test_list_orders_filter_by_date_range(orders_repo, current_user):
@@ -235,8 +237,8 @@ def test_list_orders_filter_by_date_range(orders_repo, current_user):
         from_date="2025-01-15", to_date="2025-01-19", db=None, current=current_user
     )
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_filter_from_date_only(orders_repo, current_user):
@@ -246,8 +248,8 @@ def test_list_orders_filter_from_date_only(orders_repo, current_user):
 
     result = orders.list_orders(from_date="2025-01-15", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_filter_to_date_only(orders_repo, current_user):
@@ -257,8 +259,8 @@ def test_list_orders_filter_to_date_only(orders_repo, current_user):
 
     result = orders.list_orders(to_date="2025-01-19", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_invalid_date_format(orders_repo, current_user):
@@ -278,7 +280,8 @@ def test_list_orders_empty_result(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 0
+    assert len(result.items) == 0
+    assert result.total == 0
 
 
 def test_list_orders_filters_combined(orders_repo, current_user):
@@ -306,8 +309,8 @@ def test_list_orders_filters_combined(orders_repo, current_user):
         current=current_user,
     )
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_order_without_placed_at(orders_repo, current_user):
@@ -318,8 +321,8 @@ def test_list_orders_order_without_placed_at(orders_repo, current_user):
 
     # Orders without placed_at are included (not filtered) when date filtering is applied
     # because the code checks `if order_date:` and if None, it skips date comparison but still adds
-    assert len(result) == 1
-    assert result[0].created_at is None
+    assert len(result.items) == 1
+    assert result.items[0].created_at is None
 
 
 def test_list_orders_serialization_error_handling(orders_repo, current_user):
@@ -341,7 +344,7 @@ def test_list_orders_serialization_error_handling(orders_repo, current_user):
     result = orders.list_orders(db=None, current=current_user)
 
     # Should handle error gracefully and continue
-    assert len(result) == 0
+    assert len(result.items) == 0
 
 
 def test_list_orders_exception_handling(orders_repo, current_user):
@@ -368,9 +371,9 @@ def test_list_orders_format_datetime_fields(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].created_at == "2025-01-15T10:30:00"
-    assert result[0].updated_at == "2025-01-16T14:00:00"
+    assert len(result.items) == 1
+    assert result.items[0].created_at == "2025-01-15T10:30:00"
+    assert result.items[0].updated_at == "2025-01-16T14:00:00"
 
 
 # POST /{order_id}/retry - retry_order tests
@@ -570,8 +573,8 @@ def test_list_orders_all_status_types(orders_repo, current_user):
 
     for status_val in ["pending", "ongoing", "closed", "failed", "cancelled"]:
         result = orders.list_orders(status=status_val, db=None, current=current_user)
-        assert len(result) == 1
-        assert result[0].status == status_val
+        assert len(result.items) == 1
+        assert result.items[0].status == status_val
 
 
 def test_list_orders_handles_none_reason(orders_repo, current_user):
@@ -581,8 +584,8 @@ def test_list_orders_handles_none_reason(orders_repo, current_user):
 
     result = orders.list_orders(reason="reason", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 2
+    assert len(result.items) == 1
+    assert result.items[0].id == 2
 
 
 def test_retry_order_handles_none_retry_count(orders_repo, current_user):
@@ -612,11 +615,11 @@ def test_list_orders_handles_all_optional_fields(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].retry_count == 2
-    assert result[0].execution_price == 2500.5
-    assert result[0].entry_type == "initial"
-    assert result[0].is_manual is True
+    assert len(result.items) == 1
+    assert result.items[0].retry_count == 2
+    assert result.items[0].execution_price == 2500.5
+    assert result.items[0].entry_type == "initial"
+    assert result.items[0].is_manual is True
 
 
 def test_list_orders_handles_non_standard_side(orders_repo, current_user):
@@ -625,5 +628,5 @@ def test_list_orders_handles_non_standard_side(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].side == "buy"  # Should default to "buy"
+    assert len(result.items) == 1
+    assert result.items[0].side == "buy"  # Should default to "buy"
