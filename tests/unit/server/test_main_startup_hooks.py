@@ -1,11 +1,17 @@
+# ruff: noqa: I001, PLC0415, PLR0913, E501
+
 from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from types import ModuleType
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
+
+
+# This test module uses local imports and inline lambdas extensively to
+# isolate FastAPI startup behavior without importing heavy dependencies
+# at collection time.
 
 
 def test_check_broker_ipv4_connectivity_success(monkeypatch: pytest.MonkeyPatch):
@@ -105,8 +111,8 @@ def test_start_unified_services_starts_tasks(monkeypatch: pytest.MonkeyPatch):
             return None
 
     # Provide lazy imports used inside start_unified_services
-    import types
     import sys
+    import types
 
     mod_run = types.ModuleType("modules.kotak_neo_auto_trader.run_trading_service")
     mod_run.TradingService = _Svc
@@ -114,8 +120,10 @@ def test_start_unified_services_starts_tasks(monkeypatch: pytest.MonkeyPatch):
     mod_mgr = types.ModuleType("modules.kotak_neo_auto_trader.shared_session_manager")
     mod_mgr.get_shared_session_manager = lambda: _Mgr()
 
-    sys.modules["modules.kotak_neo_auto_trader.run_trading_service"] = mod_run
-    sys.modules["modules.kotak_neo_auto_trader.shared_session_manager"] = mod_mgr
+    monkeypatch.setitem(sys.modules, "modules.kotak_neo_auto_trader.run_trading_service", mod_run)
+    monkeypatch.setitem(
+        sys.modules, "modules.kotak_neo_auto_trader.shared_session_manager", mod_mgr
+    )
 
     created = []
     loop = asyncio.new_event_loop()
@@ -138,15 +146,15 @@ def test_start_unified_services_starts_tasks(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_start_and_stop_background_scheduler(monkeypatch: pytest.MonkeyPatch):
-    from server.app import main
-
-    import types
     import sys
+    import types
+
+    from server.app import main
 
     jobs_mod = types.ModuleType("server.app.jobs")
     jobs_mod.start_scheduler = lambda: None
     jobs_mod.stop_scheduler = lambda: None
-    sys.modules["server.app.jobs"] = jobs_mod
+    monkeypatch.setitem(sys.modules, "server.app.jobs", jobs_mod)
 
     asyncio.run(main.start_background_scheduler())
     asyncio.run(main.stop_background_scheduler())
@@ -175,7 +183,11 @@ def test_ensure_db_schema_creates_tables_and_bootstraps_admin(monkeypatch: pytes
             return False
 
     monkeypatch.setattr(main, "inspect", lambda _engine: _Inspector())
-    monkeypatch.setattr(main.Base.metadata, "create_all", lambda **_k: created.__setitem__("create_all", created["create_all"] + 1))
+    monkeypatch.setattr(
+        main.Base.metadata,
+        "create_all",
+        lambda **_k: created.__setitem__("create_all", created["create_all"] + 1),
+    )
 
     monkeypatch.setattr(main.settings, "admin_email", "admin@example.com", raising=False)
     monkeypatch.setattr(main.settings, "admin_password", "secret", raising=False)
@@ -249,7 +261,9 @@ def test_ensure_db_schema_cleans_orphans_and_auto_restores(monkeypatch: pytest.M
             return True
 
     monkeypatch.setattr(main, "inspect", lambda _engine: _Inspector())
-    monkeypatch.setattr(main.Base.metadata, "create_all", lambda **_k: pytest.fail("should not create schema"))
+    monkeypatch.setattr(
+        main.Base.metadata, "create_all", lambda **_k: pytest.fail("should not create schema")
+    )
     monkeypatch.setattr(main.settings, "admin_email", None, raising=False)
     monkeypatch.setattr(main.settings, "admin_password", None, raising=False)
 
@@ -342,9 +356,7 @@ def test_ensure_db_schema_cleans_orphans_and_auto_restores(monkeypatch: pytest.M
     import sys
 
     # Ensure these module substitutions are reverted after the test.
-    monkeypatch.setitem(
-        sys.modules, "src.application.services.individual_service_manager", mod_ism
-    )
+    monkeypatch.setitem(sys.modules, "src.application.services.individual_service_manager", mod_ism)
     monkeypatch.setitem(
         sys.modules, "src.application.services.multi_user_trading_service", mod_muts
     )
