@@ -1,7 +1,7 @@
 """API endpoints for service management"""
 
 # ruff: noqa: B008
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -139,6 +139,30 @@ def get_service_status(
             status_repo = ServiceStatusRepository(db)
             status_obj = status_repo.get_or_create(current.id)
 
+        # CRITICAL: Ensure timestamps are timezone-aware (UTC) for proper frontend display
+        # PostgreSQL stores timestamps in UTC, but they may be returned as naive datetimes
+        # Making them timezone-aware ensures FastAPI serializes them correctly with 'Z' suffix
+        # If naive, assume they're UTC (PostgreSQL default) and mark them as such
+        # If timezone-aware but not UTC, convert to UTC
+        if status_obj.last_heartbeat:
+            if status_obj.last_heartbeat.tzinfo is None:
+                status_obj.last_heartbeat = status_obj.last_heartbeat.replace(tzinfo=UTC)
+            elif status_obj.last_heartbeat.tzinfo != UTC:
+                # Convert to UTC if in different timezone
+                status_obj.last_heartbeat = status_obj.last_heartbeat.astimezone(UTC)
+        if status_obj.last_task_execution:
+            if status_obj.last_task_execution.tzinfo is None:
+                status_obj.last_task_execution = status_obj.last_task_execution.replace(tzinfo=UTC)
+            elif status_obj.last_task_execution.tzinfo != UTC:
+                # Convert to UTC if in different timezone
+                status_obj.last_task_execution = status_obj.last_task_execution.astimezone(UTC)
+        if status_obj.updated_at:
+            if status_obj.updated_at.tzinfo is None:
+                status_obj.updated_at = status_obj.updated_at.replace(tzinfo=UTC)
+            elif status_obj.updated_at.tzinfo != UTC:
+                # Convert to UTC if in different timezone
+                status_obj.updated_at = status_obj.updated_at.astimezone(UTC)
+
         return ServiceStatusResponse(
             service_running=status_obj.service_running,
             last_heartbeat=status_obj.last_heartbeat,
@@ -163,13 +187,51 @@ def get_individual_services_status(
     """Get status of all individual services for current user"""
     try:
         status_dict = service_manager.get_status(current.id)
+
+        # Helper function to ensure datetime is timezone-aware (UTC)
+        def ensure_utc_datetime(dt_value):
+            """Convert ISO string or datetime to UTC timezone-aware datetime"""
+            if dt_value is None:
+                return None
+            if isinstance(dt_value, str):
+                # Parse ISO string - handle both with and without 'Z' suffix
+                try:
+                    # Replace 'Z' with '+00:00' for fromisoformat compatibility
+                    iso_str = dt_value.replace("Z", "+00:00")
+                    # Try parsing with timezone info first
+                    try:
+                        dt = datetime.fromisoformat(iso_str)
+                    except ValueError:
+                        # If that fails, try parsing as naive and assume UTC
+                        dt = datetime.fromisoformat(dt_value)
+                        dt = dt.replace(tzinfo=UTC)
+                except (ValueError, AttributeError):
+                    # Fallback: try parsing as naive datetime and assume UTC
+                    try:
+                        dt = datetime.fromisoformat(dt_value)
+                        dt = dt.replace(tzinfo=UTC)
+                    except ValueError:
+                        # If all parsing fails, return None
+                        return None
+            else:
+                dt = dt_value
+
+            # Ensure timezone-aware and in UTC
+            if dt.tzinfo is None:
+                # Assume naive datetime is UTC (PostgreSQL default)
+                dt = dt.replace(tzinfo=UTC)
+            elif dt.tzinfo != UTC:
+                # Convert to UTC if in different timezone
+                dt = dt.astimezone(UTC)
+            return dt
+
         services = {
             task_name: IndividualServiceStatus(
                 task_name=task_name,
                 is_running=info["is_running"],
-                started_at=info["started_at"],
-                last_execution_at=info["last_execution_at"],
-                next_execution_at=info["next_execution_at"],
+                started_at=ensure_utc_datetime(info["started_at"]),
+                last_execution_at=ensure_utc_datetime(info["last_execution_at"]),
+                next_execution_at=ensure_utc_datetime(info["next_execution_at"]),
                 process_id=info["process_id"],
                 schedule_enabled=info["schedule_enabled"],
                 last_execution_status=info.get("last_execution_status"),

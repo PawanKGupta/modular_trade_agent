@@ -2,7 +2,7 @@
 Unit tests for IndividualServiceManager - Timeout and Stale Execution Cleanup
 
 Tests for:
-- 5-minute timeout for all tasks (including analysis)
+- 2-minute timeout for all tasks (including analysis)
 - Stale execution cleanup with correct timeout
 - Age calculation accuracy with timezone-aware datetimes
 - No false "failed" status due to timezone issues
@@ -42,11 +42,11 @@ class TestIndividualServiceManagerTimeout:
     """Test suite for timeout and stale execution cleanup"""
 
     def test_cleanup_stale_execution_uses_5_minute_timeout(self, db_session, sample_user):
-        """Test that _cleanup_stale_execution uses 5-minute timeout for all tasks"""
+        """Test that _cleanup_stale_execution uses 2-minute timeout for all tasks"""
         manager = IndividualServiceManager(db_session)
 
-        # Create a stale execution (6 minutes old - should be cleaned up)
-        stale_time = ist_now() - timedelta(minutes=6)
+        # Create a stale execution (3 minutes old - should be cleaned up)
+        stale_time = ist_now() - timedelta(minutes=3)
         stale_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
@@ -71,11 +71,11 @@ class TestIndividualServiceManagerTimeout:
         assert "stale_execution" in str(stale_execution.details)
 
     def test_cleanup_stale_execution_does_not_clean_recent_execution(self, db_session, sample_user):
-        """Test that _cleanup_stale_execution does not clean recent executions (< 5 minutes)"""
+        """Test that _cleanup_stale_execution does not clean recent executions (< 2 minutes)"""
         manager = IndividualServiceManager(db_session)
 
-        # Create a recent execution (2 minutes old - should NOT be cleaned up)
-        recent_time = ist_now() - timedelta(minutes=2)
+        # Create a recent execution (1 minute old - should NOT be cleaned up)
+        recent_time = ist_now() - timedelta(minutes=1)
         recent_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
@@ -100,11 +100,11 @@ class TestIndividualServiceManagerTimeout:
         assert recent_execution.id == execution_id
 
     def test_cleanup_stale_execution_5_minute_boundary(self, db_session, sample_user):
-        """Test that _cleanup_stale_execution correctly handles 5-minute boundary"""
+        """Test that _cleanup_stale_execution correctly handles 2-minute boundary"""
         manager = IndividualServiceManager(db_session)
 
-        # Create execution exactly at 5-minute boundary (should be cleaned up)
-        boundary_time = ist_now() - timedelta(minutes=5, seconds=1)
+        # Create execution just beyond 2-minute boundary (should be cleaned up)
+        boundary_time = ist_now() - timedelta(minutes=2, seconds=1)
         boundary_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
@@ -119,7 +119,7 @@ class TestIndividualServiceManagerTimeout:
         # Clean up stale executions
         cleaned = manager._cleanup_stale_execution(sample_user.id, "analysis", context="test")
 
-        # Should have cleaned up (5 minutes + 1 second > 5 minutes)
+        # Should have cleaned up (2 minutes + 1 second > 2 minutes)
         assert cleaned is True
         db_session.refresh(boundary_execution)
         assert boundary_execution.status == "failed"
@@ -153,15 +153,15 @@ class TestIndividualServiceManagerTimeout:
         assert fresh_execution.id == execution_id
 
     def test_cleanup_stale_execution_works_for_all_task_types(self, db_session, sample_user):
-        """Test that 5-minute timeout applies to all task types, not just analysis"""
+        """Test that 2-minute timeout applies to all task types, not just analysis"""
         manager = IndividualServiceManager(db_session)
 
         # Test with different task types
         task_types = ["analysis", "buy_orders", "sell_monitor", "eod_cleanup", "premarket_retry"]
 
         for task_name in task_types:
-            # Create stale execution (6 minutes old)
-            stale_time = ist_now() - timedelta(minutes=6)
+            # Create stale execution (3 minutes old)
+            stale_time = ist_now() - timedelta(minutes=3)
             stale_execution = IndividualServiceTaskExecution(
                 user_id=sample_user.id,
                 task_name=task_name,
@@ -186,11 +186,11 @@ class TestIndividualServiceManagerTimeout:
             db_session.commit()
 
     def test_get_status_uses_5_minute_timeout(self, db_session, sample_user):
-        """Test that get_status() uses 5-minute timeout when checking for stale executions"""
+        """Test that get_status() uses 2-minute timeout when checking for stale executions"""
         manager = IndividualServiceManager(db_session)
 
-        # Create a stale execution (6 minutes old)
-        stale_time = ist_now() - timedelta(minutes=6)
+        # Create a stale execution (3 minutes old)
+        stale_time = ist_now() - timedelta(minutes=3)
         stale_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
@@ -219,8 +219,8 @@ class TestIndividualServiceManagerTimeout:
         """Test that run_once() cleans stale executions before checking if task is running"""
         manager = IndividualServiceManager(db_session)
 
-        # Create a stale execution (6 minutes old)
-        stale_time = ist_now() - timedelta(minutes=6)
+        # Create a stale execution (3 minutes old)
+        stale_time = ist_now() - timedelta(minutes=3)
         stale_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
@@ -248,12 +248,12 @@ class TestIndividualServiceManagerTimeout:
         """Test that age calculations are accurate with timezone-aware datetimes"""
         manager = IndividualServiceManager(db_session)
 
-        # Create execution 3 minutes ago
-        three_minutes_ago = ist_now() - timedelta(minutes=3)
+        # Create execution 1 minute ago
+        one_minute_ago = ist_now() - timedelta(minutes=1)
         execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",
-            executed_at=three_minutes_ago,
+            executed_at=one_minute_ago,
             status="running",
             duration_seconds=0.0,
             execution_type="run_once",
@@ -261,10 +261,10 @@ class TestIndividualServiceManagerTimeout:
         db_session.add(execution)
         db_session.commit()
 
-        # Clean up stale executions (should NOT clean up 3-minute-old execution)
+        # Clean up stale executions (should NOT clean up 1-minute-old execution)
         cleaned = manager._cleanup_stale_execution(sample_user.id, "analysis", context="test")
 
-        # Should NOT have cleaned up (3 minutes < 5 minutes)
+        # Should NOT have cleaned up (1 minute < 2 minutes)
         assert cleaned is False
 
         # Verify execution is still running
@@ -381,8 +381,8 @@ class TestIndividualServiceManagerTimeout:
         """Test that get_status() does not force failed status for recent executions"""
         manager = IndividualServiceManager(db_session)
 
-        # Create a recent execution (2 minutes old)
-        recent_time = ist_now() - timedelta(minutes=2)
+        # Create a recent execution (1 minute old)
+        recent_time = ist_now() - timedelta(minutes=1)
         recent_execution = IndividualServiceTaskExecution(
             user_id=sample_user.id,
             task_name="analysis",

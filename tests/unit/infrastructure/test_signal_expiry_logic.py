@@ -135,46 +135,46 @@ class TestSignalExpiryTimeCalculation:
 
     def test_holiday_handling_signal_before_holiday(self, signals_repo):
         """Signal before holiday should expire after holiday"""
-        # Signal from Tuesday, Apr 9, 2025 (next day is holiday: Apr 10 - Shri Mahavir Jayanti)
-        signal_time = datetime(2025, 4, 9, 16, 0, 0, tzinfo=IST)
+        # Signal from Thursday, Apr 2, 2026 (next day is holiday: Apr 3 - Good Friday)
+        signal_time = datetime(2026, 4, 2, 16, 0, 0, tzinfo=IST)
 
         expiry_time = signals_repo.get_signal_expiry_time(signal_time)
 
-        # Should expire on Friday, Apr 11, 2025 at 3:30 PM IST (skip holiday on Apr 10)
-        expected_expiry = datetime(2025, 4, 11, 15, 30, 0, tzinfo=IST)
+        # Should expire on Monday, Apr 6, 2026 at 3:30 PM IST (skip Good Friday + weekend)
+        expected_expiry = datetime(2026, 4, 6, 15, 30, 0, tzinfo=IST)
         assert expiry_time == expected_expiry
 
     def test_holiday_handling_signal_on_friday_before_holiday_weekend(self, signals_repo):
-        """Signal on Friday before holiday weekend should skip holiday and weekend"""
-        # Signal from Friday, Apr 17, 2025 (next day is holiday: Apr 18 - Good Friday)
-        signal_time = datetime(2025, 4, 17, 16, 0, 0, tzinfo=IST)
+        """Signal on Thursday before holiday weekend should skip holiday and weekend"""
+        # Signal from Thursday, Apr 2, 2026 (next day is holiday: Apr 3 - Good Friday)
+        signal_time = datetime(2026, 4, 2, 16, 0, 0, tzinfo=IST)
 
         expiry_time = signals_repo.get_signal_expiry_time(signal_time)
 
-        # Should expire on Monday, Apr 21, 2025 at 3:30 PM IST (skip Good Friday + weekend)
-        expected_expiry = datetime(2025, 4, 21, 15, 30, 0, tzinfo=IST)
+        # Should expire on Monday, Apr 6, 2026 at 3:30 PM IST (skip Good Friday + weekend)
+        expected_expiry = datetime(2026, 4, 6, 15, 30, 0, tzinfo=IST)
         assert expiry_time == expected_expiry
 
     def test_holiday_handling_diwali_holidays(self, signals_repo):
-        """Signal before Diwali holidays should skip both holidays"""
-        # Signal from Monday, Oct 20, 2025 (next day is holiday: Oct 21 - Diwali Laxmi Pujan)
-        signal_time = datetime(2025, 10, 20, 16, 0, 0, tzinfo=IST)
+        """Signal before Diwali holiday should skip the holiday"""
+        # Signal from Monday, Nov 9, 2026 (next day is holiday: Nov 10 - Diwali-Balipratipada)
+        signal_time = datetime(2026, 11, 9, 16, 0, 0, tzinfo=IST)
 
         expiry_time = signals_repo.get_signal_expiry_time(signal_time)
 
-        # Should expire on Thursday, Oct 23, 2025 at 3:30 PM IST (skip Oct 21 and Oct 22 holidays)
-        expected_expiry = datetime(2025, 10, 23, 15, 30, 0, tzinfo=IST)
+        # Should expire on Wednesday, Nov 11, 2026 at 3:30 PM IST (skip Nov 10 holiday)
+        expected_expiry = datetime(2026, 11, 11, 15, 30, 0, tzinfo=IST)
         assert expiry_time == expected_expiry
 
     def test_holiday_handling_signal_on_holiday(self, signals_repo):
         """Signal created on holiday should expire on next trading day"""
-        # Signal from holiday: Monday, Mar 31, 2025 (Id-Ul-Fitr)
-        signal_time = datetime(2025, 3, 31, 16, 0, 0, tzinfo=IST)
+        # Signal from holiday: Tuesday, Mar 31, 2026 (Shri Mahavir Jayanti)
+        signal_time = datetime(2026, 3, 31, 16, 0, 0, tzinfo=IST)
 
         expiry_time = signals_repo.get_signal_expiry_time(signal_time)
 
-        # Should expire on Tuesday, Apr 1, 2025 at 3:30 PM IST
-        expected_expiry = datetime(2025, 4, 1, 15, 30, 0, tzinfo=IST)
+        # Should expire on Wednesday, Apr 1, 2026 at 3:30 PM IST
+        expected_expiry = datetime(2026, 4, 1, 15, 30, 0, tzinfo=IST)
         assert expiry_time == expected_expiry
 
 

@@ -231,7 +231,7 @@ class TestPositionsTableSchema:
 
     def test_positions_table_unique_constraint(self, inspector):
         """Validate Positions table does NOT have unique constraint on (user_id, symbol)
-        
+
         This constraint was removed to support multiple positions per symbol
         (one open, multiple closed).
         """
@@ -241,7 +241,9 @@ class TestPositionsTableSchema:
             (uc for uc in unique_constraints if set(uc["column_names"]) == {"user_id", "symbol"}),
             None,
         )
-        assert user_symbol_constraint is None, "Unique constraint (user_id, symbol) should not exist - multiple positions per symbol are now allowed"
+        assert (
+            user_symbol_constraint is None
+        ), "Unique constraint (user_id, symbol) should not exist - multiple positions per symbol are now allowed"
 
 
 class TestFillsTableSchema:
@@ -251,15 +253,15 @@ class TestFillsTableSchema:
         """Validate Fills table has all expected columns"""
         columns = {col["name"]: col for col in inspector.get_columns("fills")}
 
-        required_columns = ["id", "order_id", "qty", "price", "ts"]
+        required_columns = ["id", "order_id", "quantity", "price", "filled_at"]
         for col_name in required_columns:
             assert col_name in columns, f"Missing required column: {col_name}"
 
         assert columns["order_id"]["type"].python_type == int
         assert not columns["order_id"]["nullable"]
 
-        assert columns["qty"]["type"].python_type == float
-        assert not columns["qty"]["nullable"]
+        assert columns["quantity"]["type"].python_type == float
+        assert not columns["quantity"]["nullable"]
 
         assert columns["price"]["type"].python_type == float
         assert not columns["price"]["nullable"]

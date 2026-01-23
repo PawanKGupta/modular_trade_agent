@@ -283,16 +283,16 @@ class TestReentryIntegrationRealTrading:
         # Verify re-entry was attempted (integration test focuses on flow, not full order placement)
         assert summary["attempted"] == 1
 
-        # If order was placed, verify it's in database
-        from src.infrastructure.persistence.orders_repository import OrdersRepository
-
-        orders_repo = OrdersRepository(db_session)
-        orders = orders_repo.list(test_user.id)
-        reentry_orders = [o for o in orders if o.entry_type == "reentry"]
-
-        # For integration test, we verify the re-entry check happened
-        # Order placement may fail due to mocking, but the flow is verified
+        # For integration test, we verify the re-entry check happened.
+        # Order placement may fail due to mocking, but the flow is verified.
         if summary["placed"] > 0:
+            # If order was placed, verify it's in database
+            from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+            orders_repo = OrdersRepository(db_session)
+            orders_result = orders_repo.list(test_user.id)
+            orders = orders_result[0] if isinstance(orders_result, tuple) else orders_result
+            reentry_orders = [o for o in orders if getattr(o, "entry_type", None) == "reentry"]
             assert len(reentry_orders) > 0
             reentry_order_id = reentry_orders[0].broker_order_id
         else:
@@ -558,7 +558,8 @@ class TestReentryIntegrationPaperTrading:
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
         orders_repo = OrdersRepository(db_session)
-        orders = orders_repo.list(test_user.id)
+        orders_result = orders_repo.list(test_user.id)
+        orders = orders_result[0] if isinstance(orders_result, tuple) else orders_result
         reentry_orders = [o for o in orders if o.entry_type == "reentry"]
 
         if len(reentry_orders) > 0:

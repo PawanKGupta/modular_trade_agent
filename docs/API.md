@@ -145,20 +145,71 @@ Content-Type: application/json
 
 #### Get Orders
 ```http
-GET /api/v1/user/orders?limit=50&offset=0&status=open
+GET /api/v1/user/orders/?page=1&page_size=50&status=pending
 Authorization: Bearer <token>
 ```
 
 **Query Parameters:**
-- `limit` (optional): Number of results
-- `offset` (optional): Pagination offset
-- `status` (optional): Filter by status (`open`, `filled`, `cancelled`, `rejected`)
+- `status` (optional): Filter by status (`pending`, `ongoing`, `closed`, `failed`, `cancelled`)
+- `reason` (optional): Filter by reason (partial match)
+- `from_date` (optional): Filter orders from this date (`YYYY-MM-DD`)
+- `to_date` (optional): Filter orders to this date (`YYYY-MM-DD`)
+- `page` (optional): Page number (1-based, default: 1)
+- `page_size` (optional): Items per page (default: 50)
 
-#### Get Order by ID
+**Response (paginated):**
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "page_size": 50,
+  "total_pages": 0
+}
+```
+
+#### Retry Failed Order
 ```http
-GET /api/v1/user/orders/{order_id}
+POST /api/v1/user/orders/{order_id}/retry
 Authorization: Bearer <token>
 ```
+
+#### Drop Failed Order From Retry Queue
+```http
+DELETE /api/v1/user/orders/{order_id}
+Authorization: Bearer <token>
+```
+
+#### Sync Order Status
+```http
+POST /api/v1/user/orders/sync?order_id=123
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `order_id` (optional): Sync specific order. If omitted, syncs all pending/ongoing orders
+
+**Response:**
+```json
+{
+  "message": "Order sync completed",
+  "sync_performed": true,
+  "monitoring_active": false,
+  "synced": 2,
+  "updated": 2,
+  "executed": 1,
+  "rejected": 1,
+  "cancelled": 0,
+  "errors": []
+}
+```
+
+**Use Cases:**
+- Order monitoring service is not running
+- Force refresh order status
+- Troubleshooting order status issues
+
+**Note:** If monitoring service (unified or sell_monitor) is active, the endpoint returns a message indicating automatic sync is available and no manual sync is performed.
 
 ### Targets
 
@@ -533,14 +584,16 @@ Currently, no rate limiting is implemented. Consider implementing for production
 
 ## Pagination
 
-Endpoints that return lists support pagination:
+Some endpoints return paginated objects (with `items`, `total`, `page`, `page_size`, `total_pages`).
 
-- `limit`: Number of results per page (default: 50)
-- `offset`: Number of results to skip (default: 0)
+For these endpoints, use:
+
+- `page`: Page number (1-based)
+- `page_size`: Items per page
 
 **Example:**
 ```http
-GET /api/v1/user/orders?limit=20&offset=40
+GET /api/v1/user/orders/?page=2&page_size=20
 ```
 
 ## Filtering

@@ -71,7 +71,8 @@ def auto_trade_engine(mock_auth, strategy_config, mock_telegram_notifier):
         # Mock orders repository
         engine.orders_repo = MagicMock()
         engine.orders_repo.create_amo = Mock()
-        engine.orders_repo.list = Mock(return_value=[])
+        # Repo contract: list() returns (items, total)
+        engine.orders_repo.list = Mock(return_value=([], 0))
         engine.orders_repo.mark_failed = Mock()
         engine.orders_repo.mark_cancelled = Mock()
         engine.orders_repo.update = Mock()
@@ -118,7 +119,7 @@ class TestAutoTradeEngineNotificationsPhase9:
                     assert call_args[1]["order_type"] == "MARKET"
 
     def test_notify_order_placed_limit_order(self, auto_trade_engine, mock_telegram_notifier):
-        """Test that limit order placement sends notification with price (Phase 9)"""
+        """Test that non-EQ symbols are rejected and don't notify (Phase 9)"""
         # Mock order placement response - use format that passes validation
         mock_response = {"data": {"nOrdNo": "ORDER123"}, "status": "success"}
         # Mock place_limit_buy (the actual method called for LIMIT orders)
@@ -133,7 +134,8 @@ class TestAutoTradeEngineNotificationsPhase9:
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"):
                     # Mock scrip_master to return None so it doesn't try symbol resolution
                     auto_trade_engine.scrip_master = None
-                    # Place limit order (T2T segment uses limit order automatically)
+
+                    # Current behavior: engine requires an -EQ suffix; non-EQ series are rejected.
                     success, order_id = auto_trade_engine._attempt_place_order(
                         broker_symbol="RELIANCE-BE",  # T2T segment triggers limit order
                         ticker="RELIANCE",
@@ -142,13 +144,11 @@ class TestAutoTradeEngineNotificationsPhase9:
                         ind=MagicMock(),
                     )
 
-                    assert success is True
-                    # Verify notification was sent with limit price
-                    mock_telegram_notifier.notify_order_placed.assert_called_once()
-                    call_args = mock_telegram_notifier.notify_order_placed.call_args
-                    assert call_args[1]["order_type"] == "LIMIT"
-                    # Limit price is close * 1.01 for T2T segments
-                    assert call_args[1]["price"] == pytest.approx(2495.0 * 1.01, rel=0.01)
+                    assert success is False
+                    assert order_id is None
+                    auto_trade_engine.orders.place_limit_buy.assert_not_called()
+                    auto_trade_engine.orders.place_market_buy.assert_not_called()
+                    mock_telegram_notifier.notify_order_placed.assert_not_called()
 
     def test_notify_order_placed_no_notification_when_disabled(self, auto_trade_engine):
         """Test that notification is not sent when telegram is disabled (Phase 9)"""
@@ -224,7 +224,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         }
 
         # Mock orders repository to return empty list (new failed order)
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_order = MagicMock()
         mock_order.retry_count = None
         auto_trade_engine.orders_repo.create_amo.return_value = mock_order
@@ -247,7 +247,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         mock_order.retry_count = 2
         mock_order.symbol = "RELIANCE"
         mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_order], 1)
 
         # Mock failed order update
         failed_order = {
@@ -275,7 +275,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         mock_order.retry_count = 3
         mock_order.symbol = "RELIANCE"
         mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_order], 1)
         auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
         auto_trade_engine._remove_failed_order("RELIANCE")
@@ -298,7 +298,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         mock_order.retry_count = 2
         mock_order.symbol = "RELIANCE"
         mock_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
-        auto_trade_engine.orders_repo.list.return_value = [mock_order]
+        auto_trade_engine.orders_repo.list.return_value = ([mock_order], 1)
         auto_trade_engine.orders_repo.mark_cancelled.return_value = mock_order
 
         # Simulate successful retry by removing the failed order
@@ -324,7 +324,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         }
 
         # Mock orders repository to return empty list (new failed order)
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_order = MagicMock()
         mock_order.retry_count = None
         auto_trade_engine.orders_repo.create_amo.return_value = mock_order
@@ -350,7 +350,7 @@ class TestAutoTradeEngineNotificationsPhase9:
         }
 
         # Mock orders repository to return empty list (new failed order)
-        auto_trade_engine.orders_repo.list.return_value = []
+        auto_trade_engine.orders_repo.list.return_value = ([], 0)
         mock_order = MagicMock()
         mock_order.retry_count = None
         auto_trade_engine.orders_repo.create_amo.return_value = mock_order

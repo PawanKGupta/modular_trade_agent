@@ -8,13 +8,18 @@ Verifies that paper trading implements the same re-entry logic as real trading:
 - Reset logic
 """
 
+import shutil
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
-from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
+from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
+from src.application.services.paper_trading_service_adapter import (
+    PaperTradingEngineAdapter,
+    PaperTradingServiceAdapter,
+)
 
 
 @pytest.fixture
@@ -22,13 +27,8 @@ def paper_service(tmp_path):
     """Create paper trading service with temporary storage"""
     storage_path = str(tmp_path / "paper_trading")
 
-    # Create config
-    config = PaperTradingConfig(
-        initial_capital=200000.0,  # Higher capital for testing
-        storage_path=storage_path,
-        enable_fees=False,  # Simplify for testing
-        enable_slippage=False,
-    )
+    # Ensure a clean slate even if pytest temp dirs persist
+    shutil.rmtree(storage_path, ignore_errors=True)
 
     # Create service adapter
     mock_db = MagicMock()
@@ -39,12 +39,38 @@ def paper_service(tmp_path):
         storage_path=storage_path,
     )
 
-    # Initialize
-    service.initialize()
+    # Build a deterministic paper broker for unit tests (avoid service.initialize(),
+    # which can restore/execute persisted orders and use live price providers).
+    config = PaperTradingConfig(
+        initial_capital=200000.0,
+        storage_path=storage_path,
+        price_source="mock",
+        enable_fees=False,
+        enable_slippage=False,
+        enforce_market_hours=False,
+        check_sufficient_funds=False,
+        auto_save=False,
+        max_position_size=200000.0,
+    )
 
-    # Increase max position size for testing
-    if service.broker:
-        service.broker.config.max_position_size = 200000.0
+    broker = PaperTradingBrokerAdapter(
+        user_id=service.user_id,
+        config=config,
+        storage_path=storage_path,
+        db_session=None,
+    )
+    assert broker.connect() is True
+
+    service.config = config
+    service.broker = broker
+    service.engine = PaperTradingEngineAdapter(
+        broker=broker,
+        user_id=service.user_id,
+        db_session=service.db,
+        strategy_config=service.strategy_config,
+        logger=service.logger,
+        storage_path=storage_path,
+    )
 
     # Place initial buy order to create a holding
     from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType

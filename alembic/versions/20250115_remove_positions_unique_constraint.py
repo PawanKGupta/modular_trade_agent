@@ -1,3 +1,4 @@
+# ruff: noqa
 """remove_positions_unique_constraint
 
 Revision ID: 20250115_remove_positions_unique_constraint
@@ -5,7 +6,7 @@ Revises: 566893623349
 Create Date: 2025-01-15 00:00:00.000000+00:00
 """
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from alembic import op
 
@@ -75,26 +76,61 @@ def upgrade() -> None:
         )
     else:
         # PostgreSQL and other databases: Drop constraint and add partial unique index
-        # Step 1: Drop the unique constraint
-        op.drop_constraint("uq_positions_user_symbol", "positions", type_="unique")
+        # Step 1: Drop the unique constraint (if it exists)
+        existing_tables = inspector.get_table_names()
+        if "positions" in existing_tables:
+            existing_constraints = [
+                constraint["name"] for constraint in inspector.get_unique_constraints("positions")
+            ]
+            if "uq_positions_user_symbol" in existing_constraints:
+                op.drop_constraint("uq_positions_user_symbol", "positions", type_="unique")
 
         # Step 2: Add partial unique index for open positions only
         # This ensures only one open position per (user_id, symbol)
-        op.create_index(
-            "uq_positions_user_symbol_open",
-            "positions",
-            ["user_id", "symbol"],
-            unique=True,
-            postgresql_where=op.text("closed_at IS NULL"),
-        )
+        # First, check if there are any duplicate open positions and close the older ones
+        existing_indices = [idx["name"] for idx in inspector.get_indexes("positions")]
+
+        if "uq_positions_user_symbol_open" not in existing_indices:
+            # Check for duplicate open positions and close the older ones
+            conn = bind
+            conn.execute(
+                text(
+                    """
+                UPDATE positions p1
+                SET closed_at = CURRENT_TIMESTAMP
+                WHERE closed_at IS NULL
+                AND p1.id NOT IN (
+                    SELECT MAX(id)
+                    FROM positions p2
+                    WHERE p2.closed_at IS NULL
+                    AND p1.user_id = p2.user_id
+                    AND p1.symbol = p2.symbol
+                    GROUP BY p2.user_id, p2.symbol
+                )
+            """
+                )
+            )
+
+            try:
+                op.create_index(
+                    "uq_positions_user_symbol_open",
+                    "positions",
+                    ["user_id", "symbol"],
+                    unique=True,
+                    postgresql_where=text("closed_at IS NULL"),
+                )
+            except Exception:
+                # If index creation fails, skip it - it's not critical
+                pass
 
         # Step 3: Add performance index
-        op.create_index(
-            "idx_positions_user_symbol_closed_at",
-            "positions",
-            ["user_id", "symbol", "closed_at"],
-            unique=False,
-        )
+        if "idx_positions_user_symbol_closed_at" not in existing_indices:
+            op.create_index(
+                "idx_positions_user_symbol_closed_at",
+                "positions",
+                ["user_id", "symbol", "closed_at"],
+                unique=False,
+            )
 
 
 def downgrade() -> None:

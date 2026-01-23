@@ -230,13 +230,18 @@ from .routers import (
     admin,
     auth,
     broker,
+    export,
     logs,
+    metrics,
     ml,
+    monitoring,
     notification_preferences,
     notifications,
     orders,
     paper_trading,
     pnl,
+    portfolio,
+    reports,
     service,
     signals,
     targets,
@@ -249,7 +254,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
-app = FastAPI(title="Rebound API", version="1.0.0", debug=True)
+app = FastAPI(title="Rebound API", version="26.1.1", debug=True)
 _unified_tasks = []
 
 # Configure file logging to capture errors for analysis
@@ -663,9 +668,12 @@ app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-
 app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
 app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
+app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
+app.include_router(reports.router, prefix="/api/v1/user/reports", tags=["reports"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
 app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
-app.include_router(targets.router, prefix="/api/v1/user/targets", tags=["targets"])
+app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
+app.include_router(portfolio.router, prefix="/api/v1/user/portfolio", tags=["portfolio"])
 app.include_router(
     paper_trading.router, prefix="/api/v1/user/paper-trading", tags=["paper-trading"]
 )
@@ -673,10 +681,12 @@ app.include_router(
     notification_preferences.router, prefix="/api/v1/user", tags=["notification-preferences"]
 )
 app.include_router(notifications.router, prefix="/api/v1/user", tags=["notifications"])
+app.include_router(metrics.router, prefix="/api/v1", tags=["metrics"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+app.include_router(monitoring.router, prefix="/api/v1/admin/monitoring", tags=["monitoring"])
 
 
 async def _log_retention_worker():
@@ -695,6 +705,18 @@ async def start_log_retention_worker():
     app.state.log_retention_task = asyncio.create_task(_log_retention_worker())
 
 
+@app.on_event("startup")
+async def start_background_scheduler():
+    """Start the background job scheduler for MTM updates and other scheduled tasks"""
+    try:
+        from server.app.jobs import start_scheduler
+
+        start_scheduler()
+        logging.info("Background scheduler started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start background scheduler: {e}")
+
+
 @app.on_event("shutdown")
 async def stop_log_retention_worker():
     task = getattr(app.state, "log_retention_task", None)
@@ -704,3 +726,15 @@ async def stop_log_retention_worker():
             await task
 
     # File-based logging doesn't require shutdown
+
+
+@app.on_event("shutdown")
+async def stop_background_scheduler():
+    """Stop the background job scheduler"""
+    try:
+        from server.app.jobs import stop_scheduler
+
+        stop_scheduler()
+        logging.info("Background scheduler stopped")
+    except Exception as e:
+        logging.error(f"Failed to stop background scheduler: {e}")

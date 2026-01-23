@@ -6,6 +6,7 @@ Edge Cases #14, #15, #17: Manual sell detection and positions table updates.
 
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
 # Add project root to path
@@ -15,7 +16,9 @@ sys.path.insert(0, str(project_root))
 import pytest  # noqa: E402
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager  # noqa: E402
-from src.infrastructure.db.models import Positions  # noqa: E402
+from src.infrastructure.db.models import Positions, Orders  # noqa: E402
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
+from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 
 
 class TestManualSellDetection:
@@ -348,3 +351,144 @@ class TestManualSellDetection:
         # Verify: Reconciliation was called
         assert mock_portfolio.get_holdings.called
         assert orders_placed == 0
+
+    def test_reconcile_manual_full_sell_finds_exit_price_from_orders(
+        self, sell_manager, mock_positions_repo, mock_portfolio, db_session
+    ):
+        """Test Fix #2: Manual full sell detection finds exit_price and sell_order_id from executed orders"""
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        # Use real repositories for this test
+        orders_repo = OrdersRepository(db_session)
+        positions_repo = PositionsRepository(db_session)
+        sell_manager.orders_repo = orders_repo
+        sell_manager.positions_repo = positions_repo
+        sell_manager.user_id = 1
+
+        # Create a user
+        from src.infrastructure.db.models import Users
+        user = Users(email="test@example.com", password_hash="hash", role="user")
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        sell_manager.user_id = user.id
+
+        # Create an open position
+        position = positions_repo.upsert(
+            user_id=user.id,
+            symbol="IMFA-EQ",
+            quantity=82,
+            avg_price=1222.7,
+            opened_at=ist_now(),
+        )
+
+        # Create an executed sell order (recent, within 24 hours)
+        sell_order = Orders(
+            user_id=user.id,
+            symbol="IMFA-EQ",
+            side="sell",
+            order_type="limit",
+            quantity=82,
+            status=DbOrderStatus.CLOSED,
+            execution_price=1331.19,
+            execution_qty=82,
+            execution_time=ist_now() - timedelta(hours=2),  # 2 hours ago
+            placed_at=ist_now() - timedelta(hours=3),
+        )
+        db_session.add(sell_order)
+        db_session.commit()
+        db_session.refresh(sell_order)
+
+        # Mock portfolio to return empty holdings (manual sell detected)
+        mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_positions_repo.list.return_value = [position]
+
+        # Mock ist_now function for the reconciliation
+        with patch("modules.kotak_neo_auto_trader.sell_engine.ist_now", return_value=ist_now()):
+            # Execute reconciliation
+            stats = sell_manager._reconcile_positions_with_broker_holdings()
+
+        # Verify: Position marked as closed with exit details from order
+        assert stats["closed"] == 1
+        db_session.refresh(position)
+        assert position.closed_at is not None
+        assert position.exit_price == 1331.19  # From sell order
+        assert position.exit_reason == "MANUAL"
+        assert position.sell_order_id == sell_order.id  # Linked to sell order
+        # realized_pnl should be calculated automatically: (1331.19 - 1222.7) * 82 = 8896.18
+        assert position.realized_pnl == pytest.approx(8896.18, abs=0.01)
+
+    def test_reconcile_manual_full_sell_uses_most_recent_order(
+        self, sell_manager, mock_positions_repo, mock_portfolio, db_session
+    ):
+        """Test Fix #2: Manual sell detection uses most recent executed order when multiple exist"""
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        # Use real repositories
+        orders_repo = OrdersRepository(db_session)
+        positions_repo = PositionsRepository(db_session)
+        sell_manager.orders_repo = orders_repo
+        sell_manager.positions_repo = positions_repo
+
+        # Create a user
+        from src.infrastructure.db.models import Users
+        user = Users(email="test2@example.com", password_hash="hash", role="user")
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        sell_manager.user_id = user.id
+
+        # Create an open position
+        position = positions_repo.upsert(
+            user_id=user.id,
+            symbol="RELIANCE-EQ",
+            quantity=20,
+            avg_price=2500.0,
+            opened_at=ist_now(),
+        )
+
+        # Create two executed sell orders - older one first
+        old_sell_order = Orders(
+            user_id=user.id,
+            symbol="RELIANCE-EQ",
+            side="sell",
+            order_type="limit",
+            quantity=20,
+            status=DbOrderStatus.CLOSED,
+            execution_price=2400.0,  # Older price
+            execution_qty=20,
+            execution_time=ist_now() - timedelta(hours=5),  # 5 hours ago
+        )
+        db_session.add(old_sell_order)
+
+        # Most recent sell order (should be used)
+        recent_sell_order = Orders(
+            user_id=user.id,
+            symbol="RELIANCE-EQ",
+            side="sell",
+            order_type="limit",
+            quantity=20,
+            status=DbOrderStatus.CLOSED,
+            execution_price=2600.0,  # More recent price
+            execution_qty=20,
+            execution_time=ist_now() - timedelta(hours=1),  # 1 hour ago
+        )
+        db_session.add(recent_sell_order)
+        db_session.commit()
+        db_session.refresh(recent_sell_order)
+
+        # Mock portfolio to return empty holdings
+        mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_positions_repo.list.return_value = [position]
+
+        # Mock ist_now function
+        with patch("modules.kotak_neo_auto_trader.sell_engine.ist_now", return_value=ist_now()):
+            stats = sell_manager._reconcile_positions_with_broker_holdings()
+
+        # Verify: Position uses the most recent order (2600.0, not 2400.0)
+        assert stats["closed"] == 1
+        db_session.refresh(position)
+        assert position.exit_price == 2600.0  # From most recent order
+        assert position.sell_order_id == recent_sell_order.id  # Most recent order ID

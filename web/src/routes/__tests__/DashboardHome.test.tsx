@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { withProviders } from '@/test/utils';
+import * as useSettings from '@/hooks/useSettings';
 import { DashboardHome } from '../dashboard/DashboardHome';
 import type { ServiceStatus } from '@/api/service';
 import type { PaperTradingPortfolio } from '@/api/user';
@@ -106,10 +107,18 @@ vi.mock('@/api/signals', () => ({
 }));
 
 vi.mock('@/api/orders', () => ({
-	listOrders: vi.fn(() => Promise.resolve([
-		{ id: 1, symbol: 'RELIANCE.NS', status: 'pending' },
-		{ id: 2, symbol: 'TCS.NS', status: 'pending' },
-	])),
+	listOrders: vi.fn(() =>
+		Promise.resolve({
+			items: [
+				{ id: 1, symbol: 'RELIANCE.NS', side: 'buy', quantity: 1, price: 1, status: 'pending', created_at: null, updated_at: null },
+				{ id: 2, symbol: 'TCS.NS', side: 'buy', quantity: 1, price: 1, status: 'pending', created_at: null, updated_at: null },
+			],
+			total: 2,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		})
+	),
 }));
 
 vi.mock('@/api/notifications', () => ({
@@ -197,8 +206,19 @@ describe('DashboardHome', () => {
 		daysRed: 5,
 	};
 
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(useSettings.useSettings).mockReturnValue({
+			settings: { trade_mode: 'paper', broker: null, broker_status: null },
+			isLoading: false,
+			error: null,
+			isPaperMode: true,
+			isBrokerMode: false,
+			broker: null,
+			brokerStatus: null,
+			isBrokerConnected: false,
+		});
 	});
 
 	it('renders dashboard title and live indicator', async () => {
@@ -293,11 +313,9 @@ describe('DashboardHome', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('Portfolio Value')).toBeInTheDocument();
-			// Check that the card exists and contains some value
-			const portfolioCard = screen.getByText('Portfolio Value').closest('div')?.parentElement;
-			expect(portfolioCard).toBeInTheDocument();
-			// The card should contain some numeric value (portfolio value)
+			const portfolioLink = screen.getByRole('link', { name: 'View Portfolio →' });
+			expect(portfolioLink).toBeInTheDocument();
+			const portfolioCard = portfolioLink.closest('div');
 			expect(portfolioCard?.textContent).toMatch(/\d/);
 		});
 	});
@@ -527,13 +545,21 @@ describe('DashboardHome', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('0')).toBeInTheDocument();
+			expect(screen.getByText('Active Signals')).toBeInTheDocument();
+			const activeSignalsCard = screen.getByText('Active Signals').closest('div')?.parentElement;
+			expect(activeSignalsCard).toHaveTextContent('0');
 		});
 	});
 
 	it('handles zero open orders', async () => {
 		const ordersApi = await import('@/api/orders');
-		vi.mocked(ordersApi.listOrders).mockResolvedValueOnce([]);
+		vi.mocked(ordersApi.listOrders).mockResolvedValueOnce({
+			items: [],
+			total: 0,
+			page: 1,
+			page_size: 50,
+			total_pages: 1,
+		});
 
 		render(
 			withProviders(
@@ -545,9 +571,9 @@ describe('DashboardHome', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Open Orders')).toBeInTheDocument();
-			// The count should be 0, but we check the card exists
 			const openOrdersCard = screen.getByText('Open Orders').closest('div')?.parentElement;
 			expect(openOrdersCard).toBeInTheDocument();
+			expect(openOrdersCard).toHaveTextContent('0');
 		});
 	});
 
@@ -648,7 +674,8 @@ describe('DashboardHome', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('Portfolio Value')).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'View Portfolio →' })).toBeInTheDocument();
+			expect(screen.getByText(/-2\.50%/)).toBeInTheDocument();
 		});
 	});
 
@@ -763,7 +790,8 @@ describe('DashboardHome', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByText('Portfolio Value')).toBeInTheDocument();
+				const portfolioHeadings = screen.getAllByText('Portfolio Value');
+				expect(portfolioHeadings.length).toBeGreaterThan(0);
 				expect(screen.getByText('View Portfolio →')).toBeInTheDocument();
 			});
 		});
@@ -791,7 +819,8 @@ describe('DashboardHome', () => {
 
 			await waitFor(() => {
 				expect(screen.getByText('Broker Portfolio')).toBeInTheDocument();
-				expect(screen.queryByText('Portfolio Value')).not.toBeInTheDocument();
+				expect(screen.queryByText('Paper Mode')).not.toBeInTheDocument();
+				expect(screen.queryByText('Paper Trading Portfolio')).not.toBeInTheDocument();
 			});
 		});
 

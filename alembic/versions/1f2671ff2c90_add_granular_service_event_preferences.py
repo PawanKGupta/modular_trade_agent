@@ -1,3 +1,4 @@
+# ruff: noqa
 """add_granular_service_event_preferences
 
 Revision ID: 1f2671ff2c90
@@ -39,13 +40,19 @@ def upgrade() -> None:
     ]
 
     # Use raw SQL for SQLite (more reliable than op.add_column())
+    # For Postgres, use TRUE/FALSE instead of 1/0
+    is_postgres = conn.dialect.name == "postgresql"
+    default_true = "TRUE" if is_postgres else "1"
+
     columns_to_add = []
     if "notify_service_started" not in existing_columns:
-        columns_to_add.append("notify_service_started BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_service_started BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_service_stopped" not in existing_columns:
-        columns_to_add.append("notify_service_stopped BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(f"notify_service_stopped BOOLEAN DEFAULT {default_true} NOT NULL")
     if "notify_service_execution_completed" not in existing_columns:
-        columns_to_add.append("notify_service_execution_completed BOOLEAN DEFAULT 1 NOT NULL")
+        columns_to_add.append(
+            f"notify_service_execution_completed BOOLEAN DEFAULT {default_true} NOT NULL"
+        )
 
     # Execute all ALTER TABLE statements
     for col_def in columns_to_add:

@@ -30,6 +30,8 @@ export interface Order {
 	// Entry type and source tracking
 	entry_type?: string | null; // 'initial', 'reentry', 'manual'
 	is_manual?: boolean; // Derived from orig_source == 'manual'
+	// Phase 0.1: Trade mode display name
+	trade_mode_display?: string | null; // 'Paper' for paper trading, broker name (e.g., 'Kotak Neo') for broker trading
 }
 
 export interface ListOrdersParams {
@@ -37,10 +39,20 @@ export interface ListOrdersParams {
 	reason?: string;
 	from_date?: string;
 	to_date?: string;
+	page?: number;
+	page_size?: number;
 }
 
-export async function listOrders(params?: ListOrdersParams): Promise<Order[]> {
-	const { data } = await api.get<Order[]>('/user/orders/', { params });
+export interface PaginatedOrdersResponse {
+	items: Order[];
+	total: number;
+	page: number;
+	page_size: number;
+	total_pages: number;
+}
+
+export async function listOrders(params?: ListOrdersParams): Promise<PaginatedOrdersResponse> {
+	const { data } = await api.get<PaginatedOrdersResponse>('/user/orders/', { params });
 	return data;
 }
 
@@ -51,5 +63,25 @@ export async function retryOrder(orderId: number): Promise<Order> {
 
 export async function dropOrder(orderId: number): Promise<{ message: string }> {
 	const { data } = await api.delete<{ message: string }>(`/user/orders/${orderId}`);
+	return data;
+}
+
+export interface SyncOrderStatusResponse {
+	message: string;
+	sync_performed: boolean;
+	monitoring_active: boolean;
+	synced: number;
+	updated: number;
+	executed: number;
+	rejected: number;
+	cancelled: number;
+	errors: string[];
+}
+
+export async function syncOrderStatus(orderId?: number): Promise<SyncOrderStatusResponse> {
+	const url = orderId
+		? `/user/orders/sync?order_id=${orderId}`
+		: '/user/orders/sync';
+	const { data } = await api.post<SyncOrderStatusResponse>(url);
 	return data;
 }

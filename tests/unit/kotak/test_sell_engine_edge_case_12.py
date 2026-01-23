@@ -7,7 +7,7 @@ cancel any pending reentry orders to prevent position from being reopened.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -59,7 +59,7 @@ class TestCancelPendingReentryOrders:
         reentry_order_2.broker_order_id = "BROKER_ORDER_456"
 
         # Mock orders_repo.list to return reentry orders
-        sell_manager.orders_repo.list.return_value = [reentry_order_1, reentry_order_2]
+        sell_manager.orders_repo.list.return_value = ([reentry_order_1, reentry_order_2], 2)
 
         # Mock successful cancellation
         sell_manager.orders.cancel_order.return_value = True
@@ -77,7 +77,7 @@ class TestCancelPendingReentryOrders:
     def test_cancel_pending_reentry_orders_no_orders(self, sell_manager):
         """Test when no pending reentry orders exist"""
         # Setup: Mock orders_repo.list to return empty list
-        sell_manager.orders_repo.list.return_value = []
+        sell_manager.orders_repo.list.return_value = ([], 0)
 
         # Execute
         cancelled_count = sell_manager._cancel_pending_reentry_orders("RELIANCE")
@@ -107,7 +107,7 @@ class TestCancelPendingReentryOrders:
         tcs_order.broker_order_id = "BROKER_ORDER_456"
 
         # Mock orders_repo.list to return both orders
-        sell_manager.orders_repo.list.return_value = [reliance_order, tcs_order]
+        sell_manager.orders_repo.list.return_value = ([reliance_order, tcs_order], 2)
 
         # Mock successful cancellation
         sell_manager.orders.cancel_order.return_value = True
@@ -149,11 +149,14 @@ class TestCancelPendingReentryOrders:
         cancelled_order.broker_order_id = "BROKER_ORDER_789"
 
         # Mock orders_repo.list to return all orders
-        sell_manager.orders_repo.list.return_value = [
-            pending_order,
-            executed_order,
-            cancelled_order,
-        ]
+        sell_manager.orders_repo.list.return_value = (
+            [
+                pending_order,
+                executed_order,
+                cancelled_order,
+            ],
+            3,
+        )
 
         # Mock successful cancellation
         sell_manager.orders.cancel_order.return_value = True
@@ -187,7 +190,7 @@ class TestCancelPendingReentryOrders:
         initial_order.broker_order_id = "BROKER_ORDER_456"
 
         # Mock orders_repo.list to return both orders
-        sell_manager.orders_repo.list.return_value = [reentry_order, initial_order]
+        sell_manager.orders_repo.list.return_value = ([reentry_order, initial_order], 2)
 
         # Mock successful cancellation
         sell_manager.orders.cancel_order.return_value = True
@@ -213,7 +216,7 @@ class TestCancelPendingReentryOrders:
         reentry_order.broker_order_id = None  # No broker_order_id
 
         # Mock orders_repo.list to return the order
-        sell_manager.orders_repo.list.return_value = [reentry_order]
+        sell_manager.orders_repo.list.return_value = ([reentry_order], 1)
 
         # Execute
         cancelled_count = sell_manager._cancel_pending_reentry_orders("RELIANCE")
@@ -240,7 +243,7 @@ class TestCancelPendingReentryOrders:
         reentry_order.broker_order_id = "BROKER_ORDER_123"
 
         # Mock orders_repo.list to return the order
-        sell_manager.orders_repo.list.return_value = [reentry_order]
+        sell_manager.orders_repo.list.return_value = ([reentry_order], 1)
 
         # Mock failed cancellation
         sell_manager.orders.cancel_order.return_value = False
@@ -270,7 +273,7 @@ class TestCancelPendingReentryOrders:
         reentry_order.broker_order_id = "BROKER_ORDER_123"
 
         # Mock orders_repo.list to return the order
-        sell_manager.orders_repo.list.return_value = [reentry_order]
+        sell_manager.orders_repo.list.return_value = ([reentry_order], 1)
 
         # Mock exception during cancellation
         sell_manager.orders.cancel_order.side_effect = Exception("Broker API error")
@@ -349,11 +352,14 @@ class TestCancelPendingReentryOrders:
         tcs_order.broker_order_id = "BROKER_ORDER_789"
 
         # Mock orders_repo.list to return all orders
-        sell_manager.orders_repo.list.return_value = [
-            reliance_order_1,
-            reliance_order_2,
-            tcs_order,
-        ]
+        sell_manager.orders_repo.list.return_value = (
+            [
+                reliance_order_1,
+                reliance_order_2,
+                tcs_order,
+            ],
+            3,
+        )
 
         # Mock successful cancellation
         sell_manager.orders.cancel_order.return_value = True
@@ -371,4 +377,3 @@ class TestCancelPendingReentryOrders:
         assert "BROKER_ORDER_456" in cancelled_order_ids
         assert "BROKER_ORDER_789" not in cancelled_order_ids
         assert sell_manager.orders_repo.update.call_count == 2
-

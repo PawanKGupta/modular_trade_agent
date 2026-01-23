@@ -34,6 +34,29 @@ def test_get_or_create_key_default(monkeypatch):
     assert key == base64.urlsafe_b64encode(b"dev-secret-change".ljust(32, b"_")[:32])
 
 
+def test_get_or_create_key_uses_lowercase_jwt_secret(monkeypatch):
+    """Test that lowercase jwt_secret env var is also checked"""
+    monkeypatch.delenv("BROKER_SECRET_KEY", raising=False)
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    monkeypatch.setenv("jwt_secret", "lowercase-secret")
+    expected = base64.urlsafe_b64encode(b"lowercase-secret".ljust(32, b"_")[:32])
+    assert crypto._get_or_create_key() == expected
+
+
+def test_decrypt_blob_with_type_error(monkeypatch):
+    """Test decrypt_blob handles TypeError (e.g., from None input)"""
+    key = _fresh_key()
+    monkeypatch.setenv("BROKER_SECRET_KEY", key)
+
+    # The function catches TypeError, so this should return None
+    # We'll test with an invalid type that causes TypeError
+    class BadType:
+        pass
+
+    result = crypto.decrypt_blob(BadType())  # type: ignore
+    assert result is None
+
+
 def test_encrypt_decrypt_roundtrip(monkeypatch):
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)

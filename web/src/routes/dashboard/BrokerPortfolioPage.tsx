@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getPortfolio, type PaperTradingPortfolio } from '@/api/user';
 import { useSettings } from '@/hooks/useSettings';
 import { formatBrokerError, calculateRetryDelay } from '@/utils/brokerApi';
+import { exportPortfolio } from '@/api/export';
+import { ExportButton } from '@/components/ExportButton';
 
 function formatMoney(amount: number): string {
 	return `Rs ${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -12,8 +14,11 @@ function formatPercent(value: number): string {
 	return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
+// Removed unused DateRangePicker and related state
+
 export function BrokerPortfolioPage() {
 	const { isBrokerMode, isBrokerConnected, broker } = useSettings();
+	const [showExportOptions, setShowExportOptions] = useState(false);
 
 	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<PaperTradingPortfolio>({
 		queryKey: ['portfolio', 'broker'],
@@ -32,6 +37,12 @@ export function BrokerPortfolioPage() {
 	useEffect(() => {
 		document.title = 'Broker Portfolio';
 	}, []);
+
+	const handleExport = async () => {
+		await exportPortfolio({
+			tradeMode: 'broker',
+		});
+	};
 
 	// Format last update time
 	const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : 'Never';
@@ -100,24 +111,46 @@ export function BrokerPortfolioPage() {
 
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
-			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-				<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
-					<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">
-						Broker Portfolio {broker ? `(${broker.toUpperCase()})` : ''}
-					</h1>
+			<div className="flex flex-col gap-3">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+						<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">
+							Broker Portfolio {broker ? `(${broker.toUpperCase()})` : ''}
+						</h1>
+						<div className="flex items-center gap-2">
+							<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+							<span className="text-xs text-[var(--muted)]">
+								Live • Last update: {lastUpdate}
+							</span>
+						</div>
+					</div>
 					<div className="flex items-center gap-2">
-						<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-						<span className="text-xs text-[var(--muted)]">
-							Live • Last update: {lastUpdate}
-						</span>
+						<button
+							onClick={() => setShowExportOptions(!showExportOptions)}
+							className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
+						>
+							Export {showExportOptions ? '▲' : '▼'}
+						</button>
+						<button
+							onClick={() => refetch()}
+							className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
+						>
+							Refresh
+						</button>
 					</div>
 				</div>
-				<button
-					onClick={() => refetch()}
-					className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
-				>
-					Refresh
-				</button>
+
+				{showExportOptions && (
+					<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+						<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export Portfolio</h3>
+						<div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+							<ExportButton onExport={handleExport} label="Download CSV" />
+						</div>
+						<p className="text-xs text-[var(--muted)] mt-2">
+							Export current broker portfolio holdings with P&L, quantities, and prices.
+						</p>
+					</div>
+				)}
 			</div>
 
 			{/* Account Summary */}

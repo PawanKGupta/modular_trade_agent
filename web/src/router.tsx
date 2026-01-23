@@ -9,6 +9,7 @@ import { PaperTradingPage } from './routes/dashboard/PaperTradingPage';
 import { PaperTradingHistoryPage } from './routes/dashboard/PaperTradingHistoryPage';
 import { BrokerPortfolioPage } from './routes/dashboard/BrokerPortfolioPage';
 import { BrokerOrdersPage } from './routes/dashboard/BrokerOrdersPage';
+import { BrokerTradingHistoryPage } from './routes/dashboard/BrokerTradingHistoryPage';
 import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
 import { ActivityPage } from './routes/dashboard/ActivityPage';
@@ -21,6 +22,7 @@ import { AdminUsersPage } from './routes/dashboard/AdminUsersPage';
 import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
 import { LogViewerPage } from './routes/dashboard/LogViewerPage';
 import { ServiceSchedulePage } from './routes/dashboard/ServiceSchedulePage';
+import { MonitoringDashboardPage } from './routes/dashboard/MonitoringDashboardPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -43,6 +45,7 @@ export function createAppRouter() {
 				{ path: 'paper-trading-history', element: <PaperTradingHistoryPage /> },
 				{ path: 'broker-portfolio', element: <BrokerPortfolioPage /> },
 				{ path: 'broker-orders', element: <BrokerOrdersPage /> },
+				{ path: 'broker-history', element: <BrokerTradingHistoryPage /> },
 				{ path: 'pnl', element: <PnlPage /> },
 				{ path: 'targets', element: <TargetsPage /> },
 				{ path: 'activity', element: <ActivityPage /> },
@@ -55,6 +58,7 @@ export function createAppRouter() {
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
 				{ path: 'admin/schedules', element: <ServiceSchedulePage /> },
+				{ path: 'admin/monitoring', element: <MonitoringDashboardPage /> },
 			],
 		},
 	]);

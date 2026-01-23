@@ -149,7 +149,10 @@ class TestReentryOrdersFilteredByEntryType:
         assert summary["total_orders"] == 2
 
         # Verify re-entry order was found in database query
-        all_orders = engine.orders_repo.list(test_user.id)
+        all_orders_result = engine.orders_repo.list(test_user.id)
+        all_orders = (
+            all_orders_result[0] if isinstance(all_orders_result, tuple) else all_orders_result
+        )
         reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
         assert len(reentry_orders) == 1
         assert reentry_orders[0].symbol == "TCS-EQ"  # Full symbol after migration

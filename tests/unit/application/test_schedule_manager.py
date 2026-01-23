@@ -328,11 +328,12 @@ def test_validate_schedule_invalid_task_name(db_session, schedule_manager):
 
 def test_is_trading_day_weekday(db_session, schedule_manager):
     """Test that weekdays are trading days"""
-    # Get a weekday (Monday = 0, Friday = 4)
-    today = ist_now().date()
-    weekday = today.weekday()
-    if weekday < 5:  # Monday-Friday
-        assert schedule_manager.is_trading_day(today) is True
+    from datetime import date
+
+    # Use a specific non-holiday weekday date (Monday, Dec 1, 2025)
+    # This ensures the test doesn't fail on holidays like Christmas (Dec 25)
+    test_date = date(2025, 12, 1)  # Monday, not a holiday
+    assert schedule_manager.is_trading_day(test_date) is True
 
 
 def test_is_trading_day_weekend(db_session, schedule_manager):
@@ -348,18 +349,18 @@ def test_is_trading_day_holiday(db_session, schedule_manager):
     """Test that holidays are not trading days"""
     from datetime import date
 
-    # Test known NSE holidays for 2025
-    # Mahashivratri - Feb 26, 2025 (Wednesday)
-    assert schedule_manager.is_trading_day(date(2025, 2, 26)) is False
+    # Test known NSE holidays for 2026
+    # Republic Day - Jan 26, 2026 (Monday)
+    assert schedule_manager.is_trading_day(date(2026, 1, 26)) is False
 
-    # Holi - Mar 14, 2025 (Friday)
-    assert schedule_manager.is_trading_day(date(2025, 3, 14)) is False
+    # Holi - Mar 3, 2026 (Tuesday)
+    assert schedule_manager.is_trading_day(date(2026, 3, 3)) is False
 
-    # Diwali Laxmi Pujan - Oct 21, 2025 (Tuesday)
-    assert schedule_manager.is_trading_day(date(2025, 10, 21)) is False
+    # Diwali-Balipratipada - Nov 10, 2026 (Tuesday)
+    assert schedule_manager.is_trading_day(date(2026, 11, 10)) is False
 
-    # Christmas - Dec 25, 2025 (Thursday)
-    assert schedule_manager.is_trading_day(date(2025, 12, 25)) is False
+    # Christmas - Dec 25, 2026 (Friday)
+    assert schedule_manager.is_trading_day(date(2026, 12, 25)) is False
 
 
 def test_is_trading_day_regular_weekday_not_holiday(db_session, schedule_manager):

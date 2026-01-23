@@ -86,7 +86,6 @@ class TestContinuousServiceArchitecture:
         """Test trading day detection (Mon-Fri, excluding holidays)"""
         from modules.kotak_neo_auto_trader.run_trading_service import TradingService
         from src.infrastructure.db.models import Users
-        from freezegun import freeze_time
 
         # Create a test user
         user = Users(email="test@example.com", password_hash="test", role="user")
@@ -103,24 +102,24 @@ class TestContinuousServiceArchitecture:
         )
 
         # Test with freeze_time to control the date
-        # Monday (regular weekday, not a holiday) - Dec 1, 2025
-        with freeze_time("2025-12-01 10:00:00+05:30"):  # Monday
+        # Tuesday (regular weekday, not a holiday) - Dec 1, 2026
+        with freeze_time("2026-12-01 10:00:00+05:30"):  # Tuesday
             assert service.is_trading_day() == True
 
-        # Friday (regular weekday, not a holiday) - Dec 5, 2025
-        with freeze_time("2025-12-05 10:00:00+05:30"):  # Friday
+        # Friday (regular weekday, not a holiday) - Dec 4, 2026
+        with freeze_time("2026-12-04 10:00:00+05:30"):  # Friday
             assert service.is_trading_day() == True
 
-        # Saturday - Dec 6, 2025
-        with freeze_time("2025-12-06 10:00:00+05:30"):  # Saturday
+        # Saturday - Dec 5, 2026
+        with freeze_time("2026-12-05 10:00:00+05:30"):  # Saturday
             assert service.is_trading_day() == False
 
-        # Sunday - Dec 7, 2025
-        with freeze_time("2025-12-07 10:00:00+05:30"):  # Sunday
+        # Sunday - Dec 6, 2026
+        with freeze_time("2026-12-06 10:00:00+05:30"):  # Sunday
             assert service.is_trading_day() == False
 
-        # Holiday (Holi - Mar 14, 2025 is a Friday holiday)
-        with freeze_time("2025-03-14 10:00:00+05:30"):  # Friday (Holi holiday)
+        # Holiday (Holi - Mar 3, 2026 is a Tuesday holiday)
+        with freeze_time("2026-03-03 10:00:00+05:30"):  # Tuesday (Holi holiday)
             assert service.is_trading_day() == False
 
     def test_market_hours_detection(self, db_session):

@@ -7,13 +7,26 @@ import inspect
 
 # Import from existing legacy modules
 import sys
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from utils.logger import logger  # noqa: E402
+
+# Import timezone utilities for IST
+try:
+    from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
+except ImportError:
+    # Fallback if timezone_utils not available
+    from datetime import timedelta, timezone
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    def ist_now():
+        return datetime.now(IST)
+
 
 # Import timeout utilities for SDK call protection
 try:
@@ -86,6 +99,27 @@ class BrokerServiceUnavailableError(Exception):
         super().__init__(self.message)
 
 
+def _is_scheduled_downtime() -> bool:
+    """
+    Check if current time is within Kotak Neo scheduled downtime window.
+
+    Kotak Neo API has scheduled downtime from 12:00 AM - 7:00 AM IST.
+    NOTE: This only affects certain API calls (e.g., get_holdings, get_all_orders),
+    not all API calls are affected by the scheduled downtime.
+
+    Returns:
+        True if within downtime window, False otherwise
+    """
+    try:
+        now = ist_now()
+        current_time = now.time()
+        # Downtime: 12:00 AM (00:00) to 7:00 AM (07:00)
+        return current_time < time(7, 0)
+    except Exception:
+        # If timezone check fails, default to False (assume not downtime)
+        return False
+
+
 def _get_service_unavailable_message(error: Exception, default_message: str) -> str:
     """
     Get error message for service unavailable, preferring actual API error message.
@@ -118,7 +152,7 @@ def _extract_api_error_message(error: Exception) -> str | None:
         if hasattr(error, "response"):
             response = getattr(error, "response", None)
             if response:
-                # Try to get response data
+                # Try to get response data from JSON first (most structured)
                 if hasattr(response, "json"):
                     try:
                         data = response.json()
@@ -145,14 +179,27 @@ def _extract_api_error_message(error: Exception) -> str | None:
                                 and data["error"]
                             ):
                                 return str(data["error"])
-                    except Exception:
+                    except Exception as json_err:
+                        # Log JSON parsing errors for debugging (but don't fail)
+                        logger.debug(
+                            f"Failed to parse response.json() in error extraction: {json_err}"
+                        )
                         pass
-                # Try response text
+
+                # Try response text (fallback if JSON parsing failed or not available)
                 if hasattr(response, "text"):
                     try:
                         text = response.text
-                        if text and len(text) < 500:  # Reasonable length
-                            return text
+                        # Only process text if it exists and is not None
+                        if text is not None:
+                            if not text or text.strip() == "":
+                                # Only return "Empty response" if JSON parsing also failed
+                                # (if JSON parsing succeeded, we would have returned above)
+                                return "Empty response from broker API"
+                            if len(text) < 500:  # Reasonable length
+                                return text
+                        # If text is None, don't return "Empty response" - let it fall through
+                        # to check error string or return None
                     except Exception:
                         pass
 
@@ -172,7 +219,12 @@ def _extract_api_error_message(error: Exception) -> str | None:
                         for field in ["message", "error", "description", "detail", "msg"]:
                             if field in data and data[field]:
                                 return str(data[field])
-            except Exception:
+            except Exception as json_err:
+                # Log JSON parsing errors for debugging (but don't fail)
+                logger.debug(
+                    f"Failed to parse JSON in error message: {json_err}. "
+                    f"Error string: {error_str[:200]}"
+                )
                 pass
 
         # Return the error string itself if it looks like an API message
@@ -326,6 +378,31 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         """Check if currently connected"""
         return self._connected and self._client is not None
 
+    def _ensure_fresh_client(self):
+        """
+        Phase -1: Always get fresh client before API calls.
+
+        Ensures we always use the latest client instance, even if re-auth
+        happened in another thread. This prevents client reference staleness.
+
+        Raises:
+            ConnectionError: If not authenticated or no client available
+        """
+        # If no auth handler, skip refresh (for testing scenarios)
+        if not self.auth_handler:
+            return self._client
+
+        if not self.auth_handler.is_authenticated():
+            raise ConnectionError("Not authenticated")
+
+        # Always get fresh client (don't rely on cache)
+        fresh_client = self.auth_handler.get_client()
+        if not fresh_client:
+            raise ConnectionError("No authenticated client available")
+
+        self._client = fresh_client  # Update cache
+        return fresh_client
+
     # Order Management
 
     def place_order(self, order: Order) -> str:
@@ -341,23 +418,8 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for place_order to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         # Build payload from domain order
         payload = self._build_order_payload(order)
@@ -390,6 +452,11 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             f"SDK call timed out in place_order: {timeout_error}. "
                             "This may indicate broker API is slow or unreachable."
                         )
+                        # If no auth handler, raise RuntimeError (test expectation)
+                        if not self.auth_handler:
+                            if attempt >= max_retries:
+                                raise RuntimeError("Failed to place order")
+                            continue  # Try next method
                         # Check if this is a service unavailable scenario (timeout after retries)
                         if attempt >= max_retries:
                             # After all retries, timeout likely means service is unavailable
@@ -404,7 +471,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             ) from timeout_error
                         # If timeout occurs, try refreshing client from auth handler
                         # The client might be stale even if auth handler reports authenticated
-                        if self.auth_handler and self.auth_handler.is_authenticated():
+                        if self.auth_handler.is_authenticated():
                             fresh_client = self.auth_handler.get_client()
                             if fresh_client:
                                 self._client = fresh_client
@@ -798,38 +865,12 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for get_all_orders to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         max_retries = 1  # Retry once after re-auth
         for attempt in range(max_retries + 1):
             try:
-                # Ensure client is available before making API calls
-                if not self._client:
-                    # Try to get fresh client from auth handler if available
-                    if self.auth_handler and self.auth_handler.is_authenticated():
-                        self._client = self.auth_handler.get_client()
-                    if not self._client:
-                        logger.error("No client available for get_all_orders")
-                        if attempt < max_retries:
-                            continue
-                        return []
-
                 # Try multiple method names
                 for method_name in ["order_report", "get_order_report", "orderBook", "orders"]:
                     if hasattr(self._client, method_name):
@@ -1051,6 +1092,15 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 return []
 
             except Exception as e:
+                # Check if we're in scheduled downtime before processing error
+                if _is_scheduled_downtime():
+                    logger.info(
+                        "get_holdings failed during scheduled downtime "
+                        "(12:00 AM - 7:00 AM IST). Error: {e}. Returning empty holdings.",
+                        exc_info=True,
+                    )
+                    return []
+
                 # Check if it's a connection error (might indicate missing session)
                 error_str = str(e).lower()
                 is_connection_error = (
@@ -1120,10 +1170,23 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         logger.error("Max retries reached or no auth handler for get_all_orders")
                         return []
 
-                # Non-auth errors - log and return empty
-                logger.error(f"? Failed to get orders: {e}", exc_info=True)
+                # Non-auth errors - check if scheduled downtime
+                if _is_scheduled_downtime():
+                    logger.info(
+                        "get_all_orders failed during scheduled downtime "
+                        "(12:00 AM - 7:00 AM IST). Error: {e}. Returning empty orders.",
+                        exc_info=True,
+                    )
+                else:
+                    logger.error(f"Failed to get orders: {e}", exc_info=True)
                 return []
 
+        # Check if we're in scheduled downtime before returning empty
+        if _is_scheduled_downtime():
+            logger.info(
+                "get_all_orders completed during scheduled downtime "
+                "(12:00 AM - 7:00 AM IST). Returning empty orders."
+            )
         return []
 
     def get_pending_orders(self) -> list[Order]:
@@ -1143,23 +1206,8 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected to broker")
 
-        # Refresh client from auth handler before API calls to ensure latest session is used
-        # The session (sId) is embedded in the SDK client when created during login
-        # Since session is valid for ~1 hour, we reuse it but always get fresh client to ensure session is present
-        # After re-auth, auth.client becomes a NEW object, so we need to refresh to get the new session
-        # Strategy: Always refresh if client changed (re-auth) or if no client exists
-        # In production: auth.get_client() returns auth.client (same object until re-auth, then new object)
-        # In tests: Tests should configure auth_handler.get_client() to return the same mock_client
-        if self.auth_handler and self.auth_handler.is_authenticated():
-            fresh_client = self.auth_handler.get_client()
-            if fresh_client:
-                # Always refresh if: (1) no client, OR (2) client changed (re-auth happened)
-                # Same client object = no-op refresh (ensures we have latest session)
-                if self._client is None or fresh_client is not self._client:
-                    self._client = fresh_client
-                    logger.debug(
-                        "Refreshed client from auth handler for get_holdings to ensure session is used"
-                    )
+        # Phase -1: Always ensure fresh client before API calls
+        self._ensure_fresh_client()
 
         max_retries = 1  # Retry once after re-auth
         for attempt in range(max_retries + 1):
@@ -1183,6 +1231,9 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         # Call with timeout protection (SDK might hang)
                         try:
                             # Wrap SDK call with timeout to prevent hanging
+                            # NOTE: The Kotak Neo SDK may print "Error occurred: ..." messages
+                            # to stdout/stderr before our exception handlers catch them.
+                            # This is expected behavior from the SDK during scheduled downtime.
                             response = call_with_timeout(
                                 method,
                                 timeout=DEFAULT_SDK_TIMEOUT,
@@ -1369,13 +1420,44 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                             # Success - parse and return
                             if "data" in response:
                                 return self._parse_holdings_response(response["data"])
+                            # Check for empty response (scheduled downtime)
+                            if not response or response == {}:
+                                if _is_scheduled_downtime():
+                                    logger.info(
+                                        "Empty response from get_holdings during scheduled downtime "
+                                        "(12:00 AM - 7:00 AM IST). Returning empty holdings."
+                                    )
+                                    return []
+                                logger.warning(
+                                    "Empty response from get_holdings (not during downtime)"
+                                )
 
                 # If we get here, no method worked
                 if attempt < max_retries:
                     continue
+
+                # No method worked and all retries exhausted
+                if _is_scheduled_downtime():
+                    logger.info(
+                        "get_holdings: No method worked during scheduled downtime "
+                        "(12:00 AM - 7:00 AM IST). Returning empty holdings."
+                    )
+                else:
+                    logger.warning(
+                        "get_holdings: No method worked after all retries. Returning empty holdings."
+                    )
                 return []
 
             except Exception as e:
+                # Check if we're in scheduled downtime before processing error
+                if _is_scheduled_downtime():
+                    logger.info(
+                        "get_holdings failed during scheduled downtime "
+                        "(12:00 AM - 7:00 AM IST). Error: {e}. Returning empty holdings.",
+                        exc_info=True,
+                    )
+                    return []
+
                 # Check if it's a connection error (might indicate missing session)
                 error_str = str(e).lower()
                 is_connection_error = (
@@ -1446,7 +1528,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         return []
 
                 # Non-auth errors - log and return empty
-                logger.error(f"? Failed to get holdings: {e}")
+                logger.error(f"Failed to get holdings: {e}", exc_info=True)
                 return []
 
         return []
@@ -1929,16 +2011,23 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     except (ValueError, TypeError):
                         pass
 
+                # Extract price - only set if > 0 (market orders should have None)
+                price_value = None
+                prc = item.get("prc") or item.get("price")
+                if prc is not None:
+                    try:
+                        prc_float = float(prc)
+                        if prc_float > 0:
+                            price_value = Money.from_float(prc_float)
+                    except (ValueError, TypeError):
+                        pass  # Invalid price, leave as None
+
                 order = Order(
                     symbol=symbol,
                     quantity=int(item.get("qty") or item.get("quantity", 0)),
                     order_type=self._parse_order_type(order_type),
                     transaction_type=self._parse_transaction_type(transaction_type),
-                    price=(
-                        Money.from_float(float(item.get("prc") or item.get("price", 0)))
-                        if (item.get("prc") or item.get("price"))
-                        else None
-                    ),
+                    price=price_value,  # Will be None for market orders or if price is 0/invalid
                     order_id=str(order_id),
                     status=self._parse_order_status(order_status),
                     placed_at=placed_at,

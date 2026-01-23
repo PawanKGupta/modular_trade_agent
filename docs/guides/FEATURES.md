@@ -75,8 +75,10 @@ Complete documentation of all features in Rebound — Modular Trade Agent system
 **UI Location:** `/dashboard/orders`
 
 **API Endpoints:**
-- `GET /api/v1/user/orders` - List orders
-- `GET /api/v1/user/orders/{order_id}` - Get order details
+- `GET /api/v1/user/orders/` - List orders (paginated)
+- `POST /api/v1/user/orders/{id}/retry` - Retry a failed order
+- `DELETE /api/v1/user/orders/{id}` - Drop a failed order from retry queue
+- `POST /api/v1/user/orders/sync` - Manually sync order status from broker
 
 ### 3. Target Management
 

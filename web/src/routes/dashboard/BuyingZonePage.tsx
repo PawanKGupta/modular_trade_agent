@@ -2,6 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo, useEffect } from 'react';
 import { getBuyingZone, getBuyingZoneColumns, saveBuyingZoneColumns, rejectSignal, activateSignal, type BuyingZoneItem, type DateFilter, type StatusFilter } from '@/api/signals';
 import { HolidayBanner } from '@/components/HolidayBanner';
+import { exportSignals } from '@/api/export';
+import { ExportButton } from '@/components/ExportButton';
+import { DateRangePicker, type DateRange as ExportDateRange } from '@/components/DateRangePicker';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
+import { FilterPresetDropdown } from '@/components/FilterPresetDropdown';
 
 /**
  * Calculate the expiry time for a signal based on next trading day market close.
@@ -166,10 +171,26 @@ const MAX_COLUMNS = 20;
 // Default columns: Symbol, Status, Distance to EMA9, Backtest, Confidence, ML Confidence
 const DEFAULT_COLUMNS: ColumnKey[] = ['symbol', 'status', 'distance_to_ema9', 'backtest_score', 'confidence', 'ml_confidence'];
 
+function getDefaultExportDateRange(): ExportDateRange {
+	const endDate = new Date();
+	const startDate = new Date();
+	startDate.setDate(startDate.getDate() - 90); // Last 90 days
+
+	return {
+		startDate: startDate.toISOString().split('T')[0],
+		endDate: endDate.toISOString().split('T')[0],
+	};
+}
+
 export function BuyingZonePage() {
 	const qc = useQueryClient();
 	const [dateFilter, setDateFilter] = useState<DateFilter>(null);
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
+	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [exportDateRange, setExportDateRange] = useState<ExportDateRange>(getDefaultExportDateRange());
+
+	// Saved filters hook
+	const { presets, savePreset, deletePreset, loading: presetsLoading } = useSavedFilters('signals');
 
 	const { data, isLoading, error} = useQuery<BuyingZoneItem[]>({
 		queryKey: ['buying-zone', dateFilter, statusFilter],
@@ -239,6 +260,28 @@ export function BuyingZonePage() {
 	useEffect(() => {
 		document.title = 'Buying Zone';
 	}, []);
+
+	const handleExport = async () => {
+		await exportSignals({
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			verdict: statusFilter === 'all' ? undefined : statusFilter,
+		});
+	};
+
+	// Filter preset handlers
+	type SignalFiltersPreset = { statusFilter?: StatusFilter; dateFilter?: DateFilter | null };
+	const handleLoadPreset = (filters: SignalFiltersPreset) => {
+		if (filters.statusFilter) setStatusFilter(filters.statusFilter);
+		if (filters.dateFilter !== undefined) setDateFilter(filters.dateFilter);
+	};
+
+	const handleSavePreset = async (name: string) => {
+		return await savePreset(name, {
+			statusFilter,
+			dateFilter,
+		});
+	};
 
 	const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
@@ -323,6 +366,22 @@ export function BuyingZonePage() {
 			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
 				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Buying Zone</h1>
 				<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4 w-full sm:w-auto">
+					{/* Filter Presets */}
+					<FilterPresetDropdown
+						presets={presets}
+						onLoadPreset={handleLoadPreset}
+						onSavePreset={handleSavePreset}
+						onDeletePreset={deletePreset}
+						currentFilters={{ statusFilter, dateFilter }}
+						loading={presetsLoading}
+					/>
+
+					<button
+						onClick={() => setShowExportOptions(!showExportOptions)}
+						className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
+					>
+						Export {showExportOptions ? '▲' : '▼'}
+					</button>
 					{/* Status Filter */}
 					<div className="flex items-center gap-2">
 						<label className="text-xs sm:text-sm text-[var(--muted)] whitespace-nowrap">Status:</label>
@@ -359,6 +418,20 @@ export function BuyingZonePage() {
 					</span>
 				</div>
 			</div>
+
+			{/* Export Options Panel */}
+			{showExportOptions && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+					<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export Signals</h3>
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+						<DateRangePicker value={exportDateRange} onChange={setExportDateRange} />
+						<ExportButton onExport={handleExport} label="Download CSV" />
+					</div>
+					<p className="text-xs text-[var(--muted)] mt-2">
+						Export will include signals with status "{statusFilter}" for the selected date range.
+					</p>
+				</div>
+			)}
 
 			{/* Column Selection */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-4">

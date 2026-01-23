@@ -406,6 +406,16 @@ class KotakNeoScripMaster:
                 or instrument.get("token")
             )
 
+            # Extract tick size from scrip master (dTickSize is in paise, convert to rupees)
+            tick_size_paise = instrument.get("dTickSize", "-1")
+            tick_size = None
+            if tick_size_paise and tick_size_paise != "-1":
+                try:
+                    # dTickSize is in paise, convert to rupees (divide by 100)
+                    tick_size = float(tick_size_paise) / 100.0
+                except (ValueError, TypeError):
+                    tick_size = None
+
             if trading_symbol:
                 # Store with exchange prefix for uniqueness
                 key = f"{exchange}:{trading_symbol}"
@@ -413,6 +423,7 @@ class KotakNeoScripMaster:
                     "exchange": exchange,
                     "symbol": trading_symbol,  # This is the trading symbol like GLENMARK-EQ
                     "token": token,
+                    "tick_size": tick_size,  # Tick size in rupees (from dTickSize in paise)
                     "instrument": instrument,
                 }
 
@@ -466,6 +477,25 @@ class KotakNeoScripMaster:
         """Get correct trading symbol for order placement"""
         instrument = self.get_instrument(symbol, exchange)
         return instrument["symbol"] if instrument else None
+
+    def get_tick_size(self, symbol: str, exchange: str = "NSE") -> float | None:
+        """
+        Get tick size for a symbol from scrip master.
+
+        Args:
+            symbol: Trading symbol (e.g., 'RELIANCE-EQ', 'INFY-EQ')
+            exchange: Exchange (default: NSE)
+
+        Returns:
+            Tick size in rupees, or None if not found or invalid
+        """
+        instrument = self.get_instrument(symbol, exchange)
+        if instrument:
+            tick_size = instrument.get("tick_size")
+            # Only return if tick_size is valid (not None and > 0)
+            if tick_size is not None and tick_size > 0:
+                return tick_size
+        return None
 
     def search_instruments(self, keyword: str, exchange: str = None) -> list[dict]:
         """

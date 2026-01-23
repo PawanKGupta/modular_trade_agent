@@ -47,3 +47,27 @@ body {
 	scrollbar-width: thin;
 	scrollbar-color: #1e293b transparent;
 }
+
+/* Chart Styling */
+.recharts-wrapper {
+	font-family: inherit;
+}
+
+.recharts-cartesian-axis-tick-value {
+	fill: var(--muted);
+	font-size: 12px;
+}
+
+.recharts-legend-item-text {
+	fill: var(--muted);
+	font-size: 12px;
+}
+
+.recharts-tooltip-wrapper {
+	outline: none;
+}
+
+/* Ensure charts respect dark theme */
+.recharts-surface {
+	background: transparent;
+}

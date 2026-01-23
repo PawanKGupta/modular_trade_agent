@@ -164,6 +164,7 @@ class OrderFieldExtractor:
             or order.get("orderTime")
             or order.get("order_time")
             or order.get("timestamp")
+            or order.get("executionTime")
             or None
         )
 

@@ -19,12 +19,12 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
-from utils.logger import logger
+from utils.logger import logger  # noqa: E402
 
-from .order_tracker import OrderTracker, get_order_tracker
+from .order_tracker import OrderTracker, get_order_tracker  # noqa: E402
 
 # Import Phase 1 modules
-from .tracking_scope import TrackingScope, get_tracking_scope
+from .tracking_scope import TrackingScope, get_tracking_scope  # noqa: E402
 
 
 class ManualOrderMatcher:
@@ -48,7 +48,41 @@ class ManualOrderMatcher:
         self.tracking_scope = tracking_scope or get_tracking_scope()
         self.order_tracker = order_tracker or get_order_tracker()
 
-    def reconcile_holdings_with_tracking(
+    def validate_and_clean_pre_existing_qty(
+        self, symbol: str, broker_qty: int, system_qty: int, pre_existing_qty: int
+    ) -> int:
+        """
+        Validate and clean up stale pre_existing_qty values.
+
+        Args:
+            symbol: Symbol being checked
+            broker_qty: Current broker holding quantity
+            system_qty: System tracked quantity
+            pre_existing_qty: Pre-existing quantity from tracking entry
+
+        Returns:
+            Validated pre_existing_qty (may be reset to 0 if stale)
+        """
+        # If broker_qty is 0 and pre_existing_qty is large, likely stale
+        if broker_qty == 0 and pre_existing_qty > 0:
+            if system_qty == 0:
+                # Both are 0, pre_existing_qty is definitely stale
+                logger.warning(
+                    f"[CLEANUP] {symbol}: Resetting stale pre_existing_qty "
+                    f"from {pre_existing_qty} to 0 (broker_qty=0, system_qty=0)"
+                )
+                return 0
+            elif pre_existing_qty > system_qty * 2:
+                # Pre-existing is more than 2x system qty, likely stale
+                logger.warning(
+                    f"[CLEANUP] {symbol}: Pre_existing_qty ({pre_existing_qty}) "
+                    f"seems suspiciously large compared to system_qty ({system_qty}). "
+                    f"Consider manual review."
+                )
+
+        return pre_existing_qty
+
+    def reconcile_holdings_with_tracking(  # noqa: PLR0912, PLR0915
         self, broker_holdings: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """
@@ -85,7 +119,7 @@ class ManualOrderMatcher:
                 # Extract base symbol using utility function for consistency
                 # After migration, holdings may have full symbols (e.g., "RELIANCE-EQ")
                 # We extract base symbol for matching with tracking scope (which uses base symbols)
-                from .utils.symbol_utils import extract_base_symbol
+                from .utils.symbol_utils import extract_base_symbol  # noqa: PLC0415
 
                 base_symbol = extract_base_symbol(symbol)
                 if base_symbol:
@@ -128,7 +162,8 @@ class ManualOrderMatcher:
                             logger.info(
                                 f"  Symbol: {completed_symbol}, Ticker: {ticker}, "
                                 f"System Qty: {system_qty}, Final Tracked Qty: {tracked_qty}, "
-                                f"Initial Order ID: {initial_order_id}, Completed At: {completed_at}"
+                                f"Initial Order ID: {initial_order_id}, "
+                                f"Completed At: {completed_at}"
                             )
                         else:
                             logger.warning(
@@ -147,8 +182,10 @@ class ManualOrderMatcher:
             for idx, entry in enumerate(data.get("symbols", [])):
                 try:
                     logger.info(
-                        f"  Entry #{idx + 1}: symbol={entry.get('symbol')}, status={entry.get('tracking_status')}, "
-                        f"qty={entry.get('current_tracked_qty')}, ticker={entry.get('ticker')}, "
+                        f"  Entry #{idx + 1}: symbol={entry.get('symbol')}, "
+                        f"status={entry.get('tracking_status')}, "
+                        f"qty={entry.get('current_tracked_qty')}, "
+                        f"ticker={entry.get('ticker')}, "
                         f"order_id={entry.get('initial_order_id')}"
                     )
                 except Exception as e:
@@ -161,7 +198,6 @@ class ManualOrderMatcher:
         previously_tracked_holdings = []
         for holding_symbol in holdings_symbols:
             # Check if it's in active, completed, or all tracked symbols
-            is_tracked_active = holding_symbol in [s.upper() for s in tracked_symbols]
             is_tracked_completed = holding_symbol in [s.upper() for s in completed_tracked_symbols]
             is_tracked_any = holding_symbol in [s.upper() for s in all_tracked_symbols]
 
@@ -209,11 +245,14 @@ class ManualOrderMatcher:
             duplicate_symbol = completed_tracked_symbols[0]
             if duplicate_symbol.upper() not in holdings_symbols:
                 logger.warning(
-                    f"DATA CORRUPTION DETECTED (non-fatal): All {len(completed_tracked_symbols)} completed tracking entries "
-                    f"have the same symbol '{duplicate_symbol}', but this symbol is NOT in current holdings. "
+                    f"DATA CORRUPTION DETECTED (non-fatal): "
+                    f"All {len(completed_tracked_symbols)} completed tracking entries "
+                    f"have the same symbol '{duplicate_symbol}', "
+                    f"but this symbol is NOT in current holdings. "
                     f"This suggests tracking data corruption. "
                     f"Holdings: {', '.join(holdings_symbols)}. "
-                    f"EOD cleanup will continue normally. Consider fixing tracking file when convenient."
+                    f"EOD cleanup will continue normally. "
+                    f"Consider fixing tracking file when convenient."
                 )
 
         if untracked_holdings:
@@ -251,8 +290,10 @@ class ManualOrderMatcher:
         if not tracked_symbols:
             logger.warning(
                 f"No active tracked symbols to reconcile. "
-                f"This means manual trade detection cannot work for {len(holdings_symbols)} holdings. "
-                f"Consider initializing tracking for existing holdings or investigate why tracking was lost."
+                f"This means manual trade detection cannot work for "
+                f"{len(holdings_symbols)} holdings. "
+                f"Consider initializing tracking for existing holdings "
+                f"or investigate why tracking was lost."
             )
             return {
                 "matched": 0,
@@ -263,6 +304,18 @@ class ManualOrderMatcher:
             }
 
         logger.info(f"Reconciling {len(tracked_symbols)} tracked symbol(s)")
+
+        # Log symbol normalization for debugging
+        if tracked_symbols:
+            from .utils.symbol_utils import extract_base_symbol  # noqa: PLC0415
+
+            normalized_examples = []
+            for sym in tracked_symbols[:5]:  # Show first 5 examples
+                normalized = extract_base_symbol(sym).upper()
+                if normalized != sym.upper():
+                    normalized_examples.append(f"{sym} -> {normalized}")
+            if normalized_examples:
+                logger.debug(f"Symbol normalization examples: {', '.join(normalized_examples)}")
 
         results = {
             "matched": 0,
@@ -285,14 +338,36 @@ class ManualOrderMatcher:
                 system_qty = tracking_entry.get("current_tracked_qty", 0)
                 pre_existing_qty = tracking_entry.get("pre_existing_qty", 0)
 
-                # Get broker quantity
-                broker_holding = holdings_dict.get(symbol.upper())
-                broker_qty = 0
+                # Normalize tracked symbol for lookup (same as holdings normalization)
+                # This handles cases where tracked symbol is "MIRZAINT-EQ"
+                # but holdings has "MIRZAINT"
+                from .utils.symbol_utils import extract_base_symbol  # noqa: PLC0415
 
+                normalized_symbol = extract_base_symbol(symbol).upper()
+                original_symbol_upper = symbol.upper()
+
+                # Try normalized symbol first (matches how holdings are stored)
+                broker_holding = holdings_dict.get(normalized_symbol)
+
+                # Fallback: try original symbol if normalized lookup fails
+                if not broker_holding and normalized_symbol != original_symbol_upper:
+                    broker_holding = holdings_dict.get(original_symbol_upper)
+                    if broker_holding:
+                        logger.debug(
+                            f"Found holding using original symbol format: {original_symbol_upper} "
+                            f"(normalized: {normalized_symbol})"
+                        )
+
+                broker_qty = 0
                 if broker_holding:
                     broker_qty = int(
                         broker_holding.get("qty", 0) or broker_holding.get("quantity", 0) or 0
                     )
+
+                # Validate pre_existing_qty before using it
+                pre_existing_qty = self.validate_and_clean_pre_existing_qty(
+                    symbol, broker_qty, system_qty, pre_existing_qty
+                )
 
                 # Expected quantity = system qty + pre-existing qty
                 expected_total_qty = system_qty + pre_existing_qty
@@ -301,7 +376,8 @@ class ManualOrderMatcher:
                 if broker_qty == expected_total_qty:
                     # Perfect match - no manual trades
                     logger.debug(
-                        f"[OK] {symbol}: Broker qty ({broker_qty}) matches expected ({expected_total_qty})"
+                        f"[OK] {symbol}: Broker qty ({broker_qty}) "
+                        f"matches expected ({expected_total_qty})"
                     )
                     results["matched"] += 1
                     continue
@@ -311,9 +387,11 @@ class ManualOrderMatcher:
 
                 logger.info(
                     f"[WARN] {symbol}: Quantity mismatch detected\n"
-                    f"  Expected: {expected_total_qty} (system: {system_qty}, pre-existing: {pre_existing_qty})\n"
+                    f"  Expected: {expected_total_qty} "
+                    f"(system: {system_qty}, pre-existing: {pre_existing_qty})\n"
                     f"  Broker:   {broker_qty}\n"
-                    f"  Diff:     {qty_diff:+d}"
+                    f"  Diff:     {qty_diff:+d}\n"
+                    f"  Symbol normalization: {original_symbol_upper} -> {normalized_symbol}"
                 )
 
                 discrepancy = {
@@ -398,7 +476,7 @@ class ManualOrderMatcher:
             List of potential manual orders
         """
         # Get all related orders for this symbol (system orders)
-        known_order_ids = set(tracking_entry.get("all_related_orders", []))
+        # known_order_ids = set(tracking_entry.get("all_related_orders", []))
 
         # Try to get recent orders from broker (implementation would need broker client)
         # For now, return empty list as this requires broker API integration
@@ -591,7 +669,7 @@ def get_manual_order_matcher(
     Returns:
         ManualOrderMatcher instance
     """
-    global _matcher_instance
+    global _matcher_instance  # noqa: PLW0603
 
     if _matcher_instance is None:
         _matcher_instance = ManualOrderMatcher(tracking_scope, order_tracker)

@@ -348,7 +348,8 @@ class TestOrderMonitoringRepository:
         repo.mark_rejected(order, "test_rejection")  # This will update reason field
 
         # Retrieve via list
-        orders = repo.list(sample_user.id)
+        orders_result = repo.list(sample_user.id)
+        orders = orders_result[0] if isinstance(orders_result, tuple) else orders_result
         retrieved = next(o for o in orders if o.id == order.id)
 
         assert retrieved.reason == "Broker rejected: test_rejection"  # Use unified reason field

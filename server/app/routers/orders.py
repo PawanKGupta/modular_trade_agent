@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 from math import floor
+from pathlib import Path
 from typing import Annotated, Literal
 
 import yfinance as yf
@@ -9,19 +10,71 @@ from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader import config as kotak_config
+from modules.kotak_neo_auto_trader.infrastructure.broker_factory import BrokerFactory
+from modules.kotak_neo_auto_trader.orders import KotakNeoOrders
+from modules.kotak_neo_auto_trader.shared_session_manager import (
+    get_shared_session_manager,
+)
+from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+    OrderFieldExtractor,
+)
+from modules.kotak_neo_auto_trader.utils.symbol_utils import get_ticker_from_full_symbol
+from src.application.services.broker_credentials import (
+    create_temp_env_file,
+    decrypt_broker_credentials,
+)
+from src.application.services.conflict_detection_service import ConflictDetectionService
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.individual_service_status_repository import (
+    IndividualServiceStatusRepository,
+)
 from src.infrastructure.persistence.orders_repository import OrdersRepository
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
 
 from ..core.deps import get_current_user, get_db
-from ..schemas.orders import OrderResponse
+from ..schemas.orders import OrderResponse, PaginatedOrderResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _normalize_repo_list_result(result):
+    """Normalize OrdersRepository.list() result across legacy/new call signatures."""
+    # Some call sites/tests expect (items, total_count), while the current
+    # OrdersRepository.list() returns a plain list of Orders.
+    if isinstance(result, tuple) and len(result) == 2:
+        items, total_count = result
+        return items, int(total_count) if total_count is not None else len(items)
+    return result, len(result)
+
+
+def _is_order_monitoring_active(user_id: int, db: Session) -> bool:
+    """
+    Check if order monitoring is active (unified service or sell_monitor individual service).
+
+    Returns:
+        True if unified service OR sell_monitor service is running
+    """
+    try:
+        # Check unified service
+        conflict_service = ConflictDetectionService(db)
+        if conflict_service.is_unified_service_running(user_id):
+            return True
+
+        # Check sell_monitor individual service
+        status_repo = IndividualServiceStatusRepository(db)
+        sell_monitor_status = status_repo.get_by_user_and_task(user_id, "sell_monitor")
+        if sell_monitor_status and sell_monitor_status.is_running:
+            return True
+    except Exception as e:
+        logger.debug(f"Error checking order monitoring status: {e}")
+
+    return False
 
 
 def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int) -> None:
@@ -37,8 +90,6 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         user_capital = trading_config.capital_per_trade if trading_config else 20000.0
 
         # Get current price from yfinance
-        from modules.kotak_neo_auto_trader.utils.symbol_utils import get_ticker_from_full_symbol
-
         ticker = getattr(order, "ticker", None) or get_ticker_from_full_symbol(order.symbol)
         stock = yf.Ticker(ticker)
         hist = stock.history(period="1d")
@@ -79,8 +130,8 @@ def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int)
         # Continue with original quantity if recalculation fails
 
 
-@router.get("/", response_model=list[OrderResponse])
-def list_orders(  # noqa: PLR0913
+@router.get("/", response_model=PaginatedOrderResponse)
+def list_orders(  # noqa: PLR0912, PLR0913
     status: Annotated[
         Literal[
             "pending",  # Merged: AMO + PENDING_EXECUTION
@@ -105,9 +156,17 @@ def list_orders(  # noqa: PLR0913
         str | None,
         Query(description="Filter orders to this date (ISO format: YYYY-MM-DD)"),
     ] = None,
+    page: Annotated[
+        int,
+        Query(ge=1, description="Page number (1-based)"),
+    ] = 1,
+    page_size: Annotated[
+        int,
+        Query(ge=1, le=500, description="Number of items per page"),
+    ] = 50,
     db: Session = Depends(get_db),  # noqa: B008 - FastAPI dependency injection
     current: Users = Depends(get_current_user),  # noqa: B008 - FastAPI dependency injection
-) -> list[OrderResponse]:
+) -> PaginatedOrderResponse:
     try:
         repo = OrdersRepository(db)
         # Map string status to enum member
@@ -120,7 +179,20 @@ def list_orders(  # noqa: PLR0913
             # Note: SELL status removed - use side='sell' to filter sell orders
         }
         db_status = status_map.get(status) if status else None
-        items = repo.list(current.id, db_status)
+
+        # Calculate offset for pagination
+        offset = (page - 1) * page_size
+
+        # Get paginated orders and total count
+        # The underlying OrdersRepository.list() may or may not support limit/offset.
+        try:
+            result = repo.list(current.id, db_status, limit=page_size, offset=offset)
+            items, total_count = _normalize_repo_list_result(result)
+        except TypeError:
+            # Fallback: fetch all and slice
+            all_items = repo.list(current.id, status=db_status)
+            total_count = len(all_items)
+            items = all_items[offset : offset + page_size]
 
         # Apply additional filters
         if reason:
@@ -162,10 +234,37 @@ def list_orders(  # noqa: PLR0913
                 return dt_value.isoformat()
             return str(dt_value)
 
+        # Get user settings once for broker name lookup
+        settings_repo = SettingsRepository(db)
+        user_settings = settings_repo.get_by_user_id(current.id)
+        broker_name = user_settings.broker if user_settings else None
+
+        # Helper function to format broker name for display
+        def format_broker_name(broker: str | None) -> str:
+            """Format broker name for display (e.g., 'kotak-neo' -> 'Kotak Neo')"""
+            if not broker:
+                return "Broker"
+            # Convert kebab-case to Title Case
+            return broker.replace("-", " ").title()
+
         # map DB columns to API model field names
         result = []
         for o in items:
             try:
+                # Get trade_mode from order and determine display name (Phase 0.1)
+                trade_mode_display = None
+                if hasattr(o, "trade_mode") and o.trade_mode:
+                    trade_mode_value = (
+                        o.trade_mode.value if hasattr(o.trade_mode, "value") else str(o.trade_mode)
+                    )
+                    if trade_mode_value == "paper":
+                        trade_mode_display = "Paper"
+                    elif trade_mode_value == "broker":
+                        # Use broker name from settings, or fallback to "Broker"
+                        trade_mode_display = (
+                            format_broker_name(broker_name) if broker_name else "Broker"
+                        )
+
                 order_response = OrderResponse(
                     id=o.id,
                     symbol=o.symbol,
@@ -188,6 +287,8 @@ def list_orders(  # noqa: PLR0913
                     # Entry type and source tracking
                     entry_type=getattr(o, "entry_type", None),
                     is_manual=getattr(o, "orig_source", None) == "manual",
+                    # Phase 0.1: Trade mode display name
+                    trade_mode_display=trade_mode_display,
                 )
                 result.append(order_response)
             except Exception as e:
@@ -195,7 +296,16 @@ def list_orders(  # noqa: PLR0913
                 # Skip this order and continue
                 continue
 
-        return result
+        # Calculate total pages
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+
+        return PaginatedOrderResponse(
+            items=result,
+            total=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
     except Exception as e:
         logger.exception(f"Error listing orders for user {current.id}: {e}")
         raise HTTPException(
@@ -308,7 +418,8 @@ def drop_order(
     """
     Drop an order from the retry queue.
 
-    Marks the order as CLOSED, removing it from retry tracking.
+    Marks the order as CANCELLED, removing it from retry tracking.
+    More semantically correct than CLOSED for failed orders that never executed.
     """
     try:
         repo = OrdersRepository(db)
@@ -336,10 +447,8 @@ def drop_order(
                 ),
             )
 
-        # Mark as closed
-        order.status = DbOrderStatus.CLOSED
-        order.closed_at = ist_now()
-        repo.update(order)
+        # Mark as cancelled (more semantically correct than CLOSED for failed orders)
+        repo.mark_cancelled(order, "Dropped from retry queue")
 
         return {"message": f"Order {order_id} dropped from retry queue"}
     except HTTPException:
@@ -349,6 +458,395 @@ def drop_order(
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to drop order: {str(e)}",
+        ) from e
+
+
+@router.post("/sync", response_model=dict)
+def sync_order_status(  # noqa: PLR0912, PLR0915
+    order_id: Annotated[
+        int | None,
+        Query(
+            description="Optional: Sync specific order. If None, syncs all pending/ongoing orders"
+        ),
+    ] = None,
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+) -> dict:
+    """
+    Manually sync order status from broker.
+
+    Useful when:
+    - Order monitoring service is not running
+    - Force refresh order status
+    - Troubleshooting order status issues
+
+    Args:
+        order_id: Optional order ID to sync specific order.
+            If None, syncs all pending/ongoing orders.
+
+    Returns:
+        Dict with sync results: {
+            "message": str,
+            "sync_performed": bool,
+            "monitoring_active": bool,
+            "synced": int,
+            "updated": int,
+            "executed": int,
+            "rejected": int,
+            "cancelled": int,
+            "errors": list[str]
+        }
+    """
+    try:
+        # Perform manual sync
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+
+        if not settings:
+            raise HTTPException(
+                status_code=400,
+                detail="User settings not found",
+            )
+
+        # Handle paper trading mode
+        # Extract trade_mode value consistently for both PAPER and BROKER checks
+        trade_mode = settings.trade_mode
+        if hasattr(trade_mode, "value"):
+            trade_mode_value = trade_mode.value
+        elif isinstance(trade_mode, str):
+            trade_mode_value = trade_mode.lower()
+        else:
+            # Fallback: convert to string and handle enum representation
+            trade_mode_str = str(trade_mode)
+            # Handle enum string representation like "<TradeMode.BROKER: 'broker'>"
+            if ":" in trade_mode_str and "'" in trade_mode_str:
+                # Extract value from "<TradeMode.BROKER: 'broker'>"
+                try:
+                    trade_mode_value = trade_mode_str.split(":")[-1].strip().strip("'\"")
+                except Exception:
+                    trade_mode_value = trade_mode_str.lower()
+            else:
+                trade_mode_value = trade_mode_str.lower()
+
+        # Normalize to lowercase for comparison
+        trade_mode_value = trade_mode_value.lower() if trade_mode_value else ""
+
+        if trade_mode_value == "paper":
+            # For paper trading, orders are executed immediately (simulated)
+            # No broker sync needed, but we can refresh the orders list
+            repo = OrdersRepository(db)
+            if order_id:
+                # Sync specific order - for paper trading, just refresh from DB
+                order = repo.get(order_id)
+                if not order or order.user_id != current.id:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Order {order_id} not found",
+                    )
+                order_trade_mode_value = (
+                    order.trade_mode.value
+                    if hasattr(order.trade_mode, "value")
+                    else str(order.trade_mode) if order.trade_mode else None
+                )
+                if order_trade_mode_value != "paper":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Order is not a paper trading order",
+                    )
+                # Paper trading orders are already up-to-date (executed immediately)
+                return {
+                    "message": "Paper trading orders are executed immediately. No sync needed.",
+                    "sync_performed": False,
+                    "monitoring_active": False,
+                    "synced": 1,
+                    "updated": 0,
+                    "executed": 0,
+                    "rejected": 0,
+                    "cancelled": 0,
+                    "errors": [],
+                }
+            else:
+                # Sync all paper trading orders - just refresh from DB
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
+                paper_orders = []
+                for o in all_orders:
+                    o_trade_mode_value = (
+                        o.trade_mode.value
+                        if hasattr(o.trade_mode, "value")
+                        else str(o.trade_mode) if o.trade_mode else None
+                    )
+                    if o_trade_mode_value == "paper" and o.status in [
+                        DbOrderStatus.PENDING,
+                        DbOrderStatus.ONGOING,
+                    ]:
+                        paper_orders.append(o)
+                paper_msg = (
+                    f"Paper trading orders are executed immediately. "
+                    f"Found {len(paper_orders)} active paper orders."
+                )
+                return {
+                    "message": paper_msg,
+                    "sync_performed": False,
+                    "monitoring_active": False,
+                    "synced": len(paper_orders),
+                    "updated": 0,
+                    "executed": 0,
+                    "rejected": 0,
+                    "cancelled": 0,
+                    "errors": [],
+                }
+
+        # Handle broker mode (paper trading already handled above)
+        # trade_mode_value already extracted above
+        if trade_mode_value != "broker":
+            raise HTTPException(
+                status_code=400,
+                detail="Broker mode required for order sync",
+            )
+
+        if not settings.broker_creds_encrypted:
+            raise HTTPException(
+                status_code=400,
+                detail="Broker credentials not configured",
+            )
+
+        # Check if monitoring is active (after validating broker mode/creds)
+        if _is_order_monitoring_active(current.id, db):
+            return {
+                "message": (
+                    "Order monitoring service is active. Status syncs automatically every minute."
+                ),
+                "sync_performed": False,
+                "monitoring_active": True,
+                "synced": 0,
+                "updated": 0,
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+                "errors": [],
+            }
+
+        # Get broker session
+        try:
+            broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+        except Exception as e:
+            logger.error(f"Error decrypting broker credentials: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to decrypt broker credentials: {str(e)}",
+            ) from e
+
+        try:
+            env_file = create_temp_env_file(broker_creds)
+        except Exception as e:
+            logger.error(f"Error creating temp env file: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create temp env file: {str(e)}",
+            ) from e
+
+        try:
+            try:
+                session_manager = get_shared_session_manager()
+                auth = session_manager.get_or_create_session(current.id, env_file, db)
+                if not auth:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to create broker session",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error creating broker session: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to create broker session: {str(e)}",
+                ) from e
+
+            try:
+                broker = BrokerFactory.create_broker("kotak_neo", auth)
+                if not broker.connect():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="Failed to connect to broker",
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error connecting to broker: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Failed to connect to broker: {str(e)}",
+                ) from e
+
+            # Fetch broker orders using KotakNeoOrders
+            try:
+                orders_api = KotakNeoOrders(auth)
+                orders_response = orders_api.get_orders()
+                if orders_response is None:
+                    logger.warning("Broker get_orders() returned None")
+                    orders_response = {}
+            except Exception as e:
+                logger.error(f"Error fetching broker orders: {e}", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to fetch broker orders: {str(e)}",
+                ) from e
+
+            broker_orders = (
+                orders_response.get("data", []) if isinstance(orders_response, dict) else []
+            )
+
+            # Get orders to sync
+            repo = OrdersRepository(db)
+            if order_id:
+                # Sync specific order
+                order = repo.get(order_id)
+                if not order or order.user_id != current.id:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Order {order_id} not found",
+                    )
+                orders_to_sync = [order]
+            else:
+                # Sync all pending/ongoing orders
+                all_orders, _ = _normalize_repo_list_result(repo.list(current.id, status=None))
+                orders_to_sync = [
+                    o
+                    for o in all_orders
+                    if o.status in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
+                ]
+
+            # Sync each order
+            stats = {
+                "synced": 0,
+                "updated": 0,
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+                "errors": [],
+            }
+
+            for db_order in orders_to_sync:
+                stats["synced"] += 1
+                order_id_str = db_order.broker_order_id or db_order.order_id
+                if not order_id_str:
+                    stats["errors"].append(f"Order {db_order.id} has no broker_order_id")
+                    continue
+
+                # Find order in broker orders
+                broker_order = None
+                for bo in broker_orders:
+                    try:
+                        broker_order_id = OrderFieldExtractor.get_order_id(bo)
+                        if broker_order_id and broker_order_id == str(order_id_str):
+                            broker_order = bo
+                            break
+                    except Exception as e:
+                        logger.debug(f"Error extracting order ID from broker order: {e}")
+                        continue
+
+                if not broker_order:
+                    # Order not found in broker - might be executed and removed
+                    # Check holdings to see if it was executed (optional enhancement)
+                    continue
+
+                # Extract status
+                status = OrderFieldExtractor.get_status(broker_order)
+                status_lower = status.lower() if status else ""
+
+                if not status_lower:
+                    continue
+
+                # Update order status
+                try:
+                    if status_lower in ["rejected", "reject"]:
+                        try:
+                            rejection_reason = (
+                                OrderFieldExtractor.get_rejection_reason(broker_order)
+                                or "Rejected by broker"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Error extracting rejection reason: {e}")
+                            rejection_reason = "Rejected by broker"
+                        repo.mark_rejected(db_order, rejection_reason)
+                        stats["rejected"] += 1
+                        stats["updated"] += 1
+                    elif status_lower in ["cancelled", "cancel"]:
+                        try:
+                            cancelled_reason = (
+                                OrderFieldExtractor.get_rejection_reason(broker_order)
+                                or "Cancelled"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Error extracting cancellation reason: {e}")
+                            cancelled_reason = "Cancelled"
+                        repo.mark_cancelled(db_order, cancelled_reason)
+                        stats["cancelled"] += 1
+                        stats["updated"] += 1
+                    elif status_lower in ["executed", "filled", "complete"]:
+                        try:
+                            execution_price = OrderFieldExtractor.get_price(broker_order)
+                            if execution_price is None or execution_price <= 0:
+                                logger.warning(
+                                    f"Invalid execution price for order {db_order.id}: "
+                                    f"{execution_price}"
+                                )
+                                execution_price = db_order.price or 0.0
+
+                            execution_qty = (
+                                OrderFieldExtractor.get_filled_quantity(broker_order)
+                                or OrderFieldExtractor.get_quantity(broker_order)
+                                or db_order.quantity
+                            )
+                            if execution_qty is None or execution_qty <= 0:
+                                logger.warning(
+                                    f"Invalid execution qty for order {db_order.id}: "
+                                    f"{execution_qty}"
+                                )
+                                execution_qty = db_order.quantity
+
+                            repo.mark_executed(
+                                db_order,
+                                execution_price=execution_price,
+                                execution_qty=execution_qty,
+                            )
+                            stats["executed"] += 1
+                            stats["updated"] += 1
+                        except Exception as e:
+                            logger.error(
+                                f"Error marking order {db_order.id} as executed: {e}", exc_info=True
+                            )
+                            stats["errors"].append(
+                                f"Order {db_order.id}: Failed to mark as executed: {str(e)}"
+                            )
+                    elif status_lower in ["pending", "open", "trigger_pending"]:
+                        # Update last_status_check
+                        repo.update_status_check(db_order)
+                        stats["updated"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"Error updating order {db_order.id}: {str(e)}")
+
+            return {
+                "message": "Order sync completed",
+                "sync_performed": True,
+                "monitoring_active": False,
+                **stats,
+            }
+        finally:
+            # Cleanup temp env file
+            try:
+                Path(env_file).unlink(missing_ok=True)
+            except Exception as cleanup_error:
+                logger.debug(f"Failed to cleanup temp env file: {cleanup_error}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error syncing order status: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to sync order status: {str(e)}",
         ) from e
 
 

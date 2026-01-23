@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listOrders, retryOrder, dropOrder, type Order, type OrderStatus } from '@/api/orders';
+import { listOrders, retryOrder, dropOrder, syncOrderStatus, type Order, type OrderStatus } from '@/api/orders';
+import { exportOrders } from '@/api/export';
+import { ExportButton } from '@/components/ExportButton';
+import { DateRangePicker, type DateRange } from '@/components/DateRangePicker';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
+import { FilterPresetDropdown } from '@/components/FilterPresetDropdown';
 
 const TABS: { key: OrderStatus; label: string }[] = [
 	{ key: 'pending', label: 'Pending' }, // Merged: AMO + PENDING_EXECUTION
@@ -29,12 +34,37 @@ const formatDate = (dateStr: string | null | undefined): string => {
 	}
 };
 
+function getDefaultDateRange(): DateRange {
+	const endDate = new Date();
+	const startDate = new Date();
+	startDate.setDate(startDate.getDate() - 30); // Last 30 days
+
+	return {
+		startDate: startDate.toISOString().split('T')[0],
+		endDate: endDate.toISOString().split('T')[0],
+	};
+}
+
 export function OrdersPage() {
 	const [tab, setTab] = useState<OrderStatus>('pending');
+	const [page, setPage] = useState(1);
+	const [pageSize, setPageSize] = useState(50);
+	const [tradeModeFilter, setTradeModeFilter] = useState<'all' | 'paper' | 'broker'>('all');
+	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [exportDateRange, setExportDateRange] = useState<DateRange>(getDefaultDateRange());
 	const queryClient = useQueryClient();
+
+	// Saved filters hook
+	const { presets, savePreset, deletePreset, loading: presetsLoading } = useSavedFilters('orders');
+
+	// Reset to page 1 when tab changes
+	useEffect(() => {
+		setPage(1);
+	}, [tab]);
+
 	const { data, isLoading, isError } = useQuery({
-		queryKey: ['orders', tab],
-		queryFn: () => listOrders({ status: tab }),
+		queryKey: ['orders', tab, page, pageSize],
+		queryFn: () => listOrders({ status: tab, page, page_size: pageSize }),
 	});
 
 	const retryMutation = useMutation({
@@ -51,11 +81,85 @@ export function OrdersPage() {
 		},
 	});
 
+	const syncMutation = useMutation({
+		mutationFn: syncOrderStatus,
+		onSuccess: (data) => {
+			queryClient.invalidateQueries({ queryKey: ['orders'] });
+			// Show success message
+			if (data.sync_performed) {
+				// You can add a toast notification here if you have one
+				console.log(`Sync completed: ${data.synced} orders synced, ${data.updated} updated`);
+			} else if (data.monitoring_active) {
+				console.log('Monitoring service is active. Status syncs automatically.');
+			} else if (data.message.includes('Paper trading')) {
+				// Paper trading orders don't need syncing - they're executed immediately
+				console.log(data.message);
+			}
+		},
+		onError: (error) => {
+			console.error('Failed to sync orders:', error);
+			// You can add error toast notification here
+		},
+	});
+
 	useEffect(() => {
 		document.title = 'Orders';
 	}, []);
 
-	const orders: Order[] = useMemo(() => data ?? [], [data]);
+	const handleExport = async () => {
+		const tradeMode = tradeModeFilter === 'all' ? undefined : tradeModeFilter === 'paper' ? 'paper' : 'broker';
+		await exportOrders({
+			startDate: exportDateRange.startDate,
+			endDate: exportDateRange.endDate,
+			tradeMode: tradeMode as 'paper' | 'broker' | undefined,
+			status: tab,
+		});
+	};
+
+	// Filter preset handlers
+	type OrderFiltersPreset = { tab?: OrderStatus; tradeModeFilter?: 'all' | 'paper' | 'broker' };
+	const handleLoadPreset = (filters: OrderFiltersPreset) => {
+		if (filters.tab) setTab(filters.tab);
+		if (filters.tradeModeFilter) setTradeModeFilter(filters.tradeModeFilter);
+	};
+
+	const handleSavePreset = async (name: string) => {
+		return await savePreset(name, {
+			tab,
+			tradeModeFilter,
+		});
+	};
+
+	const orders: Order[] = useMemo(() => {
+		const allOrders = data?.items ?? [];
+		if (tradeModeFilter === 'all') {
+			return allOrders;
+		}
+		// Filter by trade_mode_display (case-insensitive)
+		return allOrders.filter((o) => {
+			if (!o.trade_mode_display) return false;
+			const display = o.trade_mode_display.toLowerCase();
+			if (tradeModeFilter === 'paper') {
+				return display === 'paper';
+			}
+			if (tradeModeFilter === 'broker') {
+				return display !== 'paper'; // Any broker name
+			}
+			return true;
+		});
+	}, [data?.items, tradeModeFilter]);
+
+	// Pagination handlers
+	const handlePageChange = (newPage: number) => {
+		setPage(newPage);
+		// Optional: scroll to top
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	};
+
+	const handlePageSizeChange = (newPageSize: number) => {
+		setPageSize(newPageSize);
+		setPage(1); // Reset to first page
+	};
 
 	const handleRetry = async (orderId: number) => {
 		if (confirm('Retry this order?')) {
@@ -82,7 +186,37 @@ export function OrdersPage() {
 
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
-			<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Orders</h1>
+			<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+				<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Orders</h1>
+				<div className="flex items-center gap-2">
+					<FilterPresetDropdown
+						presets={presets}
+						onLoadPreset={handleLoadPreset}
+						onSavePreset={handleSavePreset}
+						onDeletePreset={deletePreset}
+						currentFilters={{ tab, tradeModeFilter }}
+						loading={presetsLoading}
+					/>
+					<button
+						onClick={() => setShowExportOptions(!showExportOptions)}
+						className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
+					>
+						Export {showExportOptions ? '▲' : '▼'}
+					</button>
+				</div>
+			</div>
+			{showExportOptions && (
+				<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-4">
+					<h3 className="text-sm font-medium text-[var(--text)] mb-3">Export Orders</h3>
+					<div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+						<DateRangePicker value={exportDateRange} onChange={setExportDateRange} />
+						<ExportButton onExport={handleExport} label="Download CSV" />
+					</div>
+					<p className="text-xs text-[var(--muted)] mt-2">
+						Export will include orders with status "{tab}" and trade mode "{tradeModeFilter}" for the selected date range.
+					</p>
+				</div>
+			)}
 			<div className="flex flex-wrap gap-2">
 				{TABS.map((t) => (
 					<button
@@ -99,11 +233,67 @@ export function OrdersPage() {
 					</button>
 				))}
 			</div>
+			<div className="flex flex-wrap gap-2 items-center">
+				<span className="text-sm text-[var(--muted)]">Filter by mode:</span>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'all'
+							? 'bg-blue-600 text-white border-blue-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('all')}
+				>
+					All
+				</button>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'paper'
+							? 'bg-purple-600 text-white border-purple-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('paper')}
+				>
+					Paper
+				</button>
+				<button
+					className={`px-3 py-1 rounded border text-sm ${
+						tradeModeFilter === 'broker'
+							? 'bg-green-600 text-white border-green-600'
+							: 'bg-[var(--panel)] text-[var(--text)] border-[#1e293b] hover:bg-[#0f1720]'
+					}`}
+					onClick={() => setTradeModeFilter('broker')}
+				>
+					Broker
+				</button>
+			</div>
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0 px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-sm sm:text-base text-[var(--text)]">{TABS.find((t) => t.key === tab)?.label} Orders</div>
-					{isLoading && <span className="text-xs sm:text-sm text-[var(--muted)]">Loading...</span>}
-					{isError && <span className="text-xs sm:text-sm text-red-400">Failed to load orders</span>}
+					<div className="flex items-center gap-2">
+						<button
+							onClick={() => syncMutation.mutate(undefined)}
+							disabled={syncMutation.isPending}
+							className="px-3 py-1.5 text-xs sm:text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white rounded transition-colors flex items-center gap-1.5"
+							title="Sync order status from broker"
+						>
+							<svg
+								className={`w-4 h-4 ${syncMutation.isPending ? 'animate-spin' : ''}`}
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+								/>
+							</svg>
+							{syncMutation.isPending ? 'Syncing...' : 'Refresh'}
+						</button>
+						{isLoading && <span className="text-xs sm:text-sm text-[var(--muted)]">Loading...</span>}
+						{isError && <span className="text-xs sm:text-sm text-red-400">Failed to load orders</span>}
+					</div>
 				</div>
 				<div className="overflow-x-auto -mx-2 sm:mx-0">
 					<table className="w-full text-xs sm:text-sm">
@@ -114,6 +304,7 @@ export function OrdersPage() {
 								<th className="text-left p-2 whitespace-nowrap">Qty</th>
 								<th className="text-left p-2 whitespace-nowrap">Price</th>
 								<th className="text-left p-2 whitespace-nowrap">Status</th>
+								<th className="text-left p-2 whitespace-nowrap hidden sm:table-cell">Mode</th>
 								<th className="text-left p-2 whitespace-nowrap hidden sm:table-cell">Created</th>
 								<th className="text-left p-2 whitespace-nowrap hidden md:table-cell">Entry Type</th>
 								<th className="text-left p-2 whitespace-nowrap hidden md:table-cell">Manual</th>
@@ -142,6 +333,19 @@ export function OrdersPage() {
 								<td className="p-2 text-[var(--text)]">{o.quantity}</td>
 								<td className="p-2 text-[var(--text)]">{formatPrice(o.price)}</td>
 								<td className="p-2 text-[var(--text)]">{o.status}</td>
+								<td className="p-2 text-[var(--text)] hidden sm:table-cell">
+									{o.trade_mode_display ? (
+										<span className={`px-2 py-0.5 text-xs rounded ${
+											o.trade_mode_display.toLowerCase() === 'paper'
+												? 'bg-purple-500/20 text-purple-300'
+												: 'bg-green-500/20 text-green-300'
+										}`}>
+											{o.trade_mode_display}
+										</span>
+									) : (
+										<span className="text-[var(--muted)]">-</span>
+									)}
+								</td>
 								<td className="p-2 text-[var(--text)] text-xs hidden sm:table-cell">
 									{formatDate(o.created_at)}
 								</td>
@@ -250,6 +454,89 @@ export function OrdersPage() {
 					</tbody>
 				</table>
 				</div>
+				{/* Pagination Controls */}
+				{data && data.total > 0 && (
+					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-3 py-3 border-t border-[#1e293b]">
+						<div className="text-sm text-[var(--muted)]">
+							Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, data.total)} of {data.total} orders
+						</div>
+
+						<div className="flex items-center gap-2">
+							{/* Page Size Selector */}
+							<select
+								value={pageSize}
+								onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+								className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)]"
+							>
+								<option value={25}>25 per page</option>
+								<option value={50}>50 per page</option>
+								<option value={100}>100 per page</option>
+								<option value={200}>200 per page</option>
+							</select>
+
+							{/* Pagination Buttons */}
+							<div className="flex items-center gap-1">
+								<button
+									onClick={() => handlePageChange(1)}
+									disabled={page === 1}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									««
+								</button>
+								<button
+									onClick={() => handlePageChange(page - 1)}
+									disabled={page === 1}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									«
+								</button>
+
+								{/* Page Numbers */}
+								{[...Array(Math.min(5, data.total_pages))].map((_, i) => {
+									let pageNum;
+									if (data.total_pages <= 5) {
+										pageNum = i + 1;
+									} else if (page <= 3) {
+										pageNum = i + 1;
+									} else if (page >= data.total_pages - 2) {
+										pageNum = data.total_pages - 4 + i;
+									} else {
+										pageNum = page - 2 + i;
+									}
+
+									return (
+										<button
+											key={pageNum}
+											onClick={() => handlePageChange(pageNum)}
+											className={`px-2 py-1 text-sm border rounded ${
+												page === pageNum
+													? 'bg-blue-600 text-white border-blue-600'
+													: 'bg-[var(--panel)] border-[#1e293b] text-[var(--text)] hover:bg-[#0f1720]'
+											}`}
+										>
+											{pageNum}
+										</button>
+									);
+								})}
+
+								<button
+									onClick={() => handlePageChange(page + 1)}
+									disabled={page >= data.total_pages}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									»
+								</button>
+								<button
+									onClick={() => handlePageChange(data.total_pages)}
+									disabled={page >= data.total_pages}
+									className="px-2 py-1 text-sm bg-[var(--panel)] border border-[#1e293b] rounded text-[var(--text)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#0f1720]"
+								>
+									»»
+								</button>
+							</div>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	);

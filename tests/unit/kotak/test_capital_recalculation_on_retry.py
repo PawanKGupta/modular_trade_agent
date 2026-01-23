@@ -93,6 +93,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty  # Original qty from when capital was lower
         mock_db_order.ticker = ticker
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_db_order.order_metadata = {"ticker": ticker}
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
         type(mock_db_order).retry_count = 0  # Ensure it's an integer attribute
 
@@ -184,6 +186,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty  # Original qty from when capital was higher
         mock_db_order.ticker = ticker
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_db_order.order_metadata = {"ticker": ticker}
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
         type(mock_db_order).retry_count = 0  # Ensure it's an integer attribute
 
@@ -255,6 +259,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty
         mock_db_order.ticker = ticker
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_db_order.order_metadata = {"ticker": ticker}
 
         auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 
@@ -321,6 +327,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.status = DbOrderStatus.FAILED  # RETRY_PENDING merged into FAILED
         mock_db_order.quantity = original_qty
         mock_db_order.ticker = ticker
+        # After bug fix: ticker is now extracted from order_metadata first
+        mock_db_order.order_metadata = {"ticker": ticker}
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
         type(mock_db_order).retry_count = 0  # Ensure it's an integer attribute
 

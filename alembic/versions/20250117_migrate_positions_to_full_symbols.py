@@ -1,6 +1,7 @@
+# ruff: noqa
 """migrate_positions_to_full_symbols
 
-Revision ID: 20250117_migrate_positions_to_full_symbols
+Revision ID: a1b2c3d4e5f8
 Revises: d1e2f3a4b5c6
 Create Date: 2025-01-17 12:00:00.000000+00:00
 """
@@ -11,8 +12,8 @@ from sqlalchemy.dialects import sqlite
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "20250117_migrate_positions_to_full_symbols"
-down_revision = "20251213_add_failed_status_to_signalstatus"
+revision = "a1b2c3d4e5f8"
+down_revision = "d1e2f3a4b5c6"
 branch_labels = None
 depends_on = None
 
@@ -36,6 +37,32 @@ def upgrade() -> None:
     if "positions" not in existing_tables:
         print("Warning: positions table does not exist, skipping migration")
         return
+
+    # Increase symbol column length to 64 to accommodate full symbols like "SYMBOL-EQ"
+    positions_columns = [col["name"] for col in inspector.get_columns("positions")]
+    if "symbol" in positions_columns:
+        # Alter column type to varchar(64) before updating symbols
+        if isinstance(conn.dialect, sqlite.dialect):
+            # SQLite doesn't support ALTER COLUMN directly
+            # Since we are migrating to full symbols, just proceed - SQLite is flexible with types
+            pass
+        else:
+            # PostgreSQL: expand column
+            op.execute(text("ALTER TABLE positions ALTER COLUMN symbol TYPE VARCHAR(64)"))
+
+    # Also expand orders.symbol if needed
+    if "orders" in existing_tables:
+        orders_columns = [col["name"] for col in inspector.get_columns("orders")]
+        if "symbol" in orders_columns:
+            if not isinstance(conn.dialect, sqlite.dialect):
+                op.execute(text("ALTER TABLE orders ALTER COLUMN symbol TYPE VARCHAR(64)"))
+
+    # Also expand signals.symbol if needed
+    if "signals" in existing_tables:
+        signals_columns = [col["name"] for col in inspector.get_columns("signals")]
+        if "symbol" in signals_columns:
+            if not isinstance(conn.dialect, sqlite.dialect):
+                op.execute(text("ALTER TABLE signals ALTER COLUMN symbol TYPE VARCHAR(64)"))
 
     if isinstance(conn.dialect, sqlite.dialect):
         # SQLite version

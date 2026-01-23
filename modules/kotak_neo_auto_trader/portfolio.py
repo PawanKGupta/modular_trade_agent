@@ -47,22 +47,39 @@ class KotakNeoPortfolio:
             return None
 
         def _call_any(method_names):
+            last_error = None
             for name in method_names:
                 try:
                     if hasattr(client, name):
                         return getattr(client, name)()
-                except Exception:
+                except Exception as e:
+                    last_error = e
+                    # Log the error for debugging (SDK may print "Error occurred" but we want it in logs)
+                    logger.debug(f"Failed to call {name}(): {e}")
                     continue
+            # If all methods failed, log the last error
+            if last_error:
+                logger.warning(
+                    f"All holdings API methods failed. Last error: {last_error}. "
+                    "This may indicate an API connection issue or invalid response."
+                )
             return None
 
         try:
             logger.info(" Retrieving portfolio holdings...")
-            holdings = (
-                _call_any(
-                    ["holdings", "get_holdings", "portfolio_holdings", "getPortfolioHoldings"]
-                )
-                or {}
+            holdings = _call_any(
+                ["holdings", "get_holdings", "portfolio_holdings", "getPortfolioHoldings"]
             )
+
+            # If API call failed (returned None), return None to indicate error
+            # Don't convert to {} as that would be treated as "no holdings" instead of "API error"
+            if holdings is None:
+                logger.warning(
+                    "Holdings API call failed (returned None). "
+                    "This may indicate a connection issue or API error. "
+                    "Reconciliation will be skipped to avoid incorrect position closures."
+                )
+                return None
 
             if isinstance(holdings, dict) and "error" in holdings:
                 logger.error(f" Failed to get holdings: {holdings['error']}")

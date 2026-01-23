@@ -13,6 +13,7 @@ Scenario:
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -124,12 +125,22 @@ class TestDuplicateReentryDetectionTiming:
         )
 
         # Mock DB order with proper datetime
-        db_order = Mock()
-        db_order.entry_type = "reentry"
-        db_order.order_metadata = {"rsi": 25.0, "price": 95.0, "rsi_entry_level": 25.0}
-        db_order.filled_at = execution_time  # Real datetime object
-        db_order.execution_time = None
-        mock_orders_repo.get_by_broker_order_id = Mock(return_value=db_order)
+        db_order = SimpleNamespace(
+            entry_type="reentry",
+            order_metadata={"rsi": 25.0, "price": 95.0, "rsi_entry_level": 25.0},
+            filled_at=execution_time,
+            execution_time=None,
+            placed_at=None,
+            symbol="RELIANCE-EQ",
+        )
+
+        def _get_by_broker_order_id(user_id, broker_order_id):
+            assert broker_order_id == order_id
+            return db_order
+
+        mock_orders_repo.get_by_broker_order_id = Mock(side_effect=_get_by_broker_order_id)
+        mock_orders_repo.get = Mock(return_value=db_order)
+        mock_orders_repo.get = Mock(return_value=db_order)
         # Also mock get() for db_order_id lookup
         mock_orders_repo.get = Mock(return_value=db_order)
 
@@ -139,6 +150,10 @@ class TestDuplicateReentryDetectionTiming:
         mock_transaction.__enter__ = Mock(return_value=mock_positions_repo.db)
         mock_transaction.__exit__ = Mock(return_value=False)
 
+        # Defensive: ensure the monitor uses our configured repo mocks
+        unified_monitor.positions_repo = mock_positions_repo
+        unified_monitor.orders_repo = mock_orders_repo
+
         with patch(
             "modules.kotak_neo_auto_trader.unified_order_monitor.transaction",
             return_value=mock_transaction,
@@ -146,7 +161,7 @@ class TestDuplicateReentryDetectionTiming:
             # Call _create_position_from_executed_order
             unified_monitor._create_position_from_executed_order(
                 order_id=order_id,
-                order_info={"symbol": "RELIANCE-EQ", "db_order_id": 1},
+                order_info={"symbol": "RELIANCE-EQ"},
                 execution_price=95.0,
                 execution_qty=10.0,
             )
@@ -182,12 +197,21 @@ class TestDuplicateReentryDetectionTiming:
         mock_positions_repo.get_by_symbol_for_update = Mock(return_value=position)
 
         # Mock DB order with proper datetime
-        db_order = Mock()
-        db_order.entry_type = "reentry"
-        db_order.order_metadata = {"rsi": 25.0, "price": 95.0, "rsi_entry_level": 25.0}
-        db_order.filled_at = execution_time  # Real datetime object
-        db_order.execution_time = None
-        mock_orders_repo.get_by_broker_order_id = Mock(return_value=db_order)
+        db_order = SimpleNamespace(
+            entry_type="reentry",
+            order_metadata={"rsi": 25.0, "price": 95.0, "rsi_entry_level": 25.0},
+            filled_at=execution_time,
+            execution_time=None,
+            placed_at=None,
+            symbol="RELIANCE-EQ",
+        )
+
+        def _get_by_broker_order_id(user_id, broker_order_id):
+            assert broker_order_id == order_id
+            return db_order
+
+        mock_orders_repo.get_by_broker_order_id = Mock(side_effect=_get_by_broker_order_id)
+        mock_orders_repo.get = Mock(return_value=db_order)
 
         # Mock transaction context manager
         mock_positions_repo.db = Mock()
@@ -202,7 +226,7 @@ class TestDuplicateReentryDetectionTiming:
             # Call _create_position_from_executed_order
             unified_monitor._create_position_from_executed_order(
                 order_id=order_id,
-                order_info={"symbol": "RELIANCE-EQ", "db_order_id": 1},
+                order_info={"symbol": "RELIANCE-EQ"},
                 execution_price=95.0,
                 execution_qty=10.0,
             )

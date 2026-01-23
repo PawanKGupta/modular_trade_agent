@@ -79,7 +79,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -100,6 +100,7 @@ class TestExitPriceTimeRecording:
 
         assert stats["detected"] == 1
         call_args = mock_positions_repo.mark_closed.call_args
+        # avgPrc is the only accepted source for execution price
         assert call_args.kwargs["exit_price"] == 2500.0
 
     def test_manual_sell_order_saves_execution_time(
@@ -120,7 +121,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         execution_time = ist_now() - timedelta(minutes=30)
 
@@ -165,7 +166,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         # Test with prc field (fallback)
         all_orders_response = {
@@ -187,7 +188,8 @@ class TestExitPriceTimeRecording:
 
         assert stats["detected"] == 1
         call_args = mock_positions_repo.mark_closed.call_args
-        assert call_args.kwargs["exit_price"] == 2500.0
+        # No fallback: prc alone should not populate exit price
+        assert call_args.kwargs["exit_price"] is None
 
     def test_manual_sell_order_extracts_time_from_order(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
@@ -207,7 +209,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         execution_time = ist_now() - timedelta(minutes=15)
 
@@ -234,6 +236,90 @@ class TestExitPriceTimeRecording:
         # closed_at should be set from execution time
         assert call_args.kwargs["closed_at"] is not None
 
+    def test_manual_sell_order_prefers_avgPrc_over_prc(
+        self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
+    ):
+        """avgPrc should win over conflicting prc values."""
+        position = Mock(spec=Positions)
+        position.symbol = "RELIANCE-EQ"
+        position.quantity = 100.0
+        position.closed_at = None
+        position.opened_at = ist_now() - timedelta(hours=2)
+
+        mock_positions_repo.list.return_value = [position]
+        mock_positions_repo.get_by_symbol.return_value = position
+
+        system_buy_order = Mock(spec=Orders)
+        system_buy_order.side = "buy"
+        system_buy_order.symbol = "RELIANCE-EQ"
+        system_buy_order.orig_source = "signal"
+        system_buy_order.execution_time = position.opened_at
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
+
+        all_orders_response = {
+            "data": [
+                {
+                    "orderId": "MANUAL123",
+                    "trdSym": "RELIANCE-EQ",
+                    "transactionType": "SELL",
+                    "orderStatus": "executed",
+                    "filledQty": 100,
+                    "avgPrc": 2600.0,
+                    "prc": 1.0,
+                }
+            ]
+        }
+
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
+
+        stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
+
+        assert stats["detected"] == 1
+        call_args = mock_positions_repo.mark_closed.call_args
+        assert call_args.kwargs["exit_price"] == 2600.0
+
+    def test_manual_sell_order_ignores_non_positive_avgPrc(
+        self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
+    ):
+        """Non-positive avgPrc should be treated as missing even if prc is provided."""
+        position = Mock(spec=Positions)
+        position.symbol = "RELIANCE-EQ"
+        position.quantity = 100.0
+        position.closed_at = None
+        position.opened_at = ist_now() - timedelta(hours=2)
+
+        mock_positions_repo.list.return_value = [position]
+        mock_positions_repo.get_by_symbol.return_value = position
+
+        system_buy_order = Mock(spec=Orders)
+        system_buy_order.side = "buy"
+        system_buy_order.symbol = "RELIANCE-EQ"
+        system_buy_order.orig_source = "signal"
+        system_buy_order.execution_time = position.opened_at
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
+
+        all_orders_response = {
+            "data": [
+                {
+                    "orderId": "MANUAL123",
+                    "trdSym": "RELIANCE-EQ",
+                    "transactionType": "SELL",
+                    "orderStatus": "executed",
+                    "filledQty": 100,
+                    "avgPrc": 0.0,
+                    "prc": 2500.0,
+                }
+            ]
+        }
+
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
+
+        stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
+
+        assert stats["detected"] == 1
+        call_args = mock_positions_repo.mark_closed.call_args
+        assert call_args.kwargs["exit_price"] is None
+
     def test_missing_exit_price_handled_gracefully(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
     ):
@@ -252,7 +338,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -294,7 +380,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [
@@ -341,7 +427,7 @@ class TestExitPriceTimeRecording:
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
         system_buy_order.execution_time = position.opened_at
-        mock_orders_repo.list.return_value = [system_buy_order]
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
         all_orders_response = {
             "data": [

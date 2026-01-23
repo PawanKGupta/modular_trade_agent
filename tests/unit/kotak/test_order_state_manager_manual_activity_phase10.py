@@ -308,7 +308,7 @@ class TestManualActivityDetectionPhase10:
         mock_db_order.id = 1
         mock_db_order.broker_order_id = "ORDER123"
         mock_db_order.symbol = "RELIANCE"
-        mock_orders_repo.list.return_value = [mock_db_order]
+        mock_orders_repo.list.return_value = ([mock_db_order], 1)
 
         # Update DB for manual modification
         order_state_manager._update_db_for_manual_modification(
@@ -333,7 +333,7 @@ class TestManualActivityDetectionPhase10:
         mock_db_order.id = 1
         mock_db_order.broker_order_id = "ORDER123"
         mock_db_order.symbol = "RELIANCE"
-        mock_orders_repo.list.return_value = [mock_db_order]
+        mock_orders_repo.list.return_value = ([mock_db_order], 1)
 
         # Update DB for manual cancellation
         order_state_manager._update_db_for_manual_cancellation(

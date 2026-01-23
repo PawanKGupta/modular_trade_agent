@@ -8,9 +8,25 @@ from typing import Any
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus
+from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
 from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.persistence.fills_repository import FillsRepository
+from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
+
+# Optional imports (may not be available in all environments)
+try:
+    from modules.kotak_neo_auto_trader.utils.trading_day_utils import (
+        get_next_trading_day_close,
+    )
+except ImportError:
+    # Fallback if module not available
+    get_next_trading_day_close = None  # type: ignore
+
+try:
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
+except ImportError:
+    extract_base_symbol = None  # type: ignore
 
 # Import logger for duplicate detection logging
 try:
@@ -28,7 +44,25 @@ class OrdersRepository:
     def get(self, order_id: int) -> Orders | None:
         return self.db.get(Orders, order_id)
 
-    def list(self, user_id: int, status: OrderStatus | None = None) -> builtins.list[Orders]:
+    def list(  # noqa: PLR0912, PLR0915
+        self,
+        user_id: int,
+        status: OrderStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[builtins.list[Orders], int]:
+        """
+        List orders with optional pagination support.
+
+        Args:
+            user_id: User ID to filter orders
+            status: Optional status filter
+            limit: Optional limit for pagination
+            offset: Offset for pagination (default: 0)
+
+        Returns:
+            Tuple of (orders list, total count)
+        """
         # Always use raw SQL fallback to avoid enum validation issues
         # This ensures compatibility with database schema regardless of SQLAlchemy metadata cache
 
@@ -81,19 +115,41 @@ class OrdersRepository:
             optional_columns.append("execution_qty")
         if "execution_time" in orders_columns:
             optional_columns.append("execution_time")
+        # Phase 0.1: Trade mode column
+        if "trade_mode" in orders_columns:
+            optional_columns.append("trade_mode")
 
         all_columns = base_columns + optional_columns
-        query = f"""
-            SELECT {", ".join(all_columns)}
-            FROM orders
-            WHERE user_id = :user_id
-        """
+
+        # Build base WHERE clause
+        where_clause = "WHERE user_id = :user_id"
         params = {"user_id": user_id}
         if status:
-            query += " AND status = :status"
+            where_clause += " AND status = :status"
             # Use enum value (lowercase) to match database
             params["status"] = status.value.lower()
-        query += " ORDER BY placed_at DESC"
+
+        # Get total count before applying pagination
+        # `where_clause` is built from static strings; values are bound via `params`.
+        count_query = f"SELECT COUNT(*) FROM orders {where_clause}"  # noqa: S608
+        total_count = self.db.execute(text(count_query), params).scalar() or 0
+
+        # Build SELECT query with pagination.
+        # Columns are derived from DB introspection; values are bound via `params`.
+        query = "\n".join(
+            [
+                "SELECT " + ", ".join(all_columns),
+                "FROM orders",
+                where_clause,
+                "ORDER BY placed_at DESC",
+            ]
+        )  # noqa: S608
+
+        # Apply pagination if limit is provided
+        if limit is not None:
+            query += " LIMIT :limit OFFSET :offset"
+            params["limit"] = int(limit)
+            params["offset"] = max(0, int(offset))
 
         results = self.db.execute(text(query), params).fetchall()
 
@@ -180,8 +236,6 @@ class OrdersRepository:
                 order_kwargs["retry_count"] = row_dict.get("retry_count") or 0
             if "reason" in orders_columns:
                 order_kwargs["reason"] = row_dict.get("reason")
-            if "reason" in orders_columns:
-                order_kwargs["reason"] = row_dict.get("reason")
             if "last_status_check" in orders_columns:
                 order_kwargs["last_status_check"] = parse_datetime(
                     row_dict.get("last_status_check")
@@ -196,12 +250,23 @@ class OrdersRepository:
                 order_kwargs["updated_at"] = parse_datetime(
                     row_dict.get("updated_at") or row_dict.get("placed_at")
                 )
+            # Phase 0.1: Add trade_mode if column exists
+            if "trade_mode" in orders_columns:
+                trade_mode_str = row_dict.get("trade_mode")
+                if trade_mode_str:
+                    try:
+                        order_kwargs["trade_mode"] = TradeMode(trade_mode_str.lower())
+                    except (ValueError, AttributeError):
+                        # Fallback to default if invalid value
+                        order_kwargs["trade_mode"] = TradeMode.PAPER
+                else:
+                    order_kwargs["trade_mode"] = TradeMode.PAPER
 
             order = Orders(**order_kwargs)
             orders.append(order)
-        return orders
+        return orders, total_count
 
-    def create_amo(
+    def create_amo(  # noqa: PLR0912, PLR0913
         self,
         *,
         user_id: int,
@@ -215,12 +280,13 @@ class OrdersRepository:
         entry_type: str | None = None,
         order_metadata: dict | None = None,
         reason: str | None = None,
+        trade_mode: TradeMode | None = None,
     ) -> Orders:
         # Check for existing active order to prevent duplicates
         # First check by exact symbol match (most common case - same symbol format)
         # Then check by base symbol (fallback for different formats like SALSTEEL-BE vs SALSTEEL)
         if side == "buy":
-            existing_orders = self.list(user_id)
+            existing_orders, _ = self.list(user_id)
             symbol_upper = symbol.upper().strip()
 
             for existing_order in existing_orders:
@@ -234,11 +300,65 @@ class OrdersRepository:
                 # Only exact match (full symbols are different instruments)
                 if existing_symbol_upper == symbol_upper:
                     logger.warning(
-                        f"Duplicate order prevented: Active buy order already exists with symbol '{symbol}'. "
-                        f"Existing order: {existing_order.symbol} (id: {existing_order.id}, status: {existing_order.status}). "
-                        f"Returning existing order."
+                        "Duplicate order prevented: Active buy order already exists "
+                        "with symbol '%s'. "
+                        "Existing order: %s (id: %s, status: %s). Returning existing order.",
+                        symbol,
+                        existing_order.symbol,
+                        existing_order.id,
+                        existing_order.status,
                     )
                     return existing_order
+
+        # CRITICAL: Check for existing active SELL order by base symbol
+        # There should only be ONE sell order per symbol (base symbol, not full symbol)
+        # This prevents multiple sell orders for the same stock
+        if side == "sell":
+            try:
+                if extract_base_symbol is None:
+                    raise ImportError("extract_base_symbol not available")
+                existing_orders, _ = self.list(user_id)
+                symbol_base = extract_base_symbol(symbol).upper().strip()
+
+                for existing_order in existing_orders:
+                    if existing_order.side != "sell":
+                        continue
+                    if existing_order.status not in [OrderStatus.PENDING, OrderStatus.ONGOING]:
+                        continue
+
+                    existing_symbol_base = (
+                        extract_base_symbol(existing_order.symbol).upper().strip()
+                    )
+
+                    # Check by base symbol (e.g., "INDIAGLYCO" matches "INDIAGLYCO-EQ"
+                    # and "INDIAGLYCO-BE")
+                    if existing_symbol_base == symbol_base:
+                        logger.warning(
+                            "Duplicate sell order prevented: Active sell order already exists "
+                            "for base symbol '%s'. "
+                            "Existing order: %s (id: %s, status: %s). Requested order: %s. "
+                            "Returning existing order.",
+                            symbol_base,
+                            existing_order.symbol,
+                            existing_order.id,
+                            existing_order.status,
+                            symbol,
+                        )
+                        return existing_order
+            except Exception as e:
+                # Non-critical: if symbol extraction fails, log and continue
+                # Better to place order than to block due to utility function failure
+                logger.debug("Could not check for duplicate sell orders: %s", e)
+
+        # Phase 0.1: Get trade_mode from UserSettings if not provided
+        if trade_mode is None:
+            settings_repo = SettingsRepository(self.db)
+            user_settings = settings_repo.get_by_user_id(user_id)
+            if user_settings and user_settings.trade_mode:
+                trade_mode = user_settings.trade_mode
+            else:
+                # Default to PAPER if no settings exist
+                trade_mode = TradeMode.PAPER
 
         now = ist_now()
         order = Orders(
@@ -256,6 +376,7 @@ class OrdersRepository:
             order_metadata=order_metadata,
             broker_order_id=broker_order_id,
             reason=reason or "Order placed - waiting for market open",
+            trade_mode=trade_mode,  # Phase 0.1: Add trade_mode
         )
         self.db.add(order)
         self.db.commit()
@@ -322,7 +443,7 @@ class OrdersRepository:
         base_symbol = symbol.upper().split("-")[0].strip()
 
         # Get all buy orders for user
-        all_orders = self.list(user_id)
+        all_orders, _ = self.list(user_id)
 
         for order in all_orders:
             if order.side != "buy" or order.status not in statuses:
@@ -384,7 +505,8 @@ class OrdersRepository:
 
         Args:
             order: Order to update
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
             **fields: Fields to update on the order
         """
         # Merge order into current session if it's detached
@@ -418,7 +540,8 @@ class OrdersRepository:
 
         Args:
             order: Order to cancel
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
         """
         # For AMO orders, cancel means remove or mark closed without fills
         order.status = OrderStatus.CLOSED
@@ -456,9 +579,11 @@ class OrdersRepository:
         """Mark an order as rejected by broker
 
         Note: REJECTED status is now mapped to FAILED with reason field.
+        Stores detailed rejection reason in rejection_reason field for analysis.
         """
         order.status = OrderStatus.FAILED  # Changed from REJECTED
         order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
+        order.rejection_reason = rejection_reason  # Store detailed reason (Phase 1)
         order.last_status_check = ist_now()
         # Set first_failed_at if not already set (for retry logic)
         if not order.first_failed_at:
@@ -483,34 +608,173 @@ class OrdersRepository:
 
         return self.update(order)
 
-    def mark_executed(
+    def mark_executed(  # noqa: PLR0913
         self,
         order: Orders,
         execution_price: float,
         execution_qty: float | None = None,
+        charges: float = 0.0,
+        broker_fill_id: str | None = None,
         auto_commit: bool = True,
+        create_fill_record: bool = True,
     ) -> Orders:
         """Mark an order as executed with execution details
 
+        Supports partial fills: each call creates a Fill record, then aggregates
+        all fills to update order.execution_price and order.execution_qty.
+
         Args:
             order: Order to mark as executed
-            execution_price: Price at which order executed
-            execution_qty: Quantity executed (defaults to order quantity)
-            auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
+            execution_price: Price at which this fill executed
+            execution_qty: Quantity executed in this fill (defaults to order quantity)
+            charges: Brokerage + taxes for this fill
+            broker_fill_id: Broker's unique fill ID for deduplication
+            auto_commit: If True, commit immediately. If False, caller handles commit
+                (for transactions).
+            create_fill_record: If True, create Fill record (default). Set False for
+                legacy single-fill behavior.
         """
+        fill_qty = execution_qty or order.quantity
+
+        # Create Fill record for this execution
+        if create_fill_record:
+            try:
+                fills_repo = FillsRepository(self.db)
+
+                # Check for duplicate fill by broker_fill_id
+                if broker_fill_id and fills_repo.get_by_broker_fill_id(broker_fill_id):
+                    logger.info(f"Duplicate fill {broker_fill_id} for order {order.id}, skipping")
+                    return order
+
+                # Create fill record
+                fills_repo.create(
+                    order_id=order.id,
+                    user_id=order.user_id,
+                    quantity=fill_qty,
+                    price=execution_price,
+                    charges=charges,
+                    broker_fill_id=broker_fill_id,
+                    auto_commit=False,  # Will commit with order update
+                )
+
+                # Aggregate all fills to get total execution stats
+                fill_summary = fills_repo.get_fill_summary(order.id)
+                order.execution_qty = fill_summary["total_qty"]
+                order.execution_price = fill_summary["avg_price"]  # Weighted average
+
+            except Exception as e:
+                # Fall back to legacy behavior if fills table doesn't exist or other error
+                logger.debug(
+                    f"Fill record creation failed for order {order.id}, using legacy behavior: {e}"
+                )
+                order.execution_price = execution_price
+                order.execution_qty = fill_qty
+        else:
+            # Legacy behavior: single fill, no Fill record
+            order.execution_price = execution_price
+            order.execution_qty = fill_qty
+
+        # Update order status and timestamps
         order.status = OrderStatus.ONGOING
-        order.execution_price = execution_price
-        order.execution_qty = execution_qty or order.quantity
         order.execution_time = ist_now()
         order.filled_at = ist_now()
         order.last_status_check = ist_now()
-        order.reason = f"Order executed at Rs {execution_price:.2f}"  # Set reason
-        return self.update(order, auto_commit=auto_commit)
+        order.reason = f"Order executed at Rs {order.execution_price:.2f}"
+
+        updated_order = self.update(order, auto_commit=auto_commit)
+
+        # Phase 2.1: Late fill detection - check if signal is EXPIRED when order fills
+        if order.side == "buy":
+            self._mark_signal_as_traded_with_late_fill_detection(order)
+
+        return updated_order
 
     def update_status_check(self, order: Orders) -> Orders:
         """Update the last status check timestamp"""
         order.last_status_check = ist_now()
         return self.update(order)
+
+    def _mark_signal_as_traded_with_late_fill_detection(self, order: Orders) -> None:
+        """
+        Helper method to mark signal as TRADED when order executes.
+        Detects late fills (when signal is EXPIRED) and marks with appropriate reason.
+
+        Only marks if:
+        - Order is a buy order
+        - Signal exists for this symbol
+
+        Args:
+            order: The order that was executed
+        """
+        if order.side != "buy":
+            return  # Only handle buy orders
+
+        try:
+            signals_repo = SignalsRepository(self.db, user_id=order.user_id)
+
+            # Extract base symbol (remove -EQ, -BE suffixes)
+            base_symbol = order.symbol.split("-")[0] if "-" in order.symbol else order.symbol
+            base_symbol = base_symbol.upper()
+
+            # Find the latest signal for this symbol
+            signal = self.db.execute(
+                select(Signals)
+                .where(Signals.symbol == base_symbol)
+                .order_by(Signals.ts.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+            if not signal:
+                return  # No signal found
+
+            # Check current signal status (base status or user status)
+            user_status = signals_repo.get_user_signal_status(signal.id, order.user_id)
+
+            # If no user status override, use base signal status
+            if user_status is None:
+                user_status = signal.status
+
+            # Determine if this is a late fill (signal is EXPIRED)
+            is_late_fill = user_status == SignalStatus.EXPIRED
+
+            # Mark signal as TRADED with appropriate reason
+            reason = "late_fill" if is_late_fill else "order_placed"
+
+            # Try multiple symbol variants to handle stored symbols with/without suffixes
+            candidates = [base_symbol]
+            upper_symbol = order.symbol.upper()
+            if upper_symbol not in candidates:
+                candidates.append(upper_symbol)
+            # Add NSE-style ticker if missing
+            ticker_variant = f"{base_symbol}.NS" if not base_symbol.endswith(".NS") else base_symbol
+            if ticker_variant not in candidates:
+                candidates.append(ticker_variant)
+
+            marked = False
+            for candidate in candidates:
+                try:
+                    if signals_repo.mark_as_traded(candidate, user_id=order.user_id, reason=reason):
+                        if is_late_fill:
+                            logger.info(
+                                f"Late fill detected: Order {order.id} executed for EXPIRED signal "
+                                f"{candidate} (user {order.user_id})"
+                            )
+                        marked = True
+                        break
+                except Exception as inner_mark_error:
+                    logger.debug(
+                        f"Mark-as-traded attempt failed for {candidate}: {inner_mark_error}"
+                    )
+
+            if not marked:
+                logger.debug(
+                    f"Could not mark signal as TRADED for any variant: {candidates} "
+                    f"(order {order.id})"
+                )
+
+        except Exception as e:
+            # Don't fail order update if signal marking fails
+            logger.warning(f"Failed to mark signal as TRADED for order {order.id}: {e}")
 
     def _mark_signal_as_failed(self, order: Orders) -> None:
         """
@@ -552,7 +816,7 @@ class OrdersRepository:
 
             # Edge case: Check if there are other successful orders for this symbol
             # Only mark as FAILED if ALL buy orders have failed
-            other_orders = self.list(order.user_id)
+            other_orders, _ = self.list(order.user_id)
             symbol_orders = [
                 o
                 for o in other_orders
@@ -578,14 +842,19 @@ class OrdersRepository:
             logger.warning(f"Failed to mark signal as FAILED for order {order.id}: {e}")
 
     def get_pending_amo_orders(self, user_id: int) -> list[Orders]:
-        """Get all pending orders that need status checking
+        """Get all pending AMO buy orders that need status checking
 
         Note: Previously returned AMO + PENDING_EXECUTION, now returns PENDING only.
+        CRITICAL: Only returns buy orders to prevent sell orders from being tracked as buy orders.
         """
-        return self.list(
+        orders, _ = self.list(
             user_id,
             status=OrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
         )
+        # CRITICAL FIX: Filter to only buy orders
+        # AMO orders are always buy orders, but we need to prevent sell orders
+        # with PENDING status from being incorrectly loaded as buy orders
+        return [o for o in orders if o.side == "buy"]
 
     def get_failed_orders(self, user_id: int) -> list[Orders]:
         """Get all failed orders
@@ -593,10 +862,11 @@ class OrdersRepository:
         Note: Previously returned RETRY_PENDING + FAILED, now returns FAILED only.
         For retriable orders (with expiry filter), use get_retriable_failed_orders().
         """
-        return self.list(
+        orders, _ = self.list(
             user_id,
             status=OrderStatus.FAILED,  # Merged: FAILED + RETRY_PENDING + REJECTED
         )
+        return orders
 
     def get_retriable_failed_orders(self, user_id: int) -> list[Orders]:
         """
@@ -609,12 +879,13 @@ class OrdersRepository:
         Returns:
             List of FAILED orders that haven't expired yet
         """
-        from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
-            get_next_trading_day_close,
-        )
+        if get_next_trading_day_close is None:
+            # Module not available, return all failed orders without expiry filter
+            all_failed, _ = self.list(user_id, status=OrderStatus.FAILED)
+            return all_failed
 
         # Get all FAILED orders
-        all_failed = self.list(user_id, status=OrderStatus.FAILED)
+        all_failed, _ = self.list(user_id, status=OrderStatus.FAILED)
 
         # Apply expiry filter
         retriable_orders = []

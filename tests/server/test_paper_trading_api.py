@@ -4,12 +4,14 @@ Tests for Paper Trading API endpoints - Live Price Fetching
 
 import json
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
+
+from datetime import UTC
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -87,9 +89,8 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     }
     (storage_path / "holdings.json").write_text(json.dumps(holdings_data))
 
-    # Active sell orders with target prices
-    sell_orders_data = {"APOLLOHOSP": {"target_price": 160.0, "order_id": "ord_1"}}
-    (storage_path / "active_sell_orders.json").write_text(json.dumps(sell_orders_data))
+    # Active sell orders file is no longer the source of truth for targets.
+    # The portfolio endpoint calculates EMA9 if no DB sell order is found.
 
     # Orders
     (storage_path / "orders.json").write_text(json.dumps([]))
@@ -110,12 +111,18 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
         patched_path,
     )
 
-    # Mock yfinance to return a DIFFERENT price than stored
-    # Patch yfinance.Ticker where it's defined, which will affect all imports
-    with patch("yfinance.Ticker") as mock_ticker_class:
+    # Mock yfinance to return a DIFFERENT price than stored.
+    # Also stub OHLCV fetch used for EMA9 target calculation to avoid real downloads.
+    with (
+        patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
+        patch("server.app.routers.paper_trading.fetch_ohlcv_yf") as mock_fetch_ohlcv,
+    ):
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 165.0}  # LIVE PRICE (different from 155.0)
         mock_ticker_class.return_value = mock_ticker
+
+        # Constant close series -> EMA9 should equal 160.0
+        mock_fetch_ohlcv.return_value = pd.DataFrame({"close": [160.0] * 60})
 
         # Call API
         response = client.get("/api/v1/user/paper-trading/portfolio", headers=headers)
@@ -221,52 +228,69 @@ def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
     user_resp = auth_client.get("/api/v1/auth/me")
     assert user_resp.status_code == 200
     user_id = user_resp.json()["id"]
+    # Seed database-backed orders and closed position
+    from datetime import datetime
 
-    # Create paper trading data files for the correct user
-    storage_path = tmp_path / "paper_trading" / f"user_{user_id}"
-    storage_path.mkdir(parents=True, exist_ok=True)
+    from src.infrastructure.db.session import SessionLocal
+    from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
 
-    # Mock transactions (BUY then SELL of INFY)
-    transactions_data = [
-        {
-            "order_id": "buy_001",
-            "symbol": "INFY",
-            "transaction_type": "BUY",
-            "quantity": 100,
-            "price": 1400.0,
-            "order_value": 140000.0,
-            "charges": 200.0,
-            "timestamp": "2024-11-01T09:15:00",
-        },
-        {
-            "order_id": "sell_001",
-            "symbol": "INFY",
-            "transaction_type": "SELL",
-            "quantity": 100,
-            "price": 1500.0,
-            "order_value": 150000.0,
-            "charges": 300.0,
-            "timestamp": "2024-11-10T14:30:00",
-        },
-        {
-            "order_id": "buy_002",
-            "symbol": "TCS",
-            "transaction_type": "BUY",
-            "quantity": 50,
-            "price": 3500.0,
-            "order_value": 175000.0,
-            "charges": 250.0,
-            "timestamp": "2024-11-15T10:00:00",
-        },
-    ]
+    db = SessionLocal()
+    try:
+        orders_repo = OrdersRepository(db)
+        positions_repo = PositionsRepository(db)
 
-    (storage_path / "transactions.json").write_text(json.dumps(transactions_data))
+        # Create BUY INFY
+        buy_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="INFY",
+            side="buy",
+            order_type="market",
+            quantity=100,
+            price=1400.0,
+            order_id="buy_001",
+        )
 
-    # Monkey patch storage path
-    original_path = Path
-    monkeypatch.setattr(
-        "server.app.routers.paper_trading.Path", lambda x: original_path(tmp_path / x)
-    )
+        # Create SELL INFY
+        sell_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="INFY",
+            side="sell",
+            order_type="market",
+            quantity=100,
+            price=1500.0,
+            order_id="sell_001",
+        )
+
+        # Create BUY TCS
+        orders_repo.create_amo(
+            user_id=user_id,
+            symbol="TCS",
+            side="buy",
+            order_type="market",
+            quantity=50,
+            price=3500.0,
+            order_id="buy_002",
+        )
+
+        # Create and close INFY position with realized PnL = 9500.0
+        positions_repo.upsert(
+            user_id=user_id,
+            symbol="INFY",
+            quantity=100,
+            avg_price=1400.0,
+            opened_at=datetime(2024, 11, 1, 9, 15, 0, tzinfo=UTC),
+        )
+        positions_repo.mark_closed(
+            user_id=user_id,
+            symbol="INFY",
+            closed_at=datetime(2024, 11, 10, 14, 30, 0, tzinfo=UTC),
+            exit_price=1500.0,
+            realized_pnl=9500.0,
+            sell_order_id=sell_order.id,
+        )
+    finally:
+        db.close()
 
     # Call API
     response = auth_client.get("/api/v1/user/paper-trading/history")
@@ -275,13 +299,19 @@ def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
     data = response.json()
 
     # Verify transactions
-    assert len(data["transactions"]) == 3
-    assert data["transactions"][0]["symbol"] in ["INFY", "TCS"]
-    assert data["transactions"][0]["transaction_type"] in ["BUY", "SELL"]
+    assert isinstance(data["transactions"], dict)
+    tx_items = data["transactions"]["items"]
+    assert len(tx_items) == 3
+    assert data["transactions"]["total"] == 3
+    assert tx_items[0]["symbol"] in ["INFY", "TCS"]
+    assert tx_items[0]["transaction_type"] in ["BUY", "SELL"]
 
     # Verify closed positions (1 for INFY: 100 @ 1400 -> 1500)
-    assert len(data["closed_positions"]) == 1
-    closed = data["closed_positions"][0]
+    assert isinstance(data["closed_positions"], dict)
+    cp_items = data["closed_positions"]["items"]
+    assert len(cp_items) == 1
+    assert data["closed_positions"]["total"] == 1
+    closed = cp_items[0]
     assert closed["symbol"] == "INFY"
     assert closed["entry_price"] == 1400.0
     assert closed["exit_price"] == 1500.0
@@ -302,18 +332,14 @@ def test_trade_history_endpoint(tmp_path, monkeypatch, auth_client):
 
 def test_trade_history_empty(auth_client, tmp_path, monkeypatch):
     """Test trade history returns empty data when no transactions exist"""
-    # Monkey patch to use tmp path
-    original_path = Path
-    monkeypatch.setattr(
-        "server.app.routers.paper_trading.Path", lambda x: original_path(tmp_path / x)
-    )
-
     response = auth_client.get("/api/v1/user/paper-trading/history")
     assert response.status_code == 200
 
     data = response.json()
-    assert len(data["transactions"]) == 0
-    assert len(data["closed_positions"]) == 0
+    assert data["transactions"]["total"] == 0
+    assert len(data["transactions"]["items"]) == 0
+    assert data["closed_positions"]["total"] == 0
+    assert len(data["closed_positions"]["items"]) == 0
     assert data["statistics"]["total_trades"] == 0
 
 
@@ -339,6 +365,8 @@ def test_trade_history_partial_matching(auth_client):
     assert "transactions" in data
     assert "closed_positions" in data
     assert "statistics" in data
-    assert isinstance(data["transactions"], list)
-    assert isinstance(data["closed_positions"], list)
+    assert isinstance(data["transactions"], dict)
+    assert isinstance(data["transactions"]["items"], list)
+    assert isinstance(data["closed_positions"], dict)
+    assert isinstance(data["closed_positions"]["items"], list)
     assert isinstance(data["statistics"], dict)

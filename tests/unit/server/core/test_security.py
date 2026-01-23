@@ -64,3 +64,32 @@ def test_decode_token_failure(monkeypatch):
 
     monkeypatch.setattr(security, "jwt", FakeJWT())
     assert security.decode_token("invalid") is None
+
+
+def test_create_jwt_token_with_only_expires_days(monkeypatch):
+    """Test create_jwt_token with only expires_days (no expires_minutes)"""
+    token = security.create_jwt_token("user-123", expires_days=7)
+    payload = jwt.decode(token, DummySettings.jwt_secret, algorithms=[DummySettings.jwt_algorithm])
+    assert payload["sub"] == "user-123"
+    exp = datetime.fromtimestamp(payload["exp"], tz=UTC)
+    delta = exp - datetime.now(tz=UTC)
+    assert delta > timedelta(days=6)
+    assert delta < timedelta(days=8)
+
+
+def test_create_jwt_token_with_extra_none(monkeypatch):
+    """Test create_jwt_token with extra=None"""
+    token = security.create_jwt_token("user-123", extra=None)
+    payload = jwt.decode(token, DummySettings.jwt_secret, algorithms=[DummySettings.jwt_algorithm])
+    assert payload["sub"] == "user-123"
+    assert "exp" in payload
+
+
+def test_verify_password_with_wrong_hash():
+    """Test verify_password with completely wrong hash format"""
+    hashed = security.hash_password("correct")
+    # Try to verify with wrong password
+    assert not security.verify_password("wrong", hashed)
+    # Try with different hash
+    other_hashed = security.hash_password("other")
+    assert not security.verify_password("correct", other_hashed)

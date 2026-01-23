@@ -1,5 +1,6 @@
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException, status
@@ -45,7 +46,6 @@ class DummyOrder(SimpleNamespace):
 
 class DummyOrdersRepo:
     def __init__(self, db):
-        self.db = db
         self.orders_by_user = {}
         self.orders_by_id = {}
         self.list_calls = []
@@ -53,12 +53,44 @@ class DummyOrdersRepo:
         self.update_calls = []
         self.stats = {}
 
-    def list(self, user_id, status=None):
-        self.list_calls.append((user_id, status))
-        orders = self.orders_by_user.get(user_id, [])
+        # Mock db and db.bind for inspect() calls in real OrdersRepository
+        # The real OrdersRepository.list() calls inspect(self.db.bind)
+        class MockBind:
+            def get_columns(self, table_name):
+                # Return a list of column dicts that match what OrdersRepository expects
+                return [
+                    {"name": "id"},
+                    {"name": "user_id"},
+                    {"name": "symbol"},
+                    {"name": "side"},
+                    {"name": "order_type"},
+                    {"name": "quantity"},
+                    {"name": "price"},
+                    {"name": "status"},
+                    {"name": "avg_price"},
+                    {"name": "placed_at"},
+                    {"name": "filled_at"},
+                    {"name": "closed_at"},
+                    {"name": "orig_source"},
+                    {"name": "updated_at"},
+                    {"name": "broker_order_id"},
+                    {"name": "trade_mode"},
+                ]
+
+        class MockDB:
+            def __init__(self):
+                self.bind = MockBind()
+
+        self.db = MockDB() if db is None else db
+
+    def list(self, user_id, status=None, *, limit=50, offset=0):
+        self.list_calls.append((user_id, status, limit, offset))
+        all_orders = self.orders_by_user.get(user_id, [])
         if status:
-            orders = [o for o in orders if o.status == status]
-        return orders
+            all_orders = [o for o in all_orders if o.status == status]
+        total_count = len(all_orders)
+        paginated = all_orders[offset : offset + limit]
+        return paginated, total_count
 
     def get(self, order_id):
         self.get_calls.append(order_id)
@@ -68,14 +100,75 @@ class DummyOrdersRepo:
         self.update_calls.append(order)
         return order
 
+    def mark_cancelled(self, order, cancelled_reason=None):
+        """Mock mark_cancelled method that sets status to CANCELLED"""
+        # Use mocked ist_now from orders module (patched by mock_ist_now fixture)
+        order.status = OrderStatus.CANCELLED
+        order.reason = cancelled_reason or "Cancelled"
+        order.closed_at = orders.ist_now()  # Use mocked ist_now from orders module
+        order.last_status_check = orders.ist_now()
+        return self.update(order)
+
     def get_order_statistics(self, user_id):
         return self.stats.get(user_id, {})
 
 
 @pytest.fixture
 def orders_repo(monkeypatch):
-    repo = DummyOrdersRepo(db=None)
+    # Create a mock db session that has a bind attribute for inspect()
+    class MockBind:
+        def get_columns(self, table_name):
+            return [
+                {"name": "id"},
+                {"name": "user_id"},
+                {"name": "symbol"},
+                {"name": "side"},
+                {"name": "order_type"},
+                {"name": "quantity"},
+                {"name": "price"},
+                {"name": "status"},
+                {"name": "avg_price"},
+                {"name": "placed_at"},
+                {"name": "filled_at"},
+                {"name": "closed_at"},
+                {"name": "orig_source"},
+                {"name": "updated_at"},
+                {"name": "order_id"},
+                {"name": "broker_order_id"},
+                {"name": "metadata"},
+                {"name": "entry_type"},
+                {"name": "first_failed_at"},
+                {"name": "last_retry_attempt"},
+                {"name": "retry_count"},
+                {"name": "reason"},
+                {"name": "last_status_check"},
+                {"name": "execution_price"},
+                {"name": "execution_qty"},
+                {"name": "execution_time"},
+                {"name": "trade_mode"},
+            ]
+
+    class MockDB:
+        def __init__(self):
+            self.bind = MockBind()
+            # Add query method for SettingsRepository
+            self.query = MagicMock()
+
+    mock_db = MockDB()
+    repo = DummyOrdersRepo(db=mock_db)
     monkeypatch.setattr(orders, "OrdersRepository", lambda db: repo)
+
+    # Mock SettingsRepository to avoid db.query calls
+    # Patch where it's imported in orders.py
+    mock_settings_repo = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.broker = "kotak_neo"
+    mock_settings_repo.get_by_user_id.return_value = mock_settings
+    monkeypatch.setattr(
+        "server.app.routers.orders.SettingsRepository",
+        lambda db: mock_settings_repo,
+    )
+
     return repo
 
 
@@ -103,11 +196,11 @@ def test_list_orders_no_filters(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 2
-    assert result[0].symbol == "RELIANCE.NS"
-    assert result[1].symbol == "TCS.NS"
+    assert len(result.items) == 2
+    assert result.items[0].symbol == "RELIANCE.NS"
+    assert result.items[1].symbol == "TCS.NS"
     assert len(orders_repo.list_calls) == 1
-    assert orders_repo.list_calls[0] == (42, None)
+    assert orders_repo.list_calls[0] == (42, None, 50, 0)
 
 
 def test_list_orders_filter_by_status(orders_repo, current_user):
@@ -117,8 +210,8 @@ def test_list_orders_filter_by_status(orders_repo, current_user):
 
     result = orders.list_orders(status="pending", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].status == "pending"
+    assert len(result.items) == 1
+    assert result.items[0].status == "pending"
     assert orders_repo.list_calls[0][1] == OrderStatus.PENDING
 
 
@@ -130,8 +223,8 @@ def test_list_orders_filter_by_reason(orders_repo, current_user):
 
     result = orders.list_orders(reason="funds", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert "funds" in result[0].reason.lower()
+    assert len(result.items) == 1
+    assert "funds" in result.items[0].reason.lower()
 
 
 def test_list_orders_filter_by_date_range(orders_repo, current_user):
@@ -144,8 +237,8 @@ def test_list_orders_filter_by_date_range(orders_repo, current_user):
         from_date="2025-01-15", to_date="2025-01-19", db=None, current=current_user
     )
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_filter_from_date_only(orders_repo, current_user):
@@ -155,8 +248,8 @@ def test_list_orders_filter_from_date_only(orders_repo, current_user):
 
     result = orders.list_orders(from_date="2025-01-15", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_filter_to_date_only(orders_repo, current_user):
@@ -166,8 +259,8 @@ def test_list_orders_filter_to_date_only(orders_repo, current_user):
 
     result = orders.list_orders(to_date="2025-01-19", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_invalid_date_format(orders_repo, current_user):
@@ -187,7 +280,8 @@ def test_list_orders_empty_result(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 0
+    assert len(result.items) == 0
+    assert result.total == 0
 
 
 def test_list_orders_filters_combined(orders_repo, current_user):
@@ -215,8 +309,8 @@ def test_list_orders_filters_combined(orders_repo, current_user):
         current=current_user,
     )
 
-    assert len(result) == 1
-    assert result[0].id == 1
+    assert len(result.items) == 1
+    assert result.items[0].id == 1
 
 
 def test_list_orders_order_without_placed_at(orders_repo, current_user):
@@ -227,8 +321,8 @@ def test_list_orders_order_without_placed_at(orders_repo, current_user):
 
     # Orders without placed_at are included (not filtered) when date filtering is applied
     # because the code checks `if order_date:` and if None, it skips date comparison but still adds
-    assert len(result) == 1
-    assert result[0].created_at is None
+    assert len(result.items) == 1
+    assert result.items[0].created_at is None
 
 
 def test_list_orders_serialization_error_handling(orders_repo, current_user):
@@ -250,7 +344,7 @@ def test_list_orders_serialization_error_handling(orders_repo, current_user):
     result = orders.list_orders(db=None, current=current_user)
 
     # Should handle error gracefully and continue
-    assert len(result) == 0
+    assert len(result.items) == 0
 
 
 def test_list_orders_exception_handling(orders_repo, current_user):
@@ -277,9 +371,9 @@ def test_list_orders_format_datetime_fields(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].created_at == "2025-01-15T10:30:00"
-    assert result[0].updated_at == "2025-01-16T14:00:00"
+    assert len(result.items) == 1
+    assert result.items[0].created_at == "2025-01-15T10:30:00"
+    assert result.items[0].updated_at == "2025-01-16T14:00:00"
 
 
 # POST /{order_id}/retry - retry_order tests
@@ -388,8 +482,9 @@ def test_drop_order_success(orders_repo, current_user, mock_ist_now):
     result = orders.drop_order(order_id=1, db=None, current=current_user)
 
     assert result["message"] == "Order 1 dropped from retry queue"
-    assert order.status == OrderStatus.CLOSED
+    assert order.status == OrderStatus.CANCELLED
     assert order.closed_at == mock_ist_now
+    assert "Dropped from retry queue" in (order.reason or "")
     assert len(orders_repo.update_calls) == 1
 
 
@@ -478,8 +573,8 @@ def test_list_orders_all_status_types(orders_repo, current_user):
 
     for status_val in ["pending", "ongoing", "closed", "failed", "cancelled"]:
         result = orders.list_orders(status=status_val, db=None, current=current_user)
-        assert len(result) == 1
-        assert result[0].status == status_val
+        assert len(result.items) == 1
+        assert result.items[0].status == status_val
 
 
 def test_list_orders_handles_none_reason(orders_repo, current_user):
@@ -489,8 +584,8 @@ def test_list_orders_handles_none_reason(orders_repo, current_user):
 
     result = orders.list_orders(reason="reason", db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].id == 2
+    assert len(result.items) == 1
+    assert result.items[0].id == 2
 
 
 def test_retry_order_handles_none_retry_count(orders_repo, current_user):
@@ -520,11 +615,11 @@ def test_list_orders_handles_all_optional_fields(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].retry_count == 2
-    assert result[0].execution_price == 2500.5
-    assert result[0].entry_type == "initial"
-    assert result[0].is_manual is True
+    assert len(result.items) == 1
+    assert result.items[0].retry_count == 2
+    assert result.items[0].execution_price == 2500.5
+    assert result.items[0].entry_type == "initial"
+    assert result.items[0].is_manual is True
 
 
 def test_list_orders_handles_non_standard_side(orders_repo, current_user):
@@ -533,5 +628,5 @@ def test_list_orders_handles_non_standard_side(orders_repo, current_user):
 
     result = orders.list_orders(db=None, current=current_user)
 
-    assert len(result) == 1
-    assert result[0].side == "buy"  # Should default to "buy"
+    assert len(result.items) == 1
+    assert result.items[0].side == "buy"  # Should default to "buy"

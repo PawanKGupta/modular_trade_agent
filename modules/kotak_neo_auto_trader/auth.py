@@ -7,6 +7,8 @@ import os
 import socket
 import sys
 import threading
+import time
+import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -66,6 +68,13 @@ class KotakNeoAuth:
         self.client = None
         self.session_token = None
         self.is_logged_in = False
+
+        # Phase -1: Session validity tracking
+        # Track when session was created and its TTL (Time To Live)
+        # JWT tokens from Kotak Neo API expire after ~1 hour
+        # Use 55 minutes as safety margin to proactively re-auth before expiry
+        self.session_created_at: float | None = None
+        self.session_ttl: int = 3300  # 55 minutes (safety margin for 1-hour JWT)
 
         # Thread lock for thread-safe client access
         # Prevents race conditions when multiple threads use the same client
@@ -147,6 +156,7 @@ class KotakNeoAuth:
                     return False
 
                 self.is_logged_in = True
+                self.session_created_at = time.time()  # Phase -1: Track session creation time
                 self.logger.info("Login completed successfully!")
                 self.logger.info("Session will remain active for the entire trading day")
                 return True
@@ -188,7 +198,8 @@ class KotakNeoAuth:
 
             if not consumer_key or not consumer_secret:
                 self.logger.error(
-                    "Client initialization failed: consumer_key or consumer_secret is missing or empty"
+                    "Client initialization failed: "
+                    "consumer_key or consumer_secret is missing or empty"
                 )
                 return None
 
@@ -209,7 +220,8 @@ class KotakNeoAuth:
             if "NoneType" in error_msg or "concatenate" in error_msg.lower():
                 self.logger.error(
                     "Client initialization error: SDK received None value. "
-                    "Please check that KOTAK_CONSUMER_KEY and KOTAK_CONSUMER_SECRET are set correctly."
+                    "Please check that KOTAK_CONSUMER_KEY and "
+                    "KOTAK_CONSUMER_SECRET are set correctly."
                 )
             else:
                 self.logger.error(f"Client initialization error (TypeError): {error_msg}")
@@ -432,6 +444,169 @@ class KotakNeoAuth:
             self.logger.debug(f"Error extracting token from response: {error_msg}")
             return None
 
+    def _force_relogin_impl(self) -> bool:
+        """
+        Internal implementation of force re-login (without locks).
+
+        IMPORTANT: This method assumes self._client_lock is already held by the caller.
+        Do NOT call this method directly unless you hold the lock. Use force_relogin() instead.
+
+        Phase -1 CRITICAL FIX: Keep is_logged_in = True during re-auth attempt.
+        Only set False if re-auth completely fails. This prevents Web API thread
+        from clearing session while re-auth is in progress, which causes OTP spam.
+
+        The issue: When JWT expires quickly (e.g., 13 seconds), the SDK's internal state
+        can become corrupted. Creating a new client without cleanup can cause SDK to
+        access None values internally, leading to 'NoneType' object has no attribute 'get' errors.
+        """
+        # Track caller for debugging
+        caller = "unknown"
+        try:
+            stack = traceback.extract_stack()
+            if len(stack) >= 2:
+                caller_frame = stack[-2]
+                caller = f"{caller_frame.filename.split('/')[-1]}:{caller_frame.lineno}"
+        except Exception:
+            pass
+
+        reauth_start = time.time()
+        self.logger.info(
+            f"[REAUTH_DEBUG] _force_relogin_impl() STARTED at {time.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"from {caller}"
+        )
+
+        try:
+            self.logger.info("Forcing fresh login...")
+
+            # Step 1: Clean up old client first (if exists)
+            # This clears SDK internal state that might be corrupted
+            cleanup_start = time.time()
+            old_client = self.client
+            if old_client:
+                try:
+                    # Try to logout old client to clear SDK state
+                    # Don't fail if logout fails (client might already be invalid)
+                    old_client.logout()
+                    cleanup_duration = time.time() - cleanup_start
+                    self.logger.debug(
+                        f"[REAUTH_DEBUG] Old client logged out successfully "
+                        f"(took {cleanup_duration:.2f}s)"
+                    )
+                except Exception as logout_err:
+                    cleanup_duration = time.time() - cleanup_start
+                    # Logout might fail if client is already invalid - that's okay
+                    self.logger.debug(
+                        f"[REAUTH_DEBUG] Old client logout failed (expected if expired) "
+                        f"after {cleanup_duration:.2f}s: {logout_err}"
+                    )
+            else:
+                self.logger.debug("[REAUTH_DEBUG] No old client to cleanup")
+
+            # Phase -1 CRITICAL FIX: Don't set is_logged_in = False here!
+            # Keep it True during re-auth attempt to prevent Web API thread
+            # from clearing session. Only set False if re-auth completely fails
+
+            # Step 2: Create new client (but keep is_logged_in = True)
+            init_start = time.time()
+            self.client = self._initialize_client()
+            init_duration = time.time() - init_start
+            self.logger.info(
+                f"[REAUTH_DEBUG] Client initialization {'successful' if self.client else 'failed'} "
+                f"(took {init_duration:.2f}s)"
+            )
+
+            if not self.client:
+                # Only set False if client initialization fails
+                self.is_logged_in = False
+                self.session_token = None
+                total_duration = time.time() - reauth_start
+                self.logger.error(
+                    f"[REAUTH_DEBUG] FAILED: Client initialization failed "
+                    f"(total duration: {total_duration:.2f}s)"
+                )
+                return False
+
+            # Step 3: Perform fresh login + 2FA
+            login_start = time.time()
+            login_success = self._perform_login()
+            login_duration = time.time() - login_start
+            self.logger.info(
+                f"[REAUTH_DEBUG] Login {'successful' if login_success else 'failed'} "
+                f"(took {login_duration:.2f}s)"
+            )
+
+            if not login_success:
+                # Only set False if login fails
+                self.is_logged_in = False
+                self.session_token = None
+                self.client = None
+                total_duration = time.time() - reauth_start
+                self.logger.error(
+                    f"[REAUTH_DEBUG] FAILED: Login failed (total duration: {total_duration:.2f}s)"
+                )
+                return False
+
+            # Step 4: Complete 2FA (with retry logic)
+            max_2fa_retries = 2
+            for attempt in range(max_2fa_retries):
+                tfa_start = time.time()
+                tfa_success = self._complete_2fa()
+                tfa_duration = time.time() - tfa_start
+
+                if tfa_success:
+                    # Success - keep is_logged_in = True, update timestamp
+                    total_duration = time.time() - reauth_start
+                    self.is_logged_in = True
+                    self.session_created_at = time.time()  # Phase -1: Reset session timer
+                    self.logger.info(
+                        f"[REAUTH_DEBUG] SUCCESS: Re-authentication completed in {total_duration:.2f}s "
+                        f"(2FA attempt {attempt + 1} took {tfa_duration:.2f}s)"
+                    )
+                    self.logger.info("Re-authentication successful")
+                    return True
+
+                self.logger.warning(
+                    f"[REAUTH_DEBUG] 2FA failed on attempt {attempt + 1}/{max_2fa_retries} "
+                    f"(took {tfa_duration:.2f}s)"
+                )
+
+                if attempt < max_2fa_retries - 1:
+                    self.logger.warning(
+                        f"2FA failed, retrying ({attempt + 1}/{max_2fa_retries})..."
+                    )
+                    # Create another fresh client if 2FA fails
+                    self.client = None
+                    self.client = self._initialize_client()
+                    if not self.client:
+                        break
+                    # Re-login before retrying 2FA
+                    if not self._perform_login():
+                        break
+                else:
+                    self.logger.error("2FA failed after retries")
+
+            # Re-auth failed completely - only now set False
+            total_duration = time.time() - reauth_start
+            self.logger.error(
+                f"[REAUTH_DEBUG] FAILED: Re-auth failed after {total_duration:.2f}s from {caller}"
+            )
+            self.is_logged_in = False
+            self.session_token = None
+            self.client = None
+            return False
+
+        except Exception as e:
+            total_duration = time.time() - reauth_start
+            self.logger.error(
+                f"[REAUTH_DEBUG] EXCEPTION in _force_relogin_impl() after {total_duration:.2f}s: {e}",
+                exc_info=True,
+            )
+            # Reset state on failure
+            self.is_logged_in = False
+            self.session_token = None
+            self.client = None
+            return False
+
     def force_relogin(self) -> bool:
         """
         Force a fresh login + 2FA (used when JWT expires) - THREAD-SAFE.
@@ -439,81 +614,34 @@ class KotakNeoAuth:
         IMPORTANT: Always creates a NEW client instance and properly cleans up old client.
         Uses lock to prevent concurrent re-authentication attempts from multiple threads.
 
-        The issue: When JWT expires quickly (e.g., 13 seconds), the SDK's internal state
-        can become corrupted. Creating a new client without cleanup can cause SDK to
-        access None values internally, leading to 'NoneType' object has no attribute 'get' errors.
+        This is the public method that acquires the lock before calling the implementation.
         """
+        # Track caller for debugging
+        caller = "unknown"
+        try:
+            stack = traceback.extract_stack()
+            if len(stack) >= 2:
+                caller_frame = stack[-2]
+                caller = f"{caller_frame.filename.split('/')[-1]}:{caller_frame.lineno}"
+        except Exception:
+            pass
+
+        self.logger.info(
+            f"[REAUTH_DEBUG] force_relogin() called from {caller} "
+            f"at {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
         # Use lock to prevent concurrent re-auth attempts
         # This ensures only one thread performs re-auth at a time
+        lock_start = time.time()
         with self._client_lock:
-            try:
-                self.logger.info("Forcing fresh login...")
-
-                # Step 1: Clean up old client first (if exists)
-                # This clears SDK internal state that might be corrupted
-                old_client = self.client
-                if old_client:
-                    try:
-                        # Try to logout old client to clear SDK state
-                        # Don't fail if logout fails (client might already be invalid)
-                        old_client.logout()
-                        self.logger.debug("Old client logged out successfully")
-                    except Exception as logout_err:
-                        # Logout might fail if client is already invalid - that's okay
-                        self.logger.debug(
-                            f"Old client logout failed (expected if expired): {logout_err}"
-                        )
-
-                # Step 2: Reset authentication state
-                self.is_logged_in = False
-                self.session_token = None
-                self.client = None
-
-                # Step 3: ALWAYS create a new client (don't reuse stale clients)
-                # This is critical: expired clients can cause SDK internal errors
-                self.client = self._initialize_client()
-
-                if not self.client:
-                    self.logger.error("Failed to initialize new client for re-authentication")
-                    return False
-
-                # Step 4: Perform fresh login + 2FA
-                # Add retry logic for 2FA in case SDK needs time to initialize
-                if not self._perform_login():
-                    return False
-
-                # Retry 2FA up to 2 times if it fails with SDK errors
-                max_2fa_retries = 2
-                for attempt in range(max_2fa_retries):
-                    if self._complete_2fa():
-                        self.is_logged_in = True
-                        self.logger.info("Re-authentication successful")
-                        return True
-
-                    if attempt < max_2fa_retries - 1:
-                        self.logger.warning(
-                            f"2FA failed, retrying ({attempt + 1}/{max_2fa_retries})..."
-                        )
-                        # Create another fresh client if 2FA fails
-                        self.client = None
-                        self.client = self._initialize_client()
-                        if not self.client:
-                            break
-                        # Re-login before retrying 2FA
-                        if not self._perform_login():
-                            break
-                    else:
-                        self.logger.error("2FA failed after retries")
-
-                return False
-
-            except Exception as e:
-                self.logger.error(f"Force re-login failed: {e}")
-                # Reset state on failure
-                self.is_logged_in = False
-                self.session_token = None
-                self.client = None
-                return False
+            lock_acquired_duration = time.time() - lock_start
+            if lock_acquired_duration > 0.1:
+                self.logger.warning(
+                    f"[REAUTH_DEBUG] Waited {lock_acquired_duration:.2f}s to acquire lock "
+                    f"(another thread was re-authenticating)"
+                )
+            return self._force_relogin_impl()
 
     def logout(self) -> bool:
         """
@@ -537,9 +665,32 @@ class KotakNeoAuth:
             self.logger.warning(f"Logout failed: {e}")
             return False
 
+    def is_session_valid(self) -> bool:
+        """
+        Check if session is still valid (not expired).
+
+        Phase -1: Proactively check session validity based on TTL.
+        This allows us to re-authenticate before JWT expires, preventing
+        API call failures.
+
+        Returns:
+            bool: True if session is valid, False if expired
+        """
+        if not self.is_logged_in:
+            return False
+        if self.session_created_at is None:
+            # Legacy session without timestamp tracking - assume valid
+            # This handles sessions created before Phase -1 implementation
+            return True
+        elapsed = time.time() - self.session_created_at
+        return elapsed < self.session_ttl
+
     def get_client(self):
         """
         Get the authenticated client instance (thread-safe).
+
+        Phase -1: Proactively check session validity before returning client.
+        If session is expired, trigger re-authentication automatically.
 
         Uses lock to prevent race conditions when multiple threads
         (e.g., from ThreadPoolExecutor in SellOrderManager) access
@@ -548,10 +699,89 @@ class KotakNeoAuth:
         Returns:
             NeoAPI client or None if not logged in
         """
+        # Track caller for debugging
+        caller = "unknown"
+        try:
+            stack = traceback.extract_stack()
+            if len(stack) >= 2:
+                caller_frame = stack[-2]
+                caller = f"{caller_frame.filename.split('/')[-1]}:{caller_frame.lineno}"
+        except Exception:
+            pass
+
+        get_client_start = time.time()
+
         with self._client_lock:
-            if not self.is_logged_in:
-                self.logger.error("Not logged in. Please login first.")
+            # Check session validity (TTL-based)
+            is_valid = self.is_session_valid()
+            session_age = None
+            ttl_remaining = None
+
+            if self.session_created_at:
+                session_age = time.time() - self.session_created_at
+                ttl_remaining = self.session_ttl - session_age
+
+            self.logger.debug(
+                f"[REAUTH_DEBUG] get_client() called from {caller}: "
+                f"is_session_valid()={is_valid}, "
+                f"session_age={session_age:.1f}s, "
+                f"ttl_remaining={ttl_remaining:.1f}s, "
+                f"is_logged_in={self.is_logged_in}"
+            )
+
+            # Phase -1: Proactively check session validity
+            if not is_valid:
+                self.logger.warning(
+                    f"[REAUTH_DEBUG] Session expired (TTL-based): "
+                    f"session_age={session_age:.1f}s, ttl={self.session_ttl}s, "
+                    f"forcing re-login from {caller}"
+                )
+                # Call implementation directly since we already hold the lock
+                # This prevents deadlock (force_relogin() would try to acquire lock again)
+                reauth_start = time.time()
+                reauth_success = self._force_relogin_impl()
+                reauth_duration = time.time() - reauth_start
+
+                if reauth_success:
+                    total_duration = time.time() - get_client_start
+                    self.logger.info(
+                        f"[REAUTH_DEBUG] Re-auth successful in {reauth_duration:.2f}s "
+                        f"(get_client() total: {total_duration:.2f}s, triggered from {caller})"
+                    )
+                else:
+                    total_duration = time.time() - get_client_start
+                    self.logger.error(
+                        f"[REAUTH_DEBUG] Re-auth failed after {reauth_duration:.2f}s "
+                        f"(get_client() total: {total_duration:.2f}s, triggered from {caller})"
+                    )
+
+                if reauth_duration > 10.0:
+                    self.logger.warning(
+                        f"[REAUTH_DEBUG] WARNING: Re-auth took {reauth_duration:.2f}s - "
+                        f"this may cause database connection leaks if called during request! "
+                        f"(caller: {caller})"
+                    )
+
+                if not reauth_success:
+                    return None
+            elif not self.is_logged_in:
+                total_duration = time.time() - get_client_start
+                self.logger.error(
+                    f"[REAUTH_DEBUG] Not logged in from {caller} "
+                    f"(get_client() took {total_duration:.2f}s)"
+                )
                 return None
+            else:
+                # Session is valid by TTL, but JWT might still be expired
+                # This is logged for tracking - actual JWT expiry will be detected on API calls
+                total_duration = time.time() - get_client_start
+                if total_duration > 0.1:
+                    self.logger.debug(
+                        f"[REAUTH_DEBUG] Session valid (TTL), returning client from {caller} "
+                        f"(took {total_duration:.2f}s). "
+                        "Note: JWT may still be expired and will trigger re-auth on API calls."
+                    )
+
             return self.client
 
     def get_session_token(self) -> str | None:
