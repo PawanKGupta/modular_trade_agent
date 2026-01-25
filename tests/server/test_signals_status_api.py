@@ -9,6 +9,7 @@ import uuid
 from datetime import timedelta
 
 from jose import jwt
+from sqlalchemy import text
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
 
@@ -56,8 +57,8 @@ def _create_authenticated_client():
 def _create_sample_signals():
     """Create sample signals with different statuses"""
     with SessionLocal() as db:
-        # Clear existing signals first
-        db.query(Signals).delete()
+        # Clear ALL signals from the database (not just delete from ORM)
+        db.execute(text("DELETE FROM signals"))
         db.commit()
 
         now = ist_now()
@@ -82,6 +83,10 @@ def _create_sample_signals():
 
         db.add_all(signals)
         db.commit()
+
+        # Verify they were added
+        count = db.query(Signals).count()
+        assert count == 5, f"Expected 5 signals but got {count}"
 
         return [s.symbol for s in signals]
 
