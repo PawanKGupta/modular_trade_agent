@@ -1492,87 +1492,93 @@ class TradingService:
                         if self.is_trading_day():
                             logger.debug("  -> Trading day detected - checking tasks...")
 
-                        # Pre-market retry (uses DB schedule) - 5 minute timeout
-                        premarket_schedule = self._schedule_manager.get_schedule("premarket_retry")
-                        if premarket_schedule and premarket_schedule.enabled:
-                            premarket_time = premarket_schedule.schedule_time
-                            if self.should_run_task(
-                                "premarket_retry",
-                                dt_time(premarket_time.hour, premarket_time.minute),
-                            ):
-                                self._execute_task_async(
-                                    self.run_premarket_retry,
-                                    "premarket_retry",
-                                    timeout_seconds=300,  # 5 minutes
-                                )
-
-                        # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry) - 2 minute timeout
-                        if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
-                            self._execute_task_async(
-                                self.run_premarket_amo_adjustment,
-                                "premarket_amo_adjustment",
-                                timeout_seconds=120,  # 2 minutes
+                            # Pre-market retry (uses DB schedule) - 5 minute timeout
+                            premarket_schedule = self._schedule_manager.get_schedule(
+                                "premarket_retry"
                             )
-
-                        # Sell monitoring (continuous, uses DB schedule) - 60 second timeout
-                        sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
-                        if sell_schedule and sell_schedule.enabled and sell_schedule.is_continuous:
-                            start_time = sell_schedule.schedule_time
-                            end_time = sell_schedule.end_time or dt_time(15, 30)
-                            if current_time >= dt_time(
-                                start_time.hour, start_time.minute
-                            ) and current_time <= dt_time(end_time.hour, end_time.minute):
-                                # Check if sell_monitor is already running before queuing
-                                if self._is_task_running("sell_monitor"):
-                                    self.logger.debug(
-                                        "Skipping sell_monitor - previous execution still running",
-                                        action="scheduler",
-                                    )
-                                else:
+                            if premarket_schedule and premarket_schedule.enabled:
+                                premarket_time = premarket_schedule.schedule_time
+                                if self.should_run_task(
+                                    "premarket_retry",
+                                    dt_time(premarket_time.hour, premarket_time.minute),
+                                ):
                                     self._execute_task_async(
-                                        self.run_sell_monitor,
-                                        "sell_monitor",
-                                        timeout_seconds=60,  # 1 minute (should be quick)
+                                        self.run_premarket_retry,
+                                        "premarket_retry",
+                                        timeout_seconds=300,  # 5 minutes
                                     )
 
-                        # Analysis (uses DB schedule) - 30 minute timeout
-                        analysis_schedule = self._schedule_manager.get_schedule("analysis")
-                        if analysis_schedule and analysis_schedule.enabled:
-                            analysis_time = analysis_schedule.schedule_time
-                            if self.should_run_task(
-                                "analysis", dt_time(analysis_time.hour, analysis_time.minute)
-                            ):
+                            # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry) - 2 minute timeout
+                            if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
                                 self._execute_task_async(
-                                    self.run_analysis,
-                                    "analysis",
-                                    timeout_seconds=1800,  # 30 minutes
+                                    self.run_premarket_amo_adjustment,
+                                    "premarket_amo_adjustment",
+                                    timeout_seconds=120,  # 2 minutes
                                 )
 
-                        # Buy orders (uses DB schedule) - 10 minute timeout
-                        buy_schedule = self._schedule_manager.get_schedule("buy_orders")
-                        if buy_schedule and buy_schedule.enabled:
-                            buy_time = buy_schedule.schedule_time
-                            if self.should_run_task(
-                                "buy_orders", dt_time(buy_time.hour, buy_time.minute)
+                            # Sell monitoring (continuous, uses DB schedule) - 60 second timeout
+                            sell_schedule = self._schedule_manager.get_schedule("sell_monitor")
+                            if (
+                                sell_schedule
+                                and sell_schedule.enabled
+                                and sell_schedule.is_continuous
                             ):
-                                self._execute_task_async(
-                                    self.run_buy_orders,
-                                    "buy_orders",
-                                    timeout_seconds=600,  # 10 minutes
-                                )
+                                start_time = sell_schedule.schedule_time
+                                end_time = sell_schedule.end_time or dt_time(15, 30)
+                                if current_time >= dt_time(
+                                    start_time.hour, start_time.minute
+                                ) and current_time <= dt_time(end_time.hour, end_time.minute):
+                                    # Check if sell_monitor is already running before queuing
+                                    if self._is_task_running("sell_monitor"):
+                                        self.logger.debug(
+                                            "Skipping sell_monitor - previous execution still running",
+                                            action="scheduler",
+                                        )
+                                    else:
+                                        self._execute_task_async(
+                                            self.run_sell_monitor,
+                                            "sell_monitor",
+                                            timeout_seconds=60,  # 1 minute (should be quick)
+                                        )
 
-                        # EOD cleanup (uses DB schedule) - 5 minute timeout
-                        eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
-                        if eod_schedule and eod_schedule.enabled:
-                            eod_time = eod_schedule.schedule_time
-                            if self.should_run_task(
-                                "eod_cleanup", dt_time(eod_time.hour, eod_time.minute)
-                            ):
-                                self._execute_task_async(
-                                    self.run_eod_cleanup,
-                                    "eod_cleanup",
-                                    timeout_seconds=300,  # 5 minutes
-                                )
+                            # Analysis (uses DB schedule) - 30 minute timeout
+                            analysis_schedule = self._schedule_manager.get_schedule("analysis")
+                            if analysis_schedule and analysis_schedule.enabled:
+                                analysis_time = analysis_schedule.schedule_time
+                                if self.should_run_task(
+                                    "analysis", dt_time(analysis_time.hour, analysis_time.minute)
+                                ):
+                                    self._execute_task_async(
+                                        self.run_analysis,
+                                        "analysis",
+                                        timeout_seconds=1800,  # 30 minutes
+                                    )
+
+                            # Buy orders (uses DB schedule) - 10 minute timeout
+                            buy_schedule = self._schedule_manager.get_schedule("buy_orders")
+                            if buy_schedule and buy_schedule.enabled:
+                                buy_time = buy_schedule.schedule_time
+                                if self.should_run_task(
+                                    "buy_orders", dt_time(buy_time.hour, buy_time.minute)
+                                ):
+                                    self._execute_task_async(
+                                        self.run_buy_orders,
+                                        "buy_orders",
+                                        timeout_seconds=600,  # 10 minutes
+                                    )
+
+                            # EOD cleanup (uses DB schedule) - 5 minute timeout
+                            eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
+                            if eod_schedule and eod_schedule.enabled:
+                                eod_time = eod_schedule.schedule_time
+                                if self.should_run_task(
+                                    "eod_cleanup", dt_time(eod_time.hour, eod_time.minute)
+                                ):
+                                    self._execute_task_async(
+                                        self.run_eod_cleanup,
+                                        "eod_cleanup",
+                                        timeout_seconds=300,  # 5 minutes
+                                    )
 
                     # Update heartbeat every minute using thread-local session
                     # Use retry logic for reliability (handles database lock contention)
