@@ -149,7 +149,9 @@ class PaperTradingServiceAdapter:
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
             try:
-                self.broker = PaperTradingBrokerAdapter(self.config, db_session=self.db)
+                self.broker = PaperTradingBrokerAdapter(
+                    user_id=self.user_id, config=self.config, db_session=self.db
+                )
             except Exception as broker_init_error:
                 self.logger.error(
                     f"Failed to create paper trading broker: {broker_init_error}",
@@ -2012,7 +2014,7 @@ class PaperTradingEngineAdapter:
             elif isinstance(today_orders_result, dict) and "items" in today_orders_result:
                 today_orders = today_orders_result.get("items")
 
-            for order in (today_orders or []):
+            for order in today_orders or []:
                 if (
                     order.side == "buy"
                     and order.placed_at

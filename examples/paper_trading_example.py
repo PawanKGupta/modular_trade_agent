@@ -3,6 +3,7 @@ Paper Trading Example
 Demonstrates how to use the paper trading system
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,18 +11,17 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
-from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
-from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 from modules.kotak_neo_auto_trader.application.dto import OrderRequest
 from modules.kotak_neo_auto_trader.application.use_cases import PlaceOrderUseCase
+from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.domain import (
     OrderType,
-    TransactionType,
     OrderVariety,
     ProductType,
-    Exchange,
+    TransactionType,
 )
+from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTradingBrokerAdapter
+from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 
 
 def main():
@@ -45,9 +45,11 @@ def main():
 
     # 2. Initialize paper trading adapter
     print("? Step 2: Initializing paper trading adapter...")
-    broker = PaperTradingBrokerAdapter(config)
+    # user_id: Demo user ID for this example (in production, use actual user ID from session/auth)
+    user_id = int(os.getenv("PAPER_TRADING_USER_ID", "1"))
+    broker = PaperTradingBrokerAdapter(user_id=user_id, config=config)
     broker.connect()
-    print("? Connected to paper trading system\n")
+    print(f"? Connected to paper trading system (User ID: {user_id})\n")
 
     # 3. Check initial balance
     print("? Step 3: Checking account balance...")

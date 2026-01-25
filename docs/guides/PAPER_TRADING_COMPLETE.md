@@ -61,7 +61,7 @@ from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradi
 
 # Create broker with Γé╣1 lakh
 config = PaperTradingConfig(initial_capital=100000.0)
-broker = PaperTradingBrokerAdapter(config)
+broker = PaperTradingBrokerAdapter(user_id=1, config=config)
 broker.connect()
 
 print(f"Balance: Γé╣{broker.get_available_balance().amount:,.2f}")
@@ -149,7 +149,7 @@ config = PaperTradingConfig(
 )
 
 # Initialize adapter
-broker = PaperTradingBrokerAdapter(config)
+broker = PaperTradingBrokerAdapter(user_id=1, config=config)
 broker.connect()
 
 # Now use it exactly like the real broker!
@@ -251,7 +251,7 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTr
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 
 config = PaperTradingConfig(initial_capital=100000.0)
-broker = PaperTradingBrokerAdapter(config)
+broker = PaperTradingBrokerAdapter(user_id=1, config=config)
 broker.connect()
 print(f"Balance: Γé╣{broker.get_available_balance().amount:,.2f}")
 ```

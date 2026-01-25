@@ -624,6 +624,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if user_id is None:
             raise ValueError("user_id is required for PaperTradingBrokerAdapter")
 
+        # Type check: Ensure user_id is an integer, not a config object
+        if isinstance(user_id, PaperTradingConfig):
+            raise TypeError(
+                "user_id must be an integer (user ID), not PaperTradingConfig. "
+                "Use: PaperTradingBrokerAdapter(user_id=<int>, config=<PaperTradingConfig>)"
+            )
+
+        if not isinstance(user_id, int):
+            raise TypeError(
+                f"user_id must be an integer, got {type(user_id).__name__}. "
+                "Use: PaperTradingBrokerAdapter(user_id=<int>, config=<PaperTradingConfig>)"
+            )
+
         # Configuration
         self.config = config or PaperTradingConfig.default()
 
