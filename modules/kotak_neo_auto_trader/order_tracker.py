@@ -381,6 +381,7 @@ class OrderTracker:
         order_id: str,
         status: str,
         executed_qty: int | None = None,
+        execution_price: float | None = None,
         rejection_reason: str | None = None,
     ) -> bool:
         """
@@ -438,6 +439,8 @@ class OrderTracker:
                         if executed_qty is not None:
                             db_order.execution_qty = executed_qty
                             db_order.execution_time = datetime.now()
+                            if execution_price is not None and execution_price > 0:
+                                db_order.execution_price = execution_price
 
                         db_order.last_status_check = datetime.now()
                         self.orders_repo.update(db_order)

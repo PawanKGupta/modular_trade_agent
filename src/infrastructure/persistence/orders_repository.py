@@ -536,15 +536,15 @@ class OrdersRepository:
         return order
 
     def cancel(self, order: Orders, auto_commit: bool = True) -> None:
-        """Cancel an order (mark as closed without fills)
+        """Cancel an order (mark as cancelled without fills)
 
         Args:
             order: Order to cancel
             auto_commit: If True, commit immediately. If False, caller handles commit
                 (for transactions).
         """
-        # For AMO orders, cancel means remove or mark closed without fills
-        order.status = OrderStatus.CLOSED
+        # Mark as cancelled (not closed - closed is for successfully executed + sold trades)
+        order.status = OrderStatus.CANCELLED
         order.closed_at = ist_now()
         if auto_commit:
             self.db.commit()
