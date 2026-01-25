@@ -2,8 +2,13 @@
 Tests for signals API with status filtering and rejection
 """
 
+import base64
+import json
 import os
+import uuid
 from datetime import timedelta
+
+from jose import jwt
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
 
@@ -11,16 +16,14 @@ from fastapi import status  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from server.app.main import app  # noqa: E402
-from src.infrastructure.db.models import Signals, SignalStatus  # noqa: E402
+from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus  # noqa: E402
 from src.infrastructure.db.session import SessionLocal  # noqa: E402
 from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
+from src.infrastructure.persistence.signals_repository import SignalsRepository  # noqa: E402
 
 
 def _create_authenticated_client():
     """Helper to create authenticated test client"""
-    import uuid
-    from jose import jwt  # Use python-jose (already in server requirements)
-
     client = TestClient(app)
 
     # Signup with unique email
@@ -33,20 +36,18 @@ def _create_authenticated_client():
 
     token = response.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    
+
     # Decode token to get user_id (python-jose requires key but we bypass verification)
     try:
         # Try to decode without verification (python-jose style)
         decoded = jwt.decode(token, key="", options={"verify_signature": False})
     except Exception:
         # Fallback: manually parse JWT payload (base64 decode middle part)
-        import base64
-        import json
-        payload = token.split('.')[1]
+        payload = token.split(".")[1]
         # Add padding if needed
-        payload += '=' * (4 - len(payload) % 4)
+        payload += "=" * (4 - len(payload) % 4)
         decoded = json.loads(base64.urlsafe_b64decode(payload))
-    
+
     user_id = decoded.get("uid")
 
     return client, headers, user_id
@@ -205,14 +206,15 @@ class TestRejectSignalEndpoint:
             signal = db.query(Signals).filter(Signals.symbol == "ACTIVE1").first()
             # Base signal remains ACTIVE (per-user status is in UserSignalStatus table)
             assert signal.status == SignalStatus.ACTIVE
-            
+
             # Verify user-specific status was created
-            from src.infrastructure.db.models import UserSignalStatus
-            
-            user_status = db.query(UserSignalStatus).filter(
-                UserSignalStatus.signal_id == signal.id,
-                UserSignalStatus.user_id == user_id
-            ).first()
+            user_status = (
+                db.query(UserSignalStatus)
+                .filter(
+                    UserSignalStatus.signal_id == signal.id, UserSignalStatus.user_id == user_id
+                )
+                .first()
+            )
             assert user_status is not None
             assert user_status.status == SignalStatus.REJECTED
 
@@ -275,8 +277,6 @@ class TestSignalStatusInBuyingZoneWorkflow:
 
         # 2. Mark as traded (simulating order placement)
         with SessionLocal() as db:
-            from src.infrastructure.persistence.signals_repository import SignalsRepository
-            
             repo = SignalsRepository(db, user_id=user_id)
             repo.mark_as_traded("WORKFLOW1", user_id=user_id)
 
