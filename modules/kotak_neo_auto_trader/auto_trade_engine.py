@@ -5222,8 +5222,18 @@ class AutoTradeEngine:
             summary["attempted"] += 1
 
             try:
-                # Construct ticker from symbol
-                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
+                # Construct market-data ticker from position symbol.
+                # Positions store full trading symbols like "INDIAGLYCO-EQ", but indicator services
+                # expect exchange tickers like "INDIAGLYCO.NS".
+                base_symbol = (
+                    symbol.replace(".NS", "")
+                    .replace(".BO", "")
+                    .replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
+                ticker = base_symbol if base_symbol.endswith((".NS", ".BO")) else f"{base_symbol}.NS"
 
                 # Get current indicators
                 ind = self.get_daily_indicators(ticker)

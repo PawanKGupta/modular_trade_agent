@@ -393,6 +393,11 @@ class TestPlaceReentryOrders:
 
         summary = engine.place_reentry_orders()
 
+        # Position symbols are stored with trading suffixes (e.g., "RELIANCE-EQ"),
+        # but indicators must be fetched using market-data tickers (e.g., "RELIANCE.NS").
+        engine.get_daily_indicators.assert_called_once()
+        assert engine.get_daily_indicators.call_args[0][0] == "RELIANCE.NS"
+
         # Verify order was placed
         assert summary["attempted"] == 1
         assert summary["placed"] == 1
