@@ -2184,11 +2184,19 @@ class AutoTradeEngine:
                         }
                         and order_symbol_base == base_symbol_clean
                     ):
-                        logger.debug(
-                            f"Database check: {base_symbol} already has active buy order "
-                            f"(status: {existing_order.status}, order_id: {existing_order.id})"
-                        )
-                        return True
+                        # Only block re-entry for UNFILLED orders (execution_qty is None)
+                        # Filled orders that are still ONGOING (position not yet closed) shouldn't block re-entry
+                        if existing_order.execution_qty is None:
+                            logger.debug(
+                                f"Database check: {base_symbol} already has unfilled buy order "
+                                f"(status: {existing_order.status}, order_id: {existing_order.id})"
+                            )
+                            return True
+                        else:
+                            logger.debug(
+                                f"Database check: {base_symbol} has filled buy order (execution_qty={existing_order.execution_qty}), "
+                                f"not blocking re-entry (status: {existing_order.status}, order_id: {existing_order.id})"
+                            )
             except Exception as e:
                 logger.warning(f"Database check for active buy order failed for {base_symbol}: {e}")
 
@@ -5361,21 +5369,16 @@ class AutoTradeEngine:
                     summary["skipped_missing_data"] += 1
                     continue
 
-                # Check for active buy orders only
-                # Reentries allow buying more of existing position
-                if self.order_validation_service:
-                    is_duplicate, duplicate_reason = (
-                        self.order_validation_service.check_duplicate_order(
-                            broker_symbol,
-                            check_active_buy_order=True,
-                            check_holdings=False,  # Don't check holdings for reentries
-                            allow_reentry=True,  # Allow reentries (buying more)
-                        )
+                # Check for active BUY orders only (not SELL orders)
+                # Re-entry should be allowed even if there's an open SELL order
+                # Use has_active_buy_order which correctly filters by side='buy'
+                if self.has_active_buy_order(broker_symbol):
+                    logger.info(
+                        f"Skipping {symbol}: Active BUY order exists for {broker_symbol} "
+                        "(re-entry blocked to prevent duplicate buy orders)"
                     )
-                    if is_duplicate:
-                        logger.info(f"Skipping {symbol}: {duplicate_reason}")
-                        summary["skipped_duplicates"] += 1
-                        continue
+                    summary["skipped_duplicates"] += 1
+                    continue
 
                 # Calculate execution capital and quantity
                 execution_capital = self._calculate_execution_capital(
