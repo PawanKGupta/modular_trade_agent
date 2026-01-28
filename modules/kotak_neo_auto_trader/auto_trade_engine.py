@@ -4330,110 +4330,67 @@ class AutoTradeEngine:
         # Pre-fetch indicators for all recommendation tickers (batch operation with parallelization)
         cached_indicators: dict[str, dict[str, Any] | None] = {}
         if recommendations:
-            # Try parallel execution first, fallback to sequential if it fails
-            try:
-                logger.info(
-                    f"Pre-fetching indicators for {len(recommendations)} "
-                    f"recommendations in parallel..."
-                )
-                from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+            # Pre-fetch all indicators in parallel (thread-safe cache, no fallback to sequential)
+            logger.info(
+                f"Pre-fetching indicators for {len(recommendations)} recommendations in parallel..."
+            )
+            from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
 
-                def fetch_indicator(rec_ticker: str) -> tuple[str, dict[str, Any] | None]:
-                    """Fetch indicator for a single ticker"""
+            def fetch_indicator(rec_ticker: str) -> tuple[str, dict[str, Any] | None]:
+                """Fetch indicator for a single ticker (thread-safe)"""
+                try:
+                    logger.debug(f"[Parallel Fetch] Starting fetch for {rec_ticker}")
+                    ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                    if ind:
+                        logger.debug(
+                            f"[Parallel Fetch] Fetched {rec_ticker}: "
+                            f"close={ind.get('close', 'N/A')}"
+                        )
+                    return (rec_ticker, ind)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to fetch indicators for {rec_ticker}: {e}",
+                        exc_info=False,
+                    )
+                    return (rec_ticker, None)
+
+            # ThreadPoolExecutor: 5 max workers for concurrent requests
+            # Separate locks in PriceCache prevent deadlocks
+            max_workers = min(5, len(recommendations))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_ticker = {
+                    executor.submit(fetch_indicator, rec.ticker): rec.ticker
+                    for rec in recommendations
+                }
+
+                for future in as_completed(future_to_ticker, timeout=60):  # 60s overall timeout
                     try:
-                        # get_daily_indicators is a static method, call it correctly
-                        logger.debug(f"[Parallel Fetch] Starting fetch for {rec_ticker}")
-                        ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                        ticker, ind = future.result(timeout=30)  # 30s per future
+
+                        # Validate ticker match
+                        expected_ticker = future_to_ticker.get(future)
+                        if ticker != expected_ticker:
+                            logger.error(
+                                f"Ticker mismatch! Expected {expected_ticker}, got {ticker}"
+                            )
+                            ticker = expected_ticker
+
+                        cached_indicators[ticker] = ind
                         if ind:
                             logger.debug(
-                                f"[Parallel Fetch] Fetched {rec_ticker}: "
-                                f"close={ind.get('close', 'N/A')}"
+                                f"Cached indicators for {ticker}: close={ind.get('close', 'N/A')}"
                             )
-                        return (rec_ticker, ind)
+                    except TimeoutError:
+                        ticker = future_to_ticker.get(future, "unknown")
+                        logger.error(f"Timeout fetching indicators for {ticker}")
+                        cached_indicators[ticker] = None
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to pre-fetch indicators for {rec_ticker}: {e}",
-                            exc_info=e,
-                        )
-                        return (rec_ticker, None)
+                        ticker = future_to_ticker.get(future, "unknown")
+                        logger.error(f"Error fetching {ticker}: {e}", exc_info=False)
+                        cached_indicators[ticker] = None
 
-                # Use ThreadPoolExecutor to fetch indicators in parallel
-                # Limit to 5 concurrent requests to avoid overwhelming the API
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_ticker = {
-                        executor.submit(fetch_indicator, rec.ticker): rec.ticker
-                        for rec in recommendations
-                    }
-                    for future in as_completed(future_to_ticker):
-                        try:
-                            ticker, ind = future.result()
-
-                            # Validate that we got the correct ticker back
-                            expected_ticker = future_to_ticker.get(future)
-                            if ticker != expected_ticker:
-                                logger.error(
-                                    f"BUG: Ticker mismatch! "
-                                    f"Expected {expected_ticker}, got {ticker}"
-                                )
-                                # Use the expected ticker to prevent cache corruption
-                                ticker = expected_ticker
-
-                            cached_indicators[ticker] = ind
-                            if ind:
-                                logger.debug(
-                                    f"Cached indicators for {ticker}: "
-                                    f"close={ind.get('close', 'N/A')}"
-                                )
-                            else:
-                                logger.warning(f"Failed to fetch indicators for {ticker}")
-                        except Exception as e:
-                            ticker = future_to_ticker.get(future, "unknown")
-                            logger.error(
-                                f"Error getting indicator result for {ticker}: {e}",
-                                exc_info=e,
-                            )
-                            cached_indicators[ticker] = None
-
-                successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
-                logger.info(
-                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators (parallel)"
-                )
-
-                # Detect potential price caching bugs: Check if multiple tickers have identical prices
-                if successful_prefetches > 1:
-                    prices = {}
-                    for ticker, ind in cached_indicators.items():
-                        if ind and "close" in ind:
-                            price = ind["close"]
-                            if price in prices:
-                                logger.warning(
-                                    f"⚠️  POTENTIAL BUG: {ticker} and {prices[price]} "
-                                    f"have identical price: Rs {price:.2f}"
-                                )
-                            else:
-                                prices[price] = ticker
-            except Exception as parallel_error:
-                # Fallback to sequential execution if parallel fails
-                logger.warning(
-                    f"Parallel indicator fetching failed: {parallel_error}. Falling back to sequential...",
-                    exc_info=parallel_error,
-                )
-                logger.info(
-                    f"Pre-fetching indicators for {len(recommendations)} "
-                    f"recommendations sequentially..."
-                )
-                for rec in recommendations:
-                    try:
-                        ind = AutoTradeEngine.get_daily_indicators(rec.ticker)
-                        cached_indicators[rec.ticker] = ind
-                    except Exception as e:
-                        logger.warning(f"Failed to pre-fetch indicators for {rec.ticker}: {e}")
-                        cached_indicators[rec.ticker] = None
-                successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
-                logger.info(
-                    f"Pre-fetched {successful_prefetches}/{len(recommendations)} "
-                    f"indicators (sequential)"
-                )
+            successful_prefetches = sum(1 for v in cached_indicators.values() if v is not None)
+            logger.info(f"Pre-fetched {successful_prefetches}/{len(recommendations)} indicators")
 
         # OPTIMIZATION: Fetch orders once and cache for reuse throughout placement
         # This prevents multiple API calls (5-6x) during buy order placement
@@ -5241,7 +5198,9 @@ class AutoTradeEngine:
                     .replace("-BL", "")
                     .replace("-BZ", "")
                 )
-                ticker = base_symbol if base_symbol.endswith((".NS", ".BO")) else f"{base_symbol}.NS"
+                ticker = (
+                    base_symbol if base_symbol.endswith((".NS", ".BO")) else f"{base_symbol}.NS"
+                )
 
                 # Get current indicators
                 ind = self.get_daily_indicators(ticker)
@@ -5385,6 +5344,12 @@ class AutoTradeEngine:
                     ticker, current_price, avg_volume
                 )
                 qty = int(execution_capital / current_price)
+
+                logger.info(
+                    f"Re-entry quantity calculation for {symbol}: "
+                    f"execution_capital={execution_capital}, current_price={current_price}, "
+                    f"avg_volume={avg_volume}, calculated_qty={qty}"
+                )
 
                 if qty <= 0:
                     logger.warning(f"Skipping {symbol}: invalid quantity ({qty})")
