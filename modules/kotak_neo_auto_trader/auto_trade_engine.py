@@ -3635,7 +3635,7 @@ class AutoTradeEngine:
         try:
             # 1. Get all pending orders from broker
             logger.info("Fetching pending AMO orders from broker...")
-            pending_orders = self.orders.get_order_book() or []
+            pending_orders = self.orders.get_pending_orders() or []
 
             # Filter only AMO/pending orders (including re-entry orders)
             amo_orders = [
