@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
@@ -266,7 +267,7 @@ class OrdersRepository:
             orders.append(order)
         return orders, total_count
 
-    def create_amo(  # noqa: PLR0912, PLR0913
+    def create_amo(  # noqa: PLR0912, PLR0913, PLR0915
         self,
         *,
         user_id: int,
@@ -361,9 +362,18 @@ class OrdersRepository:
                 trade_mode = TradeMode.PAPER
 
         now = ist_now()
+        # Compute base_symbol for DB-level uniqueness and normalization
+        try:
+            if extract_base_symbol is None:
+                raise ImportError("extract_base_symbol not available")
+            base_symbol_val = extract_base_symbol(symbol).upper().strip()
+        except Exception:
+            base_symbol_val = symbol.upper().split("-")[0].strip()
+
         order = Orders(
             user_id=user_id,
             symbol=symbol,  # Keep actual symbol format from broker (e.g., SALSTEEL-BE)
+            base_symbol=base_symbol_val,
             side=side,
             order_type=order_type,
             quantity=quantity,
@@ -379,9 +389,33 @@ class OrdersRepository:
             trade_mode=trade_mode,  # Phase 0.1: Add trade_mode
         )
         self.db.add(order)
-        self.db.commit()
-        self.db.refresh(order)
-        return order
+        try:
+            self.db.commit()
+            self.db.refresh(order)
+            return order
+        except IntegrityError:
+            # Likely violated unique constraint for active sell per user+base_symbol
+            # Rollback and return the existing active order instead of failing
+            self.db.rollback()
+            stmt = (
+                select(Orders)
+                .where(
+                    Orders.user_id == user_id,
+                    Orders.base_symbol == base_symbol_val,
+                    Orders.side == "sell",
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                )
+                .limit(1)
+            )
+            existing = self.db.execute(stmt).scalar_one_or_none()
+            if existing:
+                logger.warning(
+                    "Duplicate sell prevented by DB constraint: returning existing order %s",
+                    existing.id,
+                )
+                return existing
+            # If no existing found, re-raise to surface unexpected integrity issues
+            raise
 
     def get_by_broker_order_id(self, user_id: int, broker_order_id: str) -> Orders | None:
         """Get order by broker-specific order ID"""

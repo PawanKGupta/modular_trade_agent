@@ -111,6 +111,7 @@ class Orders(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    base_symbol: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     side: Mapped[str] = mapped_column(String(8), nullable=False)  # 'buy'|'sell'
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'market'|'limit'
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
