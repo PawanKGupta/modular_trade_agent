@@ -35,21 +35,25 @@ def upgrade():
     # and mark older ones as cancelled
     op.execute(
         """
-    WITH duplicates AS (
-        SELECT user_id, base_symbol, status, array_agg(id ORDER BY placed_at DESC) as ids
-        FROM orders
-        WHERE status IN ('pending','ongoing')
-        GROUP BY user_id, base_symbol, status
-        HAVING COUNT(*) > 1
-    )
-    UPDATE orders o
-    SET status = 'cancelled', reason = 'Cancelled duplicate pending sell during migration'
-    WHERE id IN (
-        SELECT unnest(ids[2:])
-        FROM duplicates d
-        WHERE o.user_id = d.user_id AND o.base_symbol = d.base_symbol AND o.status = d.status
-    );
-    """
+        WITH dup_ids AS (
+            SELECT id
+            FROM (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY user_id, base_symbol, status
+                        ORDER BY placed_at DESC, id DESC
+                    ) as rn
+                FROM orders
+                WHERE status IN ('pending', 'ongoing')
+            ) ranked
+            WHERE rn > 1
+        )
+        UPDATE orders
+        SET status = 'cancelled',
+            reason = 'Cancelled duplicate pending sell during migration'
+        WHERE id IN (SELECT id FROM dup_ids)
+        """
     )
 
     # Create partial unique index to ensure one active sell per user+base_symbol
