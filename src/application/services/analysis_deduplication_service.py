@@ -76,38 +76,28 @@ class AnalysisDeduplicationService:
 
     def _has_ongoing_buy_order_by_symbol(self, user_id: int, symbol: str) -> bool:
         """
-        Check if user has an ONGOING buy order for a symbol with fallback to base symbol matching.
+        Check if user has an open position for a symbol (user still holds the stock).
 
-        After migration, orders have full symbols (e.g., "RELIANCE-EQ"),
-        but signals may still have base symbols (e.g., "RELIANCE").
-        This method tries exact match first, then falls back to base symbol matching.
+        Uses Positions (closed_at IS NULL) as source of truth. Tries exact symbol match
+        first, then fallback to base symbol matching for signals that use base symbols.
 
         Args:
             user_id: User ID
             symbol: Symbol from signal (may be base or full symbol)
 
         Returns:
-            True if user has an ONGOING buy order, False otherwise
+            True if user has an open position for the symbol, False otherwise
         """
         # Try exact match first (in case signal has full symbol)
         if self._orders_repo.has_ongoing_buy_order(user_id, symbol):
             return True
 
-        # Fallback: If not found and symbol might be base symbol, try base symbol matching
-        # Check if symbol is a base symbol (no segment suffix)
+        # Fallback: If symbol might be base symbol, check open positions by base symbol
         if "-" not in symbol.upper():
-            # Query all ongoing buy orders and match by base symbol
-            from src.infrastructure.db.models import Orders, OrderStatus
-
-            stmt = select(Orders).where(
-                Orders.user_id == user_id,
-                Orders.side == "buy",
-                Orders.status == OrderStatus.ONGOING,
-            )
-            all_orders = self.db.execute(stmt).scalars().all()
+            all_positions = self._positions_repo.list(user_id)
             base_symbol = extract_base_symbol(symbol).upper()
-            for order in all_orders:
-                if extract_base_symbol(order.symbol).upper() == base_symbol:
+            for pos in all_positions:
+                if pos.closed_at is None and extract_base_symbol(pos.symbol).upper() == base_symbol:
                     return True
 
         return False

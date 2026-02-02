@@ -118,18 +118,16 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         """Test _has_ongoing_buy_order_by_symbol with exact match (full symbol)"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
-        # Create ONGOING buy order with full symbol
-        order = Orders(
+        # Create open position (closed_at=None) with full symbol
+        position = Positions(
             user_id=test_user.id,
             symbol="RELIANCE-EQ",
-            side="buy",
-            order_type="MARKET",
-            status=OrderStatus.ONGOING,
-            quantity=10,
-            price=2500.0,
-            placed_at=ist_now(),
+            quantity=10.0,
+            avg_price=2500.0,
+            opened_at=ist_now(),
+            closed_at=None,
         )
-        db_session.add(order)
+        db_session.add(position)
         db_session.commit()
 
         # Check with full symbol (exact match)
@@ -140,18 +138,16 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         """Test _has_ongoing_buy_order_by_symbol with base symbol matching full symbol"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
-        # Create ONGOING buy order with full symbol
-        order = Orders(
+        # Create open position with full symbol (closed_at=None)
+        position = Positions(
             user_id=test_user.id,
             symbol="RELIANCE-EQ",
-            side="buy",
-            order_type="MARKET",
-            status=OrderStatus.ONGOING,
-            quantity=10,
-            price=2500.0,
-            placed_at=ist_now(),
+            quantity=10.0,
+            avg_price=2500.0,
+            opened_at=ist_now(),
+            closed_at=None,
         )
-        db_session.add(order)
+        db_session.add(position)
         db_session.commit()
 
         # Check with base symbol (fallback matching)
@@ -167,46 +163,33 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         assert result is False
 
     def test_has_ongoing_buy_order_by_symbol_ignores_closed_orders(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol ignores CLOSED orders"""
+        """Test _has_ongoing_buy_order_by_symbol ignores closed positions"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
-        # Create CLOSED buy order with full symbol
-        order = Orders(
+        # Create closed position (closed_at set)
+        position = Positions(
             user_id=test_user.id,
             symbol="RELIANCE-EQ",
-            side="buy",
-            order_type="MARKET",
-            status=OrderStatus.CLOSED,
-            quantity=10,
-            price=2500.0,
-            placed_at=ist_now(),
+            quantity=10.0,
+            avg_price=2500.0,
+            opened_at=ist_now(),
+            closed_at=ist_now(),
         )
-        db_session.add(order)
+        db_session.add(position)
         db_session.commit()
 
-        # Check with base symbol - should return False (order is CLOSED, not ONGOING)
+        # Check with base symbol - should return False (position is closed)
         result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE")
         assert result is False
 
     def test_has_ongoing_buy_order_by_symbol_ignores_sell_orders(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol ignores sell orders"""
+        """Test _has_ongoing_buy_order_by_symbol returns False when no open position"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
-        # Create ONGOING sell order with full symbol
-        order = Orders(
-            user_id=test_user.id,
-            symbol="RELIANCE-EQ",
-            side="sell",
-            order_type="MARKET",
-            status=OrderStatus.ONGOING,
-            quantity=10,
-            price=2500.0,
-            placed_at=ist_now(),
-        )
-        db_session.add(order)
-        db_session.commit()
+        # No open position for RELIANCE (sell order does not create a holding)
+        # So no Positions row with closed_at=None for this symbol
 
-        # Check with base symbol - should return False (order is sell, not buy)
+        # Check with base symbol - should return False (no open position)
         result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE")
         assert result is False
 
