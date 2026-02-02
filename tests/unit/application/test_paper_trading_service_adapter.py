@@ -898,11 +898,13 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock get_holding to return None (position closed)
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+        # Pre-check: get_holding must return a holding first so we don't skip place_order.
+        # After place_order we verify position closed (get_holding returns None).
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
 
         # Mock get_all_orders to return pending order
-
         pending_order = MagicMock()
         pending_order.symbol = "RELIANCE"
         pending_order.transaction_type.value = "SELL"
@@ -998,8 +1000,11 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock get_holding to return None
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+        # Pre-check: get_holding must return a holding first so we enter the block that
+        # cancels pending and places market order; then get_holding returns None (closed).
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
 
         # Mock get_all_orders to return pending order
         pending_order = MagicMock()

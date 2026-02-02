@@ -7,10 +7,11 @@ Tests verify that:
 3. Audit log entry is created with "late_fill" reason
 """
 
-import pytest
-from datetime import datetime, timedelta
+from datetime import timedelta
 
-from src.infrastructure.db.models import OrderStatus, Orders, SignalStatus, Signals, UserRole, Users
+import pytest
+
+from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, UserRole, Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.persistence.orders_repository import OrdersRepository
@@ -87,7 +88,7 @@ class TestLateFillDetection:
         )
 
         # Verify order was executed
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         assert executed_order.execution_price == 2500.0
 
         # Verify signal was marked as TRADED with late_fill reason
@@ -96,9 +97,12 @@ class TestLateFillDetection:
 
         # Verify audit log entry was created with late_fill reason
         from sqlalchemy import text
+
         audit_log_repo = AuditLogRepository(db_session)
         audit_logs = db_session.execute(
-            text("SELECT * FROM audit_logs WHERE resource_id = :signal_id ORDER BY timestamp DESC LIMIT 1"),
+            text(
+                "SELECT * FROM audit_logs WHERE resource_id = :signal_id ORDER BY timestamp DESC LIMIT 1"
+            ),
             {"signal_id": expired_signal.id},
         ).fetchall()
 
@@ -131,7 +135,7 @@ class TestLateFillDetection:
         )
 
         # Verify order was executed
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
 
         # Verify signal was marked as TRADED with order_placed reason (not late_fill)
         user_status = signals_repo.get_user_signal_status(active_signal.id, test_user.id)
@@ -143,6 +147,7 @@ class TestLateFillDetection:
 
         # Create a sell order directly (should not trigger late fill detection)
         from src.infrastructure.db.timezone_utils import ist_now
+
         order = Orders(
             user_id=test_user.id,
             symbol="RELIANCE",
@@ -165,7 +170,7 @@ class TestLateFillDetection:
         )
 
         # Verify order was executed
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
 
         # Verify signal status was NOT changed (sell orders don't trigger signal marking)
         signals_repo = SignalsRepository(db_session, user_id=test_user.id)
@@ -213,12 +218,14 @@ class TestLateFillDetection:
             db_session.refresh(expired_signal)
             # Signal base status should still be EXPIRED (user override creates UserSignalStatus)
             # But if mark_as_traded worked, there should be a UserSignalStatus entry
-            from src.infrastructure.db.models import UserSignalStatus
             from sqlalchemy import select
+
+            from src.infrastructure.db.models import UserSignalStatus
+
             user_status_entry = db_session.execute(
                 select(UserSignalStatus).where(
                     UserSignalStatus.user_id == test_user.id,
-                    UserSignalStatus.signal_id == expired_signal.id
+                    UserSignalStatus.signal_id == expired_signal.id,
                 )
             ).scalar_one_or_none()
             if user_status_entry:
@@ -229,4 +236,3 @@ class TestLateFillDetection:
                 pytest.skip("Symbol normalization didn't match - acceptable for variant test")
         else:
             assert user_status == SignalStatus.TRADED
-

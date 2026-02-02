@@ -275,11 +275,12 @@ class TestDuplicatePreventionMultipleRuns:
         """Test that has_active_buy_order checks database for existing orders"""
         symbol = "RELIANCE-EQ"
 
-        # Mock existing order in database
+        # Mock existing order in database (unfilled: execution_qty is None)
         existing_order = MagicMock()
         existing_order.symbol = symbol
         existing_order.side = "buy"
         existing_order.status = DbOrderStatus.PENDING
+        existing_order.execution_qty = None
 
         auto_trade_engine.orders_repo.list.return_value = ([existing_order], 1)
         auto_trade_engine.orders = None  # Simulate broker API unavailable

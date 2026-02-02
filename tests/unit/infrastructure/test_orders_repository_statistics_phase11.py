@@ -6,16 +6,14 @@ Tests order status distribution and statistics methods.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import text
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.infrastructure.db.models import OrderStatus
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
 
@@ -144,7 +142,7 @@ class TestOrdersRepositoryStatisticsPhase11:
         assert stats["retry_pending"] == 2
         assert stats["rejected_orders"] == 1
         assert stats["cancelled_orders"] == 4
-        assert stats["executed_orders"] == 10  # ongoing orders
+        assert stats["executed_orders"] == 20  # executed orders are CLOSED
         assert stats["closed_orders"] == 20
         assert stats["amo_orders"] == 5
 
@@ -192,7 +190,6 @@ class TestOrdersRepositoryStatisticsPhase11:
         assert stats["retry_pending"] == 0
         assert stats["rejected_orders"] == 0
         assert stats["cancelled_orders"] == 0
-        assert stats["executed_orders"] == 10
+        assert stats["executed_orders"] == 0  # no "closed" in mock; executed_orders = closed count
         assert stats["closed_orders"] == 0
         assert stats["amo_orders"] == 5
-

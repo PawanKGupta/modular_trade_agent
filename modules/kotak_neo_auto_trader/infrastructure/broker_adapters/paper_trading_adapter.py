@@ -429,17 +429,24 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                             reentries_array = list(existing_pos.reentries)
 
                     # Add new reentry entry
+                    # placed_at may be datetime or str depending on DB driver/serialization
+                    placed_at_val = db_order.placed_at
+                    if placed_at_val is None:
+                        placed_at_str = ist_now().date().isoformat()
+                    elif hasattr(placed_at_val, "date"):
+                        placed_at_str = placed_at_val.date().isoformat()
+                    elif isinstance(placed_at_val, str) and len(placed_at_val) >= 10:
+                        placed_at_str = placed_at_val[:10]
+                    else:
+                        placed_at_str = ist_now().date().isoformat()
+
                     reentry_data = {
                         "qty": int(execution_qty),
                         "level": None,  # Will be set if available in metadata
                         "rsi": float(entry_rsi),
                         "price": float(execution_price_float),
                         "time": ist_now().isoformat(),
-                        "placed_at": (
-                            db_order.placed_at.date().isoformat()
-                            if db_order.placed_at
-                            else ist_now().date().isoformat()
-                        ),
+                        "placed_at": placed_at_str,
                         "order_id": order.order_id,
                     }
 
@@ -988,20 +995,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if order.is_sell_order():
             can_sell, error = self._can_sell_from_database(order.symbol, order.quantity)
             if not can_sell:
-                # Position already closed in DB: cancel order instead of rejecting
-                if "No holding found" in error:
-                    logger.info(
-                        "Position already closed for %s, cancelling sell order (no open position in DB)",
-                        order.symbol,
-                    )
-                    order.cancel("Position already closed")
-                    self._save_order(order)
-                    self._sync_order_failure_to_db(order, "cancelled", "Position already closed")
-                    return
-                logger.warning(f"[WARN]? Cannot sell: {error}")
+                # No holding / position closed: reject order (invalid sell)
+                logger.info(
+                    "Sell rejected for %s: %s",
+                    order.symbol,
+                    error,
+                )
                 order.reject(error)
                 self._save_order(order)
-                self._sync_order_failure_to_db(order, "rejected", error)
+                self._sync_order_failure_to_db(
+                    order, "rejected", error or "Position already closed / no holding"
+                )
                 return
 
         # Execute order
@@ -1841,13 +1845,25 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             remarks=order_dict.get("remarks", ""),
         )
 
-        # Restore timestamps
+        # Restore timestamps (may be ISO strings or invalid strings from legacy/reason mix-up)
+        def _parse_optional_datetime(val):
+            if not val:
+                return None
+            if hasattr(val, "year"):  # already datetime
+                return val
+            if not isinstance(val, str):
+                return None
+            try:
+                return datetime.fromisoformat(val)
+            except (ValueError, TypeError):
+                return None
+
         if order_dict.get("placed_at"):
-            order.placed_at = datetime.fromisoformat(order_dict["placed_at"])
+            order.placed_at = _parse_optional_datetime(order_dict["placed_at"])
         if order_dict.get("executed_at"):
-            order.executed_at = datetime.fromisoformat(order_dict["executed_at"])
+            order.executed_at = _parse_optional_datetime(order_dict["executed_at"])
         if order_dict.get("cancelled_at"):
-            order.cancelled_at = datetime.fromisoformat(order_dict["cancelled_at"])
+            order.cancelled_at = _parse_optional_datetime(order_dict["cancelled_at"])
 
         return order
 

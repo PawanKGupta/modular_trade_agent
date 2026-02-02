@@ -218,9 +218,9 @@ class TestBuyOrderDBOnlyModeIntegration:
             data = json.load(f)
             assert len(data.get("trades", [])) == 0
 
-        # Verify order status updated in DB
+        # Verify order status updated in DB (filled orders are CLOSED)
         session.refresh(db_order)
-        assert db_order.status == OrderStatus.ONGOING
+        assert db_order.status == OrderStatus.CLOSED
         assert db_order.execution_price == execution_price
         assert db_order.execution_qty == execution_qty
 

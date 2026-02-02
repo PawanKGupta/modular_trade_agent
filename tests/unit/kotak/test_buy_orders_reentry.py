@@ -439,13 +439,8 @@ class TestPlaceReentryOrders:
         engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
         engine._resolve_broker_symbol = Mock(return_value="RELIANCE-EQ")
 
-        # Mock order validation service: duplicate detected
-        # Ensure it's set before calling place_reentry_orders
-        mock_order_validation_service = Mock()
-        mock_order_validation_service.check_duplicate_order = Mock(
-            return_value=(True, "Active buy order exists")
-        )
-        engine.order_validation_service = mock_order_validation_service
+        # place_reentry_orders uses has_active_buy_order() to block duplicates
+        engine.has_active_buy_order = Mock(return_value=True)
 
         summary = engine.place_reentry_orders()
 
@@ -663,13 +658,8 @@ class TestPlaceReentryOrders:
         engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
         engine._resolve_broker_symbol = Mock(return_value="RELIANCE-EQ")
 
-        # Mock order validation service: duplicate detected (fresh entry exists)
-        # Ensure it's set before calling place_reentry_orders
-        mock_order_validation_service = Mock()
-        mock_order_validation_service.check_duplicate_order = Mock(
-            return_value=(True, "Active buy order exists for fresh entry")
-        )
-        engine.order_validation_service = mock_order_validation_service
+        # place_reentry_orders uses has_active_buy_order() (fresh entry same day blocks re-entry)
+        engine.has_active_buy_order = Mock(return_value=True)
 
         summary = engine.place_reentry_orders()
 

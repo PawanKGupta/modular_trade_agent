@@ -3336,29 +3336,34 @@ class SellOrderManager:
                 logger.warning("DbOrderStatus or ist_now not available, skipping buy order closure")
                 return 0
 
-            # Query for ONGOING buy orders for this symbol
+            # Query for buy orders for this symbol that should be closed (filled but not yet
+            # marked with closed_at). Filled orders are stored as CLOSED; legacy or in-flight
+            # may still be ONGOING. Include both.
             all_orders, _ = self.orders_repo.list(self.user_id)
-            ongoing_buy_orders = [
+            buy_orders_to_close = [
                 db_order
                 for db_order in all_orders
                 if db_order.side.lower() == "buy"
-                and db_order.status == DbOrderStatus.ONGOING
                 and extract_base_symbol(db_order.symbol).upper() == base_symbol.upper()
+                and (
+                    db_order.status == DbOrderStatus.ONGOING
+                    or (db_order.status == DbOrderStatus.CLOSED and db_order.closed_at is None)
+                )
             ]
 
-            if not ongoing_buy_orders:
-                logger.debug(f"No ONGOING buy orders found for {base_symbol}")
+            if not buy_orders_to_close:
+                logger.debug(f"No buy orders to close found for {base_symbol}")
                 return 0
 
             logger.info(
-                f"Found {len(ongoing_buy_orders)} ONGOING buy order(s) for {base_symbol}. "
+                f"Found {len(buy_orders_to_close)} buy order(s) for {base_symbol}. "
                 f"Closing them as sell order executed..."
             )
 
             # Wrap all order closures in a single transaction
             if transaction:
                 with transaction(self.orders_repo.db):
-                    for db_order in ongoing_buy_orders:
+                    for db_order in buy_orders_to_close:
                         try:
                             # Mark buy order as CLOSED
                             self.orders_repo.update(
@@ -4275,7 +4280,10 @@ class SellOrderManager:
                                     db_order = self.orders_repo.get_by_broker_order_id(
                                         self.user_id, order_id
                                     )
-                                    if db_order and (db_order.price is None or abs(float(db_order.price) - price) > 0.01):
+                                    if db_order and (
+                                        db_order.price is None
+                                        or abs(float(db_order.price) - price) > 0.01
+                                    ):
                                         db_order.price = price
                                         self.orders_repo.update(db_order)
                                         logger.debug(
@@ -4283,7 +4291,9 @@ class SellOrderManager:
                                         )
                                 except Exception as sync_error:
                                     # Don't fail the main flow if sync fails
-                                    logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
+                                    logger.debug(
+                                        f"Failed to sync price for {order_id}: {sync_error}"
+                                    )
                             else:
                                 # Fallback to database price
                                 db_order = self.orders_repo.get_by_broker_order_id(
@@ -4351,7 +4361,9 @@ class SellOrderManager:
                                                 # Only update if price actually changed (avoid unnecessary writes)
                                                 if abs(float(db_order.price) - fresh_price) > 0.01:
                                                     db_order.price = fresh_price
-                                                    self.orders_repo.update(db_order)  # auto_commit=True by default
+                                                    self.orders_repo.update(
+                                                        db_order
+                                                    )  # auto_commit=True by default
                                                     logger.info(
                                                         f"Synced stale price for {symbol} order {order_id}: "
                                                         f"Rs {db_price:.2f} -> Rs {fresh_price:.2f} ({staleness_reason})"
@@ -4364,10 +4376,14 @@ class SellOrderManager:
                                                         f"Refreshed timestamp for stale {symbol} order {order_id} "
                                                         f"(price unchanged: Rs {db_price:.2f}, {staleness_reason})"
                                                     )
-                                                    price = db_price  # Use database price (unchanged)
+                                                    price = (
+                                                        db_price  # Use database price (unchanged)
+                                                    )
                                             except Exception as sync_error:
                                                 # Don't fail the main flow if sync fails
-                                                logger.debug(f"Failed to sync price for {order_id}: {sync_error}")
+                                                logger.debug(
+                                                    f"Failed to sync price for {order_id}: {sync_error}"
+                                                )
                                                 price = db_price  # Fallback to database price
                                         else:
                                             # No price in broker response, just refresh timestamp
