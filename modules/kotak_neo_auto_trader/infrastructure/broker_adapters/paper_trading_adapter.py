@@ -190,7 +190,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         Sync paper trading order execution to database (orders and positions tables).
 
         This updates:
-        - Order status to ONGOING (for buy orders) or CLOSED (for sell orders)
+        - Order status to CLOSED when executed (for both buy and sell)
         - Creates/updates position in positions table (for buy orders)
         - Updates/closes position in positions table (for sell orders)
 
@@ -813,6 +813,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Persist MARKET orders to DB *before* they may execute immediately.
             # This prevents execution sync warnings like:
             # "DB order not found for execution sync ... Order executed in file but not tracked in DB"
+            db_order_created = True
             if (
                 self.db_session
                 and self.user_id
@@ -825,8 +826,35 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
                     repo = OrdersRepository(self.db_session)
 
+                    # For sell orders: close any existing active sell(s) for this symbol so the
+                    # uq_orders_user_base_symbol_active constraint allows the new insert.
+                    # Commit the cancel so it's visible to create_amo (same or new connection).
+                    if order.is_sell_order():
+                        logger.info(
+                            "[PaperTrading] Before create_amo: cancelling prior active sell (user_id=%s, symbol=%s)",
+                            self.user_id,
+                            order.symbol,
+                        )
+                        cancelled = repo.cancel_active_sell_for_symbol(
+                            self.user_id,
+                            order.symbol,
+                            reason="Replaced by new sell order",
+                            auto_commit=True,
+                        )
+                        logger.info(
+                            "[PaperTrading] cancel_active_sell_for_symbol returned cancelled=%s (order_id=%s)",
+                            cancelled.id if cancelled else None,
+                            order_id,
+                        )
+
                     # Safety: avoid duplicates (e.g., if another layer already created it)
                     existing = repo.get_by_broker_order_id(self.user_id, order_id)
+                    logger.info(
+                        "[PaperTrading] get_by_broker_order_id(user_id=%s, order_id=%s) => existing=%s",
+                        self.user_id,
+                        order_id,
+                        existing.id if existing else None,
+                    )
                     if not existing:
                         # Extract metadata if present
                         order_metadata = None
@@ -835,6 +863,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                         elif hasattr(order, "_metadata") and isinstance(order._metadata, dict):
                             order_metadata = order._metadata
 
+                        logger.info(
+                            "[PaperTrading] Calling create_amo(user_id=%s, symbol=%s, side=%s, order_id=%s)",
+                            self.user_id,
+                            order.symbol,
+                            order.transaction_type.value.lower(),
+                            order_id,
+                        )
                         repo.create_amo(
                             user_id=self.user_id,
                             symbol=order.symbol,
@@ -850,6 +885,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                             trade_mode=TradeMode.PAPER,
                         )
                 except Exception as db_ex:
+                    db_order_created = False
                     # Don't block trading if DB insert fails, but log loudly
                     logger.warning(
                         f"[PaperTrading] Failed to create DB order for MARKET {order.symbol} "
@@ -871,7 +907,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             elif order.order_type == OrderType.MARKET:
                 # Check if market is open before executing
                 if self.order_simulator._is_market_open(order):
-                    self._execute_order(order)
+                    if db_order_created:
+                        self._execute_order(order)
+                    else:
+                        logger.warning(
+                            f"[PaperTrading] Skipping execution for {order.symbol}: "
+                            "DB order was not created (e.g. unique constraint)."
+                        )
                 else:
                     logger.info(
                         f"? Market order placed during off-market hours - will execute when market opens: {order.symbol}"
@@ -946,6 +988,16 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if order.is_sell_order():
             can_sell, error = self._can_sell_from_database(order.symbol, order.quantity)
             if not can_sell:
+                # Position already closed in DB: cancel order instead of rejecting
+                if "No holding found" in error:
+                    logger.info(
+                        "Position already closed for %s, cancelling sell order (no open position in DB)",
+                        order.symbol,
+                    )
+                    order.cancel("Position already closed")
+                    self._save_order(order)
+                    self._sync_order_failure_to_db(order, "cancelled", "Position already closed")
+                    return
                 logger.warning(f"[WARN]? Cannot sell: {error}")
                 order.reject(error)
                 self._save_order(order)
@@ -1005,6 +1057,21 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         # Save updated order
         self._save_order(order)
 
+    def _resolve_portfolio_symbol_for_sell(self, symbol: str) -> str | None:
+        """
+        Resolve the key used in the in-memory portfolio for a sell order symbol.
+        Portfolio may be keyed as INTERARCH.NS (from DB positions) while order has INTERARCH.
+        """
+        candidates = [symbol]
+        if not symbol.endswith(".NS") and not symbol.endswith(".BO"):
+            candidates.append(f"{symbol}.NS")
+        if symbol.endswith(".NS") or symbol.endswith(".BO"):
+            candidates.append(symbol[:-3])
+        for key in candidates:
+            if self.portfolio.has_holding(key):
+                return key
+        return None
+
     def _update_portfolio_after_execution(
         self, order: Order, execution_price: Money
     ) -> dict | None:
@@ -1037,13 +1104,19 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
 
         else:  # SELL
+            # Resolve portfolio key: in-memory portfolio may be keyed as "INTERARCH.NS" (from DB)
+            # while order.symbol is "INTERARCH" (base symbol from sell monitor).
+            portfolio_symbol = self._resolve_portfolio_symbol_for_sell(order.symbol)
+            if not portfolio_symbol:
+                raise ValueError(f"No holding found for {order.symbol}")
+
             # Get entry price before reducing holding
-            holding = self.portfolio.get_holding(order.symbol)
+            holding = self.portfolio.get_holding(portfolio_symbol)
             entry_price = holding.average_price.amount if holding else 0.0
 
-            # Reduce holding
+            # Reduce holding using resolved key
             remaining_holding, realized_pnl = self.portfolio.reduce_holding(
-                order.symbol, order.quantity, execution_price
+                portfolio_symbol, order.quantity, execution_price
             )
 
             # Add cash
@@ -1110,8 +1183,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 from src.infrastructure.persistence.orders_repository import OrdersRepository
 
                 repo = OrdersRepository(self.db_session)
-                # Try to get user_id from order_dict if present
-                user_id = order_dict.get("user_id")
+                # Use adapter's user_id (paper store does not persist user_id on orders)
+                user_id = order_dict.get("user_id") or self.user_id
                 db_order = None
                 if user_id:
                     db_order = repo.get_by_broker_order_id(user_id, order_id)
@@ -1308,12 +1381,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     )
 
             if not position or position.closed_at is not None:
-                # Debug: List all open positions for this user to help diagnose
                 all_positions = positions_repo.list(self.user_id)
                 open_positions = [p for p in all_positions if p.closed_at is None]
-                logger.warning(
-                    f"[PaperTrading] No holding found for {symbol} (user_id={self.user_id}). "
-                    f"Open positions: {[f'{p.symbol}(qty={p.quantity})' for p in open_positions]}"
+                logger.debug(
+                    "[PaperTrading] No holding found for %s (user_id=%s). Open positions: %s",
+                    symbol,
+                    self.user_id,
+                    [f"{p.symbol}(qty={p.quantity})" for p in open_positions],
                 )
                 return False, f"No holding found for {symbol}"
 

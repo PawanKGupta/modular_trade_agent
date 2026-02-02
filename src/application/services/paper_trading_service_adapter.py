@@ -1198,6 +1198,16 @@ class PaperTradingServiceAdapter:
                     }
 
                     try:
+                        # If position is already closed (e.g. elsewhere or previous run), don't place sell
+                        holding_before = self.broker.get_holding(symbol)
+                        if not holding_before or holding_before.quantity == 0:
+                            symbols_to_remove.append(symbol)
+                            self.logger.info(
+                                f"Position already closed for {symbol}, removing from tracking (no sell placed)",
+                                action="_monitor_sell_orders",
+                            )
+                            continue
+
                         # Cancel existing limit order if any
                         pending_orders = self.broker.get_all_orders()
                         for pending in pending_orders:
@@ -1215,7 +1225,7 @@ class PaperTradingServiceAdapter:
                         # Place market order - will execute immediately at target price
                         self.broker.place_order(target_order)
 
-                        # Verify position is actually closed before removing from tracking
+                        # Verify position is actually closed after sell
                         holding = self.broker.get_holding(symbol)
                         if not holding or holding.quantity == 0:
                             symbols_to_remove.append(symbol)
