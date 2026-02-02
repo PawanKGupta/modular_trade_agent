@@ -46,6 +46,7 @@ try:
 except ImportError:
     EMAIL_NOTIFIER_AVAILABLE = False
 from src.infrastructure.db.dialect import is_postgresql
+from src.infrastructure.db.session import SessionLocal
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
 )
@@ -494,14 +495,20 @@ class IndividualServiceManager:
         duration: float,
         details: dict | str | None,
         task_name: str,
+        db_override: Session | None = None,
+        execution_repo_override=None,
     ) -> None:
         """
         Update execution status with rollback handling and raw SQL fallback.
 
         This method ensures execution status is always updated, even if the session
         is in a bad state due to previous errors (e.g., datetime conversion issues).
+        When db_override and execution_repo_override are provided (e.g. from run_once
+        background thread), use them instead of self.db so the request session is not used.
         """
-        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+        db = db_override if db_override is not None else self.db
+        execution_repo = execution_repo_override if execution_repo_override is not None else self._execution_repo
+        logger = get_user_logger(user_id=user_id, db=db, module="IndividualService")
 
         # Ensure details is JSON-serializable
         if details is None:
@@ -514,17 +521,17 @@ class IndividualServiceManager:
         try:
             # Rollback session if it's in a bad state (e.g., from previous errors)
             try:
-                self.db.rollback()
+                db.rollback()
             except Exception:
                 pass  # Ignore rollback errors
 
-            execution = self._execution_repo.get(execution_id)
+            execution = execution_repo.get(execution_id)
             if execution:
                 execution.status = status
                 execution.duration_seconds = duration
                 execution.details = details_dict
-                self._execution_repo.db.commit()
-                self._execution_repo.db.flush()
+                execution_repo.db.commit()
+                execution_repo.db.flush()
                 logger.info(
                     f"Updated execution {execution_id} status to '{status}' in database",
                     action="run_once",
@@ -549,7 +556,7 @@ class IndividualServiceManager:
 
                 # Rollback and use fresh connection for raw SQL
                 try:
-                    self.db.rollback()
+                    db.rollback()
                 except Exception:
                     pass
 
@@ -562,8 +569,8 @@ class IndividualServiceManager:
                     WHERE id = :execution_id
                 """
                 )
-                details_json = json.dumps(details_dict)
-                self.db.execute(
+                details_json = json.dumps(details_dict                )
+                db.execute(
                     update_sql,
                     {
                         "execution_id": execution_id,
@@ -572,7 +579,7 @@ class IndividualServiceManager:
                         "details": details_json,
                     },
                 )
-                self.db.commit()
+                db.commit()
                 logger.info(
                     f"Updated execution {execution_id} status to '{status}' via raw SQL",
                     action="run_once",
@@ -587,9 +594,24 @@ class IndividualServiceManager:
                 )
 
     def _execute_task_once(self, user_id: int, task_name: str, execution_id: int) -> None:
-        """Execute a task once in a separate thread with timeout protection"""
+        """Execute a task once in a separate thread with timeout protection.
+
+        Uses a fresh DB session (task_db) for all work. The request session (self.db)
+        must not be used here because the request returns immediately and closes
+        that session while this method runs in a background thread.
+        """
         start_time = time.time()
-        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+        task_db = SessionLocal()
+        try:
+            task_settings_repo = SettingsRepository(task_db)
+            task_config_repo = UserTradingConfigRepository(task_db)
+            task_execution_repo = IndividualServiceTaskExecutionRepository(task_db)
+            task_status_repo = IndividualServiceStatusRepository(task_db)
+        except Exception:
+            task_db.close()
+            raise
+
+        logger = get_user_logger(user_id=user_id, db=task_db, module="IndividualService")
 
         # Maximum execution time: 5 minutes for all tasks
         MAX_EXECUTION_TIME = 300  # 5 minutes
@@ -600,14 +622,14 @@ class IndividualServiceManager:
                 action="run_once",
             )
 
-            # Get user context
-            settings = self._settings_repo.get_by_user_id(user_id)
+            # Get user context (use task_db; request session may already be closed)
+            settings = task_settings_repo.get_by_user_id(user_id)
             if not settings:
                 raise ValueError(f"User settings not found for user_id={user_id}")
 
             # Load configuration
-            user_config = self._config_repo.get_or_create_default(user_id)
-            strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
+            user_config = task_config_repo.get_or_create_default(user_id)
+            strategy_config = user_config_to_strategy_config(user_config, db_session=task_db)
 
             # Get broker credentials if needed
             broker_creds = None
@@ -644,6 +666,8 @@ class IndividualServiceManager:
                         broker_creds=broker_creds,
                         strategy_config=strategy_config,
                         settings=settings,
+                        db_session=task_db,
+                        config_repo=task_config_repo,
                     )
                 except Exception as e:
                     task_exception[0] = e
@@ -669,10 +693,12 @@ class IndividualServiceManager:
                     duration=duration,
                     details=result,
                     task_name=task_name,
+                    db_override=task_db,
+                    execution_repo_override=task_execution_repo,
                 )
 
                 # Update last execution time
-                self._status_repo.update_last_execution(user_id, task_name)
+                task_status_repo.update_last_execution(user_id, task_name)
 
                 logger.info(
                     f"Task execution completed: {task_name} (duration: {duration:.2f}s)",
@@ -680,7 +706,9 @@ class IndividualServiceManager:
                 )
 
                 # Send notification for successful execution
-                self._notify_service_execution_completed(user_id, task_name, "success", duration)
+                self._notify_service_execution_completed(
+                    user_id, task_name, "success", duration, db_override=task_db
+                )
             else:
                 # TIMEOUT: Task exceeded maximum execution time
                 duration = time.time() - start_time
@@ -700,11 +728,13 @@ class IndividualServiceManager:
                         "timeout_seconds": MAX_EXECUTION_TIME,
                     },
                     task_name=task_name,
+                    db_override=task_db,
+                    execution_repo_override=task_execution_repo,
                 )
 
                 # Send notification for timeout
                 self._notify_service_execution_completed(
-                    user_id, task_name, "failed", duration, timeout_msg
+                    user_id, task_name, "failed", duration, timeout_msg, db_override=task_db
                 )
 
                 raise TimeoutError(timeout_msg)
@@ -733,10 +763,14 @@ class IndividualServiceManager:
                 duration=duration,
                 details=error_details,
                 task_name=task_name,
+                db_override=task_db,
+                execution_repo_override=task_execution_repo,
             )
 
             # Send notification for failed execution
-            self._notify_service_execution_completed(user_id, task_name, "failed", duration, str(e))
+            self._notify_service_execution_completed(
+                user_id, task_name, "failed", duration, str(e), db_override=task_db
+            )
 
         finally:
             # Small delay to ensure database commit is fully written and visible
@@ -751,12 +785,27 @@ class IndividualServiceManager:
                     action="run_once",
                     task_name=task_name,
                 )
+            try:
+                task_db.close()
+            except Exception:
+                pass
 
     def _execute_task_logic(
-        self, user_id: int, task_name: str, broker_creds: dict | None, strategy_config, settings
+        self,
+        user_id: int,
+        task_name: str,
+        broker_creds: dict | None,
+        strategy_config,
+        settings,
+        db_session: Session | None = None,
+        config_repo=None,
     ) -> dict:
-        """Execute the actual task logic"""
-        logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
+        """Execute the actual task logic.
+        When db_session and config_repo are provided (from run_once thread), use them instead of self.db.
+        """
+        db = db_session if db_session is not None else self.db
+        config_repo_use = config_repo if config_repo is not None else self._config_repo
+        logger = get_user_logger(user_id=user_id, db=db, module="IndividualService")
 
         if task_name == "analysis":
             return self._run_analysis_task(user_id=user_id)
@@ -771,11 +820,11 @@ class IndividualServiceManager:
             )
 
             # Load user trading config to get paper_trading_initial_capital
-            user_config = self._config_repo.get_or_create_default(user_id)
+            user_config = config_repo_use.get_or_create_default(user_id)
 
             service = PaperTradingServiceAdapter(
                 user_id=user_id,
-                db_session=self.db,
+                db_session=db,
                 strategy_config=strategy_config,
                 initial_capital=user_config.paper_trading_initial_capital,
                 storage_path=None,  # Will use user-specific path
@@ -800,7 +849,7 @@ class IndividualServiceManager:
             # Skip execution tracking since individual services track separately
             service = trading_service_module.TradingService(
                 user_id=user_id,
-                db_session=self.db,
+                db_session=db,
                 broker_creds=broker_creds,
                 strategy_config=strategy_config,
                 env_file=None,
@@ -2094,9 +2143,21 @@ class IndividualServiceManager:
                             pass
 
     def _notify_service_execution_completed(
-        self, user_id: int, task_name: str, status: str, duration: float, error: str | None = None
+        self,
+        user_id: int,
+        task_name: str,
+        status: str,
+        duration: float,
+        error: str | None = None,
+        db_override: Session | None = None,
     ) -> None:
-        """Send notification when a service execution completes (success or failure)"""
+        """Send notification when a service execution completes (success or failure).
+        When db_override is provided (e.g. from run_once thread), use it instead of self.db.
+        """
+        db = db_override if db_override is not None else self.db
+        notification_repo = (
+            NotificationRepository(db) if db_override is not None else self._notification_repo
+        )
         task_display_name = task_name.replace("_", " ").title()
         duration_str = f"{duration:.2f}s" if duration < 60 else f"{duration / 60:.1f}m"
 
@@ -2106,7 +2167,7 @@ class IndividualServiceManager:
             NotificationPreferenceService,
         )
 
-        pref_service = NotificationPreferenceService(self.db)
+        pref_service = NotificationPreferenceService(db)
         preferences = pref_service.get_preferences(user_id)
 
         if status == "success":
@@ -2153,7 +2214,7 @@ class IndividualServiceManager:
             user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="in_app"
         ):
             try:
-                notification = self._notification_repo.create(
+                notification = notification_repo.create(
                     user_id=user_id,
                     type="service",
                     level=level,
@@ -2187,7 +2248,7 @@ class IndividualServiceManager:
                             )
                             # Update notification delivery status if notification was created
                             if notification and email_sent:
-                                self._notification_repo.update_delivery_status(
+                                notification_repo.update_delivery_status(
                                     notification_id=notification.id, email_sent=True
                                 )
                     except Exception as e:
