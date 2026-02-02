@@ -2153,7 +2153,7 @@ class AutoTradeEngine:
                     "Falling back to database check."
                 )
 
-        # 2) Database fallback: Check for PENDING/ONGOING buy orders (AMO/PENDING_EXECUTION merged into PENDING)
+        # 2) Database fallback: Check for PENDING/ONGOING/CLOSED buy orders (AMO/PENDING_EXECUTION merged into PENDING)
         # This prevents duplicates when broker API doesn't return pending orders or is unavailable
         if self.orders_repo and self.user_id:
             try:
@@ -2180,12 +2180,13 @@ class AutoTradeEngine:
                         and existing_order.status
                         in {
                             DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
-                            DbOrderStatus.ONGOING,
+                            DbOrderStatus.ONGOING,  # Legacy executed
+                            DbOrderStatus.CLOSED,  # Filled (position open; don't block re-entry if filled)
                         }
                         and order_symbol_base == base_symbol_clean
                     ):
                         # Only block re-entry for UNFILLED orders (execution_qty is None)
-                        # Filled orders that are still ONGOING (position not yet closed) shouldn't block re-entry
+                        # Filled orders (ONGOING legacy or CLOSED) shouldn't block re-entry
                         if existing_order.execution_qty is None:
                             logger.debug(
                                 f"Database check: {base_symbol} already has unfilled buy order "

@@ -114,8 +114,8 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         result = service._find_position_by_symbol(test_user.id, "RELIANCE", include_closed=False)
         assert result is None  # Closed position should not be returned
 
-    def test_has_ongoing_buy_order_by_symbol_exact_match_full_symbol(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol with exact match (full symbol)"""
+    def test_has_open_position_for_symbol_exact_match_full_symbol(self, db_session, test_user):
+        """Test _has_open_position_for_symbol with exact match (full symbol)"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
         # Create open position (closed_at=None) with full symbol
@@ -131,11 +131,11 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         db_session.commit()
 
         # Check with full symbol (exact match)
-        result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE-EQ")
+        result = service._has_open_position_for_symbol(test_user.id, "RELIANCE-EQ")
         assert result is True
 
-    def test_has_ongoing_buy_order_by_symbol_base_symbol_fallback(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol with base symbol matching full symbol"""
+    def test_has_open_position_for_symbol_base_symbol_fallback(self, db_session, test_user):
+        """Test _has_open_position_for_symbol with base symbol matching full symbol"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
         # Create open position with full symbol (closed_at=None)
@@ -151,19 +151,19 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         db_session.commit()
 
         # Check with base symbol (fallback matching)
-        result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE")
+        result = service._has_open_position_for_symbol(test_user.id, "RELIANCE")
         assert result is True
 
-    def test_has_ongoing_buy_order_by_symbol_not_found(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol when order doesn't exist"""
+    def test_has_open_position_for_symbol_not_found(self, db_session, test_user):
+        """Test _has_open_position_for_symbol when order doesn't exist"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
         # Check for non-existent order
-        result = service._has_ongoing_buy_order_by_symbol(test_user.id, "NONEXISTENT")
+        result = service._has_open_position_for_symbol(test_user.id, "NONEXISTENT")
         assert result is False
 
-    def test_has_ongoing_buy_order_by_symbol_ignores_closed_orders(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol ignores closed positions"""
+    def test_has_open_position_for_symbol_ignores_closed_orders(self, db_session, test_user):
+        """Test _has_open_position_for_symbol ignores closed positions"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
         # Create closed position (closed_at set)
@@ -179,18 +179,18 @@ class TestAnalysisDeduplicationServiceSymbolMatching:
         db_session.commit()
 
         # Check with base symbol - should return False (position is closed)
-        result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE")
+        result = service._has_open_position_for_symbol(test_user.id, "RELIANCE")
         assert result is False
 
-    def test_has_ongoing_buy_order_by_symbol_ignores_sell_orders(self, db_session, test_user):
-        """Test _has_ongoing_buy_order_by_symbol returns False when no open position"""
+    def test_has_open_position_for_symbol_ignores_sell_orders(self, db_session, test_user):
+        """Test _has_open_position_for_symbol returns False when no open position"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
 
         # No open position for RELIANCE (sell order does not create a holding)
         # So no Positions row with closed_at=None for this symbol
 
         # Check with base symbol - should return False (no open position)
-        result = service._has_ongoing_buy_order_by_symbol(test_user.id, "RELIANCE")
+        result = service._has_open_position_for_symbol(test_user.id, "RELIANCE")
         assert result is False
 
     def test_deduplicate_with_base_symbol_matches_full_symbol_position(self, db_session, test_user):

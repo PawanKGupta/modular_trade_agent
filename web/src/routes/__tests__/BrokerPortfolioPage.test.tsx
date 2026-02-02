@@ -4,42 +4,43 @@ import { MemoryRouter } from 'react-router-dom';
 import { withProviders } from '@/test/utils';
 import { BrokerPortfolioPage } from '../dashboard/BrokerPortfolioPage';
 
+const mockPortfolioResponse = {
+	account: {
+		initial_capital: 200000,
+		available_cash: 150000,
+		total_pnl: 10000,
+		realized_pnl: 5000,
+		unrealized_pnl: 5000,
+		portfolio_value: 60000,
+		total_value: 210000,
+		return_percentage: 5.0,
+	},
+	holdings: [
+		{
+			symbol: 'RELIANCE.NS',
+			quantity: 20,
+			average_price: 2500.0,
+			current_price: 2600.0,
+			cost_basis: 50000,
+			market_value: 52000,
+			pnl: 2000,
+			pnl_percentage: 4.0,
+			target_price: null,
+			distance_to_target: null,
+			reentry_count: 0,
+			entry_rsi: null,
+			initial_entry_price: null,
+			reentries: null,
+		},
+	],
+	recent_orders: [],
+	order_statistics: {},
+};
+
 // Mock the API
 vi.mock('@/api/user', () => ({
-	getPortfolio: vi.fn(() =>
-		Promise.resolve({
-			account: {
-				initial_capital: 200000,
-				available_cash: 150000,
-				total_pnl: 10000,
-				realized_pnl: 5000,
-				unrealized_pnl: 5000,
-				portfolio_value: 60000,
-				total_value: 210000,
-				return_percentage: 5.0,
-			},
-			holdings: [
-				{
-					symbol: 'RELIANCE.NS',
-					quantity: 20,
-					average_price: 2500.0,
-					current_price: 2600.0,
-					cost_basis: 50000,
-					market_value: 52000,
-					pnl: 2000,
-					pnl_percentage: 4.0,
-					target_price: null,
-					distance_to_target: null,
-					reentry_count: 0,
-					entry_rsi: null,
-					initial_entry_price: null,
-					reentries: null,
-				},
-			],
-			recent_orders: [],
-			order_statistics: {},
-		})
-	),
+	getPortfolio: vi.fn(() => Promise.resolve(mockPortfolioResponse)),
+	getBrokerSystemHoldings: vi.fn(() => Promise.resolve(mockPortfolioResponse)),
 }));
 
 // Mock useSettings

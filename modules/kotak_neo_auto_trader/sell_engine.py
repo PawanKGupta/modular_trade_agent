@@ -3314,16 +3314,18 @@ class SellOrderManager:
 
     def _close_buy_orders_for_symbol(self, base_symbol: str) -> int:
         """
-        Close ONGOING buy orders for a symbol when sell order executes.
+        Mark buy orders as CLOSED with closed_at when sell order executes (order lifecycle only).
 
-        When a sell order executes and closes a position, mark all corresponding
-        ONGOING buy orders as CLOSED with closed_at timestamp.
+        When a sell order executes, the position is closed via positions_repo.mark_closed().
+        This method only updates orders: sets status CLOSED and order closed_at for buy orders
+        that are ONGOING (legacy) or CLOSED with closed_at None (backfill). New fills already
+        get closed_at in orders_repository.mark_executed(), so this is for legacy/backfill only.
 
         Args:
             base_symbol: Base symbol (e.g., "RELIANCE") for which to close buy orders
 
         Returns:
-            Number of buy orders closed
+            Number of buy orders updated
         """
         if not self.orders_repo or not self.user_id:
             logger.debug("OrdersRepository or user_id not available, skipping buy order closure")

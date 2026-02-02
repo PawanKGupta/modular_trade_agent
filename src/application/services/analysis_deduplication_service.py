@@ -74,12 +74,13 @@ class AnalysisDeduplicationService:
 
         return None
 
-    def _has_ongoing_buy_order_by_symbol(self, user_id: int, symbol: str) -> bool:
+    def _has_open_position_for_symbol(self, user_id: int, symbol: str) -> bool:
         """
         Check if user has an open position for a symbol (user still holds the stock).
 
-        Uses Positions (closed_at IS NULL) as source of truth. Tries exact symbol match
+        Uses Positions table (closed_at IS NULL) as source of truth. Tries exact symbol match
         first, then fallback to base symbol matching for signals that use base symbols.
+        Does not use order status (ONGOING/CLOSED) for position open/closed.
 
         Args:
             user_id: User ID
@@ -269,7 +270,7 @@ class AnalysisDeduplicationService:
                         # (Uses Positions table: closed_at IS NULL; not order status.)
                         # If position is open, we can skip duplicate signal.
                         if user_has_traded:
-                            user_has_open_position = self._has_ongoing_buy_order_by_symbol(
+                            user_has_open_position = self._has_open_position_for_symbol(
                                 self.user_id, symbol
                             )
 
@@ -351,7 +352,7 @@ class AnalysisDeduplicationService:
                             # Check if user has open position for symbol
                             user_has_open_position = False
                             if self.user_id:
-                                user_has_open_position = self._has_ongoing_buy_order_by_symbol(
+                                user_has_open_position = self._has_open_position_for_symbol(
                                     self.user_id, symbol
                                 )
 
