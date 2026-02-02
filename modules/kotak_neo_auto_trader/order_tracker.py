@@ -411,12 +411,11 @@ class OrderTracker:
                 ) or self.orders_repo.get_by_order_id(self.user_id, order_id)
 
                 if db_order:
-                    # Map broker status string to DB status enum
-                    # Note: "PENDING" from broker means "trigger pending" or "after market order req received"
-                    # (broker is processing). "OPEN" means broker accepted, waiting execution.
-                    # Both mean "order is with broker, waiting execution" → PENDING
+                    # Map broker status string to DB status enum.
+                    # Filled = CLOSED (order lifecycle ends at fill; position ongoing is in Positions).
+                    # PENDING/OPEN = order with broker, not yet filled.
                     status_map = {
-                        "EXECUTED": DbOrderStatus.ONGOING,  # Executed orders become ONGOING
+                        "EXECUTED": DbOrderStatus.CLOSED,  # Filled orders are CLOSED (not ONGOING)
                         "REJECTED": DbOrderStatus.FAILED,  # Merged: REJECTED → FAILED (handled via mark_rejected)
                         "CANCELLED": DbOrderStatus.CANCELLED,  # Cancelled orders
                         "PENDING": DbOrderStatus.PENDING,  # Broker processing (trigger pending, AMO req received)
@@ -436,13 +435,20 @@ class OrderTracker:
                         if new_db_status:
                             db_order.status = new_db_status
 
+                        now = datetime.now()
                         if executed_qty is not None:
                             db_order.execution_qty = executed_qty
-                            db_order.execution_time = datetime.now()
+                            db_order.execution_time = now
                             if execution_price is not None and execution_price > 0:
                                 db_order.execution_price = execution_price
 
-                        db_order.last_status_check = datetime.now()
+                        # Capture closed_at at order closer (fill time) when broker reports EXECUTED
+                        if status.upper() == "EXECUTED":
+                            db_order.closed_at = now
+                            if getattr(db_order, "filled_at", None) is None:
+                                db_order.filled_at = now
+
+                        db_order.last_status_check = now
                         self.orders_repo.update(db_order)
                         updated = True
                         logger.debug(f"Updated order {order_id} status in database: {status}")
@@ -487,8 +493,8 @@ class OrderTracker:
         Remove order from pending tracking.
 
         Phase 7: Supports dual-write (JSON + DB).
-        Note: Only cancels orders that are PENDING or FAILED. ONGOING orders
-        are removed from tracking but remain ONGOING (not cancelled).
+        Note: Only cancels orders that are PENDING or FAILED. CLOSED (filled) orders
+        are removed from tracking but remain CLOSED (not cancelled).
 
         Args:
             order_id: Order ID to remove
@@ -510,8 +516,8 @@ class OrderTracker:
 
                 if db_order:
                     # Only cancel if order is PENDING or FAILED
-                    # ONGOING orders should remain ONGOING (they're executed, not cancelled)
-                    # CLOSED/CANCELLED orders should remain as-is
+                    # CLOSED (filled) orders should remain CLOSED (executed, not cancelled)
+                    # CANCELLED orders should remain as-is
                     if db_order.status in [DbOrderStatus.PENDING, DbOrderStatus.FAILED]:
                         # Mark as cancelled only for pending/failed orders
                         self.orders_repo.mark_cancelled(
@@ -519,7 +525,7 @@ class OrderTracker:
                         )
                         logger.debug(f"Marked order {order_id} as cancelled in database")
                     else:
-                        # For ONGOING/CLOSED/CANCELLED orders, just remove from tracking
+                        # For CLOSED/CANCELLED orders, just remove from tracking
                         # Don't change their status
                         logger.debug(
                             f"Removed order {order_id} from pending tracking "

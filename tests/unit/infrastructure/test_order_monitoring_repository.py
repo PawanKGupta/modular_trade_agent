@@ -183,6 +183,7 @@ class TestOrderMonitoringRepository:
         assert updated.execution_qty == 10.0
         assert updated.execution_time is not None
         assert updated.filled_at is not None
+        assert updated.closed_at is not None  # closed_at at order closer (fill time)
         assert updated.last_status_check is not None
 
     def test_mark_executed_with_partial_qty(self, db_session, sample_user):

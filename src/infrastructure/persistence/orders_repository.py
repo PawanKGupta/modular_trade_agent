@@ -936,10 +936,13 @@ class OrdersRepository:
         # Update order status and timestamps.
         # Mark as CLOSED when filled so (user_id, base_symbol) is freed for the unique
         # index uq_orders_user_base_symbol_active; "position ongoing" is tracked in Positions.
+        # Capture closed_at at order closer (fill time) so Order lifecycle is independent of Position.
+        fill_time = ist_now()
         order.status = OrderStatus.CLOSED
-        order.execution_time = ist_now()
-        order.filled_at = ist_now()
-        order.last_status_check = ist_now()
+        order.execution_time = fill_time
+        order.filled_at = fill_time
+        order.closed_at = fill_time
+        order.last_status_check = fill_time
         order.reason = f"Order executed at Rs {order.execution_price:.2f}"
 
         updated_order = self.update(order, auto_commit=auto_commit)
