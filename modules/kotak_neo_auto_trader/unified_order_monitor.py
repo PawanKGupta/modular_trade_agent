@@ -384,15 +384,16 @@ class UnifiedOrderMonitor:
 
         if self.orders_repo and self.user_id:
             try:
-                # Get ONGOING buy orders with missing execution price
-                ongoing_orders, _ = self.orders_repo.list(
-                    self.user_id, status=DbOrderStatus.ONGOING
-                )
-                for order in ongoing_orders:
-                    # Filter for buy orders only
-                    if order.side and order.side.lower() != "buy":
-                        continue
-
+                # Get executed buy orders (ONGOING legacy or CLOSED = filled) for sync
+                all_orders, _ = self.orders_repo.list(self.user_id)
+                executed_buy_orders = [
+                    o
+                    for o in all_orders
+                    if o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
+                    and o.side
+                    and o.side.lower() == "buy"
+                ]
+                for order in executed_buy_orders:
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
                     # Previously only orders WITHOUT execution_price were checked, causing
                     # positions to never be created for executed orders that already had
@@ -408,11 +409,11 @@ class UnifiedOrderMonitor:
                             "placed_at": order.placed_at,
                         }
                         logger.debug(
-                            f"Added ONGOING order {order_id} ({order.symbol}) to sync - "
+                            f"Added executed order {order_id} ({order.symbol}) to sync - "
                             f"execution_price={'present' if order.execution_price else 'missing'}"
                         )
             except Exception as e:
-                logger.error(f"Error loading ONGOING orders for sync: {e}", exc_info=True)
+                logger.error(f"Error loading executed orders for sync: {e}", exc_info=True)
 
         if not orders_to_check:
             logger.debug("No buy orders to check")
@@ -694,7 +695,8 @@ class UnifiedOrderMonitor:
                                         db_order = self.orders_repo.get(order_info["db_order_id"])
                                         if (
                                             db_order
-                                            and db_order.status == DbOrderStatus.ONGOING
+                                            and db_order.status
+                                            in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
                                             and db_order.execution_price
                                             and db_order.execution_price > 0
                                             and db_order.execution_qty
@@ -760,7 +762,8 @@ class UnifiedOrderMonitor:
                                 db_order = self.orders_repo.get(order_info["db_order_id"])
                                 if (
                                     db_order
-                                    and db_order.status == DbOrderStatus.ONGOING
+                                    and db_order.status
+                                    in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
                                     and db_order.execution_price
                                     and db_order.execution_price > 0
                                     and db_order.execution_qty
@@ -1687,9 +1690,9 @@ class UnifiedOrderMonitor:
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
 
-            # Note: Order status is already correct (ONGOING = executed order)
-            # According to design: PENDING → ONGOING (when executed) → CLOSED (when sold)
-            # If order has execution_price and status is ONGOING, that's the correct state.
+            # Note: Order status is already correct (ONGOING legacy or CLOSED = executed order)
+            # According to design: PENDING → CLOSED (when executed); position ongoing is in Positions.
+            # If order has execution_price and status is ONGOING or CLOSED, that's the correct state.
             # We're only fixing the missing position creation here.
 
         except ValueError as e:
@@ -1975,17 +1978,19 @@ class UnifiedOrderMonitor:
                 # Already timezone-aware, convert to IST if needed
                 return dt.astimezone(IST) if dt.tzinfo != IST else dt
 
-            # Get all ONGOING buy orders executed today
+            # Get all executed buy orders (ONGOING legacy or CLOSED) executed today
             # We'll check orders that have execution_time >= today_start
-            all_orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.ONGOING)
+            all_orders, _ = self.orders_repo.list(self.user_id)
+            executed_buy_orders = [
+                o
+                for o in all_orders
+                if o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
+                and o.side.lower() == "buy"
+            ]
 
             newly_executed_orders = []
             skipped_orders = []
-            for order in all_orders:
-                # Only process buy orders
-                if order.side.lower() != "buy":
-                    continue
-
+            for order in executed_buy_orders:
                 # Skip manual orders - system does not track manual buys
                 if order.orig_source and order.orig_source.lower() == "manual":
                     skipped_orders.append(f"{order.symbol}: manual order (not tracked)")

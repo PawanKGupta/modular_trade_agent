@@ -4701,11 +4701,11 @@ class AutoTradeEngine:
                     )
 
             # If database has an order, we'll check if quantity needs to be updated after calculating new quantity
-            # For now, skip if database has ONGOING order (already executed, cannot update)
+            # Skip if database has executed order (ONGOING legacy or CLOSED = filled, cannot update)
             if has_db_order and existing_db_order:
-                if existing_db_order.status == DbOrderStatus.ONGOING:
+                if existing_db_order.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
                     logger.info(
-                        f"Skipping {broker_symbol}: already has active buy order in database "
+                        f"Skipping {broker_symbol}: already has executed buy order in database "
                         f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
                         "Order already executed, cannot update quantity."
                     )
@@ -4717,7 +4717,7 @@ class AutoTradeEngine:
                     summary["ticker_attempts"].append(ticker_attempt)
                     continue
 
-            # Check broker API for pending orders (only if database doesn't have order or order is not ONGOING)
+            # Check broker API for pending orders (only if database doesn't have order or order is not executed)
             # If broker has pending order, cancel and replace
             # OPTIMIZATION: Use cached orders if available to avoid redundant API calls
             if self.orders:
@@ -4913,10 +4913,10 @@ class AutoTradeEngine:
                         ticker_attempt["existing_order_id"] = existing_db_order.id
                         summary["ticker_attempts"].append(ticker_attempt)
                         continue
-                elif existing_db_order.status == DbOrderStatus.ONGOING:
-                    # Order is ONGOING (already executed), skip
+                elif existing_db_order.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
+                    # Order is executed (ONGOING legacy or CLOSED = filled), skip
                     logger.info(
-                        f"Skipping {broker_symbol}: already has active buy order in database "
+                        f"Skipping {broker_symbol}: already has executed buy order in database "
                         f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
                         "Order already executed, cannot update quantity/price."
                     )

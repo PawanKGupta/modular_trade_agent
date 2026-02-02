@@ -632,13 +632,13 @@ class SellOrderManager:
                 ticker = get_ticker_from_full_symbol(pos.symbol)
                 placed_symbol = pos.symbol  # Use full symbol as placed_symbol
 
-                # Try to get ticker and placed_symbol from most recent ONGOING order
+                # Try to get ticker and placed_symbol from most recent executed buy order (ONGOING legacy or CLOSED)
                 if self.orders_repo and DbOrderStatus:
                     try:
-                        ongoing_orders, _ = self.orders_repo.list(
-                            self.user_id, status=DbOrderStatus.ONGOING
-                        )
-                        for order in ongoing_orders:
+                        all_orders, _ = self.orders_repo.list(self.user_id)
+                        for order in all_orders:
+                            if order.status not in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
+                                continue
                             if (
                                 order.side.lower() == "buy"
                                 and order.symbol.upper() == pos.symbol.upper()  # Exact match
@@ -950,10 +950,8 @@ class SellOrderManager:
                     # Get all pending/ongoing sell orders from database
                     all_orders, _ = self.orders_repo.list(self.user_id)
                     for order in all_orders:
-                        if order.side.lower() == "sell" and order.status in {
-                            DbOrderStatus.PENDING,
-                            DbOrderStatus.ONGOING,
-                        }:
+                        # Active sell = PENDING (not yet filled). Filled = CLOSED.
+                        if order.side.lower() == "sell" and order.status == DbOrderStatus.PENDING:
                             # Use full symbol (orders already have full symbols)
                             full_symbol = order.symbol.upper()
                             if full_symbol:
@@ -975,11 +973,11 @@ class SellOrderManager:
 
                 if self.orders_repo:
                     try:
-                        # Try to get ticker from most recent buy order
-                        ongoing_orders, _ = self.orders_repo.list(
-                            self.user_id, status=DbOrderStatus.ONGOING
-                        )
-                        for order in ongoing_orders:
+                        # Try to get ticker from most recent executed buy order (ONGOING legacy or CLOSED)
+                        all_orders, _ = self.orders_repo.list(self.user_id)
+                        for order in all_orders:
+                            if order.status not in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
+                                continue
                             if (
                                 order.side.lower() == "buy"
                                 and extract_base_symbol(order.symbol).upper() == base_symbol
@@ -1566,10 +1564,13 @@ class SellOrderManager:
                     if self.orders_repo and position_obj.opened_at:
                         try:
                             if DbOrderStatus:
-                                buy_orders, _ = self.orders_repo.list(
-                                    self.user_id,
-                                    status=DbOrderStatus.ONGOING,
-                                )
+                                all_orders, _ = self.orders_repo.list(self.user_id)
+                                buy_orders = [
+                                    o
+                                    for o in all_orders
+                                    if o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
+                                    and o.side.lower() == "buy"
+                                ]
 
                                 for buy_order in buy_orders:
                                     if buy_order.side.lower() != "buy":
@@ -2026,9 +2027,8 @@ class SellOrderManager:
                 if order.symbol.upper() != symbol.upper():
                     continue
 
-                # Check if order was executed recently
-                # Executed orders have status='ongoing' and execution_time or filled_at set
-                if order.status == DbOrderStatus.ONGOING:
+                # Check if order was executed recently (ONGOING legacy or CLOSED = filled)
+                if order.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
                     # Check execution_time first (more accurate)
                     if hasattr(order, "execution_time") and order.execution_time:
                         if order.execution_time >= cutoff_time:

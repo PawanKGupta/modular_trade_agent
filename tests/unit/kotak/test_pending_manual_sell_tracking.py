@@ -15,6 +15,7 @@ import pytest  # noqa: E402
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager  # noqa: E402
 from src.infrastructure.db.models import Orders, Positions  # noqa: E402
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 
 
@@ -80,11 +81,12 @@ class TestDetectPendingManualSellOrders:
         mock_positions_repo.list.return_value = [position]
         mock_positions_repo.get_by_symbol.return_value = position
 
-        # Mock system buy order
+        # Mock system buy order (executed = ONGOING/CLOSED so position is considered system)
         system_buy_order = Mock(spec=Orders)
         system_buy_order.side = "buy"
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
@@ -135,6 +137,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.side = "buy"
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = ([system_buy_order], 1)
 
@@ -337,6 +340,7 @@ class TestDetectPendingManualSellOrders:
         system_buy_order.side = "buy"
         system_buy_order.symbol = "RELIANCE-EQ"
         system_buy_order.orig_source = "signal"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = position.opened_at
         mock_orders_repo.list.return_value = ([system_buy_order], 1)
 

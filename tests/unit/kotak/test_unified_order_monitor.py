@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from src.infrastructure.db.models import OrderStatus
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -1114,6 +1116,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1153,6 +1156,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1183,6 +1187,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1240,6 +1245,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.execution_time = yesterday
         mock_order.filled_at = yesterday
 
@@ -1260,6 +1266,7 @@ class TestUnifiedOrderMonitor:
         # Manual buy order (orig_source='manual')
         manual_buy_order = Mock()
         manual_buy_order.side = "buy"
+        manual_buy_order.status = OrderStatus.CLOSED  # Executed (filled)
         manual_buy_order.orig_source = "manual"
         manual_buy_order.symbol = "RELIANCE-EQ"
         manual_buy_order.execution_time = execution_time
@@ -1268,6 +1275,7 @@ class TestUnifiedOrderMonitor:
         # System buy order (orig_source='signal')
         system_buy_order = Mock()
         system_buy_order.side = "buy"
+        system_buy_order.status = OrderStatus.CLOSED  # Executed (filled)
         system_buy_order.orig_source = "signal"
         system_buy_order.symbol = "TCS-EQ"
         system_buy_order.execution_time = execution_time
@@ -1306,6 +1314,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1337,6 +1346,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1370,6 +1380,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1405,6 +1416,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = None  # Invalid price
         mock_order.execution_qty = 10.0
@@ -1434,6 +1446,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 0  # Invalid qty
@@ -1461,6 +1474,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1490,6 +1504,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1524,6 +1539,7 @@ class TestUnifiedOrderMonitor:
         # First order fails
         mock_order1 = Mock()
         mock_order1.side = "buy"
+        mock_order1.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order1.symbol = "RELIANCE-EQ"
         mock_order1.execution_price = 2450.50
         mock_order1.execution_qty = 10.0
@@ -1534,6 +1550,7 @@ class TestUnifiedOrderMonitor:
         # Second order succeeds
         mock_order2 = Mock()
         mock_order2.side = "buy"
+        mock_order2.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order2.symbol = "TCS-EQ"
         mock_order2.execution_price = 3200.0
         mock_order2.execution_qty = 5.0
@@ -1580,6 +1597,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "RELIANCE-EQ"
         mock_order.execution_price = 2450.50
         mock_order.execution_qty = 10.0
@@ -1627,6 +1645,7 @@ class TestUnifiedOrderMonitor:
 
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "TCS-EQ"
         mock_order.execution_price = 3200.0
         mock_order.execution_qty = 5.0

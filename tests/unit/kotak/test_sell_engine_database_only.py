@@ -162,9 +162,10 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
         mock_position.opened_at = ist_now()
         mock_position.closed_at = None
 
-        # Create mock ONGOING order with metadata
+        # Create mock executed buy order (ONGOING/CLOSED) with metadata
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "IFBIND-EQ"
         mock_order.execution_qty = 10.0
         mock_order.execution_price = 1500.0
@@ -194,7 +195,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
         mock_orders_repo.list.assert_called_once()
         call_args = mock_orders_repo.list.call_args
         assert call_args[0][0] == 2  # user_id
-        assert call_args[1]["status"] == DbOrderStatus.ONGOING
+        # list(user_id) does not pass status; executed orders filtered in code (ONGOING/CLOSED)
 
         # Verify metadata was enriched
         assert len(result) == 1

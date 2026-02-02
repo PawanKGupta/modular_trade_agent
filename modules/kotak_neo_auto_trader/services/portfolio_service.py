@@ -370,7 +370,7 @@ class PortfolioService:
 
                 for order in db_orders:
                     if order.side == "buy" and order.status in {
-                        DbOrderStatus.ONGOING,  # Executed orders (may not be in broker holdings yet)
+                        DbOrderStatus.ONGOING,  # Legacy executed orders (may not be in broker yet)
                         DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
                     }:
                         # For PENDING orders, check if they're stale using same logic as EOD cleanup

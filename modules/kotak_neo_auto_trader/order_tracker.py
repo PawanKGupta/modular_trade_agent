@@ -287,11 +287,9 @@ class OrderTracker:
                 # Get pending orders from DB
                 db_orders, _ = self.orders_repo.list(self.user_id)
 
-                # Filter by status
-                pending_statuses = {
-                    DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
-                    DbOrderStatus.ONGOING,
-                }
+                # Filter by status: only PENDING (not yet filled). Filled = CLOSED, so exclude CLOSED/ONGOING.
+                # Legacy ONGOING rows are treated as filled and excluded from "pending".
+                pending_statuses = {DbOrderStatus.PENDING}
                 db_orders = [o for o in db_orders if o.status in pending_statuses]
 
                 # Convert DB orders to dict format
