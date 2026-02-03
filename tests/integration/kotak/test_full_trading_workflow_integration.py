@@ -417,6 +417,12 @@ class TestCategory1HappyPath:
         # Ensure indicator_service has price_service reference
         sell_manager.indicator_service.price_service = engine.price_service
 
+        # Edge Case #17: get_open_positions requires valid holdings; mock so position is returned
+        if sell_manager.portfolio is not None:
+            sell_manager.portfolio.get_holdings = Mock(
+                return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 40}]}
+            )
+
         # Mock get_realtime_price for EMA9 calculation
         import pandas as pd
 

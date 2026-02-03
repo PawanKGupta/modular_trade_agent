@@ -65,6 +65,9 @@ def sell_manager(db_session, orders_repo, positions_repo, test_user):
     manager.orders_repo = orders_repo
     manager.orders = Mock()
     manager.portfolio = Mock()
+    # Edge Case #17: get_open_positions requires valid holdings; tests that call
+    # _detect_manual_sells_from_orders or get_open_positions override this per-test.
+    manager.portfolio.get_holdings.return_value = {"data": []}
     return manager
 
 
