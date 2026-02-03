@@ -610,6 +610,10 @@ class TradingService:
         """9:15 AM - Place sell orders and start monitoring (runs continuously)"""
         from src.application.services.task_execution_wrapper import execute_task
 
+        # Respect stop request when used from unified service (do not place orders if stopped)
+        if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+            return
+
         # Only log to database on first start, not on every monitoring cycle
         if not self.tasks_completed["sell_monitor_started"]:
             with execute_task(
@@ -709,6 +713,12 @@ class TradingService:
                         )
                 except Exception as e:
                     logger.debug(f"Cache warming failed (non-critical): {e}")
+
+                # Skip placement if stop was requested during cache warming
+                if not getattr(self, "running", True) or getattr(
+                    self, "shutdown_requested", False
+                ):
+                    return
 
                 # Place sell orders at market open
                 orders_placed = self.sell_manager.run_at_market_open()

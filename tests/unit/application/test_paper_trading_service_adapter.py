@@ -668,6 +668,11 @@ class TestPaperTradingSellMonitoring:
             logger=adapter.logger,
         )
 
+        # Adapter defaults to running=False; tests that call _place_sell_orders/run_sell_monitor
+        # need it True so the stop-request check doesn't skip placement
+        adapter.running = True
+        adapter.shutdown_requested = False
+
         return adapter
 
     def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):

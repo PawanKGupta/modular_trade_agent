@@ -246,6 +246,10 @@ class TestTradingServiceRSIExitIntegration:
         service.initialize()
         service.sell_manager = mock_sell_manager
 
+        # Service defaults to running=False; set True so run_sell_monitor runs (doesn't return early)
+        service.running = True
+        service.shutdown_requested = False
+
         # Call run_sell_monitor
         service.run_sell_monitor()
 

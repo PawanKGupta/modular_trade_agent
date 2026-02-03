@@ -597,6 +597,13 @@ class MultiUserTradingService:
                                     "Skipping sell_monitor - previous execution still running",
                                     action="scheduler",
                                 )
+                            elif not service.running or getattr(
+                                service, "shutdown_requested", False
+                            ):
+                                user_logger.debug(
+                                    "Skipping sell_monitor - service stop requested",
+                                    action="scheduler",
+                                )
                             else:
                                 try:
                                     service.run_sell_monitor()

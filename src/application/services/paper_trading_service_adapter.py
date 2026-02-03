@@ -779,6 +779,10 @@ class PaperTradingServiceAdapter:
         """
         from src.application.services.task_execution_wrapper import execute_task
 
+        # Respect stop request: do not start or continue sell placement if service was stopped
+        if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+            return
+
         # Only log to database on first start, not on every monitoring cycle
         if not self.tasks_completed.get("sell_monitor_started"):
             with execute_task(
@@ -809,6 +813,12 @@ class PaperTradingServiceAdapter:
                     error_msg = "Paper trading broker not initialized."
                     self.logger.error(error_msg, action="run_sell_monitor")
                     raise RuntimeError(error_msg)
+
+                # Skip placement if stop was requested while we were in the block above
+                if not getattr(self, "running", True) or getattr(
+                    self, "shutdown_requested", False
+                ):
+                    return
 
                 # Place sell orders for all holdings at frozen EMA9 target
                 try:
@@ -950,6 +960,12 @@ class PaperTradingServiceAdapter:
         }
 
         for holding in holdings:
+            if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+                self.logger.info(
+                    "Stopping sell order placement - service stop requested",
+                    action="_place_sell_orders",
+                )
+                break
             try:
                 symbol = holding.symbol  # Full symbol from holdings (e.g., "RELIANCE-EQ")
                 symbol_base = extract_base_symbol(symbol).upper()  # Base symbol for comparison
