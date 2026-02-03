@@ -584,9 +584,11 @@ class SellOrderManager:
             )
 
         # Fetch broker holdings for validation (Edge Case #17)
-        broker_holdings_map = {}
+        # When holdings are unavailable/invalid, treat broker qty as 0 to avoid placing sell
+        # orders for positions we cannot validate (prevents erroneous sells when API fails).
+        broker_holdings_map: dict[str, int] = {}
+        holdings_valid = False
         try:
-            # Fetch holdings directly (no cache - fetch when needed)
             holdings_response = None
             if self.portfolio:
                 try:
@@ -594,7 +596,13 @@ class SellOrderManager:
                 except Exception as e:
                     logger.debug(f"Failed to fetch holdings for validation: {e}")
 
-            if holdings_response and isinstance(holdings_response, dict):
+            if (
+                holdings_response
+                and isinstance(holdings_response, dict)
+                and "data" in holdings_response
+                and isinstance(holdings_response.get("data"), list)
+            ):
+                holdings_valid = True
                 holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
                     symbol = (
@@ -624,6 +632,12 @@ class SellOrderManager:
 
         open_positions = []
         positions = self.positions_repo.list(self.user_id)
+        open_count = sum(1 for p in positions if p.closed_at is None)
+        if not holdings_valid and open_count > 0:
+            logger.warning(
+                "Holdings unavailable or invalid; skipping sell placement for open positions "
+                "(treating broker qty as 0 to avoid erroneous sells)."
+            )
 
         for pos in positions:
             if pos.closed_at is None:  # Open position
@@ -651,10 +665,22 @@ class SellOrderManager:
                     except Exception as e:
                         logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
-                # Edge Case #17: Use min(positions_qty, broker_qty) for sell order quantity
-                # This ensures we don't try to sell more than actually available
+                # Edge Case #17: Use min(positions_qty, broker_qty) for sell order quantity.
+                # When holdings fetch was invalid, use broker_qty=0 so we don't place sells.
+                # Match by full symbol (e.g. IDEA-EQ) then base symbol (e.g. IDEA) for broker format variance.
                 positions_qty = int(pos.quantity)
-                broker_qty = broker_holdings_map.get(pos.symbol.upper(), positions_qty)
+                if not holdings_valid:
+                    broker_qty = 0
+                else:
+                    symbol_upper = pos.symbol.upper()
+                    broker_qty = broker_holdings_map.get(symbol_upper)
+                    if broker_qty is None:
+                        base_sym = extract_base_symbol(symbol_upper)
+                        broker_qty = (
+                            broker_holdings_map.get(base_sym, positions_qty)
+                            if base_sym
+                            else positions_qty
+                        )
 
                 # Use the minimum to ensure we don't sell more than available
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
@@ -1707,36 +1733,39 @@ class SellOrderManager:
         try:
             # Use provided holdings response if available (from monitoring cycle), otherwise fetch
             if not holdings_response or not isinstance(holdings_response, dict):
-                # Fallback: Fetch if not provided (for backward compatibility)
-                if self.portfolio:
+                if not self.portfolio:
+                    logger.info("Portfolio not available, skipping positions reconciliation.")
+                    return stats
+                # Retry get_holdings() briefly to improve reliability at 9:15 / 16:05
+                max_attempts = 3
+                for attempt in range(max_attempts):
                     try:
                         holdings_response = self.portfolio.get_holdings()
-                        # If API call failed (returned None), skip reconciliation
-                        if holdings_response is None:
-                            logger.warning(
-                                "Holdings API returned None (API error). "
-                                "Skipping reconciliation to avoid incorrectly closing positions."
-                            )
-                            return stats
+                        if holdings_response is not None and isinstance(holdings_response, dict):
+                            break
                     except Exception as e:
                         logger.warning(
-                            f"Failed to fetch holdings for reconciliation: {e}. "
-                            "Skipping reconciliation to avoid incorrect position closures."
+                            f"Failed to fetch holdings for reconciliation (attempt {attempt + 1}/{max_attempts}): {e}."
                         )
-                        return stats
-                else:
-                    logger.debug(
-                        "Portfolio not available, cannot fetch holdings for reconciliation"
+                        if attempt < max_attempts - 1:
+                            time.sleep(2)
+                if holdings_response is None:
+                    logger.warning(
+                        "Holdings API returned None after retries. "
+                        "Skipping reconciliation to avoid incorrectly closing positions."
+                    )
+                    return stats
+                if not isinstance(holdings_response, dict):
+                    logger.warning(
+                        "Holdings API returned non-dict after retries. Skipping reconciliation."
                     )
                     return stats
 
             if not isinstance(holdings_response, dict):
-                logger.debug("Invalid holdings response for reconciliation")
+                logger.info("Invalid holdings response for reconciliation.")
                 return stats
 
-            # Check if API call failed (empty dict or missing "data" key indicates API error)
-            # Valid response should have "data" key even if it's an empty list (means no holdings)
-            # Empty dict {} without "data" key indicates API failure, not "all positions sold"
+            # Valid response must have "data" key (list); empty list = no holdings
             if not holdings_response or "data" not in holdings_response:
                 logger.warning(
                     "Holdings API returned empty/invalid response (missing 'data' key). "
@@ -1746,8 +1775,13 @@ class SellOrderManager:
                 return stats
 
             holdings_data = holdings_response.get("data", [])
+            if not isinstance(holdings_data, list):
+                logger.warning(
+                    "Holdings API 'data' is not a list. "
+                    "Skipping reconciliation to avoid incorrect position closures."
+                )
+                return stats
             # Note: Empty holdings_data list is valid - means all positions were sold
-            # But empty dict response indicates API failure and should be skipped
 
             # Create broker holdings map: {symbol or base_symbol: quantity}
             broker_holdings_map = {}
@@ -3658,6 +3692,114 @@ class SellOrderManager:
 
         return None
 
+    def _is_no_holdings_rejection(self, rejection_reason: str) -> bool:
+        """
+        Return True if the rejection reason indicates broker has no holdings for this symbol.
+        Used to sync position as closed when sell is rejected with 'No Holdings Present'.
+        """
+        if not rejection_reason:
+            return False
+        reason_lower = rejection_reason.lower()
+        return (
+            "no holdings present" in reason_lower
+            or "no holdings" in reason_lower
+            or "no holding" in reason_lower
+        )
+
+    def _get_exit_details_from_executed_sell_orders(
+        self, full_symbol: str
+    ) -> tuple[float | None, int | None]:
+        """
+        Find exit price and sell_order_id from executed sell orders for this symbol.
+        Returns (exit_price, sell_order_id); either may be None.
+        Uses most recent executed sell within 24 hours when available.
+        """
+        exit_price: float | None = None
+        sell_order_id: int | None = None
+        if not self.orders_repo or not ist_now:
+            return (exit_price, sell_order_id)
+        try:
+            all_orders, _ = self.orders_repo.list(self.user_id)
+            matching_orders = [
+                order
+                for order in all_orders
+                if (
+                    order.symbol.upper() == full_symbol.upper()
+                    and order.side.lower() == "sell"
+                    and order.execution_price is not None
+                    and order.status.value in ("closed", "ongoing")
+                )
+            ]
+            matching_orders.sort(
+                key=lambda o: (o.execution_time or o.placed_at or datetime.min),
+                reverse=True,
+            )
+            now_time = ist_now()
+            if now_time.tzinfo is not None:
+                now_time = now_time.replace(tzinfo=None)
+            for order in matching_orders:
+                order_time = order.execution_time or order.placed_at
+                if order_time:
+                    if order_time.tzinfo is not None:
+                        order_time = order_time.replace(tzinfo=None)
+                    if abs((order_time - now_time).total_seconds()) < 86400:  # 24h
+                        exit_price = order.execution_price
+                        sell_order_id = order.id
+                        break
+                else:
+                    exit_price = order.execution_price
+                    sell_order_id = order.id
+                    break
+        except Exception as e:
+            logger.debug(f"Could not get exit details from orders for {full_symbol}: {e}")
+        return (exit_price, sell_order_id)
+
+    def _mark_position_closed_for_no_holdings_rejection(self, symbol: str) -> None:
+        """
+        When a sell order is rejected with 'No Holdings Present', mark the matching
+        open position(s) as closed so DB stays in sync (e.g. when reconciliation
+        couldn't run because API was down). Fills exit_price, sell_order_id, and
+        PnL when an executed sell order exists in DB for this symbol.
+        symbol: Base symbol (e.g. IDEA) or full symbol (e.g. IDEA-EQ).
+        """
+        if not self.positions_repo or not self.user_id:
+            return
+        try:
+            symbol_upper = symbol.upper().strip()
+            open_positions = [
+                p
+                for p in self.positions_repo.list(self.user_id)
+                if p.closed_at is None
+                and (
+                    p.symbol.upper() == symbol_upper
+                    or extract_base_symbol(p.symbol).upper() == symbol_upper
+                )
+            ]
+            for pos in open_positions:
+                try:
+                    exit_price, sell_order_id = self._get_exit_details_from_executed_sell_orders(
+                        pos.symbol
+                    )
+                    self.positions_repo.mark_closed(
+                        user_id=self.user_id,
+                        symbol=pos.symbol,
+                        closed_at=ist_now(),
+                        exit_price=exit_price,
+                        exit_reason="MANUAL",
+                        sell_order_id=sell_order_id,
+                    )
+                    logger.info(
+                        f"Position {pos.symbol} marked as closed (sell rejected: No Holdings Present)"
+                        + (f", exit_price=Rs {exit_price:.2f}" if exit_price is not None else "")
+                        + "."
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to mark position {pos.symbol} closed after no-holdings rejection: {e}"
+                    )
+        except Exception as e:
+            logger.debug(f"Error marking position closed for no-holdings rejection ({symbol}): {e}")
+
     def _remove_rejected_orders(self):
         """
         Remove rejected/cancelled orders from active tracking.
@@ -3710,6 +3852,9 @@ class SellOrderManager:
                                         f"Updated sell order {order_id} status to FAILED in database: "
                                         f"{rejection_reason}"
                                     )
+                                    # Sync position as closed when broker says no holdings
+                                    if self._is_no_holdings_rejection(rejection_reason):
+                                        self._mark_position_closed_for_no_holdings_rejection(symbol)
                                 elif is_cancelled:
                                     cancelled_reason = (
                                         OrderFieldExtractor.get_rejection_reason(broker_order)
@@ -3991,6 +4136,11 @@ class SellOrderManager:
                                     f"Reconciled sell order {order_id_str} ({db_order.symbol}): "
                                     f"Updated from PENDING to FAILED - {rejection_reason}"
                                 )
+                                # Sync position as closed when broker says no holdings
+                                if self._is_no_holdings_rejection(rejection_reason):
+                                    self._mark_position_closed_for_no_holdings_rejection(
+                                        db_order.symbol
+                                    )
                             elif is_cancelled:
                                 cancelled_reason = (
                                     OrderFieldExtractor.get_rejection_reason(broker_order)
