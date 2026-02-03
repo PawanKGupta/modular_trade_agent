@@ -1826,6 +1826,14 @@ class SellOrderManager:
 
             logger.info(f"Reconciling {len(open_positions)} open positions with broker holdings...")
 
+            # Fetch broker orders once for exit-price fallback (manual sells may not be in our DB)
+            broker_orders_response = None
+            if self.orders:
+                try:
+                    broker_orders_response = self.orders.get_orders()
+                except Exception as e:
+                    logger.debug(f"Could not fetch broker orders for reconciliation exit-price fallback: {e}")
+
             for pos in open_positions:
                 stats["checked"] += 1
                 symbol = pos.symbol.upper()
@@ -1870,7 +1878,7 @@ class SellOrderManager:
                                 try:
                                     # Search for executed sell orders around the time of closure
                                     all_orders, _ = self.orders_repo.list(self.user_id)
-                                    # Filter matching sell orders
+                                    # Filter matching sell orders (executed = CLOSED or ONGOING in DB)
                                     matching_orders = [
                                         order
                                         for order in all_orders
@@ -1878,8 +1886,10 @@ class SellOrderManager:
                                             order.symbol == symbol
                                             and order.side.lower() == "sell"
                                             and order.execution_price is not None
-                                            and order.status.value
-                                            in ("closed", "ongoing")  # Executed orders
+                                            and (
+                                                (DbOrderStatus and order.status in (DbOrderStatus.CLOSED, DbOrderStatus.ONGOING))
+                                                or (hasattr(order.status, "value") and order.status.value in ("closed", "ongoing"))
+                                            )
                                         )
                                     ]
 
@@ -1924,6 +1934,54 @@ class SellOrderManager:
                                     logger.debug(
                                         f"Could not find exit price from orders for {symbol}: {e}"
                                     )
+
+                            # Fallback: get exit price from broker API (manual sells may not be in our DB)
+                            if exit_price is None and broker_orders_response and isinstance(broker_orders_response.get("data"), list):
+                                try:
+                                    base_sym = extract_base_symbol(symbol)
+                                    candidates = []
+                                    for o in broker_orders_response.get("data", []):
+                                        if not OrderFieldExtractor.is_sell_order(o):
+                                            continue
+                                        norm = self._normalize_order_strict(o)
+                                        if norm.get("status") != "complete":
+                                            continue
+                                        order_sym = (norm.get("symbol") or "").strip().upper()
+                                        if not order_sym:
+                                            order_sym = (OrderFieldExtractor.get_symbol(o) or "").strip().upper()
+                                        if order_sym != symbol and order_sym != base_sym and extract_base_symbol(order_sym) != base_sym:
+                                            continue
+                                        ep = norm.get("execution_price")
+                                        if ep is None or float(ep) <= 0:
+                                            continue
+                                        executed_at = norm.get("executed_at") or norm.get("raw", {}).get("exCfmTm") or norm.get("raw", {}).get("orderTime")
+                                        candidates.append((float(ep), executed_at, OrderFieldExtractor.get_order_id(o)))
+                                    if candidates:
+                                        # Sort by executed_at descending (most recent first); None last
+                                        def _exec_ts(et):
+                                            if not et:
+                                                return 0.0
+                                            try:
+                                                s = str(et).replace("Z", "+00:00")
+                                                return datetime.fromisoformat(s).timestamp()
+                                            except Exception:
+                                                return 0.0
+                                        candidates.sort(key=lambda x: (x[1] is None, -(_exec_ts(x[1]))))
+                                        exit_price = candidates[0][0]
+                                        broker_ord_id = candidates[0][2]
+                                        if broker_ord_id and self.orders_repo:
+                                            try:
+                                                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, broker_ord_id)
+                                                if db_order:
+                                                    sell_order_id = db_order.id
+                                            except Exception:
+                                                pass
+                                        logger.info(
+                                            f"Using exit price from broker order for manual sell {symbol}: "
+                                            f"exit_price={exit_price:.2f}"
+                                        )
+                                except Exception as e:
+                                    logger.debug(f"Could not get exit price from broker orders for {symbol}: {e}")
 
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
