@@ -55,6 +55,7 @@ from src.infrastructure.persistence.individual_service_task_execution_repository
 )
 from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
+from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
@@ -71,6 +72,7 @@ class IndividualServiceManager:
         self.db = db
         self._status_repo = IndividualServiceStatusRepository(db)
         self._execution_repo = IndividualServiceTaskExecutionRepository(db)
+        self._service_task_repo = ServiceTaskRepository(db)
         self._service_status_repo = ServiceStatusRepository(db)
         self._settings_repo = SettingsRepository(db)
         self._config_repo = UserTradingConfigRepository(db)
@@ -257,14 +259,13 @@ class IndividualServiceManager:
 
         # Get ALL running executions for this task using raw SQL
         # This ensures we clean up ALL stale executions, not just the latest one
-        # PostgreSQL stores timestamps in UTC, but we interpret them as IST
-        # Convert from UTC (storage) to IST (our timezone) for accurate age calculation
+        # executed_at is stored as naive IST clock time; interpret as IST for age calculation
         if is_postgresql(self.db):
-            # PostgreSQL: Use AT TIME ZONE to convert from UTC to IST
+            # PostgreSQL: stored value is IST (naive); treat as Asia/Kolkata for timestamptz
             sql = text(
                 """
                 SELECT id,
-                       (executed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata' as executed_at_ist
+                       (executed_at AT TIME ZONE 'Asia/Kolkata') as executed_at_ist
                 FROM individual_service_task_execution
                 WHERE user_id = :user_id
                   AND task_name = :task_name
@@ -507,7 +508,9 @@ class IndividualServiceManager:
         background thread), use them instead of self.db so the request session is not used.
         """
         db = db_override if db_override is not None else self.db
-        execution_repo = execution_repo_override if execution_repo_override is not None else self._execution_repo
+        execution_repo = (
+            execution_repo_override if execution_repo_override is not None else self._execution_repo
+        )
         logger = get_user_logger(user_id=user_id, db=db, module="IndividualService")
 
         # Ensure details is JSON-serializable
@@ -569,7 +572,7 @@ class IndividualServiceManager:
                     WHERE id = :execution_id
                 """
                 )
-                details_json = json.dumps(details_dict                )
+                details_json = json.dumps(details_dict)
                 db.execute(
                     update_sql,
                     {
@@ -1707,6 +1710,18 @@ class IndividualServiceManager:
         # Create a dict of existing service statuses
         service_statuses = {s.task_name: s for s in services}
 
+        from src.infrastructure.db.timezone_utils import IST  # noqa: PLC0415
+
+        def _executed_at_iso(dt: datetime | None) -> str | None:
+            """Format executed_at for API: treat naive as IST so DB clock times display correctly."""
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=IST)
+            else:
+                dt = dt.astimezone(IST) if dt.tzinfo != IST else dt
+            return dt.isoformat()
+
         result = {}
         # Return status for all scheduled tasks (excluding removed position_monitor)
         for schedule in schedules:
@@ -1737,12 +1752,28 @@ class IndividualServiceManager:
                 else None
             )
 
-            # Use execution record's executed_at if service status doesn't have last_execution_at
+            # Use execution record's executed_at if service status doesn't have last_execution_at.
+            # Naive datetimes from DB are stored as IST clock time; format with +05:30 for API.
             last_execution_at = None
             if service and service.last_execution_at:
-                last_execution_at = service.last_execution_at.isoformat()
+                last_execution_at = _executed_at_iso(service.last_execution_at)
             elif latest_execution and latest_execution.executed_at:
-                last_execution_at = latest_execution.executed_at.isoformat()
+                last_execution_at = _executed_at_iso(latest_execution.executed_at)
+
+            # Also consider unified service runs (service_task_execution) so "last run" reflects
+            # both individual "Run once" and unified scheduled runs
+            individual_ts = None
+            if service and service.last_execution_at:
+                individual_ts = service.last_execution_at
+            elif latest_execution and latest_execution.executed_at:
+                individual_ts = latest_execution.executed_at
+            unified_latest = self._service_task_repo.get_latest(user_id, task_name)
+            use_unified_for_display = False
+            if unified_latest and unified_latest.executed_at:
+                unified_ts = unified_latest.executed_at
+                if individual_ts is None or unified_ts > individual_ts:
+                    last_execution_at = _executed_at_iso(unified_ts)
+                    use_unified_for_display = True
 
             # Check if thread is still running for "run once" tasks
             thread_key = (user_id, task_name)
@@ -1901,7 +1932,11 @@ class IndividualServiceManager:
                 "process_id": process_id,
                 "schedule_enabled": schedule.enabled,
             }
-            if latest_execution:
+            if use_unified_for_display and unified_latest:
+                result_data["last_execution_status"] = unified_latest.status
+                result_data["last_execution_duration"] = unified_latest.duration_seconds
+                result_data["last_execution_details"] = unified_latest.details
+            elif latest_execution:
                 result_data["last_execution_status"] = actual_execution_status
                 result_data["last_execution_duration"] = latest_execution.duration_seconds
                 result_data["last_execution_details"] = latest_execution.details
