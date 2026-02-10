@@ -78,7 +78,9 @@ class PaperTradingServiceAdapter:
             "eod_cleanup": False,
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
+            "amo_orders_executed": False,
             "sell_monitor_started": False,
+            "analysis": False,
         }
 
         # Engine-like interface for compatibility
@@ -815,9 +817,7 @@ class PaperTradingServiceAdapter:
                     raise RuntimeError(error_msg)
 
                 # Skip placement if stop was requested while we were in the block above
-                if not getattr(self, "running", True) or getattr(
-                    self, "shutdown_requested", False
-                ):
+                if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
                 # Place sell orders for all holdings at frozen EMA9 target
@@ -913,7 +913,9 @@ class PaperTradingServiceAdapter:
                 "eod_cleanup": False,
                 "premarket_retry": False,
                 "premarket_amo_adjustment": False,
+                "amo_orders_executed": False,
                 "sell_monitor_started": False,
+                "analysis": False,
             }
             task_context["tasks_reset"] = True
 

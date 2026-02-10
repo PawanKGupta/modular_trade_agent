@@ -530,11 +530,30 @@ class TradingService:
 
         now = datetime.now().time()
 
-        # Allow 1 minute window for task execution
+        # Allow 2 minute window for task execution
         time_diff = (now.hour * 60 + now.minute) - (
             scheduled_time.hour * 60 + scheduled_time.minute
         )
-        return 0 <= time_diff < 2  # Run if within 2 minutes of scheduled time
+        should_run = 0 <= time_diff < 2
+
+        # Debug: log when a one-shot task is due or narrowly missed
+        if task_name not in ("sell_monitor", "premarket_amo_adjustment"):
+            if should_run:
+                self.logger.info(
+                    f"Task {task_name} is due: now={now.strftime('%H:%M:%S')}, "
+                    f"scheduled={scheduled_time}, time_diff={time_diff}",
+                    action="scheduler",
+                )
+            elif 0 <= time_diff < 5:
+                # Just missed the window - log for debugging
+                self.logger.info(
+                    f"Task {task_name} window missed: now={now.strftime('%H:%M:%S')}, "
+                    f"scheduled={scheduled_time}, time_diff={time_diff}, "
+                    f"completed={self.tasks_completed.get(task_name, 'N/A')}",
+                    action="scheduler",
+                )
+
+        return should_run
 
     def run_premarket_retry(self):
         """8:00 AM - Retry orders with RETRY_PENDING status from database"""
@@ -715,9 +734,7 @@ class TradingService:
                     logger.debug(f"Cache warming failed (non-critical): {e}")
 
                 # Skip placement if stop was requested during cache warming
-                if not getattr(self, "running", True) or getattr(
-                    self, "shutdown_requested", False
-                ):
+                if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
                 # Place sell orders at market open
@@ -1563,6 +1580,8 @@ class TradingService:
                                         "analysis",
                                         timeout_seconds=1800,  # 30 minutes
                                     )
+                            elif not analysis_schedule:
+                                logger.debug("Analysis schedule not found in DB")
 
                             # Buy orders (uses DB schedule) - 10 minute timeout
                             buy_schedule = self._schedule_manager.get_schedule("buy_orders")
@@ -1576,6 +1595,8 @@ class TradingService:
                                         "buy_orders",
                                         timeout_seconds=600,  # 10 minutes
                                     )
+                            elif not buy_schedule:
+                                logger.debug("Buy orders schedule not found in DB")
 
                             # EOD cleanup (uses DB schedule) - 5 minute timeout
                             eod_schedule = self._schedule_manager.get_schedule("eod_cleanup")
@@ -1589,6 +1610,18 @@ class TradingService:
                                         "eod_cleanup",
                                         timeout_seconds=300,  # 5 minutes
                                     )
+                            elif not eod_schedule:
+                                logger.debug("EOD cleanup schedule not found in DB")
+
+                            # Log task status once per hour (at minute 0) for debugging
+                            if current_minute == 0:
+                                completed = [k for k, v in self.tasks_completed.items() if v]
+                                pending = [k for k, v in self.tasks_completed.items() if not v]
+                                self.logger.info(
+                                    f"Hourly task status - completed: {completed or 'none'}, "
+                                    f"pending: {pending or 'none'}",
+                                    action="scheduler",
+                                )
 
                     # Update heartbeat every minute using thread-local session
                     # Use retry logic for reliability (handles database lock contention)

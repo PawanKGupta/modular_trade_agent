@@ -614,6 +614,16 @@ class MultiUserTradingService:
                                         action="scheduler",
                                     )
 
+                    # Log task status once per hour (at minute 0) for debugging
+                    if now.minute == 0:
+                        completed = [k for k, v in service.tasks_completed.items() if v]
+                        pending = [k for k, v in service.tasks_completed.items() if not v]
+                        user_logger.info(
+                            f"Hourly task status - completed: {completed or 'none'}, "
+                            f"pending: {pending or 'none'}",
+                            action="scheduler",
+                        )
+
                     # 4:00 PM - Analysis (check custom schedule from DB and trigger via
                     # Individual Service Manager)
                     analysis_schedule = thread_schedule_manager.get_schedule("analysis")
