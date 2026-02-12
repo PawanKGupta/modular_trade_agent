@@ -904,7 +904,8 @@ class PaperTradingServiceAdapter:
                     action="run_eod_cleanup",
                 )
 
-            # Reset flags for next day
+            # Reset ALL flags for next day (including eod_cleanup — otherwise it
+            # stays True forever and never runs again on subsequent days)
             self.logger.info(
                 "Resetting task flags for next trading day...", action="run_eod_cleanup"
             )
@@ -920,7 +921,6 @@ class PaperTradingServiceAdapter:
             task_context["tasks_reset"] = True
 
             self.logger.info("Service ready for next trading day", action="run_eod_cleanup")
-            self.tasks_completed["eod_cleanup"] = True
 
     def _place_sell_orders(self):
         """

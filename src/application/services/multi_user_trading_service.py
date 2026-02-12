@@ -542,11 +542,11 @@ class MultiUserTradingService:
                     premarket_schedule = thread_schedule_manager.get_schedule("premarket_retry")
                     if premarket_schedule and premarket_schedule.enabled:
                         premarket_time = premarket_schedule.schedule_time
-                        if (
-                            dt_time(premarket_time.hour, premarket_time.minute)
-                            <= current_time
-                            < dt_time(premarket_time.hour, premarket_time.minute + 1)
-                        ):
+                        # Use 2-minute window (consistent with should_run_task)
+                        premarket_diff = (
+                            current_time.hour * 60 + current_time.minute
+                        ) - (premarket_time.hour * 60 + premarket_time.minute)
+                        if 0 <= premarket_diff < 2:
                             if not service.tasks_completed.get("premarket_retry"):
                                 try:
                                     service.run_premarket_retry()
@@ -631,11 +631,11 @@ class MultiUserTradingService:
                         analysis_time = analysis_schedule.schedule_time
                         analysis_hour = analysis_time.hour
                         analysis_minute = analysis_time.minute
-                        if (
-                            dt_time(analysis_hour, analysis_minute)
-                            <= current_time
-                            < dt_time(analysis_hour, analysis_minute + 1)
-                        ):
+                        # Use 2-minute window (consistent with should_run_task)
+                        analysis_diff = (
+                            current_time.hour * 60 + current_time.minute
+                        ) - (analysis_hour * 60 + analysis_minute)
+                        if 0 <= analysis_diff < 2:
                             if not service.tasks_completed.get("analysis"):
                                 try:
                                     from src.application.services.individual_service_manager import (  # noqa: PLC0415, E501
@@ -690,11 +690,11 @@ class MultiUserTradingService:
                     buy_schedule = thread_schedule_manager.get_schedule("buy_orders")
                     if buy_schedule and buy_schedule.enabled:
                         buy_time = buy_schedule.schedule_time
-                        if (
-                            dt_time(buy_time.hour, buy_time.minute)
-                            <= current_time
-                            < dt_time(buy_time.hour, buy_time.minute + 1)
-                        ):
+                        # Use 2-minute window (consistent with should_run_task)
+                        buy_diff = (current_time.hour * 60 + current_time.minute) - (
+                            buy_time.hour * 60 + buy_time.minute
+                        )
+                        if 0 <= buy_diff < 2:
                             if not service.tasks_completed.get("buy_orders"):
                                 try:
                                     service.run_buy_orders()
@@ -709,11 +709,11 @@ class MultiUserTradingService:
                     eod_schedule = thread_schedule_manager.get_schedule("eod_cleanup")
                     if eod_schedule and eod_schedule.enabled:
                         eod_time = eod_schedule.schedule_time
-                        if (
-                            dt_time(eod_time.hour, eod_time.minute)
-                            <= current_time
-                            < dt_time(eod_time.hour, eod_time.minute + 1)
-                        ):
+                        # Use 2-minute window (consistent with should_run_task)
+                        eod_diff = (current_time.hour * 60 + current_time.minute) - (
+                            eod_time.hour * 60 + eod_time.minute
+                        )
+                        if 0 <= eod_diff < 2:
                             if not service.tasks_completed.get("eod_cleanup"):
                                 try:
                                     service.run_eod_cleanup()

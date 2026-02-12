@@ -1111,12 +1111,13 @@ class TradingService:
                 logger.info("EOD cleanup not configured")
                 task_context["eod_cleanup_ran"] = False
 
-            self.tasks_completed["eod_cleanup"] = True
-
-            # Reset task completion flags for next day
+            # Reset ALL task completion flags for next day
+            # (eod_cleanup included — otherwise it stays True forever and
+            #  never runs again on subsequent days, blocking all resets)
             logger.info("EOD cleanup completed - resetting for next trading day")
             self.tasks_completed["analysis"] = False
             self.tasks_completed["buy_orders"] = False
+            self.tasks_completed["eod_cleanup"] = False
             self.tasks_completed["premarket_retry"] = False
             self.tasks_completed["premarket_amo_adjustment"] = False
             self.tasks_completed["sell_monitor_started"] = False
