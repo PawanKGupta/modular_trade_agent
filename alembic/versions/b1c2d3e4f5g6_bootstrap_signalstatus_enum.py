@@ -23,21 +23,26 @@ def upgrade():
     if dialect_name == "postgresql":
         # Ensure the enum type exists early in the graph; CREATE TYPE IF NOT EXISTS is not
         # supported for enums, so we check pg_type/pg_enum and create only if missing.
-        with op.get_context().autocommit_block():
-            exists = bind.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM pg_type t
-                    JOIN pg_enum e ON e.enumtypid = t.oid
-                    WHERE t.typname = 'signalstatus'
-                    LIMIT 1
-                    """
-                )
-            ).scalar() is not None
+        # Note: runs inside the normal transaction (PostgreSQL supports transactional DDL).
+        exists = bind.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_type t
+                JOIN pg_enum e ON e.enumtypid = t.oid
+                WHERE t.typname = 'signalstatus'
+                LIMIT 1
+                """
+            )
+        ).scalar() is not None
 
-            if not exists:
-                bind.execute(text("CREATE TYPE signalstatus AS ENUM ('inactive', 'active', 'completed', 'failed')"))
+        if not exists:
+            bind.execute(
+                text(
+                    "CREATE TYPE signalstatus AS ENUM "
+                    "('inactive', 'active', 'completed', 'failed')"
+                )
+            )
     else:
         # SQLite and others: nothing to do; SQLAlchemy handles enums without server types.
         pass
