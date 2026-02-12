@@ -178,10 +178,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 f"[PaperTrading] Synced order failure to DB: {order.order_id} ({failure_type})"
             )
         except Exception as ex:
-            # Don't fail order processing if database sync fails
-            logger.warning(
-                f"[PaperTrading] Failed to sync order failure to DB: {ex}", exc_info=True
-            )
+            # Don't fail order processing if database sync fails, but log loudly
+            logger.error(f"[PaperTrading] Failed to sync order failure to DB: {ex}", exc_info=True)
 
     def _sync_order_execution_to_db(
         self, order: Order, execution_price: Money, trade_info: dict | None = None
@@ -584,13 +582,13 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
 
         except Exception as ex:
-            # Don't fail order processing if database sync fails
-            # Note: Order execution in file already happened, so we only rollback DB transaction
-            # This is intentional - paper trading should work even if DB is unavailable
-            logger.warning(
-                f"[PaperTrading] Failed to sync order execution to DB: {ex}. "
-                f"Order {order.order_id} executed in file but not synced to database. "
-                f"This may cause position tracking inconsistencies.",
+            # Don't fail order processing if database sync fails, but log loudly
+            # so we notice and fix the root cause. Silent warnings hide ghost holdings.
+            logger.error(
+                f"[PaperTrading] CRITICAL: Failed to sync order execution to DB: {ex}. "
+                f"Order {order.order_id} ({order.transaction_type.value} {order.symbol}) "
+                f"executed but NOT synced to database. "
+                f"This WILL cause position tracking inconsistencies (ghost holdings).",
                 exc_info=True,
             )
             # Rollback DB transaction on error (file execution already happened, which is fine)
@@ -817,16 +815,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             # Mark as placed
             order.place(order_id)
 
-            # Persist MARKET orders to DB *before* they may execute immediately.
-            # This prevents execution sync warnings like:
-            # "DB order not found for execution sync ... Order executed in file but not tracked in DB"
+            # Persist ALL orders to DB immediately after placing.
+            # This ensures every order (MARKET, AMO, LIMIT) has a DB row so that
+            # _sync_order_execution_to_db can find it later when the order executes.
             db_order_created = True
-            if (
-                self.db_session
-                and self.user_id
-                and (not order.is_amo_order())
-                and order.order_type == OrderType.MARKET
-            ):
+            if self.db_session and self.user_id:
                 try:
                     from src.infrastructure.db.models import TradeMode
                     from src.infrastructure.persistence.orders_repository import OrdersRepository
@@ -888,14 +881,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                             broker_order_id=order_id,
                             entry_type=(order_metadata or {}).get("entry_type"),
                             order_metadata=order_metadata,
-                            reason="Market order placed",
+                            reason=f"{'AMO' if order.is_amo_order() else order.order_type.value} order placed",
                             trade_mode=TradeMode.PAPER,
                         )
                 except Exception as db_ex:
                     db_order_created = False
                     # Don't block trading if DB insert fails, but log loudly
-                    logger.warning(
-                        f"[PaperTrading] Failed to create DB order for MARKET {order.symbol} "
+                    logger.error(
+                        f"[PaperTrading] Failed to create DB order for {order.order_type.value} "
+                        f"{'AMO ' if order.is_amo_order() else ''}{order.symbol} "
                         f"(order_id={order_id}): {db_ex}",
                         exc_info=True,
                     )
@@ -1309,8 +1303,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             Tuple of (is_valid, error_message)
         """
         if not self.db_session or not self.user_id:
-            # Fallback to PortfolioManager if database not available
-            return self.portfolio.can_sell(symbol, quantity)
+            logger.error(
+                f"[PaperTrading] DB session/user_id missing in _can_sell_from_database for {symbol}. "
+                "Rejecting sell (DB is sole source of truth)."
+            )
+            return False, "Database not available for sell validation"
 
         try:
             from sqlalchemy import select
@@ -1408,11 +1405,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
             return True, ""
         except Exception as e:
-            logger.warning(
-                f"Error checking database for sell validation: {e}, falling back to PortfolioManager"
+            logger.error(
+                f"[PaperTrading] CRITICAL: Error checking database for sell validation of {symbol}: {e}. "
+                f"Rejecting sell (DB is sole source of truth).",
+                exc_info=True,
             )
-            # Fallback to PortfolioManager
-            return self.portfolio.can_sell(symbol, quantity)
+            return False, f"Database error during sell validation: {e}"
 
     def _get_holdings_from_database(self) -> list[Holding]:
         """
@@ -1422,8 +1420,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             List of Holding objects
         """
         if not self.db_session or not self.user_id:
-            # Fallback to PortfolioManager if database not available
-            return self.portfolio.get_all_holdings()
+            logger.error(
+                "[PaperTrading] DB session/user_id missing in _get_holdings_from_database. "
+                "Cannot load holdings without database."
+            )
+            return []
 
         try:
             from src.infrastructure.persistence.positions_repository import PositionsRepository
@@ -1455,11 +1456,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             return holdings
         except Exception as e:
-            logger.warning(
-                f"Error loading holdings from database: {e}, falling back to PortfolioManager"
+            logger.error(
+                f"[PaperTrading] CRITICAL: Failed to load holdings from database: {e}. "
+                f"Returning empty list (DB is sole source of truth).",
+                exc_info=True,
             )
-            # Fallback to PortfolioManager
-            return self.portfolio.get_all_holdings()
+            return []
 
     def _get_holding_from_database(self, symbol: str) -> Holding | None:
         """
@@ -1472,8 +1474,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             Holding object or None
         """
         if not self.db_session or not self.user_id:
-            # Fallback to PortfolioManager if database not available
-            return self.portfolio.get_holding(symbol)
+            logger.error(
+                f"[PaperTrading] DB session/user_id missing in _get_holding_from_database for {symbol}. "
+                "Cannot load holding without database."
+            )
+            return None
 
         try:
             from sqlalchemy import select
@@ -1547,11 +1552,12 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             return holding
         except Exception as e:
-            logger.warning(
-                f"Error loading holding from database for {symbol}: {e}, falling back to PortfolioManager"
+            logger.error(
+                f"[PaperTrading] CRITICAL: Failed to load holding from database for {symbol}: {e}. "
+                f"Returning None (DB is sole source of truth).",
+                exc_info=True,
             )
-            # Fallback to PortfolioManager
-            return self.portfolio.get_holding(symbol)
+            return None
 
     def get_holdings(self) -> list[Holding]:
         """Get all holdings from database (source of truth)"""
@@ -1578,12 +1584,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         if not self.is_connected():
             raise ConnectionError("Not connected")
 
-        # Load from database first
+        # Load from database (sole source of truth, no fallback)
         holding = self._get_holding_from_database(symbol)
-
-        # Fallback to PortfolioManager if database not available
-        if not holding:
-            holding = self.portfolio.get_holding(symbol)
 
         if holding:
             # Update current price
