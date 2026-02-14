@@ -32,13 +32,7 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
             }
 
         def get_all_holdings(self):
-            return {
-                "ABC": {
-                    "quantity": 3,
-                    "average_price": 100.0,
-                    "current_price": 110.0,
-                },
-            }
+            return {}
 
         def get_all_orders(self):
             return []
@@ -73,22 +67,74 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
     # paper_trading_router already imports yfinance as `yf`; patch that directly.
     monkeypatch.setattr(paper_trading_router.yf, "Ticker", FakeTicker)
 
-    # Mock PositionsRepository and OrdersRepository for db=None case
+    # Mock PositionsRepository to return position objects
+    from datetime import datetime
+
     def mock_positions_repo(db):
-        return SimpleNamespace(list=lambda user_id=None, **kwargs: [])
+        class DummyPositionsRepository:
+            def list(self, user_id):
+                return [
+                    SimpleNamespace(
+                        id=1,
+                        user_id=user_id,
+                        symbol="ABC",
+                        quantity=3.0,
+                        avg_price=100.0,
+                        unrealized_pnl=45.0,
+                        opened_at=datetime(2025, 1, 1, 10, 0, 0),
+                        closed_at=None,
+                        reentry_count=0,
+                        reentries=None,
+                        initial_entry_price=100.0,
+                        entry_rsi=None,
+                    )
+                ]
+
+        return DummyPositionsRepository()
 
     def mock_orders_repo(db):
-        # Router expects (orders, total_count)
-        return SimpleNamespace(list=lambda *args, **kwargs: ([], 0))
+        class DummyOrdersRepository:
+            def list(self, user_id, **_kwargs):
+                return [
+                    SimpleNamespace(
+                        id=1,
+                        user_id=user_id,
+                        order_id="order1",
+                        broker_order_id=None,
+                        symbol="ABC",
+                        side="buy",
+                        quantity=3,
+                        order_type="market",
+                        status=SimpleNamespace(value="closed"),
+                        avg_price=100.0,
+                        price=None,
+                        placed_at=datetime(2025, 1, 1, 10, 0, 0),
+                        filled_at=datetime(2025, 1, 1, 10, 1, 0),
+                        trade_mode=paper_trading_router.TradeMode.PAPER,
+                        order_metadata=None,
+                        metadata=None,
+                    )
+                ], 1
+
+        return DummyOrdersRepository()
+
+    def mock_settings_repo(db):
+        class DummySettingsRepository:
+            def get_by_user_id(self, user_id):
+                return SimpleNamespace(trade_mode=paper_trading_router.TradeMode.PAPER)
+
+        return DummySettingsRepository()
 
     monkeypatch.setattr(paper_trading_router, "PositionsRepository", mock_positions_repo)
     monkeypatch.setattr(paper_trading_router, "OrdersRepository", mock_orders_repo)
+    monkeypatch.setattr(paper_trading_router, "SettingsRepository", mock_settings_repo)
 
     # Avoid any accidental EMA9 fallback network calls
     monkeypatch.setattr(paper_trading_router, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
 
+    mock_db = SimpleNamespace()
     result = paper_trading_router.get_paper_trading_portfolio(
-        db=None,  # Use None to trigger file-based fallback
+        db=mock_db,
         current=SimpleNamespace(id=202),
     )
 

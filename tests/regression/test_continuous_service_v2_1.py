@@ -408,15 +408,16 @@ class TestEODCleanupBehavior:
         with patch("modules.kotak_neo_auto_trader.run_trading_service.logger"):
             service.run_eod_cleanup()
 
-        # Verify flags reset for next day
+        # Verify flags reset for next day (including eod_cleanup)
         assert service.tasks_completed["analysis"] == False
         assert service.tasks_completed["buy_orders"] == False
         assert service.tasks_completed["premarket_retry"] == False
         assert service.tasks_completed["sell_monitor_started"] == False
         # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
-        # Verify EOD task itself marked complete
-        assert service.tasks_completed["eod_cleanup"] == True
+        # Verify EOD task itself is reset to False for next day
+        # (Implementation resets ALL flags including eod_cleanup to prevent blocking subsequent runs)
+        assert service.tasks_completed["eod_cleanup"] == False
 
 
 class TestDeprecatedScriptsWarnings:
