@@ -56,6 +56,11 @@ class TestSellEngineTickerCreationFixes:
 
         sell_manager.positions_repo.list.return_value = [mock_position]
         sell_manager.orders_repo = None  # No orders repo
+        # Edge Case #17: valid holdings required so positions are returned
+        sell_manager.portfolio = Mock()
+        sell_manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 100}]
+        }
 
         # Call get_open_positions
         result = sell_manager.get_open_positions()
@@ -88,6 +93,10 @@ class TestSellEngineTickerCreationFixes:
 
         sell_manager.positions_repo.list.return_value = [mock_position]
         sell_manager.orders_repo.list.return_value = [mock_order]
+        sell_manager.portfolio = Mock()
+        sell_manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "TCS-EQ", "quantity": 50}]
+        }
 
         # Mock DbOrderStatus
         with patch("modules.kotak_neo_auto_trader.sell_engine.DbOrderStatus", DbOrderStatus):
@@ -122,6 +131,11 @@ class TestSellEngineTickerCreationFixes:
 
         sell_manager.positions_repo.list.return_value = [mock_position]
         sell_manager.orders_repo.list.return_value = [mock_order_be, mock_order_eq]
+        # Edge Case #17: valid holdings required so positions are returned
+        sell_manager.portfolio = Mock()
+        sell_manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 100}]
+        }
 
         with patch("modules.kotak_neo_auto_trader.sell_engine.DbOrderStatus", DbOrderStatus):
             result = sell_manager.get_open_positions()

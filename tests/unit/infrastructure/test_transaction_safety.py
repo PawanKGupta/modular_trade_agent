@@ -205,7 +205,7 @@ class TestRepositoryAutoCommit:
         )
 
         # Order should be updated in session but not committed
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         assert executed_order.execution_price == 100.0
 
         # Rollback the nested transaction
@@ -260,7 +260,7 @@ class TestMultiStepTransactionSafety:
             user_id, "RELIANCE-EQ"
         )  # Full symbol after migration
 
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         assert position is not None
         assert position.quantity == 10.0
 
@@ -462,7 +462,7 @@ class TestMultiStepTransactionSafety:
 
         assert position_after.closed_at is None  # Not closed
         assert position_after.quantity == 100.0  # Original quantity
-        assert order_after.status == OrderStatus.ONGOING  # Not closed
+        assert order_after.status == OrderStatus.CLOSED  # Filled orders are CLOSED
 
 
 class TestBackwardCompatibility:
@@ -512,6 +512,6 @@ class TestBackwardCompatibility:
         )
 
         # Should be committed immediately
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         order_retrieved = orders_repo.get(order.id)
-        assert order_retrieved.status == OrderStatus.ONGOING
+        assert order_retrieved.status == OrderStatus.CLOSED  # Filled orders are CLOSED

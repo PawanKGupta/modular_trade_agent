@@ -306,7 +306,10 @@ class OrderStateManager:
 
                 # 2. Update order tracker status
                 self._order_tracker.update_order_status(
-                    order_id=order_id, status="EXECUTED", executed_qty=execution_qty
+                    order_id=order_id,
+                    status="EXECUTED",
+                    executed_qty=execution_qty,
+                    execution_price=execution_price,
                 )
 
                 # 3. Update trade history

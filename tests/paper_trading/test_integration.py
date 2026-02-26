@@ -34,9 +34,19 @@ class TestPaperTradingIntegration:
         )
 
     @pytest.fixture
-    def broker(self, config):
+    def broker(self, config, db_session):
         """Create paper trading broker"""
-        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
+        from src.infrastructure.db.models import Users
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user = Users(
+            email="test_paper_integration@example.com", password_hash="x", created_at=ist_now()
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        broker = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker.connect()
 
         # Set mock prices (both with and without .NS suffix for compatibility)
@@ -284,9 +294,19 @@ class TestDuplicateOrderPrevention:
         )
 
     @pytest.fixture
-    def broker(self, config):
+    def broker(self, config, db_session):
         """Create paper trading broker"""
-        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
+        from src.infrastructure.db.models import Users
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user = Users(
+            email="test_duplicate_prevention@example.com", password_hash="x", created_at=ist_now()
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        broker = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker.connect()
 
         # Set mock prices
@@ -435,9 +455,17 @@ class TestFrozenEMA9SellStrategy:
         )
 
     @pytest.fixture
-    def broker(self, config):
+    def broker(self, config, db_session):
         """Create paper trading broker with holdings"""
-        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
+        from src.infrastructure.db.models import Users
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user = Users(email="test_frozen_ema9@example.com", password_hash="x", created_at=ist_now())
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        broker = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker.connect()
 
         # Set mock prices
@@ -564,8 +592,16 @@ class TestEdgeCases:
     """Test edge cases and error handling"""
 
     @pytest.fixture
-    def broker(self, tmp_path):
+    def broker(self, tmp_path, db_session):
         """Create broker for edge case testing"""
+        from src.infrastructure.db.models import Users
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user = Users(email="test_edge_cases@example.com", password_hash="x", created_at=ist_now())
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
         config = PaperTradingConfig(
             initial_capital=10000.0,  # Small capital
             max_position_size=5000.0,  # Adjust max position size for small capital
@@ -576,7 +612,7 @@ class TestEdgeCases:
             enforce_market_hours=False,
             check_sufficient_funds=True,
         )
-        broker = PaperTradingBrokerAdapter(user_id=1, config=config)
+        broker = PaperTradingBrokerAdapter(user_id=user.id, config=config, db_session=db_session)
         broker.connect()
         broker.price_provider.set_mock_price("EXPENSIVE", 10000.00)
         yield broker

@@ -316,7 +316,7 @@ class PortfolioService:
         Includes:
         - Holdings from broker API
         - Pending orders from broker API
-        - ONGOING orders from database (executed orders that may not be in broker holdings yet)
+        - ONGOING/CLOSED orders from database (executed orders that may not be in broker holdings yet)
         - PENDING orders from database (if broker API doesn't return them)
 
         Args:
@@ -340,12 +340,12 @@ class PortfolioService:
             except Exception as e:
                 logger.warning(f"Failed to get pending orders from broker API: {e}")
 
-        # CRITICAL FIX: Also include database orders (ONGOING and PENDING)
+        # CRITICAL FIX: Also include database orders (ONGOING, CLOSED, and PENDING)
         # This ensures we count executed orders that may not appear in broker holdings yet
         # and pending orders that broker API might not return
         if include_pending and self.orders_repo and self.user_id:
             try:
-                # Get all buy orders from database with ONGOING or PENDING status
+                # Get all buy orders from database with ONGOING, CLOSED (filled), or PENDING status
                 # EXCLUDE stale PENDING orders using same logic as EOD cleanup
                 # (orders past next trading day market close) to prevent them from blocking new orders
                 try:
@@ -370,7 +370,8 @@ class PortfolioService:
 
                 for order in db_orders:
                     if order.side == "buy" and order.status in {
-                        DbOrderStatus.ONGOING,  # Executed orders (may not be in broker holdings yet)
+                        DbOrderStatus.ONGOING,  # Legacy executed orders (may not be in broker yet)
+                        DbOrderStatus.CLOSED,  # Filled orders (position open; may not be in broker yet)
                         DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
                     }:
                         # For PENDING orders, check if they're stale using same logic as EOD cleanup

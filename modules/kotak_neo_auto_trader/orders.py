@@ -531,6 +531,14 @@ class KotakNeoOrders:
             logger.error(f" Error getting orders: {e}")
             return None
 
+    def get_order_book(self) -> dict | None:
+        """
+        Get order book (all orders). Alias for get_orders() for compatibility
+        with code that expects get_order_book (e.g. pre-market AMO adjustment).
+        Returns same structure as get_orders(): dict with 'data' key or None.
+        """
+        return self.get_orders()
+
     def get_order_history(self, order_id: str = None) -> dict | None:
         """
         Get order history for specific order or all orders

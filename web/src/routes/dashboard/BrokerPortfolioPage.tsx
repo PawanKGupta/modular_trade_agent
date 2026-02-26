@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getPortfolio, type PaperTradingPortfolio } from '@/api/user';
+import { getPortfolio, getBrokerSystemHoldings, type PaperTradingPortfolio } from '@/api/user';
 import { useSettings } from '@/hooks/useSettings';
 import { formatBrokerError, calculateRetryDelay } from '@/utils/brokerApi';
 import { exportPortfolio } from '@/api/export';
@@ -14,13 +14,14 @@ function formatPercent(value: number): string {
 	return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
-// Removed unused DateRangePicker and related state
+type HoldingsTab = 'all' | 'system';
 
 export function BrokerPortfolioPage() {
 	const { isBrokerMode, isBrokerConnected, broker } = useSettings();
 	const [showExportOptions, setShowExportOptions] = useState(false);
+	const [tab, setTab] = useState<HoldingsTab>('system');
 
-	const { data, isLoading, error, refetch, dataUpdatedAt, failureCount } = useQuery<PaperTradingPortfolio>({
+	const portfolioQ = useQuery<PaperTradingPortfolio>({
 		queryKey: ['portfolio', 'broker'],
 		queryFn: getPortfolio,
 		refetchInterval: 30000, // Refresh every 30 seconds (reduced from 5s to avoid frequent auth/OTP)
@@ -34,6 +35,13 @@ export function BrokerPortfolioPage() {
 		retryDelay: (attemptIndex) => calculateRetryDelay(attemptIndex),
 	});
 
+	const systemHoldingsQ = useQuery<PaperTradingPortfolio>({
+		queryKey: ['portfolio', 'broker', 'system-holdings'],
+		queryFn: getBrokerSystemHoldings,
+		refetchInterval: 30000,
+		enabled: isBrokerMode,
+	});
+
 	useEffect(() => {
 		document.title = 'Broker Portfolio';
 	}, []);
@@ -44,8 +52,10 @@ export function BrokerPortfolioPage() {
 		});
 	};
 
-	// Format last update time
-	const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : 'Never';
+	const isAllTab = tab === 'all';
+	const activeData = isAllTab ? portfolioQ.data : systemHoldingsQ.data;
+	const activeQuery = isAllTab ? portfolioQ : systemHoldingsQ;
+	const lastUpdate = activeQuery.dataUpdatedAt ? new Date(activeQuery.dataUpdatedAt).toLocaleTimeString() : 'Never';
 
 	if (!isBrokerMode) {
 		return (
@@ -58,16 +68,92 @@ export function BrokerPortfolioPage() {
 	}
 
 	if (!isBrokerConnected) {
+		const sysData = systemHoldingsQ.data;
+		const sysLoading = systemHoldingsQ.isLoading;
+		const sysError = systemHoldingsQ.error;
 		return (
-			<div className="p-2 sm:p-4">
+			<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
 				<div className="text-xs sm:text-sm text-yellow-400">
-					Broker is not connected. Please configure and connect your broker in settings.
+					Broker is not connected. You can still view <strong>System Holdings</strong> (positions tracked by the
+					system) below.
 				</div>
+				<div className="flex gap-2 border-b border-[#1e293b] pb-2">
+					<button
+						type="button"
+						onClick={() => setTab('system')}
+						className={`px-3 py-1.5 text-sm rounded ${tab === 'system' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--panel)] text-[var(--muted)]'}`}
+					>
+						System Holdings
+					</button>
+				</div>
+				{sysLoading && <div className="text-xs sm:text-sm text-[var(--text)]">Loading system holdings...</div>}
+				{sysError && (
+					<div className="text-xs sm:text-sm text-red-400">
+						Error: {String(sysError)}
+						<button onClick={() => systemHoldingsQ.refetch()} className="ml-2 px-3 py-1 bg-[var(--accent)] text-white rounded text-sm">Retry</button>
+					</div>
+				)}
+				{sysData && !sysLoading && !sysError && (
+					<>
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+							<div className="px-3 py-2 border-b border-[#1e293b]">
+								<div className="font-medium text-sm text-[var(--text)]">System Holdings Summary</div>
+							</div>
+							<div className="p-3 sm:p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+								<div>
+									<div className="text-xs text-[var(--muted)]">Portfolio Value</div>
+									<div className="text-base font-semibold text-[var(--text)]">{formatMoney(sysData.account.portfolio_value)}</div>
+								</div>
+								<div>
+									<div className="text-xs text-[var(--muted)]">Unrealized P&L</div>
+									<div className={`text-base font-semibold ${sysData.account.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+										{formatMoney(sysData.account.unrealized_pnl)}
+									</div>
+								</div>
+							</div>
+						</div>
+						<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
+							<div className="px-3 py-2 border-b border-[#1e293b] font-medium text-sm text-[var(--text)]">
+								Holdings ({sysData.holdings.length})
+							</div>
+							{sysData.holdings.length === 0 ? (
+								<div className="p-3 sm:p-4 text-xs sm:text-sm text-[var(--muted)]">No system holdings</div>
+							) : (
+								<div className="overflow-x-auto">
+									<table className="w-full text-xs sm:text-sm">
+										<thead className="bg-[#0f172a] text-[var(--muted)]">
+											<tr>
+												<th className="text-left p-2">Symbol</th>
+												<th className="text-right p-2">Qty</th>
+												<th className="text-right p-2">Avg Price</th>
+												<th className="text-right p-2">Current</th>
+												<th className="text-right p-2">P&L</th>
+												<th className="text-right p-2">P&L %</th>
+											</tr>
+										</thead>
+										<tbody>
+											{sysData.holdings.map((h) => (
+												<tr key={h.symbol} className="border-t border-[#1e293b]">
+													<td className="p-2 text-[var(--text)] font-medium">{h.symbol}</td>
+													<td className="p-2 text-right">{h.quantity}</td>
+													<td className="p-2 text-right font-mono">{h.average_price.toFixed(2)}</td>
+													<td className="p-2 text-right font-mono">{h.current_price.toFixed(2)}</td>
+													<td className={`p-2 text-right ${h.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatMoney(h.pnl)}</td>
+													<td className={`p-2 text-right ${h.pnl_percentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatPercent(h.pnl_percentage)}</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							)}
+						</div>
+					</>
+				)}
 			</div>
 		);
 	}
 
-	if (isLoading) {
+	if (isAllTab && portfolioQ.isLoading) {
 		return (
 			<div className="p-2 sm:p-4">
 				<div className="text-xs sm:text-sm text-[var(--text)]">Loading portfolio...</div>
@@ -75,14 +161,15 @@ export function BrokerPortfolioPage() {
 		);
 	}
 
-	if (error) {
-		const brokerError = formatBrokerError(error);
+	if (isAllTab && portfolioQ.error) {
+		const brokerError = formatBrokerError(portfolioQ.error);
 		return (
 			<div className="p-2 sm:p-4">
 				<div className="text-xs sm:text-sm text-red-400">
 					Error loading portfolio: {brokerError.message}
 					{brokerError.statusCode && ` (Status: ${brokerError.statusCode})`}
-					{failureCount && failureCount > 0 && ` (Retry attempt: ${failureCount})`}
+					{portfolioQ.failureCount != null && portfolioQ.failureCount > 0 &&
+						` (Retry attempt: ${portfolioQ.failureCount})`}
 				</div>
 				{brokerError.retryable && (
 					<div className="mt-2 text-xs text-yellow-400">
@@ -90,7 +177,7 @@ export function BrokerPortfolioPage() {
 					</div>
 				)}
 				<button
-					onClick={() => refetch()}
+					onClick={() => portfolioQ.refetch()}
 					className="mt-2 px-4 py-3 sm:py-2 bg-[var(--accent)] text-white rounded hover:opacity-90 text-sm sm:text-base min-h-[44px] sm:min-h-0"
 				>
 					Retry Now
@@ -99,7 +186,15 @@ export function BrokerPortfolioPage() {
 		);
 	}
 
-	if (!data) {
+	if (tab === 'system' && systemHoldingsQ.isLoading) {
+		return (
+			<div className="p-2 sm:p-4">
+				<div className="text-xs sm:text-sm text-[var(--text)]">Loading system holdings...</div>
+			</div>
+		);
+	}
+
+	if (!activeData) {
 		return (
 			<div className="p-2 sm:p-4">
 				<div className="text-xs sm:text-sm text-[var(--muted)]">No portfolio data available</div>
@@ -107,7 +202,7 @@ export function BrokerPortfolioPage() {
 		);
 	}
 
-	const { account, holdings } = data;
+	const { account, holdings } = activeData;
 
 	return (
 		<div className="p-2 sm:p-4 space-y-3 sm:space-y-4">
@@ -120,11 +215,27 @@ export function BrokerPortfolioPage() {
 						<div className="flex items-center gap-2">
 							<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
 							<span className="text-xs text-[var(--muted)]">
-								Live • Last update: {lastUpdate}
+								{tab === 'system' ? 'System ' : ''}Last update: {lastUpdate}
 							</span>
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
+						<div className="flex gap-2 border border-[#1e293b] rounded p-0.5">
+							<button
+								type="button"
+								onClick={() => setTab('all')}
+								className={`px-3 py-1.5 text-sm rounded ${tab === 'all' ? 'bg-[var(--accent)] text-white' : 'bg-transparent text-[var(--muted)]'}`}
+							>
+								All Holdings
+							</button>
+							<button
+								type="button"
+								onClick={() => setTab('system')}
+								className={`px-3 py-1.5 text-sm rounded ${tab === 'system' ? 'bg-[var(--accent)] text-white' : 'bg-transparent text-[var(--muted)]'}`}
+							>
+								System Holdings
+							</button>
+						</div>
 						<button
 							onClick={() => setShowExportOptions(!showExportOptions)}
 							className="px-3 py-2 sm:py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 min-h-[44px] sm:min-h-0"
@@ -132,7 +243,7 @@ export function BrokerPortfolioPage() {
 							Export {showExportOptions ? '▲' : '▼'}
 						</button>
 						<button
-							onClick={() => refetch()}
+							onClick={() => activeQuery.refetch()}
 							className="px-3 py-2 sm:py-1 text-sm bg-[var(--accent)] text-white rounded hover:opacity-90 min-h-[44px] sm:min-h-0 w-full sm:w-auto"
 						>
 							Refresh
@@ -156,7 +267,9 @@ export function BrokerPortfolioPage() {
 			{/* Account Summary */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="px-3 py-2 border-b border-[#1e293b]">
-					<div className="font-medium text-sm sm:text-base text-[var(--text)]">Account Summary</div>
+					<div className="font-medium text-sm sm:text-base text-[var(--text)]">
+						{tab === 'system' ? 'System Holdings Summary' : 'Account Summary'}
+					</div>
 				</div>
 				<div className="p-3 sm:p-4 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
 					<div>
@@ -224,7 +337,7 @@ export function BrokerPortfolioPage() {
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
 				<div className="px-3 py-2 border-b border-[#1e293b]">
 					<div className="font-medium text-sm sm:text-base text-[var(--text)]">
-						Holdings ({holdings.length})
+						{tab === 'system' ? 'System ' : ''}Holdings ({holdings.length})
 					</div>
 				</div>
 				{holdings.length === 0 ? (

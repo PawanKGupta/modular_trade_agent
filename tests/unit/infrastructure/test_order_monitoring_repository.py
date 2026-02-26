@@ -178,11 +178,12 @@ class TestOrderMonitoringRepository:
             execution_qty=10.0,
         )
 
-        assert updated.status == OrderStatus.ONGOING
+        assert updated.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         assert updated.execution_price == 2450.50
         assert updated.execution_qty == 10.0
         assert updated.execution_time is not None
         assert updated.filled_at is not None
+        assert updated.closed_at is not None  # closed_at at order closer (fill time)
         assert updated.last_status_check is not None
 
     def test_mark_executed_with_partial_qty(self, db_session, sample_user):
@@ -378,7 +379,7 @@ class TestOrderMonitoringRepository:
         assert order.status == OrderStatus.FAILED  # RETRY_PENDING merged into FAILED
 
         order = repo.mark_executed(order, execution_price=2450.50)
-        assert order.status == OrderStatus.ONGOING
+        assert order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
 
     def test_rejected_order_has_rejection_reason(self, db_session, sample_user):
         """Test that rejected orders have rejection reason set"""

@@ -114,7 +114,11 @@ models/verdict_model_features_*.txt
 
 # Temporary error files
 *run-once*
-*tatus*
+
+# Temporary status planning docs (keep migration files!)
+Signal_Status_*.md
+# Never ignore alembic migration files
+!alembic/versions/*.py
 
 # Log files in root directory
 *.log

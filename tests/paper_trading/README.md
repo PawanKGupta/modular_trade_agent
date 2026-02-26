@@ -75,7 +75,7 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import PaperTr
 
 @pytest.fixture
 def broker():
-    broker = PaperTradingBrokerAdapter()
+    broker = PaperTradingBrokerAdapter(user_id=1)
     broker.connect()
     yield broker
     broker.reset()
@@ -84,4 +84,3 @@ def test_something(broker):
     # Your test here
     assert True
 ```
-

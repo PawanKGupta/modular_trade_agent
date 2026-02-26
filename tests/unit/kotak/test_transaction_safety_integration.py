@@ -107,7 +107,7 @@ class TestOrderExecutionTransactionSafety:
             user_id, "RELIANCE-EQ"
         )  # Full symbol after migration
 
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED  # Filled orders are CLOSED
         assert position is not None
         assert position.quantity == 10.0
 
@@ -391,7 +391,7 @@ class TestSellExecutionTransactionSafety:
 
         assert position_after.closed_at is None
         assert position_after.quantity == 100.0
-        assert order_after.status == OrderStatus.ONGOING
+        assert order_after.status == OrderStatus.CLOSED  # Filled orders are CLOSED
 
     def test_partial_sell_reduces_quantity_atomically(self, db_session, mock_sell_manager):
         """Test that partial sell reduces position quantity atomically"""

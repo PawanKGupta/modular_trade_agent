@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta
 
 import pandas as pd
+import requests
 import yfinance as yf
 
 from config.settings import (
@@ -30,6 +31,59 @@ _ohlcv_cache_max_size = 100  # Maximum number of cached entries
 
 # Thread lock for yfinance to prevent concurrent data fetching issues
 _yfinance_lock = threading.Lock()
+
+# Shared session for yfinance to reduce 401/Invalid Crumb errors (Yahoo blocks anonymous requests)
+# Session is recreated on 401/Invalid Crumb so next request gets fresh cookie/crumb
+_yf_session_holder: list = [None]
+_yf_session_lock = threading.Lock()
+
+# LOCK ORDER (deadlock prevention): Never hold more than one of these at a time.
+# - _rate_limit_lock: only in _enforce_rate_limit(); released before any other lock.
+# - _yf_session_lock: only in _get_yfinance_session() / _invalidate_yfinance_session() (currently unused; yfinance uses curl_cffi).
+# - _yfinance_lock: only around yf.download(); do not call session helpers while holding it.
+
+# User-Agent that mimics a browser to reduce Yahoo Finance 401/Invalid Crumb rate
+_YF_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def _get_yfinance_session():
+    """Return a shared requests.Session for yfinance with User-Agent. Recreated on 401/crumb."""
+    with _yf_session_lock:
+        if _yf_session_holder[0] is None:
+            s = requests.Session()
+            s.headers["User-Agent"] = _YF_USER_AGENT
+            _yf_session_holder[0] = s
+        return _yf_session_holder[0]
+
+
+def _invalidate_yfinance_session():
+    """Invalidate the shared yfinance session so next call uses a fresh one (fresh cookie/crumb)."""
+    with _yf_session_lock:
+        if _yf_session_holder[0] is not None:
+            try:
+                _yf_session_holder[0].close()
+            except Exception:
+                pass
+            _yf_session_holder[0] = None
+
+
+def _is_yfinance_auth_error(exc: BaseException) -> bool:
+    """Return True if exception is Yahoo 401 Unauthorized or Invalid Crumb/Cookie.
+    Intentionally narrow (401, invalid crumb/cookie, or response.status_code==401)
+    to avoid false positives from other APIs that use 'unauthorized' in messages.
+    """
+    msg = str(exc).lower()
+    if "401" in msg:
+        return True
+    if "invalid crumb" in msg or "invalid cookie" in msg:
+        return True
+    if hasattr(exc, "response") and getattr(exc.response, "status_code", None) == 401:
+        return True
+    return False
+
 
 # Rate limiting: Track last API call time and enforce minimum delay between calls
 # This prevents hitting Yahoo Finance rate limits by spacing out API calls
@@ -80,12 +134,14 @@ api_retry_configured = exponential_backoff_retry(
 )
 
 
-def _get_current_day_data(ticker):
+def _get_current_day_data(ticker, session=None):
     """
     Get current day trading data from live ticker info
     Returns dict with current day OHLCV data or None if not available
+    session is ignored: yfinance now requires curl_cffi session; we use default (no session).
     """
     try:
+        # Do not pass requests.Session - yfinance requires curl_cffi session or None (use its default)
         stock = yf.Ticker(ticker)
         info = stock.info
         hist = stock.history(period="2d")  # Get last 2 days to find today's data
@@ -187,17 +243,35 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
         # Rate limiting: Enforce minimum delay between API calls to prevent rate limiting
         _enforce_rate_limit(api_type=f"OHLCV ({ticker})")
 
-        # Use lock to prevent concurrent yfinance calls (not thread-safe)
-        # NOTE: Using unadjusted prices (auto_adjust=False) to match TradingView
-        with _yfinance_lock:
-            df = yf.download(
-                ticker,
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                interval=interval,
-                progress=False,
-                auto_adjust=False,
-            )
+        # Do not pass session= - yfinance requires curl_cffi session or None (use its default)
+        max_auth_retries = 2  # Retry once on 401/Invalid Crumb
+
+        for auth_attempt in range(max_auth_retries):
+            try:
+                # Use lock to prevent concurrent yfinance calls (not thread-safe)
+                # NOTE: Using unadjusted prices (auto_adjust=False) to match TradingView
+                with _yfinance_lock:
+                    df = yf.download(
+                        ticker,
+                        start=start.strftime("%Y-%m-%d"),
+                        end=end.strftime("%Y-%m-%d"),
+                        interval=interval,
+                        progress=False,
+                        auto_adjust=False,
+                    )
+                break
+            except Exception as e:
+                # Lock already released (exited "with _yfinance_lock")
+                if _is_yfinance_auth_error(e) and auth_attempt < max_auth_retries - 1:
+                    logger.warning(
+                        "yfinance 401/Invalid Crumb (attempt %s/%s), retrying: %s",
+                        auth_attempt + 1,
+                        max_auth_retries,
+                        e,
+                    )
+                    time.sleep(2)  # Brief delay before retry
+                else:
+                    raise
 
         logger.debug(f"Downloaded data shape for {ticker}: {df.shape}")
 
@@ -263,7 +337,14 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
                         df = _append_current_day_data(df, live_data)
                         logger.debug(f"Added current day data for {ticker} from live ticker")
                 except Exception as e:
-                    logger.warning(f"Failed to get current day data for {ticker}: {e}")
+                    if _is_yfinance_auth_error(e):
+                        logger.warning(
+                            "yfinance 401/Invalid Crumb when fetching current day data for %s: %s",
+                            ticker,
+                            e,
+                        )
+                    else:
+                        logger.warning(f"Failed to get current day data for {ticker}: {e}")
 
         # Additional validation - different requirements for different intervals
         # For dip-buying strategy: Daily is PRIMARY (needs 30 rows for EMA200), Weekly is SECONDARY (flexible)

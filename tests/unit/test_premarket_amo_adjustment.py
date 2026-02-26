@@ -45,7 +45,7 @@ def mock_auto_trade_engine():
 
     # Mock orders
     engine.orders = Mock()
-    engine.orders.get_order_book = Mock(return_value=[])
+    engine.orders.get_pending_orders = Mock(return_value=[])
     engine.orders.modify_order = Mock(return_value={"stat": "ok"})
 
     # Mock portfolio
@@ -90,7 +90,7 @@ def test_no_pending_orders(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
 
@@ -134,7 +134,7 @@ def test_filter_only_amo_buy_orders(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
         engine.db = None
@@ -175,7 +175,7 @@ def test_adjustment_with_gap_up(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock(return_value={"stat": "ok"})
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -229,7 +229,7 @@ def test_adjustment_with_gap_down(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock(return_value={"stat": "ok"})
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -282,7 +282,7 @@ def test_no_adjustment_needed(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock()
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -328,7 +328,7 @@ def test_price_unavailable(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock()
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -372,7 +372,7 @@ def test_modification_failure(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock(return_value={"stat": "error", "message": "Failed"})
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -418,7 +418,7 @@ def test_database_update_on_success(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock(return_value={"stat": "ok"})
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -578,7 +578,7 @@ def test_multiple_orders_mixed_results(mock_auto_trade_engine):
         engine.strategy_config = mock_auto_trade_engine.strategy_config
         engine.auth = mock_auto_trade_engine.auth
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=orders)
+        engine.orders.get_pending_orders = Mock(return_value=orders)
         engine.orders.modify_order = Mock(return_value={"stat": "ok"})
         engine.portfolio = mock_auto_trade_engine.portfolio
         engine.login = mock_auto_trade_engine.login
@@ -663,7 +663,7 @@ class TestEMAPreMarketValidation:
             engine.strategy_config = mock_auto_trade_engine.strategy_config
             engine.auth = mock_auto_trade_engine.auth
             engine.orders = Mock()
-            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.get_pending_orders = Mock(return_value=orders)
             engine.orders.cancel_order = Mock(return_value=True)
             engine.orders.modify_order = Mock()
             engine.portfolio = mock_auto_trade_engine.portfolio
@@ -721,7 +721,7 @@ class TestEMAPreMarketValidation:
             engine.strategy_config = mock_auto_trade_engine.strategy_config
             engine.auth = mock_auto_trade_engine.auth
             engine.orders = Mock()
-            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.get_pending_orders = Mock(return_value=orders)
             engine.orders.modify_order = Mock(return_value={"stat": "ok"})
             engine.portfolio = mock_auto_trade_engine.portfolio
             engine.login = mock_auto_trade_engine.login
@@ -776,7 +776,7 @@ class TestEMAPreMarketValidation:
             engine.strategy_config = mock_auto_trade_engine.strategy_config
             engine.auth = mock_auto_trade_engine.auth
             engine.orders = Mock()
-            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.get_pending_orders = Mock(return_value=orders)
             engine.orders.modify_order = Mock(return_value={"stat": "ok"})
             engine.portfolio = mock_auto_trade_engine.portfolio
             engine.login = mock_auto_trade_engine.login
@@ -828,7 +828,7 @@ class TestEMAPreMarketValidation:
             engine.strategy_config = mock_auto_trade_engine.strategy_config
             engine.auth = mock_auto_trade_engine.auth
             engine.orders = Mock()
-            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.get_pending_orders = Mock(return_value=orders)
             engine.orders.modify_order = Mock(return_value={"stat": "ok"})
             engine.portfolio = mock_auto_trade_engine.portfolio
             engine.login = mock_auto_trade_engine.login
@@ -903,7 +903,7 @@ class TestEMAPreMarketValidation:
             engine.strategy_config = mock_auto_trade_engine.strategy_config
             engine.auth = mock_auto_trade_engine.auth
             engine.orders = Mock()
-            engine.orders.get_order_book = Mock(return_value=orders)
+            engine.orders.get_pending_orders = Mock(return_value=orders)
             engine.orders.cancel_order = Mock(return_value=True)
             engine.portfolio = mock_auto_trade_engine.portfolio
             engine.login = mock_auto_trade_engine.login

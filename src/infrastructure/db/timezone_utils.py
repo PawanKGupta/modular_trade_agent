@@ -20,6 +20,17 @@ def ist_now() -> datetime:
     return datetime.now(IST)
 
 
+def ist_now_naive() -> datetime:
+    """
+    Get current datetime in IST as a naive datetime (no tzinfo).
+
+    Use when writing to TIMESTAMP WITHOUT TIME ZONE columns so the stored
+    value is the IST clock time (e.g. 16:00 for 4 PM IST). If you pass
+    timezone-aware IST, psycopg2 converts to UTC before storing.
+    """
+    return datetime.now(IST).replace(tzinfo=None)
+
+
 def utc_to_ist(utc_dt: datetime) -> datetime:
     """
     Convert UTC datetime to IST

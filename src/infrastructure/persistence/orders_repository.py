@@ -5,10 +5,18 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import inspect, select, text
+from sqlalchemy import func, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Orders, OrderStatus, Signals, SignalStatus, TradeMode
+from src.infrastructure.db.models import (
+    Orders,
+    OrderStatus,
+    Positions,
+    Signals,
+    SignalStatus,
+    TradeMode,
+)
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.fills_repository import FillsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
@@ -266,7 +274,7 @@ class OrdersRepository:
             orders.append(order)
         return orders, total_count
 
-    def create_amo(  # noqa: PLR0912, PLR0913
+    def create_amo(  # noqa: PLR0912, PLR0913, PLR0915
         self,
         *,
         user_id: int,
@@ -310,9 +318,7 @@ class OrdersRepository:
                     )
                     return existing_order
 
-        # CRITICAL: Check for existing active SELL order by base symbol
-        # There should only be ONE sell order per symbol (base symbol, not full symbol)
-        # This prevents multiple sell orders for the same stock
+        # Check for existing active SELL order by base symbol (for logging / return existing)
         if side == "sell":
             try:
                 if extract_base_symbol is None:
@@ -361,9 +367,88 @@ class OrdersRepository:
                 trade_mode = TradeMode.PAPER
 
         now = ist_now()
+        # Compute base_symbol for DB-level uniqueness and normalization
+        try:
+            if extract_base_symbol is None:
+                raise ImportError("extract_base_symbol not available")
+            base_symbol_val = extract_base_symbol(symbol).upper().strip()
+        except Exception:
+            base_symbol_val = symbol.upper().split("-")[0].strip()
+
+        # For sell: use INSERT ... ON CONFLICT to cancel any row in uq_orders_user_base_symbol_active
+        # that we cannot see (e.g. different transaction/snapshot). When we conflict, DO UPDATE
+        # sets that row to cancelled. If we don't conflict we insert a probe row — delete it after.
+        if side == "sell":
+            try:
+                now_ist = now
+                trade_mode_val = (
+                    trade_mode.value if hasattr(trade_mode, "value") else (trade_mode or "paper")
+                )
+                probe_id = f"__cancel_probe_{order_id}__"
+                # index_predicate must match partial index: status IN ('pending','ongoing') AND side = 'sell'
+                # Include retry_count (NOT NULL, default 0) to satisfy table constraints.
+                stmt_upsert = text(
+                    """
+                    INSERT INTO orders (
+                        user_id, symbol, base_symbol, side, order_type, quantity, price,
+                        status, placed_at, updated_at, order_id, broker_order_id, reason, trade_mode, retry_count
+                    ) VALUES (
+                        :user_id, :symbol, :base_symbol, 'sell', :order_type, 0, 0,
+                        'pending', :placed_at, :updated_at, :probe_id, :probe_id,
+                        'Probe to cancel existing', :trade_mode, 0
+                    )
+                    ON CONFLICT (user_id, base_symbol) WHERE (status IN ('pending', 'ongoing') AND side = 'sell')
+                    DO UPDATE SET
+                        status = 'cancelled',
+                        closed_at = EXCLUDED.placed_at,
+                        updated_at = EXCLUDED.updated_at,
+                        reason = 'Replaced by new sell order (ON CONFLICT)'
+                    """
+                )
+                self.db.execute(
+                    stmt_upsert,
+                    {
+                        "user_id": user_id,
+                        "symbol": symbol,
+                        "base_symbol": base_symbol_val,
+                        "order_type": order_type,
+                        "placed_at": now_ist,
+                        "updated_at": now_ist,
+                        "probe_id": probe_id,
+                        "trade_mode": trade_mode_val,
+                    },
+                )
+                self.db.flush()
+                # If probe did not conflict, we inserted a dummy row; remove it so our real INSERT can succeed.
+                del_probe = text(
+                    "DELETE FROM orders WHERE user_id = :user_id AND base_symbol = :base_symbol AND order_id = :probe_id"
+                )
+                self.db.execute(
+                    del_probe,
+                    {"user_id": user_id, "base_symbol": base_symbol_val, "probe_id": probe_id},
+                )
+                self.db.flush()
+                logger.debug(
+                    "[create_amo] ON CONFLICT probe ran for (user_id=%s, base_symbol=%s)",
+                    user_id,
+                    base_symbol_val,
+                )
+            except Exception as probe_e:
+                logger.warning("[create_amo] ON CONFLICT probe failed: %s", probe_e)
+                self.db.rollback()
+
+        logger.debug(
+            "[create_amo] Inserting order (user_id=%s, symbol=%s, base_symbol=%s, side=%s, order_id=%s)",
+            user_id,
+            symbol,
+            base_symbol_val,
+            side,
+            order_id,
+        )
         order = Orders(
             user_id=user_id,
             symbol=symbol,  # Keep actual symbol format from broker (e.g., SALSTEEL-BE)
+            base_symbol=base_symbol_val,
             side=side,
             order_type=order_type,
             quantity=quantity,
@@ -379,9 +464,111 @@ class OrdersRepository:
             trade_mode=trade_mode,  # Phase 0.1: Add trade_mode
         )
         self.db.add(order)
-        self.db.commit()
-        self.db.refresh(order)
-        return order
+        try:
+            self.db.commit()
+            self.db.refresh(order)
+            return order
+        except IntegrityError as ie:
+            # Likely violated uq_orders_user_base_symbol_active (active sell per user+base_symbol).
+            self.db.rollback()
+            logger.warning(
+                "[create_amo] IntegrityError on insert (user_id=%s, base_symbol=%s): %s — retrying with ON CONFLICT probe",
+                user_id,
+                base_symbol_val,
+                ie,
+            )
+            if side == "sell":
+                try:
+                    # Retry: run ON CONFLICT probe again to cancel blocking row, then insert.
+                    now_ist = ist_now()
+                    trade_mode_val = (
+                        trade_mode.value
+                        if hasattr(trade_mode, "value")
+                        else (trade_mode or "paper")
+                    )
+                    probe_id = f"__cancel_probe_{order_id}__"
+                    stmt_upsert = text(
+                        """
+                        INSERT INTO orders (
+                            user_id, symbol, base_symbol, side, order_type, quantity, price,
+                            status, placed_at, updated_at, order_id, broker_order_id, reason, trade_mode, retry_count
+                        ) VALUES (
+                            :user_id, :symbol, :base_symbol, 'sell', :order_type, 0, 0,
+                            'pending', :placed_at, :updated_at, :probe_id, :probe_id,
+                            'Probe to cancel existing', :trade_mode, 0
+                        )
+                        ON CONFLICT (user_id, base_symbol) WHERE (status IN ('pending', 'ongoing') AND side = 'sell')
+                        DO UPDATE SET
+                            status = 'cancelled',
+                            closed_at = EXCLUDED.placed_at,
+                            updated_at = EXCLUDED.updated_at,
+                            reason = 'Replaced by new sell order (ON CONFLICT)'
+                        """
+                    )
+                    self.db.execute(
+                        stmt_upsert,
+                        {
+                            "user_id": user_id,
+                            "symbol": symbol,
+                            "base_symbol": base_symbol_val,
+                            "order_type": order_type,
+                            "placed_at": now_ist,
+                            "updated_at": now_ist,
+                            "probe_id": probe_id,
+                            "trade_mode": trade_mode_val,
+                        },
+                    )
+                    self.db.flush()
+                    del_probe = text(
+                        "DELETE FROM orders WHERE user_id = :user_id AND base_symbol = :base_symbol AND order_id = :probe_id"
+                    )
+                    self.db.execute(
+                        del_probe,
+                        {"user_id": user_id, "base_symbol": base_symbol_val, "probe_id": probe_id},
+                    )
+                    self.db.flush()
+                    order = Orders(
+                        user_id=user_id,
+                        symbol=symbol,
+                        base_symbol=base_symbol_val,
+                        side=side,
+                        order_type=order_type,
+                        quantity=quantity,
+                        price=price,
+                        status=OrderStatus.PENDING,
+                        placed_at=ist_now(),
+                        updated_at=ist_now(),
+                        order_id=order_id,
+                        entry_type=entry_type,
+                        order_metadata=order_metadata,
+                        broker_order_id=broker_order_id,
+                        reason=reason or "Order placed - waiting for market open",
+                        trade_mode=trade_mode or TradeMode.PAPER,
+                    )
+                    self.db.add(order)
+                    self.db.commit()
+                    self.db.refresh(order)
+                    return order
+                except IntegrityError:
+                    self.db.rollback()
+            stmt = (
+                select(Orders)
+                .where(
+                    Orders.user_id == user_id,
+                    Orders.base_symbol == base_symbol_val,
+                    Orders.side == "sell",
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                )
+                .limit(1)
+            )
+            existing = self.db.execute(stmt).scalar_one_or_none()
+            if existing:
+                logger.warning(
+                    "Duplicate sell prevented by DB constraint: returning existing order %s",
+                    existing.id,
+                )
+                return existing
+            raise
 
     def get_by_broker_order_id(self, user_id: int, broker_order_id: str) -> Orders | None:
         """Get order by broker-specific order ID"""
@@ -460,21 +647,20 @@ class OrdersRepository:
 
     def has_ongoing_buy_order(self, user_id: int, symbol: str) -> bool:
         """
-        Check if user has an ONGOING buy order for a symbol.
+        Check if user has an open position for a symbol (user still holds the stock).
 
-        ONGOING means the order was executed and user still holds the stock.
-        This is more specific than has_successful_buy_order (which includes CLOSED).
+        Uses Positions table (closed_at IS NULL) as the source of truth for "position
+        ongoing". Order status is no longer used for this; filled orders are CLOSED.
 
         Returns:
-            True if user has an ONGOING buy order, False otherwise
+            True if user has an open position for the symbol, False otherwise
         """
         stmt = (
-            select(Orders)
+            select(Positions)
             .where(
-                Orders.user_id == user_id,
-                Orders.symbol == symbol,
-                Orders.side == "buy",
-                Orders.status == OrderStatus.ONGOING,
+                Positions.user_id == user_id,
+                Positions.symbol == symbol,
+                Positions.closed_at.is_(None),
             )
             .limit(1)
         )
@@ -536,15 +722,15 @@ class OrdersRepository:
         return order
 
     def cancel(self, order: Orders, auto_commit: bool = True) -> None:
-        """Cancel an order (mark as closed without fills)
+        """Cancel an order (mark as cancelled without fills)
 
         Args:
             order: Order to cancel
             auto_commit: If True, commit immediately. If False, caller handles commit
                 (for transactions).
         """
-        # For AMO orders, cancel means remove or mark closed without fills
-        order.status = OrderStatus.CLOSED
+        # Mark as cancelled (not closed - closed is for successfully executed + sold trades)
+        order.status = OrderStatus.CANCELLED
         order.closed_at = ist_now()
         if auto_commit:
             self.db.commit()
@@ -595,7 +781,12 @@ class OrdersRepository:
 
         return self.update(order)
 
-    def mark_cancelled(self, order: Orders, cancelled_reason: str | None = None) -> Orders:
+    def mark_cancelled(
+        self,
+        order: Orders,
+        cancelled_reason: str | None = None,
+        auto_commit: bool = True,
+    ) -> Orders:
         """Mark an order as cancelled"""
         order.status = OrderStatus.CANCELLED
         order.reason = cancelled_reason or "Cancelled"  # Use unified reason field
@@ -606,7 +797,75 @@ class OrdersRepository:
         if order.side == "buy":
             self._mark_signal_as_failed(order)
 
-        return self.update(order)
+        return self.update(order, auto_commit=auto_commit)
+
+    def cancel_active_sell_for_symbol(
+        self,
+        user_id: int,
+        symbol: str,
+        reason: str = "Replaced by new sell order",
+        auto_commit: bool = True,
+    ) -> Orders | None:
+        """
+        Find all active (pending/ongoing) sell orders for user+base_symbol and mark them
+        cancelled. Use before inserting a new sell to satisfy uq_orders_user_base_symbol_active.
+        When auto_commit=False, caller must flush/commit so the UPDATE is visible before INSERT.
+        Returns the first order cancelled, or None if none found.
+        """
+        try:
+            if extract_base_symbol is None:
+                raise ImportError("extract_base_symbol not available")
+            base_symbol_val = extract_base_symbol(symbol).upper().strip()
+        except Exception:
+            base_symbol_val = symbol.upper().split("-")[0].strip()
+
+        first_cancelled = None
+        cancel_count = 0
+        while True:
+            # Match base_symbol case-insensitively so we find rows even if DB has different case
+            stmt = (
+                select(Orders)
+                .where(
+                    Orders.user_id == user_id,
+                    func.upper(Orders.base_symbol) == base_symbol_val,
+                    Orders.side == "sell",
+                    Orders.status.in_([OrderStatus.PENDING, OrderStatus.ONGOING]),
+                )
+                .limit(1)
+            )
+            order = self.db.execute(stmt).scalar_one_or_none()
+            if not order:
+                break
+            if first_cancelled is None:
+                first_cancelled = order
+            logger.info(
+                "[cancel_active_sell_for_symbol] Cancelling order id=%s (user_id=%s, base_symbol=%s, symbol=%s, status=%s)",
+                order.id,
+                user_id,
+                getattr(order, "base_symbol", None),
+                getattr(order, "symbol", None),
+                getattr(order, "status", None),
+            )
+            self.mark_cancelled(order, reason, auto_commit=auto_commit)
+            cancel_count += 1
+            # Flush so the UPDATE is visible before next SELECT and before caller's create_amo
+            if not auto_commit:
+                self.db.flush()
+        if cancel_count == 0:
+            logger.info(
+                "[cancel_active_sell_for_symbol] No active sell found for (user_id=%s, symbol=%s, base_symbol_val=%s)",
+                user_id,
+                symbol,
+                base_symbol_val,
+            )
+        else:
+            logger.info(
+                "[cancel_active_sell_for_symbol] Cancelled %s order(s) for (user_id=%s, base_symbol=%s)",
+                cancel_count,
+                user_id,
+                base_symbol_val,
+            )
+        return first_cancelled
 
     def mark_executed(  # noqa: PLR0913
         self,
@@ -674,11 +933,16 @@ class OrdersRepository:
             order.execution_price = execution_price
             order.execution_qty = fill_qty
 
-        # Update order status and timestamps
-        order.status = OrderStatus.ONGOING
-        order.execution_time = ist_now()
-        order.filled_at = ist_now()
-        order.last_status_check = ist_now()
+        # Update order status and timestamps.
+        # Mark as CLOSED when filled so (user_id, base_symbol) is freed for the unique
+        # index uq_orders_user_base_symbol_active; "position ongoing" is tracked in Positions.
+        # Capture closed_at at order closer (fill time) so Order lifecycle is independent of Position.
+        fill_time = ist_now()
+        order.status = OrderStatus.CLOSED
+        order.execution_time = fill_time
+        order.filled_at = fill_time
+        order.closed_at = fill_time
+        order.last_status_check = fill_time
         order.reason = f"Order executed at Rs {order.execution_price:.2f}"
 
         updated_order = self.update(order, auto_commit=auto_commit)
@@ -995,7 +1259,7 @@ class OrdersRepository:
             "retry_pending": status_distribution.get("retry_pending", 0),
             "rejected_orders": status_distribution.get("rejected", 0),
             "cancelled_orders": status_distribution.get("cancelled", 0),
-            "executed_orders": status_distribution.get("ongoing", 0),  # Executed orders are ONGOING
+            "executed_orders": status_distribution.get("closed", 0),  # Executed orders are CLOSED
             "closed_orders": status_distribution.get("closed", 0),
             "amo_orders": status_distribution.get("amo", 0),
         }

@@ -100,7 +100,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         sell_order2 = Mock(spec=Orders)
         sell_order2.side = "sell"
         sell_order2.symbol = "TCS-EQ"
-        sell_order2.status = DbOrderStatus.ONGOING
+        sell_order2.status = DbOrderStatus.PENDING  # Active sell = PENDING (not ONGOING/CLOSED)
 
         mock_orders_repo.list.return_value = ([sell_order1, sell_order2], 2)
 

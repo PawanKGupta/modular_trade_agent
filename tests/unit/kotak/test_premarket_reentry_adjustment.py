@@ -48,7 +48,7 @@ def mock_engine_with_repos(db_session, test_user):
 
         # Mock orders and portfolio
         engine.orders = Mock()
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
         engine.orders.modify_order = Mock(return_value={"stat": "Ok", "orderId": "MODIFIED123"})
         engine.orders.cancel_order = Mock(return_value=True)
 
@@ -109,7 +109,7 @@ class TestReentryOrdersFilteredByEntryType:
         db_session.commit()
 
         # Mock broker orders to include both
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "FRESH_ORDER_123",
@@ -183,7 +183,7 @@ class TestQuantityRecalculationForReentry:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -243,7 +243,7 @@ class TestQuantityRecalculationForReentry:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -301,7 +301,7 @@ class TestPriceUpdateForReentry:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -373,7 +373,7 @@ class TestBothFreshAndReentryAdjustedTogether:
         db_session.commit()
 
         # Mock broker orders
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "FRESH_ORDER_123",
@@ -450,7 +450,7 @@ class TestCancellationIfPositionClosed:
         db_session.commit()
 
         # Mock broker order (still pending in broker)
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -506,7 +506,7 @@ class TestCancellationIfPositionClosed:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -563,7 +563,7 @@ class TestNoRSIValidationAtPremarket:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -631,7 +631,7 @@ class TestRealTradingPremarketAdjustment:
         db_session.commit()
 
         # Mock broker order
-        engine.orders.get_order_book = Mock(
+        engine.orders.get_pending_orders = Mock(
             return_value=[
                 {
                     "nOrdNo": "REENTRY_ORDER_123",
@@ -857,7 +857,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found - cancelled at EOD)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -901,7 +901,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -939,7 +939,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -977,7 +977,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -1009,7 +1009,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -1083,7 +1083,7 @@ class TestEODCancellationHandling:
             "orderStatus": "PENDING",
             "transactionType": "BUY",
         }
-        engine.orders.get_order_book = Mock(return_value=[broker_order])
+        engine.orders.get_pending_orders = Mock(return_value=[broker_order])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -1125,7 +1125,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         # Mock orders_repo.update to raise exception
         original_update = engine.orders_repo.update
@@ -1171,7 +1171,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 
@@ -1208,7 +1208,7 @@ class TestEODCancellationHandling:
         db_session.commit()
 
         # Mock broker to return empty list (order not found)
-        engine.orders.get_order_book = Mock(return_value=[])
+        engine.orders.get_pending_orders = Mock(return_value=[])
 
         summary = engine.adjust_amo_quantities_premarket()
 

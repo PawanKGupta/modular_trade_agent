@@ -330,10 +330,10 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
             # Verify rollback was called
             self.adapter.db_session.rollback.assert_called()
 
-            # Verify warning was logged
-            warning_calls = [
+            # Verify error was logged (changed from warning to error)
+            error_calls = [
                 call
-                for call in mock_logger.warning.call_args_list
+                for call in mock_logger.error.call_args_list
                 if "failed to sync" in str(call).lower()
             ]
-            assert len(warning_calls) > 0
+            assert len(error_calls) > 0

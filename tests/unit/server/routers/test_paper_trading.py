@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, mock_open, patch
@@ -7,6 +8,50 @@ from fastapi import HTTPException
 
 from server.app.routers import paper_trading
 from src.infrastructure.db.models import UserRole
+
+
+def create_mock_position(user_id, symbol, quantity, avg_price, opened_at=None):
+    """Helper to create a mock position object"""
+    if opened_at is None:
+        opened_at = datetime(2025, 1, 1, 10, 0, 0)
+    return SimpleNamespace(
+        id=1,
+        user_id=user_id,
+        symbol=symbol,
+        quantity=float(quantity),
+        avg_price=float(avg_price),
+        unrealized_pnl=0.0,
+        opened_at=opened_at,
+        closed_at=None,  # Open position
+        reentry_count=0,
+        reentries=None,
+        initial_entry_price=float(avg_price),
+        entry_rsi=None,
+    )
+
+
+def create_mock_buy_order(user_id, symbol, quantity, avg_price, placed_at=None):
+    """Helper to create a mock buy order for matching with positions"""
+    if placed_at is None:
+        placed_at = datetime(2025, 1, 1, 10, 0, 0)
+    return SimpleNamespace(
+        id=1,
+        user_id=user_id,
+        order_id=f"order_{symbol}",
+        broker_order_id=None,
+        symbol=symbol,
+        side="buy",
+        quantity=quantity,
+        order_type="market",
+        status=SimpleNamespace(value="closed"),
+        avg_price=avg_price,
+        price=None,
+        placed_at=placed_at,
+        filled_at=placed_at,
+        trade_mode=paper_trading.TradeMode.PAPER,
+        order_metadata=None,
+        metadata=None,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -146,13 +191,7 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 1000.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        }
-    }
+    store._holdings = {}
     store._orders = [
         {
             "order_id": "order1",
@@ -210,6 +249,31 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
 
+    # Mock PositionsRepository to return position objects instead of file-based holdings
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    symbol="RELIANCE.NS",
+                    quantity=10.0,
+                    avg_price=2500.0,
+                    unrealized_pnl=1000.0,
+                    opened_at=datetime(2025, 1, 1, 10, 0, 0),
+                    closed_at=None,  # Open position
+                    reentry_count=0,
+                    reentries=None,
+                    initial_entry_price=2500.0,
+                    entry_rsi=None,
+                )
+            ]
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+
     # Mock yfinance
     mock_ticker = MagicMock()
     mock_ticker.info = {"currentPrice": 2600.0}
@@ -234,7 +298,9 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
         monkeypatch.setattr(Path, "exists", mock_path_exists)
         monkeypatch.setattr(Path, "open", mock_path_open)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        # Pass a mock db so the router enters the DB-query branch
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         assert result.account.initial_capital == 100000.0
         assert result.account.available_cash == 50000.0
@@ -259,13 +325,7 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        }
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -277,6 +337,70 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
         return DummyPaperTradeReporter(store)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock PositionsRepository and OrdersRepository
+    from datetime import datetime  # noqa: PLC0415
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    symbol="RELIANCE.NS",
+                    quantity=10.0,
+                    avg_price=2500.0,
+                    unrealized_pnl=0.0,
+                    opened_at=datetime(2025, 1, 1, 10, 0, 0),
+                    closed_at=None,
+                    reentry_count=0,
+                    reentries=None,
+                    initial_entry_price=2500.0,
+                    entry_rsi=None,
+                )
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    order_id="order1",
+                    broker_order_id=None,
+                    symbol="RELIANCE.NS",
+                    side="buy",
+                    quantity=10,
+                    order_type="market",
+                    status=SimpleNamespace(value="closed"),
+                    avg_price=2500.0,
+                    price=None,
+                    placed_at=datetime(2025, 1, 1, 10, 0, 0),
+                    filled_at=datetime(2025, 1, 1, 10, 1, 0),
+                    trade_mode=paper_trading.TradeMode.PAPER,
+                    order_metadata=None,
+                    metadata=None,
+                )
+            ], 1
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+
+    # Mock SettingsRepository for trade_mode fallback
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
     # Mock yfinance to fail (patch the router module alias directly)
     # and avoid any historical-data fetches during target calculations.
@@ -293,7 +417,9 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        # Create a mock db object
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Router falls back to avg_price when live fetch fails
         assert result.holdings[0].current_price == 2500.0
@@ -731,13 +857,7 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
         "available_cash": 40000.0,
         "realized_pnl": 5000.0,  # Realized profit
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 20,
-            "average_price": 2500.0,
-            "current_price": 2750.0,  # Unrealized profit: 20 * (2750 - 2500) = 5000
-        }
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -750,6 +870,68 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    from datetime import datetime  # noqa: PLC0415
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    symbol="RELIANCE.NS",
+                    quantity=20.0,
+                    avg_price=2500.0,
+                    unrealized_pnl=5000.0,
+                    opened_at=datetime(2025, 1, 1, 10, 0, 0),
+                    closed_at=None,
+                    reentry_count=0,
+                    reentries=None,
+                    initial_entry_price=2500.0,
+                    entry_rsi=None,
+                )
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    order_id="order1",
+                    broker_order_id=None,
+                    symbol="RELIANCE.NS",
+                    side="buy",
+                    quantity=20,
+                    order_type="market",
+                    status=SimpleNamespace(value="closed"),
+                    avg_price=2500.0,
+                    price=None,
+                    placed_at=datetime(2025, 1, 1, 10, 0, 0),
+                    filled_at=datetime(2025, 1, 1, 10, 1, 0),
+                    trade_mode=paper_trading.TradeMode.PAPER,
+                    order_metadata=None,
+                    metadata=None,
+                )
+            ], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2750.0}
@@ -760,7 +942,8 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Expected: total_pnl = realized_pnl (5000) + unrealized_pnl (5000) = 10000
         # return_percentage = (10000 / 100000) * 100 = 10.0%
@@ -787,13 +970,7 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
         "available_cash": 60000.0,
         "realized_pnl": -2000.0,  # Realized loss
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 20,
-            "average_price": 2500.0,
-            "current_price": 2400.0,  # Unrealized loss: 20 * (2400 - 2500) = -2000
-        }
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -806,6 +983,34 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [create_mock_position(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2400.0}
@@ -816,7 +1021,8 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Expected: total_pnl = realized_pnl (-2000) + unrealized_pnl (-2000) = -4000
         # return_percentage = (-4000 / 100000) * 100 = -4.0%
@@ -884,18 +1090,7 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
         "available_cash": 100000.0,
         "realized_pnl": 15000.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,  # Unrealized: 10 * 100 = 1000
-        },
-        "TCS.NS": {
-            "quantity": 20,
-            "average_price": 3500.0,
-            "current_price": 3400.0,  # Unrealized: 20 * -100 = -2000
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -907,6 +1102,40 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
         return DummyPaperTradeReporter(store)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                create_mock_position(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_position(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                create_mock_buy_order(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_buy_order(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ], 2
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
     call_count = [0]
 
@@ -928,7 +1157,8 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Calculate expected values
         # RELIANCE: 10 * (2600 - 2500) = 1000
@@ -963,18 +1193,7 @@ def test_get_paper_trading_portfolio_portfolio_value_calculation(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        },
-        "TCS.NS": {
-            "quantity": 20,
-            "average_price": 3500.0,
-            "current_price": 3600.0,
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -986,6 +1205,40 @@ def test_get_paper_trading_portfolio_portfolio_value_calculation(monkeypatch):
         return DummyPaperTradeReporter(store)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                create_mock_position(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_position(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                create_mock_buy_order(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_buy_order(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ], 2
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
     call_count = [0]
 
@@ -1009,7 +1262,8 @@ def test_get_paper_trading_portfolio_portfolio_value_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Expected portfolio value: (10 * 2600) + (20 * 3600) = 26000 + 72000 = 98000
         expected_portfolio_value = (10 * 2600.0) + (20 * 3600.0)  # 98000.0
@@ -1032,13 +1286,7 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
         "available_cash": 30000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 20,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        }
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1051,6 +1299,34 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [create_mock_position(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
@@ -1061,7 +1337,8 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Expected total value: cash (30000) + portfolio (20 * 2600 = 52000) = 82000
         expected_total_value = 30000.0 + (20 * 2600.0)  # 82000.0
@@ -1088,18 +1365,7 @@ def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,  # Profit: 10 * 100 = 1000
-        },
-        "TCS.NS": {
-            "quantity": 20,
-            "average_price": 3500.0,
-            "current_price": 3400.0,  # Loss: 20 * -100 = -2000
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1111,6 +1377,40 @@ def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
         return DummyPaperTradeReporter(store)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                create_mock_position(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_position(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                create_mock_buy_order(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_buy_order(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ], 2
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
     call_count = [0]
 
@@ -1134,7 +1434,8 @@ def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Expected unrealized P&L: (10 * (2600 - 2500)) + (20 * (3400 - 3500)) = 1000 - 2000 = -1000
         expected_unrealized_pnl = (10 * (2600.0 - 2500.0)) + (20 * (3400.0 - 3500.0))  # -1000.0
@@ -1163,18 +1464,7 @@ def test_get_paper_trading_portfolio_holding_pnl_percentage_calculation(monkeypa
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2750.0,  # 10% gain: (2750 - 2500) / 2500 * 100 = 10%
-        },
-        "TCS.NS": {
-            "quantity": 20,
-            "average_price": 3500.0,
-            "current_price": 3150.0,  # 10% loss: (3150 - 3500) / 3500 * 100 = -10%
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1186,6 +1476,40 @@ def test_get_paper_trading_portfolio_holding_pnl_percentage_calculation(monkeypa
         return DummyPaperTradeReporter(store)
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
+
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                create_mock_position(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_position(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [
+                create_mock_buy_order(user_id, "RELIANCE.NS", 10, 2500.0, opened_at),
+                create_mock_buy_order(user_id, "TCS.NS", 20, 3500.0, opened_at),
+            ], 2
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
     call_count = [0]
 
@@ -1209,7 +1533,8 @@ def test_get_paper_trading_portfolio_holding_pnl_percentage_calculation(monkeypa
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Verify P&L percentage for each holding
         reliance_holding = next(h for h in result.holdings if h.symbol == "RELIANCE.NS")
@@ -1241,13 +1566,7 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 15,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1260,6 +1579,34 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [create_mock_position(user_id, "RELIANCE.NS", 15, 2500.0, opened_at)]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 15, 2500.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
@@ -1270,7 +1617,8 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         holding = result.holdings[0]
         # Cost basis = quantity * average_price = 15 * 2500 = 37500
@@ -1294,13 +1642,7 @@ def test_get_paper_trading_portfolio_market_value_calculation(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 20,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1313,6 +1655,34 @@ def test_get_paper_trading_portfolio_market_value_calculation(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [create_mock_position(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
@@ -1323,7 +1693,8 @@ def test_get_paper_trading_portfolio_market_value_calculation(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         holding = result.holdings[0]
         # Market value = quantity * current_price = 20 * 2600 = 52000
@@ -1347,13 +1718,7 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
         "available_cash": 40000.0,
         "realized_pnl": 5000.0,  # Realized profit
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 20,
-            "average_price": 2500.0,
-            "current_price": 2600.0,  # Unrealized: 20 * 100 = 2000
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1366,6 +1731,34 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [create_mock_position(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 20, 2500.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
@@ -1376,7 +1769,8 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         # Verify: total_pnl = realized_pnl + unrealized_pnl
         expected_total_pnl = result.account.realized_pnl + result.account.unrealized_pnl
@@ -1451,13 +1845,7 @@ def test_get_paper_trading_portfolio_zero_average_price(monkeypatch):
         "available_cash": 50000.0,
         "realized_pnl": 0.0,
     }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 0.0,  # Zero average price
-            "current_price": 2600.0,
-        },
-    }
+    store._holdings = {}
     store._orders = []
 
     def mock_store_init(storage_path, auto_save=False):
@@ -1470,6 +1858,49 @@ def test_get_paper_trading_portfolio_zero_average_price(monkeypatch):
 
     monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
+    # Mock PositionsRepository and OrdersRepository
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+
+    class DummyPositionsRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id):  # noqa: ARG002
+            return [
+                SimpleNamespace(
+                    id=1,
+                    user_id=user_id,
+                    symbol="RELIANCE.NS",
+                    quantity=10.0,
+                    avg_price=0.0,  # Zero average price
+                    unrealized_pnl=0.0,
+                    opened_at=opened_at,
+                    closed_at=None,
+                    reentry_count=0,
+                    reentries=None,
+                    initial_entry_price=0.0,
+                    entry_rsi=None,
+                )
+            ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [create_mock_buy_order(user_id, "RELIANCE.NS", 10, 0.0, opened_at)], 1
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", DummyPositionsRepository)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {"currentPrice": 2600.0}
@@ -1480,7 +1911,8 @@ def test_get_paper_trading_portfolio_zero_average_price(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         holding = result.holdings[0]
         # Cost basis should be 0 (10 * 0)

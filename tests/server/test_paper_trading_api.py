@@ -79,21 +79,53 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     }
     (storage_path / "account.json").write_text(json.dumps(account_data))
 
-    # Holdings with STORED prices (which should be overridden by live prices)
-    holdings_data = {
-        "APOLLOHOSP": {
-            "quantity": 100,
-            "average_price": 150.0,
-            "current_price": 155.0,  # STORED PRICE (should be replaced)
-        }
-    }
-    (storage_path / "holdings.json").write_text(json.dumps(holdings_data))
+    # Holdings file is no longer used - positions come from database
+    # Create empty holdings file for backward compatibility
+    (storage_path / "holdings.json").write_text(json.dumps({}))
 
     # Active sell orders file is no longer the source of truth for targets.
     # The portfolio endpoint calculates EMA9 if no DB sell order is found.
 
     # Orders
     (storage_path / "orders.json").write_text(json.dumps([]))
+
+    # Create position in database (this is now the source of truth)
+    from datetime import UTC, datetime
+
+    from src.infrastructure.db.session import SessionLocal
+    from src.infrastructure.persistence.orders_repository import OrdersRepository
+    from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+    db = SessionLocal()
+    try:
+        orders_repo = OrdersRepository(db)
+        positions_repo = PositionsRepository(db)
+
+        # Create BUY order for APOLLOHOSP with PAPER trade mode
+        from src.infrastructure.db.models import TradeMode
+
+        buy_order = orders_repo.create_amo(
+            user_id=user_id,
+            symbol="APOLLOHOSP",
+            side="buy",
+            order_type="market",
+            quantity=100,
+            price=150.0,
+            order_id="buy_apollo_001",
+            trade_mode=TradeMode.PAPER,
+        )
+
+        # Create open position in database
+        positions_repo.upsert(
+            user_id=user_id,
+            symbol="APOLLOHOSP",
+            quantity=100,
+            avg_price=150.0,
+            opened_at=datetime.now(UTC),
+        )
+        db.commit()
+    finally:
+        db.close()
 
     # Monkey patch Path used inside router so all storage reads/writes go to tmp_path
     from pathlib import Path as RealPath

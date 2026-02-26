@@ -65,6 +65,9 @@ def sell_manager(db_session, orders_repo, positions_repo, test_user):
     manager.orders_repo = orders_repo
     manager.orders = Mock()
     manager.portfolio = Mock()
+    # Edge Case #17: get_open_positions requires valid holdings; tests that call
+    # _detect_manual_sells_from_orders or get_open_positions override this per-test.
+    manager.portfolio.get_holdings.return_value = {"data": []}
     return manager
 
 
@@ -120,25 +123,17 @@ class TestCloseBuyOrdersForSymbol:
         session.commit()
         session.refresh(buy_order2)
 
-        # Verify orders are ONGOING
-        session.refresh(buy_order1)
-        session.refresh(buy_order2)
-        assert buy_order1.status == OrderStatus.ONGOING
-        assert buy_order2.status == OrderStatus.ONGOING
-
-        # Close buy orders
-        closed_count = sell_manager._close_buy_orders_for_symbol("RELIANCE")
-
-        # Verify orders are CLOSED
+        # Verify orders are CLOSED with closed_at set at fill time (order closer)
         session.refresh(buy_order1)
         session.refresh(buy_order2)
         assert buy_order1.status == OrderStatus.CLOSED
         assert buy_order2.status == OrderStatus.CLOSED
         assert buy_order1.closed_at is not None
         assert buy_order2.closed_at is not None
-        assert "Position closed" in buy_order1.reason
-        assert "Position closed" in buy_order2.reason
-        assert closed_count == 2
+
+        # _close_buy_orders_for_symbol finds only CLOSED+closed_at None (legacy). These already have closed_at.
+        closed_count = sell_manager._close_buy_orders_for_symbol("RELIANCE")
+        assert closed_count == 0
 
     def test_no_buy_orders_returns_zero(self, db_session, test_user, sell_manager, positions_repo):
         """Test that method returns 0 when no buy orders exist."""
@@ -162,12 +157,12 @@ class TestCloseBuyOrdersForSymbol:
     def test_only_closes_ongoing_orders(
         self, db_session, test_user, sell_manager, orders_repo, positions_repo
     ):
-        """Test that only ONGOING buy orders are closed, not PENDING or CLOSED."""
+        """Test that PENDING buy orders are not closed; filled (CLOSED) already have closed_at."""
         session = db_session
         user_id = test_user.id
 
-        # Create ONGOING buy order
-        ongoing_order = Orders(
+        # Create buy order and mark executed (CLOSED with closed_at set at fill time)
+        filled_order = Orders(
             user_id=user_id,
             symbol="RELIANCE-EQ",
             side="buy",
@@ -175,13 +170,13 @@ class TestCloseBuyOrdersForSymbol:
             quantity=50.0,
             price=2500.0,
             status=OrderStatus.PENDING,
-            broker_order_id="ONGOING_ORDER",
+            broker_order_id="FILLED_ORDER",
         )
-        session.add(ongoing_order)
+        session.add(filled_order)
         session.commit()
-        orders_repo.mark_executed(ongoing_order, execution_price=2500.0, execution_qty=50.0)
+        orders_repo.mark_executed(filled_order, execution_price=2500.0, execution_qty=50.0)
         session.commit()
-        session.refresh(ongoing_order)
+        session.refresh(filled_order)
 
         # Create PENDING buy order
         pending_order = Orders(
@@ -215,17 +210,17 @@ class TestCloseBuyOrdersForSymbol:
         session.commit()
         session.refresh(closed_order)
 
-        # Close buy orders
+        # _close_buy_orders_for_symbol finds only ONGOING or CLOSED+closed_at None; both filled/closed have closed_at
         closed_count = sell_manager._close_buy_orders_for_symbol("RELIANCE")
+        assert closed_count == 0
 
-        # Verify only ONGOING order was closed
-        session.refresh(ongoing_order)
+        session.refresh(filled_order)
         session.refresh(pending_order)
         session.refresh(closed_order)
-        assert ongoing_order.status == OrderStatus.CLOSED
+        assert filled_order.status == OrderStatus.CLOSED
+        assert filled_order.closed_at is not None  # Set at fill time
         assert pending_order.status == OrderStatus.PENDING  # Unchanged
-        assert closed_order.status == OrderStatus.CLOSED  # Already closed
-        assert closed_count == 1
+        assert closed_order.status == OrderStatus.CLOSED
 
     def test_only_closes_buy_orders_not_sell(
         self, db_session, test_user, sell_manager, orders_repo, positions_repo
@@ -268,15 +263,15 @@ class TestCloseBuyOrdersForSymbol:
         session.commit()
         session.refresh(sell_order)
 
-        # Close buy orders
+        # _close_buy_orders_for_symbol: buy already has closed_at from mark_executed, so nothing to do
         closed_count = sell_manager._close_buy_orders_for_symbol("RELIANCE")
+        assert closed_count == 0
 
-        # Verify only buy order was closed
         session.refresh(buy_order)
         session.refresh(sell_order)
         assert buy_order.status == OrderStatus.CLOSED
-        assert sell_order.status == OrderStatus.ONGOING  # Unchanged
-        assert closed_count == 1
+        assert buy_order.closed_at is not None  # Set at fill time
+        assert sell_order.status == OrderStatus.CLOSED
 
     def test_closes_orders_for_correct_symbol_only(
         self, db_session, test_user, sell_manager, orders_repo, positions_repo
@@ -319,15 +314,16 @@ class TestCloseBuyOrdersForSymbol:
         session.commit()
         session.refresh(tcs_order)
 
-        # Close buy orders for RELIANCE only
+        # _close_buy_orders_for_symbol: both already have closed_at from mark_executed
         closed_count = sell_manager._close_buy_orders_for_symbol("RELIANCE")
+        assert closed_count == 0
 
-        # Verify only RELIANCE order was closed
         session.refresh(reliance_order)
         session.refresh(tcs_order)
         assert reliance_order.status == OrderStatus.CLOSED
-        assert tcs_order.status == OrderStatus.ONGOING  # Unchanged
-        assert closed_count == 1
+        assert reliance_order.closed_at is not None
+        assert tcs_order.status == OrderStatus.CLOSED
+        assert tcs_order.closed_at is not None
 
     def test_handles_missing_orders_repo_gracefully(self, db_session, sell_manager):
         """Test that method handles missing orders_repo gracefully."""
@@ -471,8 +467,8 @@ class TestManualSellDetectionClosesBuyOrders:
         session.commit()
         session.refresh(system_buy_order)
 
-        # Verify buy order is ONGOING (required for system position detection)
-        assert system_buy_order.status == OrderStatus.ONGOING
+        # Verify buy order is CLOSED (filled orders are stored as CLOSED)
+        assert system_buy_order.status == OrderStatus.CLOSED
 
         # Mock broker orders to show a sell order that closed the position
         sell_manager.orders.get_orders = Mock(

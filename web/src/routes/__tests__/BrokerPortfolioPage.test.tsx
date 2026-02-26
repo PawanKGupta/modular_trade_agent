@@ -1,45 +1,46 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { withProviders } from '@/test/utils';
 import { BrokerPortfolioPage } from '../dashboard/BrokerPortfolioPage';
 
+const mockPortfolioResponse = {
+	account: {
+		initial_capital: 200000,
+		available_cash: 150000,
+		total_pnl: 10000,
+		realized_pnl: 5000,
+		unrealized_pnl: 5000,
+		portfolio_value: 60000,
+		total_value: 210000,
+		return_percentage: 5.0,
+	},
+	holdings: [
+		{
+			symbol: 'RELIANCE.NS',
+			quantity: 20,
+			average_price: 2500.0,
+			current_price: 2600.0,
+			cost_basis: 50000,
+			market_value: 52000,
+			pnl: 2000,
+			pnl_percentage: 4.0,
+			target_price: null,
+			distance_to_target: null,
+			reentry_count: 0,
+			entry_rsi: null,
+			initial_entry_price: null,
+			reentries: null,
+		},
+	],
+	recent_orders: [],
+	order_statistics: {},
+};
+
 // Mock the API
 vi.mock('@/api/user', () => ({
-	getPortfolio: vi.fn(() =>
-		Promise.resolve({
-			account: {
-				initial_capital: 200000,
-				available_cash: 150000,
-				total_pnl: 10000,
-				realized_pnl: 5000,
-				unrealized_pnl: 5000,
-				portfolio_value: 60000,
-				total_value: 210000,
-				return_percentage: 5.0,
-			},
-			holdings: [
-				{
-					symbol: 'RELIANCE.NS',
-					quantity: 20,
-					average_price: 2500.0,
-					current_price: 2600.0,
-					cost_basis: 50000,
-					market_value: 52000,
-					pnl: 2000,
-					pnl_percentage: 4.0,
-					target_price: null,
-					distance_to_target: null,
-					reentry_count: 0,
-					entry_rsi: null,
-					initial_entry_price: null,
-					reentries: null,
-				},
-			],
-			recent_orders: [],
-			order_statistics: {},
-		})
-	),
+	getPortfolio: vi.fn(() => Promise.resolve(mockPortfolioResponse)),
+	getBrokerSystemHoldings: vi.fn(() => Promise.resolve(mockPortfolioResponse)),
 }));
 
 // Mock useSettings
@@ -102,8 +103,9 @@ describe('BrokerPortfolioPage', () => {
 			)
 		);
 
+		// Default tab is 'system', so header shows "System Holdings (1)"
 		await waitFor(() => {
-			expect(screen.getByText('Holdings (1)')).toBeInTheDocument();
+			expect(screen.getByText('System Holdings (1)')).toBeInTheDocument();
 			expect(screen.getByText('RELIANCE.NS')).toBeInTheDocument();
 			expect(screen.getByText('20')).toBeInTheDocument(); // Quantity
 		});
@@ -163,7 +165,8 @@ describe('BrokerPortfolioPage', () => {
 
 	it('handles loading state', async () => {
 		const userApi = await import('@/api/user');
-		vi.mocked(userApi.getPortfolio).mockImplementation(() => new Promise(() => {})); // Never resolves
+		// Default tab is 'system', so mock getBrokerSystemHoldings to never resolve
+		vi.mocked(userApi.getBrokerSystemHoldings).mockImplementation(() => new Promise(() => {}));
 
 		// Ensure broker is connected so query is enabled
 		const useSettings = await import('@/hooks/useSettings');
@@ -187,14 +190,16 @@ describe('BrokerPortfolioPage', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText(/Loading portfolio/i)).toBeInTheDocument();
+			expect(screen.getByText(/Loading system holdings/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
 	});
 
 	it('handles error state with retry button', async () => {
 		const userApi = await import('@/api/user');
 		const mockError = new Error('Failed to fetch portfolio');
-		vi.mocked(userApi.getPortfolio).mockRejectedValueOnce(mockError);
+		vi.mocked(userApi.getPortfolio).mockRejectedValue(mockError);
+		// Ensure system tab loads so tab buttons are rendered
+		vi.mocked(userApi.getBrokerSystemHoldings).mockResolvedValue(mockPortfolioResponse);
 
 		// Ensure broker is connected so query is enabled
 		const useSettings = await import('@/hooks/useSettings');
@@ -216,6 +221,14 @@ describe('BrokerPortfolioPage', () => {
 				</MemoryRouter>
 			)
 		);
+
+		// Wait for system tab to load first so tab buttons become available
+		await waitFor(() => {
+			expect(screen.getByText('All Holdings')).toBeInTheDocument();
+		}, { timeout: 5000 });
+
+		// Switch to 'All Holdings' tab where error handling for getPortfolio is rendered
+		fireEvent.click(screen.getByText('All Holdings'));
 
 		await waitFor(() => {
 			expect(screen.getByText(/Error loading portfolio/i)).toBeInTheDocument();
@@ -224,8 +237,7 @@ describe('BrokerPortfolioPage', () => {
 	});
 
 	it('displays empty state when no holdings', async () => {
-		const userApi = await import('@/api/user');
-		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
+		const emptyResponse = {
 			account: {
 				initial_capital: 0,
 				available_cash: 0,
@@ -239,7 +251,12 @@ describe('BrokerPortfolioPage', () => {
 			holdings: [],
 			recent_orders: [],
 			order_statistics: {},
-		});
+		};
+
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce(emptyResponse);
+		// Default tab is 'system', so mock getBrokerSystemHoldings with empty data
+		vi.mocked(userApi.getBrokerSystemHoldings).mockResolvedValueOnce(emptyResponse);
 
 		// Ensure broker is connected so query is enabled
 		const useSettings = await import('@/hooks/useSettings');
@@ -269,8 +286,7 @@ describe('BrokerPortfolioPage', () => {
 	});
 
 	it('displays reentry details in holdings table', async () => {
-		const userApi = await import('@/api/user');
-		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
+		const reentryResponse = {
 			account: {
 				initial_capital: 200000,
 				available_cash: 150000,
@@ -318,7 +334,12 @@ describe('BrokerPortfolioPage', () => {
 			],
 			recent_orders: [],
 			order_statistics: {},
-		});
+		};
+
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce(reentryResponse);
+		// Default tab is 'system', so mock getBrokerSystemHoldings with reentry data
+		vi.mocked(userApi.getBrokerSystemHoldings).mockResolvedValueOnce(reentryResponse);
 
 		render(
 			withProviders(
@@ -349,8 +370,7 @@ describe('BrokerPortfolioPage', () => {
 	});
 
 	it('displays "-" when no reentries in broker holdings', async () => {
-		const userApi = await import('@/api/user');
-		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce({
+		const noReentryResponse = {
 			account: {
 				initial_capital: 200000,
 				available_cash: 150000,
@@ -381,7 +401,12 @@ describe('BrokerPortfolioPage', () => {
 			],
 			recent_orders: [],
 			order_statistics: {},
-		});
+		};
+
+		const userApi = await import('@/api/user');
+		vi.mocked(userApi.getPortfolio).mockResolvedValueOnce(noReentryResponse);
+		// Default tab is 'system', so mock getBrokerSystemHoldings with TCS-EQ data
+		vi.mocked(userApi.getBrokerSystemHoldings).mockResolvedValueOnce(noReentryResponse);
 
 		render(
 			withProviders(

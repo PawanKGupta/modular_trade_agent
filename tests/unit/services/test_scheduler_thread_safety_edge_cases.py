@@ -133,12 +133,17 @@ class TestSchedulerThreadSafetyEdgeCases:
                 thread2.start()
                 thread3.start()
 
+                # Allow all three threads to run to SessionLocal() before joining
+                time.sleep(0.25)
+
                 thread1.join(timeout=2)
                 thread2.join(timeout=2)
                 thread3.join(timeout=2)
 
         # Verify that at least 3 separate sessions were created
-        assert len(created_sessions) >= 3
+        assert (
+            len(created_sessions) >= 3
+        ), f"Expected >= 3 sessions (one per scheduler thread), got {len(created_sessions)}"
         # Verify all sessions are different objects
         assert created_sessions[0] is not created_sessions[1]
         assert created_sessions[1] is not created_sessions[2]

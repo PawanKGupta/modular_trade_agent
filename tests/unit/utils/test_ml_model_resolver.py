@@ -229,32 +229,31 @@ class TestMLModelResolver:
         self, db_session, sample_ml_model, sample_ml_model_v2
     ):
         """Test getting model path when multiple models exist"""
-        # Create temporary model file
-        model_path = Path("models/verdict_model_v1.0.pkl")
-        model_path.parent.mkdir(exist_ok=True)
+        # Use absolute path so resolver finds the file regardless of pytest cwd
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        model_path = project_root / "models" / "verdict_model_v1.0.pkl"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
         model_path.touch()
 
         try:
+            # Point DB model to absolute path so Path(...).is_file() works
+            sample_ml_model.model_path = str(model_path)
+            db_session.commit()
+
             # Should get v1.0 when requested
             result_v1 = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
             assert result_v1 is not None, "v1.0 model path should not be None"
-            expected_v1 = str(Path("models/verdict_model_v1.0.pkl"))
-            assert (
-                result_v1 == expected_v1
-                or result_v1.replace("\\", "/") == "models/verdict_model_v1.0.pkl"
-            )
+            assert result_v1 == str(model_path) or result_v1 == str(model_path.resolve())
 
             # Should get v2.0 when requested
-            model_path_v2 = Path("models/verdict_model_v2.0.pkl")
+            model_path_v2 = project_root / "models" / "verdict_model_v2.0.pkl"
             model_path_v2.touch()
             try:
+                sample_ml_model_v2.model_path = str(model_path_v2)
+                db_session.commit()
                 result_v2 = get_model_path_from_version(db_session, "verdict_classifier", "v2.0")
                 assert result_v2 is not None, "v2.0 model path should not be None"
-                expected_v2 = str(Path("models/verdict_model_v2.0.pkl"))
-                assert (
-                    result_v2 == expected_v2
-                    or result_v2.replace("\\", "/") == "models/verdict_model_v2.0.pkl"
-                )
+                assert result_v2 == str(model_path_v2) or result_v2 == str(model_path_v2.resolve())
             finally:
                 if model_path_v2.exists():
                     model_path_v2.unlink()
