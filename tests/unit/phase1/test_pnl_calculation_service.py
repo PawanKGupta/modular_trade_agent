@@ -446,6 +446,10 @@ class TestFeeEstimation:
             trade_mode=TradeMode.PAPER,
         )
         buy_order.placed_at = dt.combine(today, dt.min.time())
+        # Commit the placed_at override before creating the sell order.
+        # The sell-side create_amo() path may rollback on a probe failure, which would
+        # otherwise revert this uncommitted change and break date-based fee filtering.
+        session.commit()
 
         sell_order = orders_repo.create_amo(
             user_id=user_id,
