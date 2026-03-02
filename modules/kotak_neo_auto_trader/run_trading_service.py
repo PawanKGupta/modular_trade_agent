@@ -386,11 +386,10 @@ class TradingService:
             logger.info("Initializing live price cache for real-time WebSocket prices...")
 
             # Load scrip master for symbol/token mapping
-            self.scrip_master = KotakNeoScripMaster(
-                auth_client=self.auth.client if hasattr(self.auth, "client") else None,
-                exchanges=["NSE"],
-            )
-            self.scrip_master.load_scrip_master(force_download=False)
+            rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            self.scrip_master = KotakNeoScripMaster(auth_client=rest_client, exchanges=["NSE"])
+            if not self.scrip_master.load_scrip_master(force_download=False):
+                raise RuntimeError("Scrip master load failed")
             logger.info("[OK] Scrip master loaded")
 
             # Initialize LivePriceCache with WebSocket connection

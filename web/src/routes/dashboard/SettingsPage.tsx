@@ -18,8 +18,9 @@ export function SettingsPage() {
 	const [apiKey, setApiKey] = useState('');
 	const [apiSecret, setApiSecret] = useState('');
 	const [mobileNumber, setMobileNumber] = useState('');
-	const [password, setPassword] = useState('');
 	const [mpin, setMpin] = useState('');
+	const [totpSecret, setTotpSecret] = useState('');
+	const [environment, setEnvironment] = useState('prod');
 	const [testMode, setTestMode] = useState<'basic' | 'full'>('basic');
 	const [brokerMsg, setBrokerMsg] = useState<string | null>(null);
 	const [testing, setTesting] = useState(false);
@@ -36,15 +37,17 @@ export function SettingsPage() {
 			if (credsInfo.api_key) setApiKey(credsInfo.api_key);
 			if (credsInfo.api_secret) setApiSecret(credsInfo.api_secret);
 			if (credsInfo.mobile_number) setMobileNumber(credsInfo.mobile_number);
-			if (credsInfo.password) setPassword(credsInfo.password);
 			if (credsInfo.mpin) setMpin(credsInfo.mpin);
+			if (credsInfo.totp_secret) setTotpSecret(credsInfo.totp_secret);
+			if (credsInfo.environment) setEnvironment(credsInfo.environment);
 		} else if (credsInfo?.has_creds && !showFullCreds) {
 			// Clear fields when hiding
 			setApiKey('');
 			setApiSecret('');
 			setMobileNumber('');
-			setPassword('');
 			setMpin('');
+			setTotpSecret('');
+			setEnvironment('prod');
 		}
 	}, [credsInfo, showFullCreds]);
 
@@ -97,12 +100,12 @@ export function SettingsPage() {
 							</div>
 						)}
 						<div>
-							<label className="block text-xs sm:text-sm mb-1">API Key (Consumer Key)</label>
+							<label className="block text-xs sm:text-sm mb-1">App Token (API Key)</label>
 							<input
 								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								value={apiKey}
 								onChange={(e) => setApiKey(e.target.value)}
-								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_key_masked}` : "Enter API Key"}
+								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_key_masked}` : "Enter App Token"}
 							/>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mt-1">
@@ -111,13 +114,13 @@ export function SettingsPage() {
 							)}
 						</div>
 						<div>
-							<label className="block text-xs sm:text-sm mb-1">API Secret (Consumer Secret)</label>
+							<label className="block text-xs sm:text-sm mb-1">Client ID (UCC)</label>
 							<input
 								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 								type="password"
 								value={apiSecret}
 								onChange={(e) => setApiSecret(e.target.value)}
-								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_secret_masked}` : "Enter API Secret"}
+								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_secret_masked}` : "Enter Client ID (UCC)"}
 							/>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mt-1">
@@ -135,13 +138,13 @@ export function SettingsPage() {
 								</label>
 								<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
 									<input type="radio" checked={testMode === 'full'} onChange={() => setTestMode('full')} className="w-4 h-4" />
-									<span className="text-xs sm:text-sm">Full Test (with Login & 2FA)</span>
+									<span className="text-xs sm:text-sm">Full Test (REST login + MPIN validate)</span>
 								</label>
 							</div>
 						</div>
 
 						<div className="space-y-3 mt-4 p-3 sm:p-4 border border-[#1e293b] rounded">
-							<h4 className="text-xs sm:text-sm font-semibold">Full Authentication Credentials</h4>
+							<h4 className="text-xs sm:text-sm font-semibold">Required for REST Login</h4>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mb-2">
 									Stored credentials available. Click "Show Full Credentials" above to view/edit.
@@ -159,17 +162,6 @@ export function SettingsPage() {
 								/>
 							</div>
 							<div>
-								<label className="block text-xs sm:text-sm mb-1">Password</label>
-								<input
-									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
-									type="password"
-									value={password}
-									onChange={(e) => setPassword(e.target.value)}
-									placeholder={credsInfo?.has_creds && !showFullCreds ? "Stored (click Show to view)" : "Enter password"}
-									disabled={credsInfo?.has_creds && !showFullCreds}
-								/>
-							</div>
-							<div>
 								<label className="block text-xs sm:text-sm mb-1">MPIN (for 2FA)</label>
 								<input
 									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
@@ -180,6 +172,27 @@ export function SettingsPage() {
 									disabled={credsInfo?.has_creds && !showFullCreds}
 								/>
 							</div>
+							<div>
+								<label className="block text-xs sm:text-sm mb-1">TOTP Secret</label>
+								<input
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+									type="password"
+									value={totpSecret}
+									onChange={(e) => setTotpSecret(e.target.value)}
+									placeholder={credsInfo?.has_creds && !showFullCreds ? "Stored (click Show to view)" : "Enter TOTP Secret"}
+									disabled={credsInfo?.has_creds && !showFullCreds}
+								/>
+							</div>
+							<div>
+								<label className="block text-xs sm:text-sm mb-1">Environment</label>
+								<input
+									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+									value={environment}
+									onChange={(e) => setEnvironment(e.target.value)}
+									placeholder="prod"
+									disabled={credsInfo?.has_creds && !showFullCreds}
+								/>
+							</div>
 						</div>
 
 						<div className="flex flex-col sm:flex-row gap-2 mt-4">
@@ -187,8 +200,8 @@ export function SettingsPage() {
 								className="bg-blue-600 text-white px-4 py-3 sm:py-2 rounded disabled:opacity-50 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 								onClick={async () => {
 									setBrokerMsg(null);
-									if (!apiKey || !apiSecret) {
-										setBrokerMsg('Please enter API Key and Secret');
+									if (!apiKey || !apiSecret || !mobileNumber || !mpin || !totpSecret) {
+										setBrokerMsg('Please enter App Token, Client ID (UCC), Mobile Number, MPIN, and TOTP Secret');
 										return;
 									}
 
@@ -197,8 +210,9 @@ export function SettingsPage() {
 										api_key: apiKey,
 										api_secret: apiSecret,
 										mobile_number: mobileNumber || undefined,
-										password: password || undefined,
 										mpin: mpin || undefined,
+										totp_secret: totpSecret || undefined,
+										environment: environment || undefined,
 									});
 									setBrokerMsg('Credentials saved');
 									qc.invalidateQueries({ queryKey: ['brokerCredsInfo'] });
@@ -231,8 +245,9 @@ export function SettingsPage() {
 
 										if (testMode === 'full') {
 											payload.mobile_number = mobileNumber || fullCredsInfo?.mobile_number || '';
-											payload.password = password || fullCredsInfo?.password || '';
 											payload.mpin = mpin || fullCredsInfo?.mpin || '';
+											payload.totp_secret = totpSecret || fullCredsInfo?.totp_secret || '';
+											payload.environment = environment || fullCredsInfo?.environment || 'prod';
 										}
 
 										const res = await testBrokerConnection(payload);
@@ -253,10 +268,11 @@ export function SettingsPage() {
 									(!apiSecret && !credsInfo?.has_creds) ||
 									// Full test: need all credentials (from form or stored)
 									(testMode === 'full' &&
-										!mobileNumber &&
-										!password &&
-										!mpin &&
-										!credsInfo?.has_creds)
+										(
+											(!mobileNumber && !credsInfo?.has_creds) ||
+											(!mpin && !credsInfo?.has_creds) ||
+											(!totpSecret && !credsInfo?.has_creds)
+										))
 								}
 							>
 								{testing ? 'Testing...' : testMode === 'full' ? 'Test Full Connection' : 'Test Basic Connection'}

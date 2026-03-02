@@ -1705,10 +1705,10 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                self.scrip_master = KotakNeoScripMaster(
-                    auth_client=self.auth.client if hasattr(self.auth, "client") else None
-                )
-                self.scrip_master.load_scrip_master(force_download=False)
+                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
+                if not self.scrip_master.load_scrip_master(force_download=False):
+                    raise RuntimeError("Scrip master load failed")
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
                 logger.error(
@@ -1741,10 +1741,10 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                self.scrip_master = KotakNeoScripMaster(
-                    auth_client=self.auth.client if hasattr(self.auth, "client") else None
-                )
-                self.scrip_master.load_scrip_master(force_download=False)
+                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
+                if not self.scrip_master.load_scrip_master(force_download=False):
+                    raise RuntimeError("Scrip master load failed")
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
                 logger.error(

@@ -241,7 +241,7 @@ class KotakNeoOrders:
                 try:
                     from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
 
-                    sm = KotakNeoScripMaster(auth_client=None, exchanges=["NSE"])
+                    sm = KotakNeoScripMaster(auth_client=rest, exchanges=["NSE"])
                     sm.load_scrip_master(force_download=False)
                     tk = sm.get_token(str(ts), exchange="NSE")
                 except Exception as e:

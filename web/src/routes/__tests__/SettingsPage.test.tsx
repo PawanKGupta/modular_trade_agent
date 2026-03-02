@@ -48,9 +48,9 @@ describe('SettingsPage', () => {
 		// Should show broker credentials section
 		await waitFor(() => {
 			expect(screen.getByText(/Basic Credentials/i)).toBeInTheDocument();
-			expect(screen.getByText(/API Key \(Consumer Key\)/i)).toBeInTheDocument();
-			expect(screen.getByText(/API Secret \(Consumer Secret\)/i)).toBeInTheDocument();
-			expect(screen.getByText(/Full Authentication Credentials/i)).toBeInTheDocument();
+			expect(screen.getByText(/App Token \(API Key\)/i)).toBeInTheDocument();
+			expect(screen.getByText(/Client ID \(UCC\)/i)).toBeInTheDocument();
+			expect(screen.getByText(/Required for REST Login/i)).toBeInTheDocument();
 		});
 	});
 
@@ -58,8 +58,8 @@ describe('SettingsPage', () => {
 		renderPage();
 		await switchToBroker({ showFull: true });
 
-		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
-		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter App Token/i);
+		const apiSecretInput = screen.getByPlaceholderText(/Enter Client ID \(UCC\)/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-api-key' } });
 		fireEvent.change(apiSecretInput, { target: { value: 'test-api-secret' } });
@@ -89,8 +89,8 @@ describe('SettingsPage', () => {
 		renderPage();
 		await switchToBroker({ showFull: true });
 
-		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
-		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter App Token/i);
+		const apiSecretInput = screen.getByPlaceholderText(/Enter Client ID \(UCC\)/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-key' } });
 		fireEvent.change(apiSecretInput, { target: { value: 'test-secret' } });
@@ -114,8 +114,8 @@ describe('SettingsPage', () => {
 		renderPage();
 		await switchToBroker({ showFull: true });
 
-		const apiKeyInput = await screen.findByPlaceholderText(/Enter API Key/i);
-		const apiSecretInput = screen.getByPlaceholderText(/Enter API Secret/i);
+		const apiKeyInput = await screen.findByPlaceholderText(/Enter App Token/i);
+		const apiSecretInput = screen.getByPlaceholderText(/Enter Client ID \(UCC\)/i);
 
 		fireEvent.change(apiKeyInput, { target: { value: 'test-key' } });
 		fireEvent.change(apiSecretInput, { target: { value: 'test-secret' } });
@@ -125,12 +125,12 @@ describe('SettingsPage', () => {
 		fireEvent.click(fullTestRadio);
 
 		const mobileInput = await screen.findByPlaceholderText(/Enter mobile number/i);
-		const passwordInput = screen.getByPlaceholderText(/Enter password/i);
 		const mpinInput = screen.getByPlaceholderText(/Enter MPIN/i);
+		const totpInput = screen.getByPlaceholderText(/Enter TOTP Secret/i);
 
 		fireEvent.change(mobileInput, { target: { value: '9876543210' } });
-		fireEvent.change(passwordInput, { target: { value: 'testpass' } });
 		fireEvent.change(mpinInput, { target: { value: '1234' } });
+		fireEvent.change(totpInput, { target: { value: 'BASE32SECRET3232' } });
 
 		// Test connection
 		const testBtn = screen.getByRole('button', { name: /Test Full Connection/i });

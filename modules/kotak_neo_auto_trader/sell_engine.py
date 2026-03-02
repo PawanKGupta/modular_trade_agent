@@ -197,14 +197,23 @@ class SellOrderManager:
                 self.state_manager = None
 
         # Initialize scrip master for symbol/token resolution
-        self.scrip_master = KotakNeoScripMaster(
-            auth_client=auth.client if hasattr(auth, "client") else None
-        )
+        rest_client = None
+        try:
+            if hasattr(auth, "get_rest_client"):
+                rest_client = auth.get_rest_client()
+            elif hasattr(auth, "get_client"):
+                rest_client = auth.get_client()
+        except Exception as e:
+            logger.debug(f"Scrip master init: failed to resolve REST client from auth: {e}")
+        self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
 
         # Load scrip master data (use cache if available)
         try:
-            self.scrip_master.load_scrip_master(force_download=False)
-            logger.info("Scrip master loaded successfully")
+            loaded = self.scrip_master.load_scrip_master(force_download=False)
+            if loaded:
+                logger.info("Scrip master loaded successfully")
+            else:
+                logger.warning("Scrip master load failed; will use symbols as-is where possible.")
         except Exception as e:
             logger.warning(f"Failed to load scrip master: {e}. Will use symbols as-is.")
 

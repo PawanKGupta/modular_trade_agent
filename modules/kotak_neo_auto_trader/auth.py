@@ -4,6 +4,7 @@ Handles login, logout, and session management
 """
 
 import os
+import re
 import socket
 import sys
 import threading
@@ -164,9 +165,26 @@ class KotakNeoAuth:
             self.logger.error("REST login failed: missing required credentials")
             return False
 
+        def _kotak_error_message(payload: dict, fallback: str) -> str:
+            for key in ("message", "emsg", "error", "errorDescription", "stat"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return fallback
+
         try:
             # Step 1: tradeApiLogin (view token)
-            totp_code = pyotp.TOTP(totp_secret).now()
+            # Normalize secret to support user-entered spaces/hyphens.
+            normalized_totp_secret = re.sub(r"[\s\-]", "", totp_secret).upper()
+            try:
+                totp_code = pyotp.TOTP(normalized_totp_secret).now()
+            except Exception as totp_err:  # noqa: BLE001
+                self.logger.error(
+                    "REST login failed: invalid KOTAK_TOTP_SECRET format. "
+                    "Expected Base32 secret key (not the 6-digit OTP code). "
+                    f"Details: {totp_err}"
+                )
+                return False
 
             url_login = "https://mis.kotaksecurities.com/login/1.0/tradeApiLogin"
             headers_login = {
@@ -175,7 +193,7 @@ class KotakNeoAuth:
                 "Content-Type": "application/json",
             }
             payload_login = {
-                "mobileNumber": mobile,
+                "mobileNumber": mobile.strip(),
                 "ucc": ucc,
                 "totp": totp_code,
             }
@@ -185,8 +203,12 @@ class KotakNeoAuth:
 
             resp_login = requests.post(url_login, headers=headers_login, data=json.dumps(payload_login), timeout=10.0)
             data_login = resp_login.json()
-            if resp_login.status_code != 200 or data_login.get("status") == "error":
-                msg = data_login.get("message") or "Login failed (Step 1)"
+            if (
+                resp_login.status_code != 200
+                or data_login.get("status") == "error"
+                or str(data_login.get("stat", "")).lower() == "not_ok"
+            ):
+                msg = _kotak_error_message(data_login, "Login failed (Step 1)")
                 self.logger.error(f"REST login failed at Step 1: {msg}")
                 return False
 
@@ -215,8 +237,12 @@ class KotakNeoAuth:
                 timeout=10.0,
             )
             data_validate = resp_validate.json()
-            if resp_validate.status_code != 200 or data_validate.get("status") == "error":
-                msg = data_validate.get("message") or "Login failed (Step 2)"
+            if (
+                resp_validate.status_code != 200
+                or data_validate.get("status") == "error"
+                or str(data_validate.get("stat", "")).lower() == "not_ok"
+            ):
+                msg = _kotak_error_message(data_validate, "Login failed (Step 2)")
                 self.logger.error(f"REST login failed at Step 2 (MPIN validation): {msg}")
                 return False
 

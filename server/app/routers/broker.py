@@ -2,6 +2,7 @@
 import ast
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,13 @@ class KotakNeoCreds:
 
 
 def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
+    def _kotak_error_message(payload: dict, fallback: str) -> str:
+        for key in ("message", "emsg", "error", "errorDescription", "stat"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return fallback
+
     """
     Test Kotak Neo broker connection using REST authentication APIs.
 
@@ -131,7 +139,16 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
             try:
                 import pyotp  # type: ignore[import]
 
-                totp = pyotp.TOTP(creds.totp_secret.strip()).now()
+                normalized_totp_secret = re.sub(r"[\s\-]", "", creds.totp_secret.strip()).upper()
+                try:
+                    totp = pyotp.TOTP(normalized_totp_secret).now()
+                except Exception as totp_err:  # noqa: BLE001
+                    return (
+                        False,
+                        "Invalid TOTP secret format. "
+                        "Use the Base32 secret key from TOTP setup (not the 6-digit OTP code). "
+                        f"Details: {totp_err}",
+                    )
             except ImportError:
                 return (
                     False,
@@ -160,8 +177,12 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
             timeout=10.0,
         )
         data_login = resp_login.json()
-        if resp_login.status_code != 200 or data_login.get("status") == "error":
-            msg = data_login.get("message") or "Login failed (Step 1)"
+        if (
+            resp_login.status_code != 200
+            or data_login.get("status") == "error"
+            or str(data_login.get("stat", "")).lower() == "not_ok"
+        ):
+            msg = _kotak_error_message(data_login, "Login failed (Step 1)")
             return False, f"Login failed: {msg}"
 
         view_data = data_login.get("data") or {}
@@ -191,8 +212,12 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
             timeout=10.0,
         )
         data_validate = resp_validate.json()
-        if resp_validate.status_code != 200 or data_validate.get("status") == "error":
-            msg = data_validate.get("message") or "Login failed (Step 2)"
+        if (
+            resp_validate.status_code != 200
+            or data_validate.get("status") == "error"
+            or str(data_validate.get("stat", "")).lower() == "not_ok"
+        ):
+            msg = _kotak_error_message(data_validate, "Login failed (Step 2)")
             return False, f"MPIN validation failed: {msg}"
 
         trade_data = data_validate.get("data") or {}

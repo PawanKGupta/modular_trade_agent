@@ -223,20 +223,20 @@ http.post(API('/auth/refresh'), async () => {
 		return HttpResponse.json({ status: 'ok' });
 	}),
 	http.post(API('/user/broker/test'), async ({ request }) => {
-		const body = (await request.json()) as { api_key?: string; api_secret?: string; mobile_number?: string; password?: string; mpin?: string };
+		const body = (await request.json()) as { api_key?: string; api_secret?: string; mobile_number?: string; mpin?: string; totp_secret?: string };
 		if (!body.api_key || !body.api_secret) {
 			return HttpResponse.json({ ok: false, message: 'API key and secret are required' }, { status: 400 });
 		}
 		// Basic test (only api_key/api_secret)
-		if (!body.mobile_number || !body.password || !body.mpin) {
+		if (!body.mobile_number || !body.mpin || !body.totp_secret) {
 			return HttpResponse.json({
 				ok: true,
-				message: 'Client initialized successfully (full login test requires mobile, password, and MPIN)'
+				message: 'Client initialized successfully (full login test requires mobile, MPIN, and TOTP secret)'
 			});
 		}
 		// Full test (with login credentials)
 		// Mock: accept any non-empty values for testing
-		if (body.mobile_number && body.password && body.mpin) {
+		if (body.mobile_number && body.mpin && body.totp_secret) {
 			return HttpResponse.json({ ok: true, message: 'Connection successful' });
 		}
 		return HttpResponse.json({ ok: false, message: 'Invalid credentials' }, { status: 400 });
@@ -253,8 +253,8 @@ http.post(API('/auth/refresh'), async () => {
 				api_key: 'test-api-key-1234',
 				api_secret: 'test-api-secret-5678',
 				mobile_number: '9876543210',
-				password: 'testpassword',
 				mpin: '1234',
+				totp_secret: 'BASE32SECRET3232',
 				environment: 'prod'
 			});
 		}

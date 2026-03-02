@@ -85,9 +85,11 @@ class LivePriceManager:
             raise RuntimeError("Kotak Neo login failed")
         logger.info("[OK] Logged in to Kotak Neo (REST)")
 
-        # Load scrip master (static file URLs; SDK call removed)
-        self.scrip_master = KotakNeoScripMaster(auth_client=None, exchanges=["NSE"])
-        self.scrip_master.load_scrip_master(force_download=False)
+        # Load scrip master using authenticated REST file-paths API
+        rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+        self.scrip_master = KotakNeoScripMaster(auth_client=rest_client, exchanges=["NSE"])
+        if not self.scrip_master.load_scrip_master(force_download=False):
+            raise RuntimeError("Scrip master load failed")
         logger.info("[OK] Scrip master loaded")
 
         self.price_cache = LivePriceCache(
