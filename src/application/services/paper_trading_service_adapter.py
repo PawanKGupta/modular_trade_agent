@@ -8,8 +8,10 @@ Uses PaperTradingBrokerAdapter instead of real broker authentication.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -1165,8 +1167,24 @@ class PaperTradingServiceAdapter:
                 if data is None or data.empty:
                     continue
 
-                # Get today's data
+                # Get latest daily candle and ensure it belongs to today's session (IST)
                 latest = data.iloc[-1]
+                latest_ts = latest.name
+                try:
+                    latest_ts = pd.to_datetime(latest_ts)
+                except Exception:
+                    pass
+
+                if getattr(latest_ts, "tzinfo", None) is None:
+                    latest_ts = latest_ts.tz_localize("UTC")
+
+                latest_date_ist = latest_ts.tz_convert("Asia/Kolkata").date()
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+                # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
+                if latest_date_ist != today_ist:
+                    continue
+
                 high = latest["high"]
                 close = latest["close"]
 
