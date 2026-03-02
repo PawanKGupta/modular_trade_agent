@@ -72,32 +72,33 @@ class LivePriceManager:
                 logger.warning("Will use yfinance fallback only")
 
     def _initialize_websocket(self, env_file: str):
-        """Initialize WebSocket components."""
-        logger.info("Initializing live price manager with WebSocket...")
+        """
+        REST-based initialization (WebSocket SDK removed).
 
-        # Login to Kotak Neo
+        We keep the same high-level manager but the underlying price cache is now
+        a REST polling cache (quotes API).
+        """
+        logger.info("Initializing live price manager (REST polling)...")
+
         self.auth = KotakNeoAuth(env_file)
         if not self.auth.login():
             raise RuntimeError("Kotak Neo login failed")
+        logger.info("[OK] Logged in to Kotak Neo (REST)")
 
-        logger.info("[OK] Logged in to Kotak Neo")
-
-        # Load scrip master
-        self.scrip_master = KotakNeoScripMaster(auth_client=self.auth.client, exchanges=["NSE"])
+        # Load scrip master (static file URLs; SDK call removed)
+        self.scrip_master = KotakNeoScripMaster(auth_client=None, exchanges=["NSE"])
         self.scrip_master.load_scrip_master(force_download=False)
         logger.info("[OK] Scrip master loaded")
 
-        # Initialize price cache
         self.price_cache = LivePriceCache(
-            auth_client=self.auth.client,
+            auth_client=None,
             scrip_master=self.scrip_master,
             stale_threshold_seconds=60,
             reconnect_delay_seconds=5,
+            auth=self.auth,
         )
-
-        # Start WebSocket service
         self.price_cache.start()
-        logger.info("[OK] WebSocket price cache started")
+        logger.info("[OK] Live price cache started (REST polling)")
 
         self._initialized = True
         logger.info("Live price manager initialized successfully")

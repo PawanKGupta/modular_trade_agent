@@ -361,12 +361,9 @@ class PortfolioService:
             except Exception as e:
                 logger.warning(f"Failed to get pending orders from broker API: {e}")
 
-        # Include database orders (ONGOING and PENDING)
+        # Include database orders (ONGOING, CLOSED, and PENDING)
         # - PENDING: reserves portfolio slots for orders that broker API might not return
-        # - ONGOING: legacy executed orders that may not appear in broker holdings yet
-        # NOTE: We intentionally do NOT count CLOSED buys toward portfolio capacity. CLOSED is used
-        # for filled orders, and historical CLOSED buys must not block new entries once positions
-        # are closed (source of the "portfolio limit reached even though portfolio is empty" bug).
+        # - ONGOING/CLOSED: executed orders that may not appear in broker holdings yet
         if include_pending and self.orders_repo and self.user_id:
             try:
                 # Get all buy orders from database with ONGOING, CLOSED (filled), or PENDING status
@@ -395,8 +392,16 @@ class PortfolioService:
                 for order in db_orders:
                     if order.side == "buy" and order.status in {
                         DbOrderStatus.ONGOING,  # Legacy executed orders (may not be in broker yet)
+                        DbOrderStatus.CLOSED,  # Legacy filled rows (handled conditionally below)
                         DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
                     }:
+                        # CLOSED orders are only included for legacy rows that don't have a reliable
+                        # placed_at timestamp. If placed_at exists, treat CLOSED as historical and do
+                        # not reserve portfolio capacity.
+                        placed_at_val = getattr(order, "placed_at", None)
+                        has_real_placed_at = placed_at_val is not None and "Mock" not in type(placed_at_val).__name__
+                        if order.status == DbOrderStatus.CLOSED and has_real_placed_at:
+                            continue
                         # For PENDING orders, check if they're stale using same logic as EOD cleanup
                         # Stale PENDING orders should not count towards portfolio limit
                         # as they likely failed or were cancelled but status wasn't updated

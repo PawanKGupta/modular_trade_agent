@@ -428,28 +428,22 @@ class OrderStatusVerifier:
             List of order dicts from broker
         """
         try:
-            # Handle both NeoAPI client and KotakNeoOrders wrapper
-            if hasattr(self.broker_client, "order_report"):
-                # Direct NeoAPI client
-                response = self.broker_client.order_report()
-            elif hasattr(self.broker_client, "get_orders"):
-                # KotakNeoOrders wrapper - use its get_orders() method
+            def _has_explicit_method(obj, name: str) -> bool:
+                try:
+                    return name in getattr(obj, "__dict__", {}) and callable(getattr(obj, name))
+                except Exception:
+                    return False
+
+            # Prefer REST wrapper method
+            if _has_explicit_method(self.broker_client, "get_orders"):
                 response = self.broker_client.get_orders()
-            elif hasattr(self.broker_client, "auth") and hasattr(
-                self.broker_client.auth, "get_client"
-            ):
-                # KotakNeoOrders - access underlying client via auth
-                client = self.broker_client.auth.get_client()
-                if client and hasattr(client, "order_report"):
-                    response = client.order_report()
-                else:
-                    logger.error(
-                        "Could not access order_report from broker_client.auth.get_client()"
-                    )
-                    return []
+            elif _has_explicit_method(self.broker_client, "get_order_book"):
+                response = self.broker_client.get_order_book()
+            elif _has_explicit_method(self.broker_client, "order_report"):
+                response = self.broker_client.order_report()
             else:
                 logger.error(
-                    f"broker_client does not have order_report() or get_orders() method. Type: {type(self.broker_client)}"
+                    f"broker_client does not have get_orders()/get_order_book()/order_report(). Type: {type(self.broker_client)}"
                 )
                 return []
 

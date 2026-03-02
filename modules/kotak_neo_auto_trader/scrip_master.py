@@ -157,67 +157,8 @@ class KotakNeoScripMaster:
         try:
             logger.info(f"Downloading scrip master for {exchange} via Kotak Neo API...")
 
-            # Use auth client if provided (preferred method)
-            if auth_client and hasattr(auth_client, "scrip_master"):
-                try:
-                    logger.info(f"Using authenticated API call for {exchange}")
-                    result = auth_client.scrip_master(exchange_segment=exchange)
-
-                    # The API returns a URL string, not direct data
-                    if result and isinstance(result, str) and result.strip().startswith("http"):
-                        csv_url = result.strip()
-                        logger.info(f"Got CSV URL: {csv_url}")
-
-                        # Download CSV from URL
-                        csv_response = requests.get(csv_url, timeout=30)
-                        csv_response.raise_for_status()
-
-                        # Parse CSV format
-                        lines = csv_response.text.strip().split("\n")
-                        if len(lines) < 2:
-                            logger.error(f"Invalid CSV format for {exchange}")
-                            return None
-
-                        # First line is header
-                        headers = [h.strip() for h in lines[0].split(",")]
-                        logger.debug(f"CSV headers: {headers[:10]}...")  # Show first 10
-
-                        instruments = []
-                        for line in lines[1:]:
-                            if not line.strip():
-                                continue
-
-                            # CSV may have quotes and commas in values, use proper CSV parsing
-                            fields = [f.strip() for f in line.split(",")]
-                            if len(fields) < len(headers):
-                                continue
-
-                            # Take only the number of fields that match headers
-                            instrument = dict(zip(headers, fields[: len(headers)]))
-                            instruments.append(instrument)
-
-                        logger.info(
-                            f"Downloaded {len(instruments)} instruments for {exchange} via CSV"
-                        )
-                        return instruments
-
-                    elif result and isinstance(result, dict):
-                        # Fallback: handle if API returns dict directly
-                        instruments = result.get("data", [])
-                        if instruments:
-                            logger.info(
-                                f"Downloaded {len(instruments)} instruments for {exchange} via API"
-                            )
-                            return instruments
-                        else:
-                            logger.warning(f"API returned no instruments for {exchange}")
-                    else:
-                        logger.warning(f"Unexpected API response type: {type(result)}")
-
-                except Exception as e:
-                    logger.error(f"API scrip master failed: {e}")
-
-            # If no auth client or API failed, log error
+            # SDK-based `auth_client.scrip_master()` was removed during REST migration.
+            # We download scrip master using static file URLs (fallback).
             logger.error(f"Cannot download scrip master for {exchange}: auth client required")
             logger.error("Please authenticate using KotakNeoAuth before loading scrip master.")
             return None

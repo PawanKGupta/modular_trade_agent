@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
+import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -85,20 +86,6 @@ def _get_or_create_auth_session(
     return auth
 
 
-# Try to import NeoAPI at module level (may not be available in all environments)
-try:
-    # Add project root to path for imports
-    _project_root = Path(__file__).parent.parent.parent.parent.parent
-    if str(_project_root) not in sys.path:
-        sys.path.insert(0, str(_project_root))
-    from neo_api_client import NeoAPI  # noqa: PLC0415
-
-    _NEO_API_AVAILABLE = True
-except ImportError:
-    _NEO_API_AVAILABLE = False
-    NeoAPI = None  # type: ignore[assignment, misc]
-
-
 @dataclass
 class KotakNeoCreds:
     """Kotak Neo credentials for connection testing."""
@@ -114,97 +101,130 @@ class KotakNeoCreds:
 
 def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
     """
-    Test Kotak Neo broker connection using existing auth mechanism.
+    Test Kotak Neo broker connection using REST authentication APIs.
 
     Returns:
         tuple[bool, str]: (success, message)
     """
-    if not _NEO_API_AVAILABLE:
-        # Log technical details server-side for administrators
-        import sys
+    # Map existing fields to new REST API expectations:
+    # - api_key/consumer_key -> Authorization header
+    # - api_secret/consumer_secret -> UCC (client code)
+    api_key = str(creds.consumer_key).strip() if creds.consumer_key else ""
+    ucc = str(creds.consumer_secret).strip() if creds.consumer_secret else ""
 
-        python_version = sys.version_info
-        if python_version >= (3, 12):
-            install_cmd = "pip install --no-deps git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
-            technical_details = (
-                f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
-                f"Python version: {python_version.major}.{python_version.minor}\n"
-                f"Install command: {install_cmd}\n"
-                f"Note: Using --no-deps to avoid numpy version conflicts.\n"
-                f"See docker/INSTALL_KOTAK_SDK.md for detailed instructions."
-            )
-        else:
-            install_cmd = "pip install git+https://github.com/Kotak-Neo/kotak-neo-api@67143c58f29da9572cdbb273199852682a0019d5#egg=neo-api-client"
-            technical_details = (
-                f"Kotak Neo SDK (neo_api_client) not installed on server.\n"
-                f"Python version: {python_version.major}.{python_version.minor}\n"
-                f"Install command: {install_cmd}\n"
-                f"See docker/INSTALL_KOTAK_SDK.md for detailed instructions."
-            )
+    if not api_key or not ucc:
+        return False, "API key and UCC (api_secret) cannot be empty"
 
-        # Log technical details server-side (for administrators)
-        logger.error(
-            f"Kotak Neo SDK not available on server: {technical_details}",
-            extra={"action": "test_broker_connection"},
+    # If only basic keys are provided, just validate presence/format (no network call),
+    # matching previous behavior where we only initialized the SDK client.
+    has_full_creds = bool(creds.mobile_number and (creds.mpin or creds.totp_secret))
+    if not has_full_creds:
+        msg = (
+            "API key and UCC validated locally "
+            "(full login test requires mobile number and MPIN or TOTP secret)"
         )
-
-        # Return user-friendly error message (no installation instructions)
-        user_message = (
-            "Kotak Neo broker integration is not available on this server. "
-            "Please contact your system administrator to install the required dependencies."
-        )
-        return (False, user_message)
+        return True, msg
 
     try:
-        # Step 1: Initialize client (validates consumer_key/consumer_secret format)
-        try:
-            # Ensure all required parameters are strings, not None
-            consumer_key = str(creds.consumer_key).strip() if creds.consumer_key else ""
-            consumer_secret = str(creds.consumer_secret).strip() if creds.consumer_secret else ""
-            environment = str(creds.environment).strip() if creds.environment else "prod"
+        # Step 1: tradeApiLogin (view token) using mobileNumber + UCC + TOTP
+        if creds.totp_secret:
+            try:
+                import pyotp  # type: ignore[import]
 
-            if not consumer_key or not consumer_secret:
-                return False, "Consumer key and secret cannot be empty"
-
-            client = NeoAPI(
-                consumer_key=consumer_key,
-                consumer_secret=consumer_secret,
-                environment=environment,
-                neo_fin_key="neotradeapi",
-            )
-
-            # Validate client was created successfully
-            if client is None:
-                return False, "Failed to create client: SDK returned None"
-
-        except TypeError as te:
-            error_msg = str(te) if te else "Type error"
-            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
+                totp = pyotp.TOTP(creds.totp_secret.strip()).now()
+            except ImportError:
                 return (
                     False,
-                    "SDK initialization error: Invalid consumer_key or consumer_secret format. "
-                    "Please check your credentials.",
+                    "TOTP secret provided but pyotp is not installed on the server. "
+                    "Install pyotp or use MPIN-only flows.",
                 )
-            return False, f"SDK type error during initialization: {error_msg}"
-        except Exception as e:
-            error_str = str(e) if e is not None else "Unknown error"
-            return False, f"Failed to initialize client: {error_str}"
+        else:
+            return False, "TOTP secret is required for REST login test"
 
-        # Step 2: If full credentials provided, test login
-        has_full_creds = (
-            creds.mobile_number and creds.password and (creds.mpin or creds.totp_secret)
+        url_login = "https://mis.kotaksecurities.com/login/1.0/tradeApiLogin"
+        headers_login = {
+            "Authorization": api_key,
+            "neo-fin-key": "neotradeapi",
+            "Content-Type": "application/json",
+        }
+        payload_login = {
+            "mobileNumber": str(creds.mobile_number).strip(),
+            "ucc": ucc,
+            "totp": totp,
+        }
+
+        resp_login = requests.post(
+            url_login,
+            headers=headers_login,
+            data=json.dumps(payload_login),
+            timeout=10.0,
         )
-        if not has_full_creds:
-            msg = (
-                "Client initialized successfully "
-                "(full login test requires mobile, password, and MPIN)"
+        data_login = resp_login.json()
+        if resp_login.status_code != 200 or data_login.get("status") == "error":
+            msg = data_login.get("message") or "Login failed (Step 1)"
+            return False, f"Login failed: {msg}"
+
+        view_data = data_login.get("data") or {}
+        view_sid = view_data.get("sid")
+        view_token = view_data.get("token")
+        if not view_sid or not view_token:
+            return False, "Login failed: missing sid/token in Step 1 response"
+
+        # Step 2: tradeApiValidate (MPIN -> trade token + baseUrl)
+        if not creds.mpin:
+            return False, "MPIN is required for full REST login test"
+
+        url_validate = "https://mis.kotaksecurities.com/login/1.0/tradeApiValidate"
+        headers_validate = {
+            "Authorization": api_key,
+            "neo-fin-key": "neotradeapi",
+            "Content-Type": "application/json",
+            "sid": view_sid,
+            "Auth": view_token,
+        }
+        payload_validate = {"mpin": str(creds.mpin).strip()}
+
+        resp_validate = requests.post(
+            url_validate,
+            headers=headers_validate,
+            data=json.dumps(payload_validate),
+            timeout=10.0,
+        )
+        data_validate = resp_validate.json()
+        if resp_validate.status_code != 200 or data_validate.get("status") == "error":
+            msg = data_validate.get("message") or "Login failed (Step 2)"
+            return False, f"MPIN validation failed: {msg}"
+
+        trade_data = data_validate.get("data") or {}
+        base_url = trade_data.get("baseUrl")
+        trade_token = trade_data.get("token")
+        if not base_url or not trade_token:
+            return False, "MPIN validation failed: missing baseUrl/token"
+
+        # Optional: lightweight sanity check using a simple GET with Authorization only,
+        # similar to the tested example (script-details endpoint).
+        try:
+            test_url = f"{base_url.rstrip('/')}/script-details/1.0/masterscrip/file-paths"
+            resp_test = requests.get(
+                test_url,
+                headers={"Authorization": api_key},
+                timeout=10.0,
             )
-            return True, msg
+            if resp_test.status_code != 200:
+                logger.warning(
+                    "REST auth succeeded but script-details sanity check returned HTTP %s",
+                    resp_test.status_code,
+                )
+        except Exception as test_err:  # noqa: BLE001
+            # Do not fail the whole test on this; main login already passed.
+            logger.warning(
+                "REST auth succeeded but script-details sanity check failed: %s",
+                test_err,
+            )
 
-        # Full login test
-        return _test_kotak_neo_login(client, creds)
+        return True, "REST login and MPIN validation successful"
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         error_str = str(e) if e is not None else "Unknown error"
         return False, f"Connection test failed: {error_str}"
 

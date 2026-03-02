@@ -68,3 +68,31 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
     await authenticatedPage.waitForTimeout(200);
   }
 });
+
+test('auth -> dashboard -> pnl page basics', async ({ authenticatedPage }) => {
+  await authenticatedPage.goto('/dashboard');
+  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+
+  // Scope queries to sidebar navigation
+  const sidebar = authenticatedPage.locator('aside nav, aside');
+
+  // Navigate to PnL (expand Trading category first)
+  const tradingButton = sidebar.getByRole('button', { name: /Trading/i });
+  if (await tradingButton.isVisible().catch(() => false)) {
+    await tradingButton.click();
+    await authenticatedPage.waitForTimeout(300);
+  }
+
+  await sidebar.getByRole('link', { name: /^PnL$/i }).click();
+  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+
+  await expect(authenticatedPage.getByRole('heading', { name: /Profit & Loss/i })).toBeVisible();
+  await expect(authenticatedPage.getByText('Summary')).toBeVisible();
+  await expect(authenticatedPage.getByText('Daily P&L')).toBeVisible();
+  await expect(authenticatedPage.getByText('Closed Positions')).toBeVisible();
+
+  // Export panel should open
+  const exportButton = authenticatedPage.getByRole('button', { name: /Export Options/i });
+  await exportButton.click();
+  await expect(authenticatedPage.getByText(/Export P&L Data/i)).toBeVisible();
+});
