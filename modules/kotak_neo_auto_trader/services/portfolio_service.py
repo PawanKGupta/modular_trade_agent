@@ -275,8 +275,21 @@ class PortfolioService:
         h = self._fetch_holdings()
         symbols = set()
 
+        def _extract_symbol(item: dict) -> str:
+            # Keep this mapping aligned with KotakNeoPortfolio.get_holdings() display logic
+            # so PortfolioService doesn't silently treat real holdings as "empty".
+            return str(
+                item.get("tradingSymbol")
+                or item.get("symbol")
+                or item.get("instrumentName")
+                or item.get("securitySymbol")
+                or item.get("securityname")
+                or item.get("stockName")
+                or ""
+            ).upper().strip()
+
         for item in h.get("data") or []:
-            sym = str(item.get("tradingSymbol") or "").upper()
+            sym = _extract_symbol(item)
             if sym:
                 symbols.add(sym)
 
@@ -301,7 +314,15 @@ class PortfolioService:
         h = self._fetch_holdings()
 
         for item in h.get("data") or []:
-            sym = str(item.get("tradingSymbol") or "").upper()
+            sym = str(
+                item.get("tradingSymbol")
+                or item.get("symbol")
+                or item.get("instrumentName")
+                or item.get("securitySymbol")
+                or item.get("securityname")
+                or item.get("stockName")
+                or ""
+            ).upper().strip()
             if sym in variants:
                 return True
 
@@ -340,9 +361,12 @@ class PortfolioService:
             except Exception as e:
                 logger.warning(f"Failed to get pending orders from broker API: {e}")
 
-        # CRITICAL FIX: Also include database orders (ONGOING, CLOSED, and PENDING)
-        # This ensures we count executed orders that may not appear in broker holdings yet
-        # and pending orders that broker API might not return
+        # Include database orders (ONGOING and PENDING)
+        # - PENDING: reserves portfolio slots for orders that broker API might not return
+        # - ONGOING: legacy executed orders that may not appear in broker holdings yet
+        # NOTE: We intentionally do NOT count CLOSED buys toward portfolio capacity. CLOSED is used
+        # for filled orders, and historical CLOSED buys must not block new entries once positions
+        # are closed (source of the "portfolio limit reached even though portfolio is empty" bug).
         if include_pending and self.orders_repo and self.user_id:
             try:
                 # Get all buy orders from database with ONGOING, CLOSED (filled), or PENDING status
@@ -371,7 +395,6 @@ class PortfolioService:
                 for order in db_orders:
                     if order.side == "buy" and order.status in {
                         DbOrderStatus.ONGOING,  # Legacy executed orders (may not be in broker yet)
-                        DbOrderStatus.CLOSED,  # Filled orders (position open; may not be in broker yet)
                         DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
                     }:
                         # For PENDING orders, check if they're stale using same logic as EOD cleanup
