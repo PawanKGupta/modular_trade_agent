@@ -446,6 +446,7 @@ class TestRSIExitIntegrationPaperTrading:
                     "close": [2520.0],
                 }
             )
+            mock_data.index = pd.DatetimeIndex([pd.Timestamp.now(tz="Asia/Kolkata")])
             mock_fetch.return_value = mock_data
 
             with patch(

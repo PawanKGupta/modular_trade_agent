@@ -312,17 +312,13 @@ class TestPortfolioServiceGetCurrentPositions:
         positions = service.get_current_positions(include_pending=True)
         assert "INFY" in positions  # From database PENDING order (normalized)
 
-    def test_get_current_positions_includes_database_closed_filled_orders(self):
-        """Test get_current_positions() includes database CLOSED (filled) orders for capacity.
-
-        Filled orders are stored as CLOSED; they are included so symbols from
-        executed orders that may not be in broker holdings yet count toward capacity.
-        """
+    def test_get_current_positions_excludes_database_closed_filled_orders(self):
+        """Test get_current_positions() excludes database CLOSED (filled) buy orders."""
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(return_value={"data": []})
 
-        # Mock database order with CLOSED status (filled; should be included for capacity)
+        # Mock database order with CLOSED status (filled; should be excluded)
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.CLOSED
@@ -338,7 +334,7 @@ class TestPortfolioServiceGetCurrentPositions:
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "WIPRO" in positions  # CLOSED (filled) orders are counted for capacity
+        assert "WIPRO" not in positions  # CLOSED buys should not reserve portfolio capacity
 
     def test_get_current_positions_combines_all_sources(self):
         """Test get_current_positions() combines holdings, broker pending, and database orders"""
