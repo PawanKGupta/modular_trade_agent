@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0913, E501, PLR2004, PLR0911, PLR0915, PLC0415, PLR0912, S110
 """
 Authentication Module for Kotak Neo API
 Handles login, logout, and session management
@@ -130,12 +131,44 @@ class KotakNeoAuth:
                 name
                 for field, name in zip(
                     required_fields,
-                    ["KOTAK_CONSUMER_KEY", "KOTAK_CONSUMER_SECRET (UCC/client code)", "KOTAK_MOBILE_NUMBER", "KOTAK_MPIN"],
+                    [
+                        "KOTAK_CONSUMER_KEY",
+                        "KOTAK_CONSUMER_SECRET (UCC/client code)",
+                        "KOTAK_MOBILE_NUMBER",
+                        "KOTAK_MPIN",
+                    ],
                     strict=False,
                 )
                 if not field
             ]
             raise ValueError(f"Missing credentials: {', '.join(missing)}")
+
+        # Log masked fingerprint for debugging credential source mismatches
+        self.logger.info(
+            "Kotak credential fingerprint loaded: "
+            f"{self._credentials_fingerprint()} from config_file={self.config_file}"
+        )
+
+    def _credentials_fingerprint(self) -> str:
+        """Return masked credential fingerprint (no secret leakage)."""
+
+        def _tail(value: str, n: int = 4) -> str:
+            v = (value or "").strip()
+            if not v:
+                return "none"
+            return f"...{v[-n:]}" if len(v) >= n else v
+
+        mobile = (self.mobile_number or "").strip()
+        mobile_mask = f"...{mobile[-3:]}" if len(mobile) >= 3 else (mobile or "none")
+        env = (self.environment or "prod").strip()
+        return (
+            f"key={_tail(self.consumer_key, 6)}, "
+            f"ucc={_tail(self.consumer_secret, 4)}, "
+            f"mobile={mobile_mask}, "
+            f"mpin_len={len((self.mpin or '').strip())}, "
+            f"totp_len={len((self.totp_secret or '').strip())}, "
+            f"env={env}"
+        )
 
     def _perform_rest_login(self) -> bool:
         """
@@ -198,10 +231,13 @@ class KotakNeoAuth:
                 "totp": totp_code,
             }
 
-            import requests
             import json
 
-            resp_login = requests.post(url_login, headers=headers_login, data=json.dumps(payload_login), timeout=10.0)
+            import requests
+
+            resp_login = requests.post(
+                url_login, headers=headers_login, data=json.dumps(payload_login), timeout=10.0
+            )
             data_login = resp_login.json()
             if (
                 resp_login.status_code != 200
@@ -251,9 +287,7 @@ class KotakNeoAuth:
             trade_token = trade_data.get("token")
             trade_sid = trade_data.get("sid")
             if not base_url or not trade_token or not trade_sid:
-                self.logger.error(
-                    "REST login failed: missing baseUrl/token/sid in Step 2 response"
-                )
+                self.logger.error("REST login failed: missing baseUrl/token/sid in Step 2 response")
                 return False
 
             # Store session token and base URL for later use by REST clients
@@ -320,6 +354,7 @@ class KotakNeoAuth:
             self.logger.info("Starting Kotak Neo API login process...")
             self.logger.info(f"Mobile: {self.mobile_number}")
             self.logger.info(f"Environment: {self.environment}")
+            self.logger.info(f"Login fingerprint: {self._credentials_fingerprint()}")
 
             # Suppress output during entire login process
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):

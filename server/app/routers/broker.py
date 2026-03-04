@@ -1,9 +1,8 @@
-# ruff: noqa: B008, PLR0913, PLR0911, PLR0912, PLC0415
+# ruff: noqa: B008, PLR0913, PLR0911, PLR0912, PLC0415, PLR2004, PLR0915, S110
 import ast
 import json
 import logging
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -100,6 +99,27 @@ class KotakNeoCreds:
     environment: str = "prod"
 
 
+def _masked_creds_fingerprint(creds: KotakNeoCreds) -> str:
+    """Return masked broker credential fingerprint for troubleshooting."""
+
+    def _tail(value: str | None, n: int = 4) -> str:
+        v = (value or "").strip()
+        if not v:
+            return "none"
+        return f"...{v[-n:]}" if len(v) >= n else v
+
+    mobile = (creds.mobile_number or "").strip()
+    mobile_mask = f"...{mobile[-3:]}" if len(mobile) >= 3 else (mobile or "none")
+    return (
+        f"key={_tail(creds.consumer_key, 6)}, "
+        f"ucc={_tail(creds.consumer_secret, 4)}, "
+        f"mobile={mobile_mask}, "
+        f"mpin_len={len((creds.mpin or '').strip())}, "
+        f"totp_len={len((creds.totp_secret or '').strip())}, "
+        f"env={(creds.environment or 'prod').strip()}"
+    )
+
+
 def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
     def _kotak_error_message(payload: dict, fallback: str) -> str:
         for key in ("message", "emsg", "error", "errorDescription", "stat"):
@@ -126,6 +146,7 @@ def _test_kotak_neo_connection(creds: KotakNeoCreds) -> tuple[bool, str]:
     # If only basic keys are provided, just validate presence/format (no network call),
     # matching previous behavior where we only initialized the SDK client.
     has_full_creds = bool(creds.mobile_number and (creds.mpin or creds.totp_secret))
+    logger.info("Broker test fingerprint: %s", _masked_creds_fingerprint(creds))
     if not has_full_creds:
         msg = (
             "API key and UCC validated locally "
@@ -362,22 +383,30 @@ def save_broker_creds(
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
 
+    api_key = (payload.api_key or "").strip()
+    api_secret = (payload.api_secret or "").strip()
+    mobile_number = (payload.mobile_number or "").strip() or None
+    password = (payload.password or "").strip() or None
+    mpin = (payload.mpin or "").strip() or None
+    totp_secret = (payload.totp_secret or "").strip() or None
+    environment = (payload.environment or "prod").strip() or "prod"
+
     # Store all credentials (basic + full auth if provided)
     creds_blob = {
-        "api_key": payload.api_key,
-        "api_secret": payload.api_secret,
+        "api_key": api_key,
+        "api_secret": api_secret,
     }
     # Add full auth credentials if provided
-    if payload.mobile_number:
-        creds_blob["mobile_number"] = payload.mobile_number
-    if payload.password:
-        creds_blob["password"] = payload.password
-    if payload.mpin:
-        creds_blob["mpin"] = payload.mpin
-    if payload.totp_secret:
-        creds_blob["totp_secret"] = payload.totp_secret
-    if payload.environment:
-        creds_blob["environment"] = payload.environment
+    if mobile_number:
+        creds_blob["mobile_number"] = mobile_number
+    if password:
+        creds_blob["password"] = password
+    if mpin:
+        creds_blob["mpin"] = mpin
+    if totp_secret:
+        creds_blob["totp_secret"] = totp_secret
+    if environment:
+        creds_blob["environment"] = environment
 
     settings = repo.update(
         settings,
@@ -388,6 +417,73 @@ def save_broker_creds(
     # store encrypted creds
     settings.broker_creds_encrypted = encrypt_blob(json.dumps(creds_blob).encode("utf-8"))
     db.commit()
+
+    # Read-back check: verify we persisted what runtime will decrypt.
+    persisted = decrypt_broker_credentials(settings.broker_creds_encrypted)
+    if persisted:
+        persisted_creds = KotakNeoCreds(
+            consumer_key=str(persisted.get("api_key", "")),
+            consumer_secret=str(persisted.get("api_secret", "")),
+            mobile_number=persisted.get("mobile_number"),
+            mpin=persisted.get("mpin"),
+            totp_secret=persisted.get("totp_secret"),
+            environment=str(persisted.get("environment") or "prod"),
+        )
+        logger.info(
+            "Persisted broker creds read-back for user_id=%s fingerprint=%s",
+            current.id,
+            _masked_creds_fingerprint(persisted_creds),
+        )
+
+    # Log masked fingerprint after save to compare with runtime login path.
+    saved_creds = KotakNeoCreds(
+        consumer_key=api_key,
+        consumer_secret=api_secret,
+        mobile_number=mobile_number,
+        mpin=mpin,
+        totp_secret=totp_secret,
+        environment=environment,
+    )
+    logger.info(
+        "Saved broker creds for user_id=%s fingerprint=%s",
+        current.id,
+        _masked_creds_fingerprint(saved_creds),
+    )
+
+    # Critical: credentials may have changed; drop shared auth cache so old in-memory
+    # sessions do not continue to use stale API key/UCC.
+    try:
+        from modules.kotak_neo_auto_trader.shared_session_manager import (
+            get_shared_session_manager,
+        )
+
+        get_shared_session_manager().clear_session(current.id)
+        logger.info("Cleared shared auth session cache for user_id=%s after creds save", current.id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to clear shared auth session for user_id=%s: %s", current.id, e)
+
+    # If unified trading service is currently running, restart it so it reloads creds
+    # from DB and creates a fresh env/auth session.
+    try:
+        from src.application.services.multi_user_trading_service import MultiUserTradingService
+
+        trading_service = MultiUserTradingService(db)
+        if trading_service.is_service_running(current.id):
+            logger.info(
+                "Trading service is running for user_id=%s; restarting to apply new credentials",
+                current.id,
+            )
+            stopped = trading_service.stop_service(current.id)
+            started = trading_service.start_service(current.id) if stopped else False
+            logger.info(
+                "Trading service restart after creds save for user_id=%s: stopped=%s started=%s",
+                current.id,
+                stopped,
+                started,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to restart trading service for user_id=%s: %s", current.id, e)
+
     return {"status": "ok"}
 
 
