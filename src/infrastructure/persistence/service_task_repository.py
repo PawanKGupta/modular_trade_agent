@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ServiceTaskExecution
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 
 class ServiceTaskRepository:
@@ -38,7 +38,7 @@ class ServiceTaskRepository:
                 task = ServiceTaskExecution(
                     user_id=user_id,
                     task_name=task_name,
-                    executed_at=ist_now(),
+                    executed_at=ist_now_naive(),
                     status=status,
                     duration_seconds=duration_seconds,
                     details=details,

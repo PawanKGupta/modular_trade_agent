@@ -14,6 +14,7 @@ import pytest  # noqa: E402
 
 from modules.kotak_neo_auto_trader.unified_order_monitor import UnifiedOrderMonitor  # noqa: E402
 from src.infrastructure.db.models import Orders  # noqa: E402
+from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 
 
@@ -107,6 +108,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.side = "buy"
         manual_buy_order.orig_source = "manual"
         manual_buy_order.symbol = "RELIANCE-EQ"
+        manual_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
@@ -115,6 +117,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.side = "buy"
         system_buy_order.orig_source = "signal"
         system_buy_order.symbol = "TCS-EQ"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = execution_time
         system_buy_order.filled_at = execution_time
         system_buy_order.order_metadata = {"ticker": "TCS.NS"}
@@ -144,6 +147,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.side = "buy"
         manual_buy_order.orig_source = "manual"
         manual_buy_order.symbol = "RELIANCE-EQ"
+        manual_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
@@ -167,6 +171,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.side = "buy"
         system_buy_order.orig_source = "signal"  # System order
         system_buy_order.symbol = "RELIANCE-EQ"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = execution_time
         system_buy_order.filled_at = execution_time
         system_buy_order.order_metadata = {"ticker": "RELIANCE.NS"}
@@ -192,6 +197,7 @@ class TestManualBuyOrderFiltering:
         system_buy_order.side = "buy"
         system_buy_order.orig_source = None  # None = system order
         system_buy_order.symbol = "RELIANCE-EQ"
+        system_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy_order.execution_time = execution_time
         system_buy_order.filled_at = execution_time
         system_buy_order.order_metadata = {"ticker": "RELIANCE.NS"}
@@ -218,6 +224,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.side = "buy"
         manual_buy_order.orig_source = "MANUAL"  # Uppercase
         manual_buy_order.symbol = "RELIANCE-EQ"
+        manual_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
@@ -242,6 +249,7 @@ class TestManualBuyOrderFiltering:
         manual_buy_order.side = "buy"
         manual_buy_order.orig_source = " manual "  # With whitespace
         manual_buy_order.symbol = "RELIANCE-EQ"
+        manual_buy_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy_order.execution_time = execution_time
         manual_buy_order.filled_at = execution_time
 
@@ -265,6 +273,7 @@ class TestManualBuyOrderFiltering:
         manual_buy1.side = "buy"
         manual_buy1.orig_source = "manual"
         manual_buy1.symbol = "RELIANCE-EQ"
+        manual_buy1.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy1.execution_time = execution_time
         manual_buy1.filled_at = execution_time
 
@@ -272,6 +281,7 @@ class TestManualBuyOrderFiltering:
         manual_buy2.side = "buy"
         manual_buy2.orig_source = "manual"
         manual_buy2.symbol = "TCS-EQ"
+        manual_buy2.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy2.execution_time = execution_time
         manual_buy2.filled_at = execution_time
 
@@ -295,6 +305,7 @@ class TestManualBuyOrderFiltering:
         manual_buy.side = "buy"
         manual_buy.orig_source = "manual"
         manual_buy.symbol = "RELIANCE-EQ"
+        manual_buy.status = DbOrderStatus.CLOSED  # Executed (filled)
         manual_buy.execution_time = execution_time
         manual_buy.filled_at = execution_time
 
@@ -302,6 +313,7 @@ class TestManualBuyOrderFiltering:
         system_buy.side = "buy"
         system_buy.orig_source = "signal"
         system_buy.symbol = "TCS-EQ"
+        system_buy.status = DbOrderStatus.CLOSED  # Executed (filled)
         system_buy.execution_time = execution_time
         system_buy.filled_at = execution_time
         system_buy.order_metadata = {"ticker": "TCS.NS"}

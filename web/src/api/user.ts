@@ -83,6 +83,15 @@ export async function getPortfolio(): Promise<import('./paper-trading').PaperTra
 	return res.data;
 }
 
+/**
+ * Get system-tracked holdings for broker mode (positions table only).
+ * Does not require broker to be connected. Use to view what the system considers "its" holdings.
+ */
+export async function getBrokerSystemHoldings(): Promise<import('./paper-trading').PaperTradingPortfolio> {
+	const res = await api.get('/user/broker/system-holdings');
+	return res.data;
+}
+
 export interface BrokerOrder {
 	broker_order_id: string | null;
 	symbol: string;

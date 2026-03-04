@@ -323,7 +323,7 @@ class OrderValidationService:
             except Exception as e:
                 logger.warning(f"Error checking pending orders for duplicates: {e}")
 
-        # Database fallback: Check for PENDING/ONGOING buy orders
+        # Database fallback: Check for PENDING / ONGOING (legacy) / CLOSED (filled) buy orders
         if check_active_buy_order and self.orders_repo and self.user_id:
             try:
                 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
@@ -348,7 +348,8 @@ class OrderValidationService:
 
                     if (
                         existing_order.side == "buy"
-                        and existing_order.status in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING]
+                        and existing_order.status
+                        in [DbOrderStatus.PENDING, DbOrderStatus.ONGOING, DbOrderStatus.CLOSED]
                         and order_symbol_base == symbol_base
                     ):
                         return (

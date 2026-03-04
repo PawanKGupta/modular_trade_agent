@@ -13,6 +13,17 @@ from src.application.services.paper_trading_service_adapter import PaperTradingS
 from src.infrastructure.db.models import Users
 
 
+def _set_today_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach an IST-today datetime index for sell-monitor compatibility."""
+    now_ist = pd.Timestamp.now(tz="Asia/Kolkata")
+    df.index = (
+        pd.DatetimeIndex([now_ist])
+        if len(df) == 1
+        else pd.date_range(end=now_ist, periods=len(df), freq="D")
+    )
+    return df
+
+
 @pytest.fixture
 def test_user(db_session):
     """Create a test user"""
@@ -279,12 +290,14 @@ class TestRSIExitConditionCheckPaper:
 
         # Call monitor sell orders (which checks RSI exit)
         with patch("core.data_fetcher.fetch_ohlcv_yf") as mock_fetch:
-            mock_data = pd.DataFrame(
+            mock_data = _set_today_index(
+                pd.DataFrame(
                 {
                     "high": [2550.0],  # High < Target (not reached)
                     "close": [2520.0],
                     "rsi10": [55.0],  # RSI > 50 (falling knife exit!)
                 }
+            )
             )
             mock_fetch.return_value = mock_data
 
@@ -323,11 +336,13 @@ class TestRSIExitConditionCheckPaper:
         }
 
         # Call monitor sell orders
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],  # High < Target (not reached)
                 "close": [2520.0],
             }
+        )
         )
         mock_fetch.return_value = mock_data
         mock_rsi.return_value = pd.Series([45.0])
@@ -365,11 +380,13 @@ class TestRSIExitConditionCheckPaper:
         paper_adapter.broker.place_order = MagicMock()
 
         # Call monitor sell orders
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],
                 "close": [2520.0],
             }
+        )
         )
         mock_fetch.return_value = mock_data
         mock_rsi.return_value = pd.Series([55.0])
@@ -442,11 +459,13 @@ class TestRSIExitConditionCheckPaper:
         }
 
         # Call monitor sell orders
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],
                 "close": [2520.0],
             }
+        )
         )
         mock_fetch.return_value = mock_data
         mock_rsi.return_value = pd.Series([None])
@@ -505,11 +524,13 @@ class TestRSIExitErrorHandlingPaper:
         }
 
         # Call monitor sell orders with RSI > 50
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],
                 "close": [2520.0],
             }
+        )
         )
         mock_fetch.return_value = mock_data
         mock_rsi.return_value = pd.Series([55.0])
@@ -553,11 +574,13 @@ class TestRSIExitErrorHandlingPaper:
         }
 
         # Call monitor sell orders with RSI > 50
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],  # High < Target (not reached)
                 "close": [2520.0],
             }
+        )
         )
         mock_fetch.return_value = mock_data
         mock_rsi.return_value = pd.Series([55.0])

@@ -5,7 +5,6 @@ Paper Trading API endpoints
 import logging
 from datetime import date, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Annotated, Any
 
 import pandas_ta as ta
@@ -339,35 +338,11 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 if is_paper_position:
                     paper_positions.append(pos)
 
-        # If no DB positions found, fall back to file-based holdings
-        # This maintains backward compatibility with tests that use file-based storage
-        # and handles cases where DB is empty but file-based data exists
-        file_based_holdings = {}
-        if len(paper_positions) == 0:
-            # Fall back to file-based holdings from PaperTradeStore
-            try:
-                file_holdings = store.get_all_holdings()
-                if file_holdings:
-                    # Convert file-based holdings to position-like objects
-                    for symbol, holding_data in file_holdings.items():
-                        file_based_holdings[symbol] = SimpleNamespace(
-                            symbol=symbol,
-                            quantity=holding_data.get("quantity", 0),
-                            avg_price=holding_data.get("average_price", 0.0),
-                            closed_at=None,
-                            opened_at=None,
-                            reentry_count=0,
-                            entry_rsi=None,
-                            initial_entry_price=None,  # File-based holdings don't have initial_entry_price
-                            reentries=None,
-                        )
-            except Exception:
-                pass  # If file-based fallback fails, continue with empty positions
+        # DB is the single source of truth for positions (file-based fallback removed)
 
         # Fetch live prices using yfinance (broker-agnostic)
         portfolio_value = 0.0
-        # Process both DB positions and file-based holdings
-        all_holdings_to_process = list(paper_positions) + list(file_based_holdings.values())
+        all_holdings_to_process = list(paper_positions)
         for position in all_holdings_to_process:
             qty = position.quantity or 0
             if qty > 0:
@@ -398,8 +373,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         realized_pnl = account_data.get("realized_pnl", 0.0)
 
         # Validation: Check if account balance matches expected value based on positions
-        # This helps detect inconsistencies between file-based account and DB positions
-        all_positions_for_validation = list(paper_positions) + list(file_based_holdings.values())
+        all_positions_for_validation = list(paper_positions)
         expected_invested = sum(
             pos.quantity * pos.avg_price for pos in all_positions_for_validation if pos.quantity > 0
         )
@@ -413,7 +387,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 f"[PaperTrading] Account balance discrepancy detected for user {current.id}: "
                 f"expected Rs {expected_cash:.2f}, actual Rs {actual_cash:.2f}, "
                 f"difference Rs {cash_discrepancy:.2f}. "
-                f"This may indicate sync issues between file and database."
+                f"This may indicate sync issues between account file and DB positions."
             )
 
         # Load target prices from DATABASE sell orders ONLY (single source of truth)
@@ -483,9 +457,9 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
         holdings = []
         unrealized_pnl_total = 0.0
 
-        # Include both DB positions and file-based holdings
+        # DB positions are the single source of truth
         all_holdings_for_display = sorted(
-            list(paper_positions) + list(file_based_holdings.values()),
+            list(paper_positions),
             key=lambda p: p.symbol,
         )
         for position in all_holdings_for_display:

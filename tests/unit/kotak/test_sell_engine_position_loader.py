@@ -82,6 +82,11 @@ class TestSellOrderManagerDatabaseOnlyMethods:
             positions_repo=mock_positions_repo,
             user_id=2,
         )
+        # Edge Case #17: valid holdings required so positions are returned
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "RELIANCE", "quantity": 10}]
+        }
 
         # Call get_open_positions
         result = manager.get_open_positions()

@@ -6,6 +6,7 @@ Tests that paper trading mode works correctly for individual services.
 
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from src.application.services.paper_trading_service_adapter import (
@@ -19,6 +20,19 @@ from src.infrastructure.db.models import (
     UserSignalStatus,
 )
 from src.infrastructure.db.timezone_utils import ist_now
+
+
+def _set_today_like_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Attach a datetime index ending today (IST) for sell-monitor tests."""
+    end_ts = pd.Timestamp(ist_now())
+    if end_ts.tzinfo is None:
+        end_ts = end_ts.tz_localize("Asia/Kolkata")
+    df.index = (
+        pd.DatetimeIndex([end_ts])
+        if len(df) == 1
+        else pd.date_range(end=end_ts, periods=len(df), freq="D")
+    )
+    return df
 
 
 @pytest.fixture
@@ -668,6 +682,11 @@ class TestPaperTradingSellMonitoring:
             logger=adapter.logger,
         )
 
+        # Adapter defaults to running=False; tests that call _place_sell_orders/run_sell_monitor
+        # need it True so the stop-request check doesn't skip placement
+        adapter.running = True
+        adapter.shutdown_requested = False
+
         return adapter
 
     def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):
@@ -857,12 +876,14 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
 
         # Mock OHLCV data where High >= Target (use lowercase columns like fetch_ohlcv_yf returns)
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2650.0],  # High >= 2600.0 (target reached!)
                 "close": [2620.0],
                 "rsi10": [45.0],  # RSI < 50 (not triggered)
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -898,11 +919,13 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock get_holding to return None (position closed)
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+        # Pre-check: get_holding must return a holding first so we don't skip place_order.
+        # After place_order we verify position closed (get_holding returns None).
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
 
         # Mock get_all_orders to return pending order
-
         pending_order = MagicMock()
         pending_order.symbol = "RELIANCE"
         pending_order.transaction_type.value = "SELL"
@@ -911,12 +934,14 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
 
         # Mock OHLCV data where High >= Target
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2650.0],
                 "close": [2620.0],
                 "rsi10": [45.0],
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -960,12 +985,14 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
 
         # Mock OHLCV data where High >= Target
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2650.0],
                 "close": [2620.0],
                 "rsi10": [45.0],
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -998,8 +1025,11 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock get_holding to return None
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
+        # Pre-check: get_holding must return a holding first so we enter the block that
+        # cancels pending and places market order; then get_holding returns None (closed).
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
 
         # Mock get_all_orders to return pending order
         pending_order = MagicMock()
@@ -1010,12 +1040,14 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
 
         # Mock OHLCV data where High >= Target
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2650.0],
                 "close": [2620.0],
                 "rsi10": [45.0],
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -1044,20 +1076,25 @@ class TestPaperTradingSellMonitoring:
                 "entry_date": "2024-01-01",
             }
         }
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 0, "pending": 0}
+        )
 
         # Mock OHLCV data where RSI > 50 but High < Target (use lowercase columns like fetch_ohlcv_yf returns)
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2550.0],  # High < Target (not reached)
                 "close": [2520.0],
                 "rsi10": [52.0],  # RSI > 50 (falling knife exit!)
             }
         )
+        )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
             with patch("pandas_ta.rsi") as mock_rsi:
                 mock_data["rsi10"] = 52.0
-                mock_rsi.return_value = pd.Series([52.0])
+                mock_rsi.return_value = pd.Series([52.0], index=mock_data.index)
 
                 adapter_with_holdings._monitor_sell_orders()
 
@@ -1089,12 +1126,14 @@ class TestPaperTradingSellMonitoring:
         }
 
         # Mock OHLCV data where neither exit condition is met
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "High": [2580.0],  # High < Target
                 "Close": [2560.0],
                 "RSI10": [45.0],  # RSI < 50
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -1128,12 +1167,14 @@ class TestPaperTradingSellMonitoring:
         }
 
         # Mock data where EMA9 has changed significantly
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "High": [2580.0],
                 "Close": [2560.0],
                 "RSI10": [45.0],
             }
+        )
         )
 
         # Mock EMA9 calculation returning different value
@@ -1218,7 +1259,8 @@ class TestPaperTradingSellMonitoring:
         }
 
         # Mock OHLCV data with lowercase columns (as returned by fetch_ohlcv_yf)
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "date": pd.date_range(start="2024-01-01", periods=50),
                 "open": [2500.0] * 50,
@@ -1227,6 +1269,7 @@ class TestPaperTradingSellMonitoring:
                 "close": [2620.0] * 50,
                 "volume": [1000000] * 50,
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -1271,11 +1314,13 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        mock_data = pd.DataFrame(
+        mock_data = _set_today_like_index(
+            pd.DataFrame(
             {
                 "high": [2580.0],
                 "close": [2560.0],
             }
+        )
         )
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data) as mock_fetch:

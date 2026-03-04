@@ -16,6 +16,31 @@ from src.infrastructure.db.timezone_utils import IST
 class TestPortfolioServiceStalePendingOrderExclusion:
     """Test stale PENDING order exclusion using trading-day-aware logic"""
 
+    def test_does_not_count_closed_buy_orders_as_active_positions(self):
+        """CLOSED buy orders must not block portfolio capacity once positions are closed."""
+        mock_portfolio = Mock()
+        # Holdings empty
+        mock_portfolio.get_holdings = Mock(return_value={"data": []})
+
+        mock_closed_order = Mock()
+        mock_closed_order.side = "buy"
+        mock_closed_order.status = OrderStatus.CLOSED
+        mock_closed_order.symbol = "WIPRO-EQ"
+        mock_closed_order.placed_at = datetime(2025, 1, 7, 10, 0, 0, tzinfo=IST)
+
+        mock_orders_repo = Mock()
+        mock_orders_repo.list = Mock(return_value=([mock_closed_order], 1))
+
+        service = PortfolioService(
+            portfolio=mock_portfolio,
+            orders_repo=mock_orders_repo,
+            user_id=1,
+            enable_caching=False,
+        )
+
+        positions = service.get_current_positions(include_pending=True)
+        assert positions == []
+
     def test_excludes_stale_pending_order_past_next_trading_day_close(self):
         """Test that PENDING orders past next trading day market close are excluded"""
         mock_portfolio = Mock()

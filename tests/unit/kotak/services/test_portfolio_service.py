@@ -312,13 +312,13 @@ class TestPortfolioServiceGetCurrentPositions:
         positions = service.get_current_positions(include_pending=True)
         assert "INFY" in positions  # From database PENDING order (normalized)
 
-    def test_get_current_positions_excludes_database_closed_orders(self):
-        """Test get_current_positions() excludes database CLOSED orders"""
+    def test_get_current_positions_excludes_database_closed_filled_orders(self):
+        """Test get_current_positions() excludes database CLOSED (filled) buy orders."""
 
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(return_value={"data": []})
 
-        # Mock database order with CLOSED status (should be excluded)
+        # Mock database order with CLOSED status (filled; should be excluded)
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.CLOSED
@@ -334,7 +334,7 @@ class TestPortfolioServiceGetCurrentPositions:
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "WIPRO" not in positions  # CLOSED orders should not be counted
+        assert "WIPRO" not in positions  # CLOSED buys should not reserve portfolio capacity
 
     def test_get_current_positions_combines_all_sources(self):
         """Test get_current_positions() combines holdings, broker pending, and database orders"""
@@ -527,7 +527,7 @@ class TestPortfolioServiceCheckCapacity:
         assert max_size == 6
 
     def test_check_portfolio_capacity_respects_limit_with_database_orders(self):
-        """Test check_portfolio_capacity() respects max_portfolio_size when database orders push over limit"""
+        """check_portfolio_capacity() respects max_portfolio_size when DB orders exceed limit."""
 
         mock_portfolio = Mock()
         # 3 holdings from broker

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import IndividualServiceTaskExecution
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 
 
 class IndividualServiceTaskExecutionRepository:
@@ -34,7 +34,7 @@ class IndividualServiceTaskExecutionRepository:
         task = IndividualServiceTaskExecution(
             user_id=user_id,
             task_name=task_name,
-            executed_at=ist_now(),
+            executed_at=ist_now_naive(),
             status=status,
             duration_seconds=duration_seconds,
             details=details,
@@ -91,19 +91,19 @@ class IndividualServiceTaskExecutionRepository:
 
         Returns dict with: id, status, executed_at, duration_seconds, details
 
-        Note: executed_at is converted from UTC (storage) to IST (our timezone) for accurate age calculations.
+        Note: executed_at is stored as naive IST; raw SQL returns it as timezone-aware IST.
         """
         # Use raw SQL to bypass SQLAlchemy session cache
         # This ensures we see commits from other threads immediately
-        # Convert executed_at from UTC (storage) to IST (our timezone) for accurate age calculations
+        # executed_at is stored as naive IST; interpret as IST for age/display
         from src.infrastructure.db.timezone_utils import IST  # noqa: PLC0415
 
         if is_postgresql(self.db):
-            # PostgreSQL: Use AT TIME ZONE to convert from UTC to IST
+            # PostgreSQL: stored value is IST (naive); treat as Asia/Kolkata
             sql = text(
                 """
                 SELECT id, status,
-                       (executed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata' as executed_at,
+                       (executed_at AT TIME ZONE 'Asia/Kolkata') as executed_at,
                        duration_seconds, details
                 FROM individual_service_task_execution
                 WHERE user_id = :user_id AND task_name = :task_name
@@ -142,14 +142,12 @@ class IndividualServiceTaskExecutionRepository:
                         try:
                             executed_at = datetime.strptime(executed_at, "%Y-%m-%d %H:%M:%S")
                         except ValueError:
-                            # If all parsing fails, return as-is (will cause error but better than crashing)
+                            # If parsing fails, return as-is (may cause error but avoid crash)
                             executed_at = result[2]
 
-            # Ensure executed_at is a datetime object and timezone-aware (IST)
+            # Ensure executed_at is timezone-aware IST (stored value is naive IST)
             if isinstance(executed_at, datetime):
                 if executed_at.tzinfo is None:
-                    # Naive datetime: For PostgreSQL, it's already in IST (from AT TIME ZONE conversion)
-                    # For SQLite, we assume it's stored in IST (since SQLite doesn't have timezone support)
                     executed_at = executed_at.replace(tzinfo=IST)
                 elif executed_at.tzinfo != IST:
                     # Convert to IST if it has a different timezone

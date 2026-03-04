@@ -8,8 +8,10 @@ Uses PaperTradingBrokerAdapter instead of real broker authentication.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -78,7 +80,9 @@ class PaperTradingServiceAdapter:
             "eod_cleanup": False,
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
+            "amo_orders_executed": False,
             "sell_monitor_started": False,
+            "analysis": False,
         }
 
         # Engine-like interface for compatibility
@@ -149,7 +153,9 @@ class PaperTradingServiceAdapter:
             # Initialize paper trading broker
             self.logger.info("Initializing paper trading broker...", action="initialize")
             try:
-                self.broker = PaperTradingBrokerAdapter(self.config, db_session=self.db)
+                self.broker = PaperTradingBrokerAdapter(
+                    user_id=self.user_id, config=self.config, db_session=self.db
+                )
             except Exception as broker_init_error:
                 self.logger.error(
                     f"Failed to create paper trading broker: {broker_init_error}",
@@ -777,6 +783,10 @@ class PaperTradingServiceAdapter:
         """
         from src.application.services.task_execution_wrapper import execute_task
 
+        # Respect stop request: do not start or continue sell placement if service was stopped
+        if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+            return
+
         # Only log to database on first start, not on every monitoring cycle
         if not self.tasks_completed.get("sell_monitor_started"):
             with execute_task(
@@ -807,6 +817,10 @@ class PaperTradingServiceAdapter:
                     error_msg = "Paper trading broker not initialized."
                     self.logger.error(error_msg, action="run_sell_monitor")
                     raise RuntimeError(error_msg)
+
+                # Skip placement if stop was requested while we were in the block above
+                if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+                    return
 
                 # Place sell orders for all holdings at frozen EMA9 target
                 try:
@@ -892,7 +906,8 @@ class PaperTradingServiceAdapter:
                     action="run_eod_cleanup",
                 )
 
-            # Reset flags for next day
+            # Reset ALL flags for next day (including eod_cleanup — otherwise it
+            # stays True forever and never runs again on subsequent days)
             self.logger.info(
                 "Resetting task flags for next trading day...", action="run_eod_cleanup"
             )
@@ -901,12 +916,13 @@ class PaperTradingServiceAdapter:
                 "eod_cleanup": False,
                 "premarket_retry": False,
                 "premarket_amo_adjustment": False,
+                "amo_orders_executed": False,
                 "sell_monitor_started": False,
+                "analysis": False,
             }
             task_context["tasks_reset"] = True
 
             self.logger.info("Service ready for next trading day", action="run_eod_cleanup")
-            self.tasks_completed["eod_cleanup"] = True
 
     def _place_sell_orders(self):
         """
@@ -948,6 +964,12 @@ class PaperTradingServiceAdapter:
         }
 
         for holding in holdings:
+            if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+                self.logger.info(
+                    "Stopping sell order placement - service stop requested",
+                    action="_place_sell_orders",
+                )
+                break
             try:
                 symbol = holding.symbol  # Full symbol from holdings (e.g., "RELIANCE-EQ")
                 symbol_base = extract_base_symbol(symbol).upper()  # Base symbol for comparison
@@ -1145,8 +1167,24 @@ class PaperTradingServiceAdapter:
                 if data is None or data.empty:
                     continue
 
-                # Get today's data
+                # Get latest daily candle and ensure it belongs to today's session (IST)
                 latest = data.iloc[-1]
+                latest_ts = latest.name
+                try:
+                    latest_ts = pd.to_datetime(latest_ts)
+                except Exception:
+                    pass
+
+                if getattr(latest_ts, "tzinfo", None) is None:
+                    latest_ts = latest_ts.tz_localize("UTC")
+
+                latest_date_ist = latest_ts.tz_convert("Asia/Kolkata").date()
+                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+                # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
+                if latest_date_ist != today_ist:
+                    continue
+
                 high = latest["high"]
                 close = latest["close"]
 
@@ -1196,6 +1234,16 @@ class PaperTradingServiceAdapter:
                     }
 
                     try:
+                        # If position is already closed (e.g. elsewhere or previous run), don't place sell
+                        holding_before = self.broker.get_holding(symbol)
+                        if not holding_before or holding_before.quantity == 0:
+                            symbols_to_remove.append(symbol)
+                            self.logger.info(
+                                f"Position already closed for {symbol}, removing from tracking (no sell placed)",
+                                action="_monitor_sell_orders",
+                            )
+                            continue
+
                         # Cancel existing limit order if any
                         pending_orders = self.broker.get_all_orders()
                         for pending in pending_orders:
@@ -1213,7 +1261,7 @@ class PaperTradingServiceAdapter:
                         # Place market order - will execute immediately at target price
                         self.broker.place_order(target_order)
 
-                        # Verify position is actually closed before removing from tracking
+                        # Verify position is actually closed after sell
                         holding = self.broker.get_holding(symbol)
                         if not holding or holding.quantity == 0:
                             symbols_to_remove.append(symbol)
@@ -2012,7 +2060,7 @@ class PaperTradingEngineAdapter:
             elif isinstance(today_orders_result, dict) and "items" in today_orders_result:
                 today_orders = today_orders_result.get("items")
 
-            for order in (today_orders or []):
+            for order in today_orders or []:
                 if (
                     order.side == "buy"
                     and order.placed_at

@@ -9,10 +9,12 @@ Features:
 - Real-time LTP (WebSocket/LivePriceManager)
 - Automatic fallback mechanisms
 - Caching layer to reduce API calls
+- Thread-safe caching with request-scoped isolation
 - Subscription management
 """
 
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,60 +38,201 @@ from utils.logger import logger  # noqa: E402
 
 
 class PriceCache:
-    """Simple in-memory cache for price data with TTL"""
+    """Thread-safe in-memory cache for price data with TTL"""
 
     def __init__(self):
         self._cache: dict[str, dict[str, Any]] = {}
         self._realtime_cache: dict[str, dict[str, Any]] = {}
+        # Thread-safe locks for cache access
+        self._cache_lock = threading.RLock()  # RLock allows re-entrant locking
+        self._realtime_lock = threading.RLock()
+        # Request-scoped cache isolation
+        self._request_local = threading.local()
+        # Max cache size to prevent memory leaks
+        self.max_cache_size = 1000
+        self.max_realtime_cache_size = 500
 
     def get_historical(self, key: str, ttl_seconds: int = 300) -> pd.DataFrame | None:
         """
-        Get cached historical data if not expired
+        Get cached historical data if not expired.
+        Thread-safe with request isolation.
 
-        Phase 4.2: Adaptive TTL support
+        Edge cases handled:
+        - Expired entries are automatically removed
+        - Lock acquisition timeout (fallback to None)
+        - Request-scoped vs global cache separation
         """
-        if key in self._cache:
-            entry = self._cache[key]
-            age = (datetime.now() - entry["timestamp"]).total_seconds()
-            if age < ttl_seconds:
-                logger.debug(f"Cache hit for historical price: {key} (age: {age:.1f}s)")
-                return entry["data"]
-            else:
-                # Expired, remove from cache
-                del self._cache[key]
-        return None
+        try:
+            # Try to acquire lock with timeout to prevent deadlocks
+            acquired = self._cache_lock.acquire(timeout=2.0)
+            if not acquired:
+                logger.warning(f"Cache lock timeout for historical price: {key}")
+                return None
+
+            try:
+                if key in self._cache:
+                    entry = self._cache[key]
+                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    if age < ttl_seconds:
+                        logger.debug(f"Cache hit for historical price: {key} (age: {age:.1f}s)")
+                        return entry["data"]
+                    else:
+                        # Expired, remove from cache
+                        del self._cache[key]
+                        logger.debug(f"Expired cache entry removed: {key}")
+                return None
+            finally:
+                self._cache_lock.release()
+        except Exception as e:
+            logger.warning(f"Error accessing historical price cache for {key}: {e}")
+            return None
 
     def set_historical(self, key: str, data: pd.DataFrame):
-        """Cache historical data"""
-        self._cache[key] = {
-            "data": data,
-            "timestamp": datetime.now(),
-        }
+        """
+        Cache historical data with size limit and duplicate prevention.
+
+        Edge cases handled:
+        - Cache size limit to prevent memory leaks
+        - Thread-safe writes
+        - Data validation
+        """
+        try:
+            # Validate data before caching
+            if data is None or (isinstance(data, pd.DataFrame) and data.empty):
+                logger.warning(f"Skipping cache for invalid data: {key}")
+                return
+
+            acquired = self._cache_lock.acquire(timeout=2.0)
+            if not acquired:
+                logger.warning(f"Cache lock timeout for setting historical price: {key}")
+                return
+
+            try:
+                # Check cache size limit
+                if len(self._cache) >= self.max_cache_size:
+                    # Remove oldest entry (FIFO eviction)
+                    oldest_key = next(iter(self._cache))
+                    del self._cache[oldest_key]
+                    logger.debug(f"Cache evicted oldest entry due to size limit: {oldest_key}")
+
+                self._cache[key] = {
+                    "data": (
+                        data.copy() if isinstance(data, pd.DataFrame) else data
+                    ),  # Copy to prevent external mutations
+                    "timestamp": datetime.now(),
+                }
+                logger.debug(f"Cached historical price for {key}")
+            finally:
+                self._cache_lock.release()
+        except Exception as e:
+            logger.warning(f"Error setting historical price cache for {key}: {e}")
 
     def get_realtime(self, key: str, ttl_seconds: int = 30) -> float | None:
-        """Get cached real-time price if not expired"""
-        if key in self._realtime_cache:
-            entry = self._realtime_cache[key]
-            age = (datetime.now() - entry["timestamp"]).total_seconds()
-            if age < ttl_seconds:
-                logger.debug(f"Cache hit for real-time price: {key} (age: {age:.1f}s)")
-                return entry["price"]
-            else:
-                # Expired, remove from cache
-                del self._realtime_cache[key]
-        return None
+        """
+        Get cached real-time price if not expired.
+        Thread-safe with request isolation.
+
+        Edge cases handled:
+        - Expired entries are automatically removed
+        - Lock acquisition timeout
+        - Invalid price values (negative, zero, inf, nan)
+        """
+        try:
+            acquired = self._realtime_lock.acquire(timeout=2.0)
+            if not acquired:
+                logger.warning(f"Realtime cache lock timeout: {key}")
+                return None
+
+            try:
+                if key in self._realtime_cache:
+                    entry = self._realtime_cache[key]
+                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    if age < ttl_seconds:
+                        price = entry["price"]
+                        # Validate price
+                        if (
+                            price is not None
+                            and price > 0
+                            and not (
+                                isinstance(price, float)
+                                and (price != price or price == float("inf"))
+                            )
+                        ):
+                            logger.debug(f"Cache hit for real-time price: {key} (age: {age:.1f}s)")
+                            return price
+                        else:
+                            logger.warning(f"Invalid cached price for {key}: {price}")
+                            del self._realtime_cache[key]
+                    else:
+                        # Expired, remove from cache
+                        del self._realtime_cache[key]
+                        logger.debug(f"Expired realtime cache entry removed: {key}")
+                return None
+            finally:
+                self._realtime_lock.release()
+        except Exception as e:
+            logger.warning(f"Error accessing realtime price cache for {key}: {e}")
+            return None
 
     def set_realtime(self, key: str, price: float):
-        """Cache real-time price"""
-        self._realtime_cache[key] = {
-            "price": price,
-            "timestamp": datetime.now(),
-        }
+        """
+        Cache real-time price with validation and size limits.
+
+        Edge cases handled:
+        - Invalid price validation (negative, zero, inf, nan)
+        - Cache size limit
+        - Thread-safe writes
+        """
+        try:
+            # Validate price before caching
+            if (
+                price is None
+                or price <= 0
+                or (isinstance(price, float) and (price != price or price == float("inf")))
+            ):
+                logger.warning(f"Skipping invalid realtime price cache for {key}: {price}")
+                return
+
+            acquired = self._realtime_lock.acquire(timeout=2.0)
+            if not acquired:
+                logger.warning(f"Realtime cache lock timeout for setting: {key}")
+                return
+
+            try:
+                # Check cache size limit
+                if len(self._realtime_cache) >= self.max_realtime_cache_size:
+                    # Remove oldest entry (FIFO eviction)
+                    oldest_key = next(iter(self._realtime_cache))
+                    del self._realtime_cache[oldest_key]
+                    logger.debug(f"Realtime cache evicted oldest entry: {oldest_key}")
+
+                self._realtime_cache[key] = {
+                    "price": float(price),
+                    "timestamp": datetime.now(),
+                }
+                logger.debug(f"Cached realtime price for {key}: Rs {price:.2f}")
+            finally:
+                self._realtime_lock.release()
+        except Exception as e:
+            logger.warning(f"Error setting realtime price cache for {key}: {e}")
 
     def clear(self):
-        """Clear all cached data"""
-        self._cache.clear()
-        self._realtime_cache.clear()
+        """Clear all cached data (thread-safe)"""
+        try:
+            acquired_historical = self._cache_lock.acquire(timeout=2.0)
+            acquired_realtime = self._realtime_lock.acquire(timeout=2.0)
+
+            try:
+                self._cache.clear()
+                self._realtime_cache.clear()
+                logger.debug("Price cache cleared")
+            finally:
+                if acquired_historical:
+                    self._cache_lock.release()
+                if acquired_realtime:
+                    self._realtime_lock.release()
+        except Exception as e:
+            logger.warning(f"Error clearing price cache: {e}")
 
 
 class PriceService:

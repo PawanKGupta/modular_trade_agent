@@ -234,10 +234,11 @@ def get_task_executions(
         if status:
             query = query.filter(IndividualServiceTaskExecution.status == status)
         if start_date:
-            start_datetime = datetime.combine(start_date, dt_time.min, tzinfo=IST)
+            # executed_at is stored as naive IST; use naive range for correct comparison
+            start_datetime = datetime.combine(start_date, dt_time.min)
             query = query.filter(IndividualServiceTaskExecution.executed_at >= start_datetime)
         if end_date:
-            end_datetime = datetime.combine(end_date, dt_time.max, tzinfo=IST)
+            end_datetime = datetime.combine(end_date, dt_time.max)
             query = query.filter(IndividualServiceTaskExecution.executed_at <= end_datetime)
 
         # Get total count
@@ -278,7 +279,8 @@ def get_task_executions(
             executed_at_utc = exec.executed_at
             if executed_at_utc:
                 if executed_at_utc.tzinfo is None:
-                    executed_at_utc = executed_at_utc.replace(tzinfo=UTC)
+                    # Stored as naive IST clock time
+                    executed_at_utc = executed_at_utc.replace(tzinfo=IST).astimezone(UTC)
                 elif executed_at_utc.tzinfo != UTC:
                     executed_at_utc = executed_at_utc.astimezone(UTC)
 
@@ -491,8 +493,9 @@ def get_schedule_compliance(
         schedules = schedule_repo.get_enabled()
         now = ist_now()
         today = now.date()
-        today_start = datetime.combine(today, dt_time.min, tzinfo=IST)
-        today_end = datetime.combine(today, dt_time.max, tzinfo=IST)
+        # executed_at is stored as naive IST; use naive range for correct comparison
+        today_start = datetime.combine(today, dt_time.min)
+        today_end = datetime.combine(today, dt_time.max)
 
         compliance_list = []
         total_missed = 0
@@ -513,13 +516,13 @@ def get_schedule_compliance(
             )
 
             execution_count = len(today_executions)
-            # Get last execution and ensure it's timezone-aware (UTC) for proper frontend display
+            # Get last execution; naive is IST, convert to UTC for frontend
             last_execution = None
             if today_executions:
                 last_execution = max((e.executed_at for e in today_executions), default=None)
                 if last_execution:
                     if last_execution.tzinfo is None:
-                        last_execution = last_execution.replace(tzinfo=UTC)
+                        last_execution = last_execution.replace(tzinfo=IST).astimezone(UTC)
                     elif last_execution.tzinfo != UTC:
                         last_execution = last_execution.astimezone(UTC)
 
@@ -1140,8 +1143,8 @@ def get_monitoring_dashboard(
         logger.info("Dashboard: Getting current time")
         now = ist_now()
         today = now.date()
-        # Create timezone-aware datetime for today_start
-        today_start = datetime.combine(today, dt_time.min, tzinfo=IST)
+        # executed_at is stored as naive IST; use naive range for correct comparison
+        today_start = datetime.combine(today, dt_time.min)
         logger.info("Dashboard: Got time, calling _get_services_health_impl")
 
         # Get service health
@@ -1416,7 +1419,8 @@ def get_monitoring_dashboard(
             executed_at_utc = exec.executed_at
             if executed_at_utc:
                 if executed_at_utc.tzinfo is None:
-                    executed_at_utc = executed_at_utc.replace(tzinfo=UTC)
+                    # Stored as naive IST clock time
+                    executed_at_utc = executed_at_utc.replace(tzinfo=IST).astimezone(UTC)
                 elif executed_at_utc.tzinfo != UTC:
                     executed_at_utc = executed_at_utc.astimezone(UTC)
 

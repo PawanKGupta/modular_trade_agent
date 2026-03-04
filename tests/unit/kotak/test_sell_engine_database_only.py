@@ -59,6 +59,30 @@ class TestSellOrderManagerDatabaseOnlyInitialization:
         assert not hasattr(manager, "position_loader")
 
 
+def _valid_holdings_for_positions(positions):
+    """Build holdings response for Edge Case #17: get_open_positions requires valid holdings."""
+    data = []
+    for p in positions:
+        sym = (
+            getattr(p, "symbol", None)
+            if hasattr(p, "symbol")
+            else (p.get("symbol") if isinstance(p, dict) else None)
+        )
+        qty = (
+            getattr(p, "quantity", 0)
+            if hasattr(p, "quantity")
+            else (p.get("qty", 0) if isinstance(p, dict) else 0)
+        )
+        if sym is not None:
+            data.append(
+                {
+                    "tradingSymbol": sym.upper() if isinstance(sym, str) else str(sym),
+                    "quantity": int(qty),
+                }
+            )
+    return {"data": data}
+
+
 class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
     """Test get_open_positions() with database-only implementation"""
 
@@ -87,6 +111,9 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             positions_repo=mock_positions_repo,
             user_id=2,
         )
+        # Edge Case #17: valid holdings required so positions are returned
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -135,6 +162,10 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             positions_repo=mock_positions_repo,
             user_id=2,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions(
+            [mock_open_position]
+        )
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -162,9 +193,10 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
         mock_position.opened_at = ist_now()
         mock_position.closed_at = None
 
-        # Create mock ONGOING order with metadata
+        # Create mock executed buy order (ONGOING/CLOSED) with metadata
         mock_order = Mock()
         mock_order.side = "buy"
+        mock_order.status = DbOrderStatus.CLOSED  # Executed (filled)
         mock_order.symbol = "IFBIND-EQ"
         mock_order.execution_qty = 10.0
         mock_order.execution_price = 1500.0
@@ -186,6 +218,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             user_id=2,
             orders_repo=mock_orders_repo,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -194,7 +228,7 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
         mock_orders_repo.list.assert_called_once()
         call_args = mock_orders_repo.list.call_args
         assert call_args[0][0] == 2  # user_id
-        assert call_args[1]["status"] == DbOrderStatus.ONGOING
+        # list(user_id) does not pass status; executed orders filtered in code (ONGOING/CLOSED)
 
         # Verify metadata was enriched
         assert len(result) == 1
@@ -228,6 +262,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             user_id=2,
             orders_repo=None,  # No orders_repo
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -334,6 +370,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             user_id=2,
             orders_repo=mock_orders_repo,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions - should not raise, should use defaults
         result = manager.get_open_positions()
@@ -372,6 +410,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             positions_repo=mock_positions_repo,
             user_id=2,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions(positions)
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -434,6 +474,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             user_id=2,
             orders_repo=mock_orders_repo,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -496,6 +538,8 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
             user_id=2,
             orders_repo=mock_orders_repo,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call get_open_positions
         result = manager.get_open_positions()
@@ -550,12 +594,16 @@ class TestSellOrderManagerRunAtMarketOpenDatabaseOnly:
             positions_repo=mock_positions_repo,
             user_id=2,
         )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = _valid_holdings_for_positions([mock_position])
 
         # Call run_at_market_open
         orders_placed = manager.run_at_market_open()
 
-        # Verify get_open_positions was called (via run_at_market_open)
-        mock_positions_repo.list.assert_called_once_with(2)
+        # run_at_market_open calls positions_repo.list twice: once in
+        # _reconcile_positions_with_broker_holdings(), once in get_open_positions()
+        assert mock_positions_repo.list.call_count == 2
+        mock_positions_repo.list.assert_any_call(2)
 
         # Verify order was placed
         assert orders_placed == 1

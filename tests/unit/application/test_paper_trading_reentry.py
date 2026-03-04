@@ -10,7 +10,7 @@ Verifies that paper trading implements the same re-entry logic as real trading:
 
 import shutil
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -20,21 +20,28 @@ from src.application.services.paper_trading_service_adapter import (
     PaperTradingEngineAdapter,
     PaperTradingServiceAdapter,
 )
+from src.infrastructure.db.models import Users
+from src.infrastructure.db.timezone_utils import ist_now
 
 
 @pytest.fixture
-def paper_service(tmp_path):
+def paper_service(tmp_path, db_session):
     """Create paper trading service with temporary storage"""
     storage_path = str(tmp_path / "paper_trading")
 
     # Ensure a clean slate even if pytest temp dirs persist
     shutil.rmtree(storage_path, ignore_errors=True)
 
-    # Create service adapter
-    mock_db = MagicMock()
+    # Create test user in DB
+    user = Users(email="reentry_test@example.com", password_hash="x", created_at=ist_now())
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    # Create service adapter with real DB session
     service = PaperTradingServiceAdapter(
-        user_id=1,
-        db_session=mock_db,
+        user_id=user.id,
+        db_session=db_session,
         initial_capital=200000.0,  # Higher capital for testing
         storage_path=storage_path,
     )
@@ -54,10 +61,10 @@ def paper_service(tmp_path):
     )
 
     broker = PaperTradingBrokerAdapter(
-        user_id=service.user_id,
+        user_id=user.id,
         config=config,
         storage_path=storage_path,
-        db_session=None,
+        db_session=db_session,
     )
     assert broker.connect() is True
 

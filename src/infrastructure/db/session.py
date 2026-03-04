@@ -1,7 +1,7 @@
 import os
 import sys
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -89,6 +89,17 @@ def get_session():
     """
     db = SessionLocal()
     try:
+        # Force connection checkout and clear any leftover transaction state
+        # (e.g. "prepared" state from a previous request that failed during commit).
+        # Session doesn't get a connection until first use; rollback() alone may be a no-op.
+        try:
+            db.execute(text("SELECT 1"))
+            db.rollback()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
         yield db
         # Success path: commit transaction if still active
         try:

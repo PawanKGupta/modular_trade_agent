@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 from .case_insensitive_enum import CaseInsensitiveEnum
-from .timezone_utils import ist_now
+from .timezone_utils import ist_now, ist_now_naive
 
 
 class UserRole(str, Enum):
@@ -111,6 +111,7 @@ class Orders(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    base_symbol: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     side: Mapped[str] = mapped_column(String(8), nullable=False)  # 'buy'|'sell'
     order_type: Mapped[str] = mapped_column(String(16), nullable=False)  # 'market'|'limit'
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
@@ -676,7 +677,7 @@ class ServiceTaskExecution(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     task_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     executed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, index=True, nullable=False
+        DateTime, default=ist_now_naive, index=True, nullable=False
     )
     status: Mapped[str] = mapped_column(
         String(16), index=True, nullable=False
@@ -1041,7 +1042,7 @@ class IndividualServiceTaskExecution(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
     task_name: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     executed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, index=True, nullable=False
+        DateTime, default=ist_now_naive, index=True, nullable=False
     )
     status: Mapped[str] = mapped_column(
         String(16), index=True, nullable=False

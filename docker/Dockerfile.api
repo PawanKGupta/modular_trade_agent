@@ -65,7 +65,7 @@ RUN echo '#!/bin/bash' > /app/start.sh && \
     echo 'set +e' >> /app/start.sh && \
     echo 'echo "Checking database migration status..."' >> /app/start.sh && \
     echo 'echo "Running database migrations..."' >> /app/start.sh && \
-    echo 'MIGRATION_OUTPUT=$(python -m alembic upgrade head 2>&1)' >> /app/start.sh && \
+    echo 'MIGRATION_OUTPUT=$(python -m alembic upgrade heads 2>&1)' >> /app/start.sh && \
     echo 'MIGRATION_EXIT=$?' >> /app/start.sh && \
     echo 'echo "$MIGRATION_OUTPUT"' >> /app/start.sh && \
     echo 'if [ $MIGRATION_EXIT -ne 0 ]; then' >> /app/start.sh && \
@@ -111,7 +111,7 @@ RUN echo '#!/bin/bash' > /app/start.sh && \
     echo '      echo "Stamping database to head..."' >> /app/start.sh && \
     echo '      python -m alembic stamp head || echo "WARNING: Could not stamp database"' >> /app/start.sh && \
     echo '      echo "Retrying migrations..."' >> /app/start.sh && \
-    echo '      python -m alembic upgrade head || echo "WARNING: Migration failed after stamp, continuing anyway..."' >> /app/start.sh && \
+    echo '      python -m alembic upgrade heads || echo "WARNING: Migration failed after stamp, continuing anyway..."' >> /app/start.sh && \
     echo '    else' >> /app/start.sh && \
     echo '      echo "ERROR: Schema validation failed. Database may be incomplete."' >> /app/start.sh && \
     echo '      echo "WARNING: Continuing anyway, but manual database fix may be required."' >> /app/start.sh && \

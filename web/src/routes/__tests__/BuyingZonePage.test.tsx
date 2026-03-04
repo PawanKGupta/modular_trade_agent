@@ -1471,7 +1471,7 @@ describe('BuyingZonePage', () => {
 			});
 		});
 
-		it('refetches data after activating a signal', async () => {
+		it('refetches data after activating a signal', {}, async () => {
 			const { http, HttpResponse } = await import('msw');
 			const { server } = await import('@/mocks/server');
 

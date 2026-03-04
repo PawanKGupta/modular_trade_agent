@@ -914,6 +914,178 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
         ) from e
 
 
+@router.get("/system-holdings", response_model=PaperTradingPortfolio)
+def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
+    db: Session = Depends(get_db),  # noqa: B008
+    current: Users = Depends(get_current_user),  # noqa: B008
+):
+    """
+    Get system-tracked holdings for the current user (broker mode).
+
+    Returns only positions that the system tracks in the Positions table (open positions).
+    Use this to see what the system considers "its" holdings vs all broker holdings.
+    Does not require broker to be connected; when disconnected, current price is shown
+    as avg price (P&L will be zero). When connected, current price is enriched from broker.
+    """
+    try:
+        settings_repo = SettingsRepository(db)
+        settings = settings_repo.get_by_user_id(current.id)
+        if not settings:
+            raise HTTPException(
+                status_code=404, detail="User settings not found. Please configure your account."
+            )
+        if settings.trade_mode != TradeMode.BROKER:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "System holdings is only available in broker mode. "
+                    f"Current mode: {settings.trade_mode.value}"
+                ),
+            )
+
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        positions_repo = PositionsRepository(db)
+        all_positions = positions_repo.list(current.id)
+        open_positions = [p for p in all_positions if p.closed_at is None]
+
+        # Optional: get current prices from broker if connected
+        broker_price_by_symbol = {}
+        if settings.broker_creds_encrypted:
+            broker_creds = decrypt_broker_credentials(settings.broker_creds_encrypted)
+            if broker_creds:
+                temp_env_file = create_temp_env_file(broker_creds)
+                try:
+                    auth = _get_or_create_auth_session(current.id, temp_env_file, db)
+                    if auth and auth.is_authenticated():
+                        from modules.kotak_neo_auto_trader.infrastructure.broker_factory import (
+                            BrokerFactory,
+                        )
+
+                        broker = BrokerFactory.create_broker("kotak_neo", auth_handler=auth)
+                        holdings = broker.get_holdings()
+                        for holding in holdings:
+                            if holding.quantity == 0:
+                                continue
+                            sym = holding.symbol.upper().replace(".NS", "").replace(".BO", "")
+                            if "-" not in sym:
+                                sym = f"{sym}-EQ"
+                            broker_price_by_symbol[sym] = float(holding.current_price.amount)
+                            # Also map base symbol for positions that use full symbol
+                            base = (
+                                sym.replace("-EQ", "")
+                                .replace("-BE", "")
+                                .replace("-BL", "")
+                                .replace("-BZ", "")
+                            )
+                            broker_price_by_symbol[base] = float(holding.current_price.amount)
+                except Exception as e:
+                    logger.debug(f"Could not fetch broker prices for system holdings: {e}")
+                finally:
+                    try:
+                        Path(temp_env_file).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+        portfolio_holdings = []
+        portfolio_value = 0.0
+        unrealized_pnl_total = 0.0
+
+        for pos in open_positions:
+            current_price = (
+                broker_price_by_symbol.get(pos.symbol.upper())
+                or broker_price_by_symbol.get(
+                    pos.symbol.upper()
+                    .replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
+                )
+                or pos.avg_price
+            )
+            qty = int(pos.quantity)
+            avg_price = float(pos.avg_price)
+            cost_basis = avg_price * qty
+            market_value = current_price * qty
+            pnl = market_value - cost_basis
+            pnl_pct = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+
+            portfolio_value += market_value
+            unrealized_pnl_total += pnl
+
+            reentry_count = pos.reentry_count or 0
+            reentries_list = None
+            if pos.reentries:
+                if isinstance(pos.reentries, dict):
+                    reentries_list = pos.reentries.get("reentries", [])
+                elif isinstance(pos.reentries, list):
+                    reentries_list = pos.reentries
+                else:
+                    reentries_list = []
+
+            portfolio_holdings.append(
+                PaperTradingHolding(
+                    symbol=pos.symbol,
+                    quantity=qty,
+                    average_price=avg_price,
+                    current_price=current_price,
+                    cost_basis=cost_basis,
+                    market_value=market_value,
+                    pnl=pnl,
+                    pnl_percentage=pnl_pct,
+                    target_price=None,
+                    distance_to_target=None,
+                    reentry_count=reentry_count,
+                    reentries=reentries_list,
+                    entry_rsi=float(pos.entry_rsi) if pos.entry_rsi is not None else None,
+                    initial_entry_price=(
+                        float(pos.initial_entry_price)
+                        if pos.initial_entry_price is not None
+                        else None
+                    ),
+                )
+            )
+
+        account = PaperTradingAccount(
+            initial_capital=portfolio_value - unrealized_pnl_total,
+            available_cash=0.0,
+            total_pnl=unrealized_pnl_total,
+            realized_pnl=0.0,
+            unrealized_pnl=unrealized_pnl_total,
+            portfolio_value=portfolio_value,
+            total_value=portfolio_value,
+            return_percentage=(
+                (unrealized_pnl_total / (portfolio_value - unrealized_pnl_total) * 100)
+                if (portfolio_value - unrealized_pnl_total) > 0
+                else 0.0
+            ),
+        )
+
+        return PaperTradingPortfolio(
+            account=account,
+            holdings=portfolio_holdings,
+            recent_orders=[],
+            order_statistics={
+                "total_orders": 0,
+                "buy_orders": 0,
+                "sell_orders": 0,
+                "completed_orders": 0,
+                "pending_orders": 0,
+                "cancelled_orders": 0,
+                "rejected_orders": 0,
+                "success_rate": 0.0,
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching broker system holdings for user {current.id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch system holdings: {str(e)}"
+        ) from e
+
+
 @router.get("/orders", response_model=list[dict])
 def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
     db: Session = Depends(get_db),  # noqa: B008

@@ -238,8 +238,8 @@ class TestOrderTrackerDualWrite:
         # Should update in DB
         assert result is True
         mock_orders_repo.update.assert_called()
-        # EXECUTED status maps to ONGOING in DB
-        assert mock_order.status == DbOrderStatus.ONGOING
+        # EXECUTED status maps to CLOSED in DB (filled = CLOSED, not ONGOING)
+        assert mock_order.status == DbOrderStatus.CLOSED
         assert mock_order.execution_qty == 10
 
         # Should also update JSON

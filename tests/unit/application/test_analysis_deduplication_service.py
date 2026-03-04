@@ -513,7 +513,7 @@ class TestSmartExpirationLogic:
             assert new_signal is not None
 
     def test_traded_signal_user_has_ongoing_order_should_skip(self, db_session, test_user):
-        """Test that TRADED signal with user having ONGOING order skips creating new signal"""
+        """Test that TRADED signal with user having open position skips creating new signal"""
         service = AnalysisDeduplicationService(db_session, user_id=test_user.id)
         with freeze_time("2025-01-13 08:00:00+05:30"):
             # Create existing TRADED signal
@@ -538,18 +538,16 @@ class TestSmartExpirationLogic:
             )
             db_session.add(user_status)
 
-            # Create ONGOING buy order
-            order = Orders(
+            # Create open position (source of truth for "has ongoing buy"; Positions closed_at=None)
+            position = Positions(
                 user_id=test_user.id,
                 symbol="RELIANCE",
-                side="buy",
-                order_type="MARKET",
-                status=OrderStatus.ONGOING,
-                quantity=10,
-                price=2500.0,
-                placed_at=ist_now(),
+                quantity=10.0,
+                avg_price=2500.0,
+                opened_at=ist_now(),
+                closed_at=None,
             )
-            db_session.add(order)
+            db_session.add(position)
             db_session.commit()
 
             # Same signal appears in new analysis

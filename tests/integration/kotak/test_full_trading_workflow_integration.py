@@ -387,9 +387,9 @@ class TestCategory1HappyPath:
         # Now check buy order status
         buy_stats = monitor.check_buy_order_status()
 
-        # Verify order executed
+        # Verify order executed (filled orders are CLOSED)
         executed_order = orders_repo.get_by_broker_order_id(user_id, "AMO12345")
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED
 
         # Verify position created
         positions = positions_repo.list(user_id)
@@ -416,6 +416,12 @@ class TestCategory1HappyPath:
 
         # Ensure indicator_service has price_service reference
         sell_manager.indicator_service.price_service = engine.price_service
+
+        # Edge Case #17: get_open_positions requires valid holdings; mock so position is returned
+        if sell_manager.portfolio is not None:
+            sell_manager.portfolio.get_holdings = Mock(
+                return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 40}]}
+            )
 
         # Mock get_realtime_price for EMA9 calculation
         import pandas as pd
@@ -1305,19 +1311,19 @@ class TestCategory6SellMonitoringEdgeCases:
         # Verify order executed - refresh from database
         session.refresh(sell_order)
         executed_order = orders_repo.get_by_broker_order_id(user_id, "SELL12345")
-        # The order status should be updated to ONGOING by the monitor
+        # The order status should be updated to CLOSED when executed (filled orders are CLOSED)
         # If not updated yet, it might still be PENDING, so check both
-        assert executed_order.status in [OrderStatus.ONGOING, OrderStatus.PENDING]
+        assert executed_order.status in [OrderStatus.CLOSED, OrderStatus.PENDING]
 
-        # If still PENDING, manually update it to ONGOING to match expected behavior
+        # If still PENDING, manually update it to CLOSED to match expected behavior
         if executed_order.status == OrderStatus.PENDING:
-            executed_order.status = OrderStatus.ONGOING
+            executed_order.status = OrderStatus.CLOSED
             executed_order.execution_price = 2600.0
             executed_order.execution_qty = 40
             session.commit()
             session.refresh(executed_order)
 
-        assert executed_order.status == OrderStatus.ONGOING
+        assert executed_order.status == OrderStatus.CLOSED
 
         # Verify position closed
         # Note: Due to SQLite in-memory database session isolation, the transaction commit
@@ -1717,7 +1723,7 @@ class TestCategory7TradeClosureEdgeCases:
             order_type="limit",
             quantity=40,
             price=2600.0,
-            status=OrderStatus.ONGOING,
+            status=OrderStatus.CLOSED,
             broker_order_id="SELL12345",
             execution_price=2600.0,
             execution_qty=40.0,

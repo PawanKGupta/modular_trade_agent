@@ -74,40 +74,31 @@ class AnalysisDeduplicationService:
 
         return None
 
-    def _has_ongoing_buy_order_by_symbol(self, user_id: int, symbol: str) -> bool:
+    def _has_open_position_for_symbol(self, user_id: int, symbol: str) -> bool:
         """
-        Check if user has an ONGOING buy order for a symbol with fallback to base symbol matching.
+        Check if user has an open position for a symbol (user still holds the stock).
 
-        After migration, orders have full symbols (e.g., "RELIANCE-EQ"),
-        but signals may still have base symbols (e.g., "RELIANCE").
-        This method tries exact match first, then falls back to base symbol matching.
+        Uses Positions table (closed_at IS NULL) as source of truth. Tries exact symbol match
+        first, then fallback to base symbol matching for signals that use base symbols.
+        Does not use order status (ONGOING/CLOSED) for position open/closed.
 
         Args:
             user_id: User ID
             symbol: Symbol from signal (may be base or full symbol)
 
         Returns:
-            True if user has an ONGOING buy order, False otherwise
+            True if user has an open position for the symbol, False otherwise
         """
         # Try exact match first (in case signal has full symbol)
         if self._orders_repo.has_ongoing_buy_order(user_id, symbol):
             return True
 
-        # Fallback: If not found and symbol might be base symbol, try base symbol matching
-        # Check if symbol is a base symbol (no segment suffix)
+        # Fallback: If symbol might be base symbol, check open positions by base symbol
         if "-" not in symbol.upper():
-            # Query all ongoing buy orders and match by base symbol
-            from src.infrastructure.db.models import Orders, OrderStatus
-
-            stmt = select(Orders).where(
-                Orders.user_id == user_id,
-                Orders.side == "buy",
-                Orders.status == OrderStatus.ONGOING,
-            )
-            all_orders = self.db.execute(stmt).scalars().all()
+            all_positions = self._positions_repo.list(user_id)
             base_symbol = extract_base_symbol(symbol).upper()
-            for order in all_orders:
-                if extract_base_symbol(order.symbol).upper() == base_symbol:
+            for pos in all_positions:
+                if pos.closed_at is None and extract_base_symbol(pos.symbol).upper() == base_symbol:
                     return True
 
         return False
@@ -275,21 +266,20 @@ class AnalysisDeduplicationService:
                         )
                         user_has_traded = user_status == SignalStatus.TRADED
 
-                        # If user has TRADED status, check if they have an ONGOING order
-                        # ONGOING = order executed and user still holds the stock (position is open)
-                        # If order is ONGOING, we can assume position is open
-                        # If order is CLOSED/FAILED/CANCELLED, treat as if not traded
+                        # If user has TRADED status, check if they have an open position
+                        # (Uses Positions table: closed_at IS NULL; not order status.)
+                        # If position is open, we can skip duplicate signal.
                         if user_has_traded:
-                            user_has_ongoing_order = self._has_ongoing_buy_order_by_symbol(
+                            user_has_open_position = self._has_open_position_for_symbol(
                                 self.user_id, symbol
                             )
 
-                            # If order is ONGOING, user has open position (can skip duplicate signal)
-                            # If order is not ONGOING (CLOSED/FAILED/CANCELLED), treat as if not traded
-                            if not user_has_ongoing_order:
+                            # If user has open position, skip duplicate signal
+                            # If no open position (closed/sold), treat as if not traded
+                            if not user_has_open_position:
                                 user_has_traded = False
                             else:
-                                # Order is ONGOING, so position should be open
+                                # User has open position
                                 # Double-check position status for safety
                                 # Use _find_position_by_symbol to check for closed positions
                                 # (handles base symbol matching)
@@ -357,34 +347,30 @@ class AnalysisDeduplicationService:
 
                     elif existing_signal.status == SignalStatus.TRADED:
                         # TRADED signal (base status): Keep original, create new for non-traded users
-                        # Check if THIS user has an ONGOING order (which implies position is open)
+                        # Check if THIS user has an open position (Positions table, not order status)
                         if is_buy_signal:
-                            # Check if user has ONGOING buy order
-                            user_has_ongoing_order = False
+                            # Check if user has open position for symbol
+                            user_has_open_position = False
                             if self.user_id:
-                                user_has_ongoing_order = self._has_ongoing_buy_order_by_symbol(
+                                user_has_open_position = self._has_open_position_for_symbol(
                                     self.user_id, symbol
                                 )
 
-                                if user_has_ongoing_order:
-                                    # If ONGOING order exists, check if position is explicitly closed
-                                    # (ONGOING order implies position is open unless explicitly closed)
-                                    # Use _find_position_by_symbol to check for closed positions
+                                if user_has_open_position:
+                                    # If position exists, check if it is explicitly closed
                                     # (handles base symbol matching)
                                     position = self._find_position_by_symbol(
                                         self.user_id, symbol, include_closed=True
                                     )
                                     if position is not None and position.closed_at is not None:
                                         # Position exists but is closed: allow new signal
-                                        user_has_ongoing_order = False
+                                        user_has_open_position = False
 
-                            if user_has_ongoing_order:
-                                # User has ONGOING order (and position is open or not yet recorded):
-                                # Skip (don't create duplicate)
+                            if user_has_open_position:
+                                # User has open position (or not yet recorded): skip duplicate
                                 skipped_count += 1
                             else:
-                                # User doesn't have ONGOING order OR position is explicitly closed:
-                                # Create new signal
+                                # User has no open position or position is closed: create new signal
                                 new_signal = self._create_signal_from_data(signal_data)
                                 if new_signal:
                                     self.db.add(new_signal)
