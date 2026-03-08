@@ -189,55 +189,7 @@ class OrderValidationService:
             return 0.0
 
         lim = self.portfolio.get_limits() or {}
-        data = lim.get("data") if isinstance(lim, dict) else None
-        avail = 0.0
-        used_key = None
-
-        if isinstance(data, dict):
-            try:
-                # Prefer cash-like fields first, then margin, then Net
-                candidates = [
-                    "cash",
-                    "availableCash",
-                    "available_cash",
-                    "availableBalance",
-                    "available_balance",
-                    "available_bal",
-                    "fundsAvailable",
-                    "funds_available",
-                    "fundAvailable",
-                    "marginAvailable",
-                    "margin_available",
-                    "availableMargin",
-                    "Net",
-                    "net",
-                ]
-                for k in candidates:
-                    v = data.get(k)
-                    if v is None or v == "":
-                        continue
-                    try:
-                        fv = float(v)
-                    except Exception:
-                        continue
-                    if fv > 0:
-                        avail = fv
-                        used_key = k
-                        break
-
-                # Absolute fallback: use the max numeric value in payload
-                if avail <= 0:
-                    nums = []
-                    for v in data.values():
-                        try:
-                            nums.append(float(v))
-                        except Exception:
-                            pass
-                    if nums:
-                        avail = max(nums)
-                        used_key = used_key or "max_numeric_field"
-            except Exception as e:
-                logger.warning(f"Error parsing available cash: {e}")
+        avail, used_key = self._extract_available_cash_from_limits(lim)
 
         logger.debug(
             f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
@@ -262,6 +214,67 @@ class OrderValidationService:
             return max(0, floor(available_cash / float(price)))
         except Exception:
             return 0
+
+    def _extract_available_cash_from_limits(self, limits_payload: Any) -> tuple[float, str | None]:
+        """Parse available cash from nested/flat limits payloads."""
+        if not isinstance(limits_payload, dict):
+            return 0.0, None
+
+        candidates = [
+            "cash",
+            "availableCash",
+            "available_cash",
+            "availableBalance",
+            "available_balance",
+            "available_bal",
+            "fundsAvailable",
+            "funds_available",
+            "fundAvailable",
+            "marginAvailable",
+            "margin_available",
+            "availableMargin",
+            "Net",
+            "net",
+        ]
+
+        def _to_num(raw: Any) -> float | None:
+            try:
+                if raw is None:
+                    return None
+                if hasattr(raw, "amount"):
+                    raw = getattr(raw, "amount")
+                if isinstance(raw, str):
+                    s = raw.replace(",", "").strip()
+                    if s.lower().startswith("rs"):
+                        s = s[2:].strip(" .:")
+                    if not s:
+                        return None
+                    return float(s)
+                return float(raw)
+            except Exception:
+                return None
+
+        payloads: list[tuple[str, dict[str, Any]]] = []
+        data = limits_payload.get("data")
+        if isinstance(data, dict):
+            payloads.append(("data.", data))
+        payloads.append(("", limits_payload))
+
+        for prefix, payload in payloads:
+            for key in candidates:
+                value = _to_num(payload.get(key))
+                if value is not None and value > 0:
+                    return value, f"{prefix}{key}"
+
+            nums: list[float] = []
+            for value in payload.values():
+                num = _to_num(value)
+                if num is not None:
+                    nums.append(num)
+            if nums:
+                return max(nums), f"{prefix}max_numeric_field"
+
+        return 0.0, None
 
     def check_portfolio_capacity(self, include_pending: bool = True) -> tuple[bool, int, int]:
         """

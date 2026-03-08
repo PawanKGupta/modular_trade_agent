@@ -1976,53 +1976,7 @@ class AutoTradeEngine:
         if not self.portfolio or not price or price <= 0:
             return 0
         lim = self.portfolio.get_limits() or {}
-        data = lim.get("data") if isinstance(lim, dict) else None
-        avail = 0.0
-        used_key = None
-        if isinstance(data, dict):
-            # Prefer explicit cash-like fields first (CNC), then margin keys, then Net
-            candidates = [
-                "cash",
-                "availableCash",
-                "available_cash",
-                "availableBalance",
-                "available_balance",
-                "available_bal",
-                "fundsAvailable",
-                "funds_available",
-                "fundAvailable",
-                "marginAvailable",
-                "margin_available",
-                "availableMargin",
-                "Net",
-                "net",
-            ]
-            for k in candidates:
-                try:
-                    v = data.get(k)
-                    if v is None or v == "":
-                        continue
-                    fv = float(v)
-                    if fv > 0:
-                        avail = fv
-                        used_key = k
-                        break
-                except Exception:
-                    continue
-            # Absolute fallback: pick the max numeric value in the payload
-            if avail <= 0:
-                try:
-                    nums = []
-                    for v in data.values():
-                        try:
-                            nums.append(float(v))
-                        except Exception:
-                            pass
-                    if nums:
-                        avail = max(nums)
-                        used_key = used_key or "max_numeric_field"
-                except Exception:
-                    pass
+        avail, used_key = self._extract_available_cash_from_limits(lim)
         logger.debug(
             f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
         )
@@ -2038,60 +1992,146 @@ class AutoTradeEngine:
         if not self.portfolio:
             return 0.0
         lim = self.portfolio.get_limits() or {}
-        data = lim.get("data") if isinstance(lim, dict) else None
-        avail = 0.0
-        used_key = None
-        if isinstance(data, dict):
+        avail, used_key = self._extract_available_cash_from_limits(lim)
+        logger.debug(f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})")
+        return float(avail)
+
+    def _check_order_margin(
+        self, symbol: str, price: float, qty: int, transaction_type: str = "B", product: str = "CNC"
+    ) -> tuple[bool, float, float, float]:
+        """
+        Validate order funds using Kotak check-margin API.
+
+        Returns:
+            (has_sufficient, available_cash, required_margin, shortfall)
+        """
+        required_cash = max(0.0, float(price) * float(qty))
+
+        try:
+            if not self.auth or not hasattr(self.auth, "get_rest_client"):
+                raise RuntimeError("REST client unavailable")
+            rest = self.auth.get_rest_client()
+            if not rest:
+                raise RuntimeError("REST client unavailable")
+
+            token = None
+            if self.scrip_master:
+                # Prefer exact symbol first (e.g., RELIANCE-EQ), then base symbol.
+                token = self.scrip_master.get_token(symbol, exchange="NSE")
+                if not token and "-" in symbol:
+                    token = self.scrip_master.get_token(symbol.split("-")[0], exchange="NSE")
+            if not token:
+                raise RuntimeError(f"instrument token unavailable for {symbol}")
+
+            ex_seg = "nse_cm"
+            prc_tp = "MKT" if float(price) <= 0 else "L"
+            jdata = {
+                "brkName": "KOTAK",
+                "brnchId": "ONLINE",
+                "exSeg": ex_seg,
+                "prc": str(0 if prc_tp == "MKT" else float(price)),
+                "prcTp": prc_tp,
+                "prod": product,
+                "qty": str(int(qty)),
+                "tok": str(token),
+                "trnsTp": "B" if str(transaction_type).upper().startswith("B") else "S",
+            }
+
+            resp = rest.check_margin(jdata) or {}
+            if not isinstance(resp, dict):
+                raise RuntimeError(f"invalid check-margin response type: {type(resp)}")
+
+            def _to_num(v: Any, default: float = 0.0) -> float:
+                try:
+                    if v is None:
+                        return default
+                    return float(str(v).replace(",", "").strip())
+                except Exception:
+                    return default
+
+            avl_cash = _to_num(resp.get("avlCash"), 0.0)
+            req_margin = _to_num(resp.get("reqdMrgn"), required_cash)
+            insuf_fund = _to_num(resp.get("insufFund"), max(0.0, req_margin - avl_cash))
+            rms_valid = str(resp.get("rmsVldtd", "")).upper().strip()
+            stat_ok = str(resp.get("stat", "")).lower() == "ok"
+            stcode = str(resp.get("stCode", "")).strip()
+            has_sufficient = bool(
+                stat_ok
+                and stcode in {"200", ""}
+                and (rms_valid == "OK" or insuf_fund <= 0.0 or avl_cash >= req_margin)
+            )
+            shortfall = max(0.0, insuf_fund if insuf_fund > 0 else (req_margin - avl_cash))
+            logger.debug(
+                f"check-margin {symbol}: sufficient={has_sufficient}, avlCash={avl_cash:.2f}, "
+                f"reqdMrgn={req_margin:.2f}, insufFund={shortfall:.2f}, rmsVldtd={rms_valid or 'n/a'}"
+            )
+            return has_sufficient, avl_cash, req_margin, shortfall
+        except Exception as e:
+            # No fallback: margin API must succeed for order validation.
+            logger.error(f"check-margin failed for {symbol}: {e}")
+            return False, 0.0, required_cash, required_cash
+
+    def _extract_available_cash_from_limits(self, limits_payload: Any) -> tuple[float, str | None]:
+        """Parse available cash from nested/flat limits payloads."""
+        if not isinstance(limits_payload, dict):
+            return 0.0, None
+
+        candidates = [
+            "cash",
+            "availableCash",
+            "available_cash",
+            "availableBalance",
+            "available_balance",
+            "available_bal",
+            "fundsAvailable",
+            "funds_available",
+            "fundAvailable",
+            "marginAvailable",
+            "margin_available",
+            "availableMargin",
+            "Net",
+            "net",
+        ]
+
+        def _to_num(raw: Any) -> float | None:
             try:
-                # Prefer cash-like fields first, then margin, then Net
-                candidates = [
-                    "cash",
-                    "availableCash",
-                    "available_cash",
-                    "availableBalance",
-                    "available_balance",
-                    "available_bal",
-                    "fundsAvailable",
-                    "funds_available",
-                    "fundAvailable",
-                    "marginAvailable",
-                    "margin_available",
-                    "availableMargin",
-                    "Net",
-                    "net",
-                ]
-                for k in candidates:
-                    v = data.get(k)
-                    if v is None or v == "":
-                        continue
-                    try:
-                        fv = float(v)
-                    except Exception:
-                        continue
-                    if fv > 0:
-                        avail = fv
-                        used_key = k
-                        break
-                # Absolute fallback: use the max numeric value in payload
-                if avail <= 0:
-                    nums = []
-                    for v in data.values():
-                        try:
-                            nums.append(float(v))
-                        except Exception:
-                            pass
-                    if nums:
-                        avail = max(nums)
-                        used_key = used_key or "max_numeric_field"
-                logger.debug(
-                    f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})"
-                )
-                return float(avail)
-            except Exception as e:
-                logger.warning(f"Error parsing available cash: {e}")
-                return 0.0
-        logger.debug("Limits API returned no usable 'data' object; assuming Rs 0.00 available")
-        return 0.0
+                if raw is None:
+                    return None
+                # Support Money-like objects
+                if hasattr(raw, "amount"):
+                    raw = getattr(raw, "amount")
+                if isinstance(raw, str):
+                    s = raw.replace(",", "").strip()
+                    if s.lower().startswith("rs"):
+                        s = s[2:].strip(" .:")
+                    if not s:
+                        return None
+                    return float(s)
+                return float(raw)
+            except Exception:
+                return None
+
+        payloads: list[tuple[str, dict[str, Any]]] = []
+        data = limits_payload.get("data")
+        if isinstance(data, dict):
+            payloads.append(("data.", data))
+        payloads.append(("", limits_payload))
+
+        for prefix, payload in payloads:
+            for key in candidates:
+                value = _to_num(payload.get(key))
+                if value is not None and value > 0:
+                    return value, f"{prefix}{key}"
+
+            nums: list[float] = []
+            for value in payload.values():
+                num = _to_num(value)
+                if num is not None:
+                    nums.append(num)
+            if nums:
+                return max(nums), f"{prefix}max_numeric_field"
+
+        return 0.0, None
 
     # ---------------------- De-dup helpers ----------------------
     @staticmethod
@@ -3515,12 +3555,16 @@ class AutoTradeEngine:
                     summary["skipped"] += 1
                     continue
 
-                # Check balance
-                affordable = self.get_affordable_qty(close)
-                if affordable < config.MIN_QTY or qty > affordable:
-                    avail_cash = self.get_available_cash()
-                    required_cash = qty * close
-                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                # Check balance via check-margin (fallback: limits-based).
+                has_sufficient, avail_cash, required_cash, shortfall = self._check_order_margin(
+                    symbol=symbol,
+                    price=close,
+                    qty=qty,
+                    transaction_type="B",
+                    product="CNC",
+                )
+                affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
+                if not has_sufficient or affordable < config.MIN_QTY or qty > affordable:
                     logger.warning(
                         f"Retry failed for {symbol}: still insufficient balance "
                         f"(need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
@@ -4947,14 +4991,16 @@ class AutoTradeEngine:
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
 
-            # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
-            # Phase 3.1: Use OrderValidationService
-            has_sufficient_balance, avail_cash, affordable = (
-                self.order_validation_service.check_balance(close, qty)
+            # Balance check (CNC needs cash) via check-margin API.
+            has_sufficient_balance, avail_cash, required_cash, shortfall = self._check_order_margin(
+                symbol=broker_symbol,
+                price=close,
+                qty=qty,
+                transaction_type="B",
+                product="CNC",
             )
+            affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
             if not has_sufficient_balance:
-                required_cash = qty * close
-                shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
