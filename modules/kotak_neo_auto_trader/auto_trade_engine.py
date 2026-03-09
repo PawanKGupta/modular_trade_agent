@@ -3681,13 +3681,88 @@ class AutoTradeEngine:
                     summary["placed"] += 1
                     # Update order status to PENDING and set broker_order_id
                     # Also update quantity in case it changed due to config changes
+                    try:
+                        self.orders_repo.update(
+                            db_order,
+                            broker_order_id=order_id,
+                            quantity=qty,  # Update with recalculated quantity
+                            status=DbOrderStatus.PENDING,
+                        )
+                    except Exception as update_err:
+                        # Some deployments may still have unique index
+                        # uq_orders_user_base_symbol_active applying to active BUY rows.
+                        # If a stale active row exists for same base_symbol, cancel it and retry once.
+                        err_text = str(update_err).lower()
+                        if "uq_orders_user_base_symbol_active" in err_text or "duplicate key value" in err_text:
+                            try:
+                                from src.infrastructure.db.timezone_utils import ist_now
 
-                    self.orders_repo.update(
-                        db_order,
-                        broker_order_id=order_id,
-                        quantity=qty,  # Update with recalculated quantity
-                        status=DbOrderStatus.PENDING,
-                    )
+                                # Clear failed transaction before further DB work.
+                                self.db.rollback()
+                                base_symbol = (
+                                    (symbol or "").upper().split("-")[0].strip()
+                                )
+                                existing_orders, _ = self.orders_repo.list(self.user_id)
+                                cancelled_conflicts = 0
+                                for existing_order in existing_orders:
+                                    existing_base = (
+                                        (getattr(existing_order, "base_symbol", None) or "")
+                                        .upper()
+                                        .split("-")[0]
+                                        .strip()
+                                    )
+                                    if not existing_base:
+                                        existing_base = (
+                                            (getattr(existing_order, "symbol", "") or "")
+                                            .upper()
+                                            .split("-")[0]
+                                            .strip()
+                                        )
+                                    if (
+                                        existing_order.id != db_order.id
+                                        and existing_order.user_id == self.user_id
+                                        and existing_order.side == "buy"
+                                        and existing_base == base_symbol
+                                        and existing_order.status
+                                        in {DbOrderStatus.PENDING, DbOrderStatus.ONGOING}
+                                    ):
+                                        self.orders_repo.update(
+                                            existing_order,
+                                            status=DbOrderStatus.CANCELLED,
+                                            reason=(
+                                                "Cancelled stale active order during retry "
+                                                "to satisfy unique active-symbol constraint"
+                                            ),
+                                            closed_at=ist_now(),
+                                            last_status_check=ist_now(),
+                                        )
+                                        cancelled_conflicts += 1
+                                if cancelled_conflicts:
+                                    logger.warning(
+                                        f"Retry DB conflict for {symbol}: cancelled "
+                                        f"{cancelled_conflicts} conflicting active buy row(s), retrying update."
+                                    )
+                                # Retry once after conflict cleanup.
+                                self.orders_repo.update(
+                                    db_order,
+                                    broker_order_id=order_id,
+                                    quantity=qty,
+                                    status=DbOrderStatus.PENDING,
+                                )
+                            except Exception as retry_update_err:
+                                logger.error(
+                                    f"Retry order DB update failed for {symbol} after conflict cleanup: {retry_update_err}",
+                                    exc_info=retry_update_err,
+                                )
+                                summary["failed"] += 1
+                                continue
+                        else:
+                            logger.error(
+                                f"Retry order DB update failed for {symbol}: {update_err}",
+                                exc_info=update_err,
+                            )
+                            summary["failed"] += 1
+                            continue
                     logger.info(
                         f"Successfully placed retry order for {symbol} (order_id: {order_id}, qty: {qty}). "
                         f"DB updated with new quantity based on current config."
