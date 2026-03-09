@@ -61,6 +61,41 @@ class TestCancelledOrderDetection:
         assert found_order is not None
         assert found_order['nOrdNo'] == '251106000008974'
         assert found_order['orderStatus'] == 'cancelled'
+
+    def test_parse_broker_status_requires_documented_ordst_field(self, verifier):
+        """Parser should rely on documented ordSt field only."""
+        broker_order = {
+            "nOrdNo": "260309000666472",
+            "orderStatus": "OPEN",
+            "filledQty": "0",
+        }
+
+        parsed = verifier._parse_broker_order_status(broker_order)
+        assert parsed["status"] == "UNKNOWN"
+        assert parsed["executed_qty"] == 0
+
+    def test_parse_broker_status_handles_amo_pending_variant(self, verifier):
+        """AMO pending variants should map to PENDING."""
+        broker_order = {
+            "nOrdNo": "260309000666435",
+            "ordSt": "After Market Order Request Received",
+            "filledQty": "0",
+        }
+
+        parsed = verifier._parse_broker_order_status(broker_order)
+        assert parsed["status"] == "PENDING"
+
+    def test_parse_broker_status_handles_cancelled_after_market_order(self, verifier):
+        """Kotak ordSt variant should map to CANCELLED."""
+        broker_order = {
+            "nOrdNo": "260309000666472",
+            "ordSt": "cancelled after market order",
+            "cnlQty": "2",
+            "filledQty": "0",
+        }
+
+        parsed = verifier._parse_broker_order_status(broker_order)
+        assert parsed["status"] == "CANCELLED"
     
     def test_check_order_history_not_found(self, verifier, mock_broker_client):
         """Test that _check_order_history returns None when order not found"""
@@ -358,3 +393,22 @@ class TestCancelledOrderDetection:
         
         assert counts['executed'] == 1
         assert counts['still_pending'] == 0
+
+    def test_handle_cancellation_does_not_raise_on_tracker_db_errors(
+        self, verifier, mock_broker_client
+    ):
+        """Verifier should keep running even if tracker update/remove fails."""
+        verifier.order_tracker = Mock()
+        verifier.order_tracker.update_order_status.side_effect = RuntimeError(
+            "This session is in 'prepared' state"
+        )
+        verifier.order_tracker.remove_pending_order.side_effect = RuntimeError(
+            "This session is in 'prepared' state"
+        )
+
+        pending_order = {"order_id": "O1", "symbol": "SJS-EQ", "qty": 2}
+        broker_order = {"nOrdNo": "O1", "ordSt": "cancelled after market order"}
+        broker_status = {"status": "CANCELLED", "executed_qty": 0, "rejection_reason": None}
+
+        # Must not raise
+        verifier._handle_cancellation(pending_order, broker_order, broker_status)

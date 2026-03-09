@@ -404,6 +404,13 @@ class OrderStatusVerifier:
 
             else:
                 logger.warning(f"Unknown broker status for {order_id}: {broker_status['status']}")
+                if isinstance(broker_order, dict):
+                    logger.warning(
+                        "Unknown ordSt for order %s: raw ordSt=%r keys=%s",
+                        order_id,
+                        broker_order.get("ordSt"),
+                        sorted(list(broker_order.keys())),
+                    )
                 counts["still_pending"] += 1
 
         logger.info(
@@ -651,21 +658,48 @@ class OrderStatusVerifier:
             "complete": "EXECUTED",
             "traded": "EXECUTED",
             "executed": "EXECUTED",
+            "filled": "EXECUTED",
             "rejected": "REJECTED",
             "cancelled": "CANCELLED",
             "canceled": "CANCELLED",  # American spelling
+            "cancelled after market order": "CANCELLED",
             "open": "OPEN",
             "pending": "PENDING",
             "trigger pending": "PENDING",
             "after market order req received": "PENDING",
+            "after market order request received": "PENDING",
+            "amo req received": "PENDING",
+            "put order req received": "PENDING",
+            "validation pending": "PENDING",
+            "open pending": "PENDING",
+            "modify pending": "PENDING",
+            "modify validation pending": "PENDING",
+            "cancel pending": "PENDING",
+            "cancel validation pending": "PENDING",
             "partial fill": "PARTIALLY_FILLED",
+            "partially filled": "PARTIALLY_FILLED",
             "partially executed": "PARTIALLY_FILLED",
         }
 
-        broker_status = str(broker_order.get("ordSt", "")).lower()
+        # Use documented field from Kotak order APIs.
+        raw_status = broker_order.get("ordSt") or ""
+        broker_status = str(raw_status).strip().lower().replace("_", " ")
         internal_status = status_map.get(broker_status, "UNKNOWN")
 
-        executed_qty = int(broker_order.get("fldQty", 0) or broker_order.get("filledQty", 0) or 0)
+        def _to_int(v: Any, default: int = 0) -> int:
+            try:
+                if v is None:
+                    return default
+                return int(float(str(v).replace(",", "").strip()))
+            except Exception:
+                return default
+
+        executed_qty = _to_int(
+            broker_order.get("fldQty")
+            or broker_order.get("filledQty")
+            or broker_order.get("execQty")
+            or 0
+        )
         rejection_reason = broker_order.get("rejRsn") or broker_order.get("rejectionReason")
 
         return {
@@ -694,10 +728,13 @@ class OrderStatusVerifier:
 
         logger.info(f"Order EXECUTED: {symbol} x{executed_qty} (order_id: {order_id})")
 
-        # Update order tracker
-        self.order_tracker.update_order_status(
-            order_id=order_id, status="EXECUTED", executed_qty=executed_qty
-        )
+        # Update order tracker (best-effort; do not crash verifier on DB transaction state errors)
+        try:
+            self.order_tracker.update_order_status(
+                order_id=order_id, status="EXECUTED", executed_qty=executed_qty
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update tracker for executed order {order_id}: {e}")
 
         # Update tracking scope quantity
         if self.tracking_scope.is_tracked(symbol):
@@ -705,8 +742,11 @@ class OrderStatusVerifier:
             # Just log confirmation
             logger.debug(f"Confirmed execution for tracked symbol: {symbol}")
 
-        # Remove from pending (execution complete)
-        self.order_tracker.remove_pending_order(order_id)
+        # Remove from pending (execution complete), best-effort
+        try:
+            self.order_tracker.remove_pending_order(order_id)
+        except Exception as e:
+            logger.warning(f"Failed to remove executed order {order_id} from pending tracker: {e}")
 
         # Trigger callback
         if self.on_execution_callback:
@@ -738,17 +778,23 @@ class OrderStatusVerifier:
             f"Order REJECTED: {symbol} x{qty} (order_id: {order_id}, reason: {rejection_reason})"
         )
 
-        # Update order tracker
-        self.order_tracker.update_order_status(
-            order_id=order_id, status="REJECTED", rejection_reason=rejection_reason
-        )
+        # Update order tracker (best-effort; do not crash verifier on DB transaction state errors)
+        try:
+            self.order_tracker.update_order_status(
+                order_id=order_id, status="REJECTED", rejection_reason=rejection_reason
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update tracker for rejected order {order_id}: {e}")
 
         # Stop tracking this symbol (order failed)
         if self.tracking_scope.is_tracked(symbol):
             self.tracking_scope.stop_tracking(symbol, reason=f"Order rejected: {rejection_reason}")
 
-        # Remove from pending (rejection finalized)
-        self.order_tracker.remove_pending_order(order_id)
+        # Remove from pending (rejection finalized), best-effort
+        try:
+            self.order_tracker.remove_pending_order(order_id)
+        except Exception as e:
+            logger.warning(f"Failed to remove rejected order {order_id} from pending tracker: {e}")
 
         # Trigger callback
         if self.on_rejection_callback:
@@ -777,15 +823,21 @@ class OrderStatusVerifier:
 
         logger.info(f"Order CANCELLED: {symbol} x{qty} (order_id: {order_id})")
 
-        # Update order tracker
-        self.order_tracker.update_order_status(order_id=order_id, status="CANCELLED")
+        # Update order tracker (best-effort; do not crash verifier on DB transaction state errors)
+        try:
+            self.order_tracker.update_order_status(order_id=order_id, status="CANCELLED")
+        except Exception as e:
+            logger.warning(f"Failed to update tracker for cancelled order {order_id}: {e}")
 
         # Stop tracking this symbol (order cancelled)
         if self.tracking_scope.is_tracked(symbol):
             self.tracking_scope.stop_tracking(symbol, reason="Order cancelled")
 
-        # Remove from pending (cancellation finalized)
-        self.order_tracker.remove_pending_order(order_id)
+        # Remove from pending (cancellation finalized), best-effort
+        try:
+            self.order_tracker.remove_pending_order(order_id)
+        except Exception as e:
+            logger.warning(f"Failed to remove cancelled order {order_id} from pending tracker: {e}")
 
         # Note: Cancellation callback can be added if needed
         # Similar to rejection callback, but typically cancellations
@@ -816,10 +868,13 @@ class OrderStatusVerifier:
             f"(filled: {executed_qty}/{total_qty}, remaining: {remaining_qty})"
         )
 
-        # Update order tracker
-        self.order_tracker.update_order_status(
-            order_id=order_id, status="PARTIALLY_FILLED", executed_qty=executed_qty
-        )
+        # Update order tracker (best-effort; do not crash verifier on DB transaction state errors)
+        try:
+            self.order_tracker.update_order_status(
+                order_id=order_id, status="PARTIALLY_FILLED", executed_qty=executed_qty
+            )
+        except Exception as e:
+            logger.warning(f"Failed to update tracker for partially filled order {order_id}: {e}")
 
         # Note: Tracking scope already has full quantity tracked
         # Partial fills don't change the tracked quantity
