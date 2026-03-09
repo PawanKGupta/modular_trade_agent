@@ -401,3 +401,43 @@ class TestReconciliationEdgeCases:
         assert result["matched"] == 3
         assert result["manual_buys_detected"] == 0
         assert result["manual_sells_detected"] == 0
+
+    def test_reconcile_uses_active_entry_not_stale_completed(
+        self, manual_matcher, mock_tracking_scope
+    ):
+        """Use status='active' entry when symbol exists in completed history too."""
+        tracked_symbol = "SJS-EQ"
+        mock_tracking_scope.get_tracked_symbols.side_effect = (
+            lambda status="active": [tracked_symbol] if status == "active" else []
+        )
+
+        stale_completed = {
+            "current_tracked_qty": 2,
+            "pre_existing_qty": 1096,  # stale value from old completed tracking
+            "symbol": tracked_symbol,
+        }
+        active_entry = {
+            "current_tracked_qty": 2,
+            "pre_existing_qty": 0,
+            "symbol": tracked_symbol,
+        }
+
+        def get_tracking_entry(symbol, status="any"):
+            if symbol != tracked_symbol:
+                return None
+            if status == "active":
+                return active_entry
+            if status == "completed":
+                return stale_completed
+            return stale_completed
+
+        mock_tracking_scope.get_tracking_entry.side_effect = get_tracking_entry
+
+        # No broker holdings for this symbol -> discrepancy exists,
+        # but expected qty should come from active entry only (2, not 1098).
+        result = manual_matcher.reconcile_holdings_with_tracking([])
+
+        assert result["manual_sells_detected"] == 1
+        assert len(result["discrepancies"]) == 1
+        assert result["discrepancies"][0]["expected_total_qty"] == 2
+        assert result["discrepancies"][0]["qty_diff"] == -2
