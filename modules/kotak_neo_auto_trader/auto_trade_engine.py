@@ -1998,12 +1998,12 @@ class AutoTradeEngine:
 
     def _check_order_margin(
         self, symbol: str, price: float, qty: int, transaction_type: str = "B", product: str = "CNC"
-    ) -> tuple[bool, float, float, float]:
+    ) -> tuple[bool, float, float, float, bool]:
         """
         Validate order funds using Kotak check-margin API.
 
         Returns:
-            (has_sufficient, available_cash, required_margin, shortfall)
+            (has_sufficient, available_cash, required_margin, shortfall, margin_api_ok)
         """
         required_cash = max(0.0, float(price) * float(qty))
 
@@ -2049,27 +2049,101 @@ class AutoTradeEngine:
                 except Exception:
                     return default
 
-            avl_cash = _to_num(resp.get("avlCash"), 0.0)
-            req_margin = _to_num(resp.get("reqdMrgn"), required_cash)
-            insuf_fund = _to_num(resp.get("insufFund"), max(0.0, req_margin - avl_cash))
-            rms_valid = str(resp.get("rmsVldtd", "")).upper().strip()
-            stat_ok = str(resp.get("stat", "")).lower() == "ok"
-            stcode = str(resp.get("stCode", "")).strip()
+            # Kotak payloads can be either flat or wrapped under `data`
+            # (dict/list). Parse both envelope and data-body fields.
+            body: dict[str, Any] = resp
+            data_node = resp.get("data")
+            if isinstance(data_node, dict):
+                body = data_node
+            elif isinstance(data_node, list) and data_node and isinstance(data_node[0], dict):
+                body = data_node[0]
+
+            def _first(*keys: str, source: dict[str, Any]) -> Any:
+                for key in keys:
+                    if key in source and source.get(key) is not None:
+                        return source.get(key)
+                return None
+
+            avl_raw = _first(
+                "avlCash",
+                "availableCash",
+                "cash",
+                "netCash",
+                source=body,
+            )
+            if avl_raw is None:
+                avl_raw = _first(
+                    "avlCash",
+                    "availableCash",
+                    "cash",
+                    "netCash",
+                    source=resp,
+                )
+
+            req_raw = _first(
+                "reqdMrgn",
+                "requiredMargin",
+                "reqMargin",
+                "ordMrgn",
+                source=body,
+            )
+            if req_raw is None:
+                req_raw = _first(
+                    "reqdMrgn",
+                    "requiredMargin",
+                    "reqMargin",
+                    "ordMrgn",
+                    source=resp,
+                )
+
+            insuf_raw = _first(
+                "insufFund",
+                "insufficientFund",
+                "shortfall",
+                source=body,
+            )
+            if insuf_raw is None:
+                insuf_raw = _first(
+                    "insufFund",
+                    "insufficientFund",
+                    "shortfall",
+                    source=resp,
+                )
+
+            rms_raw = _first("rmsVldtd", "rmsValidated", source=body)
+            if rms_raw is None:
+                rms_raw = _first("rmsVldtd", "rmsValidated", source=resp)
+
+            stat_raw = _first("stat", "status", source=resp)
+            if stat_raw is None:
+                stat_raw = _first("stat", "status", source=body)
+
+            stcode_raw = _first("stCode", "statusCode", "code", source=resp)
+            if stcode_raw is None:
+                stcode_raw = _first("stCode", "statusCode", "code", source=body)
+
+            avl_cash = _to_num(avl_raw, 0.0)
+            req_margin = _to_num(req_raw, required_cash)
+            insuf_fund = _to_num(insuf_raw, max(0.0, req_margin - avl_cash))
+            rms_valid = str(rms_raw or "").upper().strip()
+            stat_ok = str(stat_raw or "").lower().strip() in {"ok", "success", "true"}
+            stcode = str(stcode_raw or "").strip()
             has_sufficient = bool(
                 stat_ok
-                and stcode in {"200", ""}
+                and stcode in {"200", "0", ""}
                 and (rms_valid == "OK" or insuf_fund <= 0.0 or avl_cash >= req_margin)
             )
+            margin_api_ok = bool(stat_ok and stcode in {"200", "0", ""})
             shortfall = max(0.0, insuf_fund if insuf_fund > 0 else (req_margin - avl_cash))
             logger.debug(
                 f"check-margin {symbol}: sufficient={has_sufficient}, avlCash={avl_cash:.2f}, "
                 f"reqdMrgn={req_margin:.2f}, insufFund={shortfall:.2f}, rmsVldtd={rms_valid or 'n/a'}"
             )
-            return has_sufficient, avl_cash, req_margin, shortfall
+            return has_sufficient, avl_cash, req_margin, shortfall, margin_api_ok
         except Exception as e:
             # No fallback: margin API must succeed for order validation.
             logger.error(f"check-margin failed for {symbol}: {e}")
-            return False, 0.0, required_cash, required_cash
+            return False, 0.0, required_cash, required_cash, False
 
     def _extract_available_cash_from_limits(self, limits_payload: Any) -> tuple[float, str | None]:
         """Parse available cash from nested/flat limits payloads."""
@@ -3556,13 +3630,33 @@ class AutoTradeEngine:
                     continue
 
                 # Check balance via check-margin (fallback: limits-based).
-                has_sufficient, avail_cash, required_cash, shortfall = self._check_order_margin(
+                margin_result = self._check_order_margin(
                     symbol=symbol,
                     price=close,
                     qty=qty,
                     transaction_type="B",
                     product="CNC",
                 )
+                if len(margin_result) == 4:
+                    has_sufficient, avail_cash, required_cash, shortfall = margin_result
+                    margin_api_ok = True
+                else:
+                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = margin_result
+
+                if not margin_api_ok:
+                    logger.error(
+                        f"Retry margin check failed for {symbol}; "
+                        "skipping this retry attempt (not a balance-shortfall decision)."
+                    )
+                    from src.infrastructure.db.timezone_utils import ist_now
+
+                    db_order.retry_count = (db_order.retry_count or 0) + 1
+                    db_order.last_retry_attempt = ist_now()
+                    db_order.reason = "margin_check_failed"
+                    self.orders_repo.update(db_order)
+                    summary["failed"] += 1
+                    continue
+
                 affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
                 if not has_sufficient or affordable < config.MIN_QTY or qty > affordable:
                     logger.warning(
@@ -3574,6 +3668,9 @@ class AutoTradeEngine:
 
                     db_order.retry_count = (db_order.retry_count or 0) + 1
                     db_order.last_retry_attempt = ist_now()
+                    db_order.reason = (
+                        f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
+                    )
                     self.orders_repo.update(db_order)
                     summary["failed"] += 1
                     continue
@@ -4992,14 +5089,58 @@ class AutoTradeEngine:
                 continue
 
             # Balance check (CNC needs cash) via check-margin API.
-            has_sufficient_balance, avail_cash, required_cash, shortfall = self._check_order_margin(
+            margin_result = self._check_order_margin(
                 symbol=broker_symbol,
                 price=close,
                 qty=qty,
                 transaction_type="B",
                 product="CNC",
             )
+            if len(margin_result) == 4:
+                has_sufficient_balance, avail_cash, required_cash, shortfall = margin_result
+                margin_api_ok = True
+            else:
+                (
+                    has_sufficient_balance,
+                    avail_cash,
+                    required_cash,
+                    shortfall,
+                    margin_api_ok,
+                ) = margin_result
             affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
+            if not margin_api_ok:
+                logger.error(
+                    f"Margin check failed for {broker_symbol}; skipping order "
+                    "(not an insufficient-balance verdict)."
+                )
+                ticker_attempt["status"] = "failed"
+                ticker_attempt["reason"] = "margin_check_failed"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                summary["ticker_attempts"].append(ticker_attempt)
+
+                failed_order_info = {
+                    "symbol": broker_symbol,
+                    "ticker": rec.ticker,
+                    "close": close,
+                    "qty": qty,
+                    "required_cash": qty * close,
+                    "shortfall": 0.0,
+                    "reason": "margin_check_failed",
+                    "verdict": rec.verdict,
+                    "rsi10": ind.get("rsi10"),
+                    "ema9": ind.get("ema9"),
+                    "ema200": ind.get("ema200"),
+                    "execution_capital": execution_capital,
+                    "non_retryable": True,
+                }
+                try:
+                    self._add_failed_order(failed_order_info)
+                except Exception as db_err:
+                    logger.warning(f"Failed to persist margin_check_failed order: {db_err}")
+                summary["skipped"] += 1
+                continue
+
             if not has_sufficient_balance:
                 # Telegram message with emojis
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
