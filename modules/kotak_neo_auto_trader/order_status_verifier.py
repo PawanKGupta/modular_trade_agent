@@ -428,18 +428,32 @@ class OrderStatusVerifier:
             List of order dicts from broker
         """
         try:
-            def _has_explicit_method(obj, name: str) -> bool:
+            def _has_callable_method(obj, name: str) -> bool:
+                """
+                Return True when object exposes a callable method name.
+
+                Supports:
+                - normal class-defined methods (e.g. KotakNeoOrders.get_orders)
+                - explicitly attached mock methods in instance __dict__
+
+                Avoids generic Mock attribute auto-creation being treated as real API methods.
+                """
                 try:
-                    return name in getattr(obj, "__dict__", {}) and callable(getattr(obj, name))
+                    method = getattr(obj, name, None)
+                    if not callable(method):
+                        return False
+                    return name in getattr(type(obj), "__dict__", {}) or name in getattr(
+                        obj, "__dict__", {}
+                    )
                 except Exception:
                     return False
 
             # Prefer REST wrapper method
-            if _has_explicit_method(self.broker_client, "get_orders"):
+            if _has_callable_method(self.broker_client, "get_orders"):
                 response = self.broker_client.get_orders()
-            elif _has_explicit_method(self.broker_client, "get_order_book"):
+            elif _has_callable_method(self.broker_client, "get_order_book"):
                 response = self.broker_client.get_order_book()
-            elif _has_explicit_method(self.broker_client, "order_report"):
+            elif _has_callable_method(self.broker_client, "order_report"):
                 response = self.broker_client.order_report()
             else:
                 logger.error(
