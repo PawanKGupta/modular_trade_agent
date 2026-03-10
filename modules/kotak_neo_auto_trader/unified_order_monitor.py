@@ -894,6 +894,18 @@ class UnifiedOrderMonitor:
 
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
+                # Prevent duplicate execution aggregation loops:
+                # mark_executed() aggregates via fills table, so calling it again for the
+                # same already-executed order inflates execution_qty (6->12->18...).
+                if (
+                    getattr(db_order, "status", None) == DbOrderStatus.CLOSED
+                    and getattr(db_order, "execution_qty", None)
+                    and float(getattr(db_order, "execution_qty", 0) or 0) > 0
+                    and getattr(db_order, "execution_price", None)
+                    and float(getattr(db_order, "execution_price", 0) or 0) > 0
+                ):
+                    return
+
                 execution_price = OrderFieldExtractor.get_price(broker_order)
                 # Edge Case #2: Use fldQty (filled quantity) if available,
                 # otherwise use order quantity
@@ -2113,19 +2125,36 @@ class UnifiedOrderMonitor:
                     )
                     if not symbol:
                         continue
+                    full_symbol = str(symbol).upper()
+                    base_symbol = full_symbol.split("-")[0]
                     try:
-                        qty = int(
-                            float(
+                        # Prefer true sellable quantity. Fallback to quantity only when
+                        # sellable fields are entirely absent in payload.
+                        has_sellable_field = any(
+                            k in h
+                            for k in (
+                                "sellableQuantity",
+                                "sellQty",
+                                "sellableQty",
+                                "sellable_quantity",
+                            )
+                        )
+                        if has_sellable_field:
+                            raw_qty = (
                                 h.get("sellableQuantity")
                                 or h.get("sellQty")
                                 or h.get("sellableQty")
-                                or h.get("quantity")
+                                or h.get("sellable_quantity")
                                 or 0
                             )
-                        )
+                        else:
+                            raw_qty = h.get("quantity") or h.get("qty") or 0
+                        qty = int(float(raw_qty))
                     except (TypeError, ValueError):
                         qty = 0
-                    sellable_qty_map[str(symbol).upper()] = max(qty, 0)
+                    qty = max(qty, 0)
+                    sellable_qty_map[full_symbol] = qty
+                    sellable_qty_map[base_symbol] = qty
             except Exception as e:
                 logger.debug(f"Failed to build sellable quantity map for new holdings: {e}")
 
@@ -2181,14 +2210,14 @@ class UnifiedOrderMonitor:
                     # Do not place sells when holdings are not sellable at broker side.
                     # This avoids repeated RMS rejections and quantity amplification loops.
                     sellable_qty = sellable_qty_map.get(full_symbol)
-                    if sellable_qty is not None:
-                        if sellable_qty <= 0:
-                            logger.info(
-                                f"Skipping {full_symbol}: holdings sellableQuantity is 0 "
-                                "(likely T1/not yet sellable)."
-                            )
-                            continue
-                        execution_qty = min(float(execution_qty), float(sellable_qty))
+                    if sellable_qty is None:
+                        sellable_qty = sellable_qty_map.get(full_symbol.split("-")[0])
+                    if sellable_qty is None or sellable_qty <= 0:
+                        logger.info(
+                            f"Skipping {full_symbol}: holdings sellableQuantity is 0/unknown "
+                            "(likely T1/not yet sellable)."
+                        )
+                        continue
 
                     # FIX: Ensure position exists before placing sell order
                     # If position doesn't exist or is closed, create it from the executed order
@@ -2246,6 +2275,36 @@ class UnifiedOrderMonitor:
                             )
                             continue
 
+                    # Uniform sell quantity rule: qty = min(db_open_position_qty, broker_sellable_qty)
+                    current_open_position = None
+                    db_open_qty = 0.0
+                    if self.positions_repo:
+                        try:
+                            current_open_position = self.positions_repo.get_by_symbol(
+                                self.user_id, full_symbol
+                            )
+                            if current_open_position and current_open_position.closed_at is None:
+                                db_open_qty = float(current_open_position.quantity or 0)
+                        except Exception as pos_qty_err:
+                            logger.warning(
+                                f"Error fetching open position qty for {full_symbol}: {pos_qty_err}"
+                            )
+
+                    if db_open_qty <= 0:
+                        logger.info(
+                            f"Skipping {full_symbol}: no open DB position quantity available "
+                            "after execution sync."
+                        )
+                        continue
+
+                    place_qty = min(float(db_open_qty), float(sellable_qty))
+                    if place_qty <= 0:
+                        logger.info(
+                            f"Skipping {full_symbol}: computed sell qty is 0 "
+                            f"(db_open_qty={db_open_qty}, sellable_qty={sellable_qty})."
+                        )
+                        continue
+
                     # Get execution time for this order (normalize to IST)
                     order_execution_time = (
                         getattr(db_order, "execution_time", None) or db_order.filled_at
@@ -2258,7 +2317,7 @@ class UnifiedOrderMonitor:
                     trade = {
                         "symbol": full_symbol,  # ✅ Full symbol for matching
                         "ticker": ticker,
-                        "qty": int(execution_qty),
+                        "qty": int(place_qty),
                         "entry_price": execution_price,
                         "placed_symbol": db_order.symbol,  # Keep original broker symbol (full)
                         "entry_time": (
@@ -2286,8 +2345,9 @@ class UnifiedOrderMonitor:
 
                     # Place sell order
                     logger.info(
-                        f"Placing sell order for {full_symbol}: qty={int(execution_qty)}, "
-                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
+                        f"Placing sell order for {full_symbol}: qty={int(place_qty)}, "
+                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}, "
+                        f"db_open_qty={db_open_qty}, sellable_qty={sellable_qty}"
                     )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
@@ -2298,7 +2358,7 @@ class UnifiedOrderMonitor:
                             symbol=full_symbol,
                             order_id=order_id,
                             target_price=ema9,
-                            qty=int(execution_qty),
+                            qty=int(place_qty),
                             ticker=ticker,
                             placed_symbol=broker_sym,
                         )

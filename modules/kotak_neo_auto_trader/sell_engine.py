@@ -722,11 +722,13 @@ class SellOrderManager:
                     if qty <= 0:
                         continue
 
-                    # Do not downgrade holdings value when positions is lower/noisy.
-                    existing_full = broker_holdings_map.get(full_symbol, 0)
-                    broker_holdings_map[full_symbol] = max(existing_full, qty)
-                    existing_base = broker_holdings_map.get(base_symbol.upper(), 0)
-                    broker_holdings_map[base_symbol.upper()] = max(existing_base, qty)
+                    # Positions data is only a fallback for symbols missing in holdings.
+                    # Never override holdings-derived sellable quantity with positions qty.
+                    if full_symbol not in broker_holdings_map:
+                        broker_holdings_map[full_symbol] = max(qty, 0)
+                    base_key = base_symbol.upper()
+                    if base_key not in broker_holdings_map:
+                        broker_holdings_map[base_key] = max(qty, 0)
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
