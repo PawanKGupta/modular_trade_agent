@@ -595,8 +595,43 @@ class SellOrderManager:
         # Fetch broker holdings for validation (Edge Case #17)
         # When holdings are unavailable/invalid, treat broker qty as 0 to avoid placing sell
         # orders for positions we cannot validate (prevents erroneous sells when API fails).
+        def _extract_holdings_rows(payload: Any) -> list[dict[str, Any]]:
+            """Normalize holdings payload across Kotak response variants."""
+            if not payload:
+                return []
+            if isinstance(payload, list):
+                return [row for row in payload if isinstance(row, dict)]
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                if isinstance(data, list):
+                    return [row for row in data if isinstance(row, dict)]
+                if isinstance(data, dict):
+                    nested = data.get("holdings") or data.get("data")
+                    if isinstance(nested, list):
+                        return [row for row in nested if isinstance(row, dict)]
+                holdings = payload.get("holdings")
+                if isinstance(holdings, list):
+                    return [row for row in holdings if isinstance(row, dict)]
+            return []
+
+        def _to_int(value: Any) -> int:
+            try:
+                if value is None:
+                    return 0
+                if hasattr(value, "amount"):
+                    return int(float(value.amount))
+                if isinstance(value, str):
+                    cleaned = value.replace(",", "").replace("Rs", "").replace("INR", "").strip()
+                    if cleaned == "":
+                        return 0
+                    return int(float(cleaned))
+                return int(float(value))
+            except (TypeError, ValueError):
+                return 0
+
         broker_holdings_map: dict[str, int] = {}
         holdings_valid = False
+        positions_valid = False
         try:
             holdings_response = None
             if self.portfolio:
@@ -605,27 +640,41 @@ class SellOrderManager:
                 except Exception as e:
                     logger.debug(f"Failed to fetch holdings for validation: {e}")
 
-            if (
-                holdings_response
-                and isinstance(holdings_response, dict)
-                and "data" in holdings_response
-                and isinstance(holdings_response.get("data"), list)
-            ):
+            holdings_data = _extract_holdings_rows(holdings_response)
+            if holdings_data:
                 holdings_valid = True
-                holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
                     symbol = (
                         holding.get("tradingSymbol")
                         or holding.get("symbol")
+                        or holding.get("sym")
                         or holding.get("securitySymbol")
+                        or holding.get("trdSym")
                         or ""
                     )
                     if not symbol:
                         continue
 
                     full_symbol = symbol.upper()  # Keep full symbol from broker
-                    qty = int(
-                        holding.get("quantity")
+                    base_symbol = extract_base_symbol(full_symbol) or full_symbol
+                    qty = _to_int(
+                        # Prefer explicitly sellable quantity where broker provides it
+                        holding.get("sellableQuantity")
+                        or holding.get("sellQty")
+                        or holding.get("sellableQty")
+                        or holding.get("dpQty")
+                        or holding.get("freeQty")
+                        or holding.get("availableQty")
+                        or holding.get("availableQuantity")
+                        or holding.get("sell_quantity")
+                        or holding.get("sellable_quantity")
+                        or holding.get("netSellableQty")
+                        or holding.get("net_sellable_qty")
+                        or holding.get("availQty")
+                        or holding.get("availQuantity")
+                        or holding.get("deliverableQty")
+                        or holding.get("deliveryQty")
+                        or holding.get("quantity")
                         or holding.get("qty")
                         or holding.get("netQuantity")
                         or holding.get("holdingsQuantity")
@@ -636,15 +685,59 @@ class SellOrderManager:
                     # This ensures we detect when broker has 0 shares (user sold all manually)
                     if full_symbol:
                         broker_holdings_map[full_symbol] = qty
+                    if base_symbol:
+                        broker_holdings_map[base_symbol.upper()] = qty
+
+            # Positions endpoint can reflect same-day executed buys earlier than holdings.
+            positions_response = None
+            if self.portfolio and hasattr(self.portfolio, "get_positions"):
+                try:
+                    positions_response = self.portfolio.get_positions()
+                except Exception as e:
+                    logger.debug(f"Failed to fetch positions for validation: {e}")
+
+            positions_data = _extract_holdings_rows(positions_response)
+            if positions_data:
+                positions_valid = True
+                for pos in positions_data:
+                    # Prefer trdSym (documented full symbol like AXISBANK-EQ)
+                    full_symbol = (
+                        pos.get("trdSym")
+                        or pos.get("tradingSymbol")
+                        or pos.get("symbol")
+                        or pos.get("sym")
+                        or ""
+                    )
+                    if not full_symbol:
+                        continue
+                    full_symbol = str(full_symbol).upper()
+                    base_symbol = extract_base_symbol(full_symbol) or full_symbol
+
+                    qty = _to_int(
+                        pos.get("qty")
+                        or pos.get("netQty")
+                        or pos.get("netQuantity")
+                        or pos.get("flBuyQty")
+                    )
+                    if qty <= 0:
+                        continue
+
+                    # Do not downgrade holdings value when positions is lower/noisy.
+                    existing_full = broker_holdings_map.get(full_symbol, 0)
+                    broker_holdings_map[full_symbol] = max(existing_full, qty)
+                    existing_base = broker_holdings_map.get(base_symbol.upper(), 0)
+                    broker_holdings_map[base_symbol.upper()] = max(existing_base, qty)
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
         open_positions = []
+        skipped_zero_qty = 0
+        skipped_manual_only = 0
         positions = self.positions_repo.list(self.user_id)
         open_count = sum(1 for p in positions if p.closed_at is None)
-        if not holdings_valid and open_count > 0:
+        if not (holdings_valid or positions_valid) and open_count > 0:
             logger.warning(
-                "Holdings unavailable or invalid; skipping sell placement for open positions "
+                "Holdings/positions unavailable or invalid; skipping sell placement for open positions "
                 "(treating broker qty as 0 to avoid erroneous sells)."
             )
 
@@ -658,7 +751,11 @@ class SellOrderManager:
                 # Try to get ticker and placed_symbol from most recent executed buy order (ONGOING legacy or CLOSED)
                 if self.orders_repo and DbOrderStatus:
                     try:
+                        # Keep system and manual trades separate:
+                        # skip symbols where only manual BUY orders exist.
                         all_orders, _ = self.orders_repo.list(self.user_id)
+                        has_non_manual_buy = False
+                        has_manual_buy = False
                         for order in all_orders:
                             if order.status not in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
                                 continue
@@ -666,11 +763,24 @@ class SellOrderManager:
                                 order.side.lower() == "buy"
                                 and order.symbol.upper() == pos.symbol.upper()  # Exact match
                             ):
+                                source = (order.orig_source or "").strip().lower()
+                                if source == "manual":
+                                    has_manual_buy = True
+                                else:
+                                    has_non_manual_buy = True
                                 # Found matching order - use its metadata
                                 if order.order_metadata and isinstance(order.order_metadata, dict):
                                     ticker = order.order_metadata.get("ticker", ticker)
                                 placed_symbol = order.symbol  # Full broker symbol
-                                break
+                                if has_non_manual_buy:
+                                    break
+
+                        if has_manual_buy and not has_non_manual_buy:
+                            skipped_manual_only += 1
+                            logger.info(
+                                f"Skipping {pos.symbol}: manual-only position (no system BUY order)."
+                            )
+                            continue
                     except Exception as e:
                         logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
@@ -678,7 +788,7 @@ class SellOrderManager:
                 # When holdings fetch was invalid, use broker_qty=0 so we don't place sells.
                 # Match by full symbol (e.g. IDEA-EQ) then base symbol (e.g. IDEA) for broker format variance.
                 positions_qty = int(pos.quantity)
-                if not holdings_valid:
+                if not (holdings_valid or positions_valid):
                     broker_qty = 0
                 else:
                     symbol_upper = pos.symbol.upper()
@@ -699,6 +809,7 @@ class SellOrderManager:
                 # Issue #2 Fix: Filter zero quantity positions before adding to list
                 # Prevents positions from being added when sell_qty becomes 0 after validation
                 if sell_qty <= 0:
+                    skipped_zero_qty += 1
                     logger.warning(
                         f"Skipping {pos.symbol}: sell quantity is {sell_qty} "
                         f"(positions table: {positions_qty}, broker: {broker_qty}). "
@@ -726,6 +837,14 @@ class SellOrderManager:
                     }
                 )
 
+        holdings_rows = len(holdings_data) if "holdings_data" in locals() else 0
+        positions_rows = len(positions_data) if "positions_data" in locals() else 0
+        logger.info(
+            "Sell monitor input snapshot: "
+            f"holdings_rows={holdings_rows}, positions_rows={positions_rows}, "
+            f"db_open_positions={open_count}, eligible_open_positions={len(open_positions)}, "
+            f"skipped_zero_qty={skipped_zero_qty}, skipped_manual_only={skipped_manual_only}"
+        )
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
