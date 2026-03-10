@@ -1455,7 +1455,7 @@ def get_broker_orders(  # noqa: PLR0915, PLR0912, B008
                     status_map = {
                         "pending": "pending",
                         "open": "pending",
-                        "executed": "ongoing",
+                        "executed": "closed",
                         "complete": "closed",  # OrderStatus.COMPLETE.value.lower() = "complete"
                         "completed": "closed",  # Support both variants for compatibility
                         "filled": "closed",
