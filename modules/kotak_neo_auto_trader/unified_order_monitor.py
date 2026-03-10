@@ -386,13 +386,39 @@ class UnifiedOrderMonitor:
             try:
                 # Get executed buy orders (ONGOING legacy or CLOSED = filled) for sync
                 all_orders, _ = self.orders_repo.list(self.user_id)
-                executed_buy_orders = [
-                    o
-                    for o in all_orders
-                    if o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
-                    and o.side
-                    and o.side.lower() == "buy"
-                ]
+                local_ist_now = ist_now
+                if local_ist_now is None:
+                    from src.infrastructure.db.timezone_utils import (
+                        ist_now as local_ist_now,  # noqa: PLC0415
+                    )
+                today_start = datetime.combine(local_ist_now().date(), datetime.min.time()).replace(
+                    tzinfo=local_ist_now().tzinfo
+                )
+
+                def _normalize_to_ist(dt: datetime | None) -> datetime | None:
+                    if dt is None:
+                        return None
+                    if dt.tzinfo is None:
+                        return dt.replace(tzinfo=IST)
+                    return dt.astimezone(IST) if dt.tzinfo != IST else dt
+
+                executed_buy_orders = []
+                for o in all_orders:
+                    if not (o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)):
+                        continue
+                    if not (o.side and o.side.lower() == "buy"):
+                        continue
+
+                    # Avoid replaying historical CLOSED buys forever.
+                    # ONGOING buys are still tracked for backward compatibility.
+                    if o.status == DbOrderStatus.CLOSED:
+                        executed_at = _normalize_to_ist(
+                            getattr(o, "execution_time", None) or getattr(o, "filled_at", None)
+                        )
+                        if not executed_at or executed_at < today_start:
+                            continue
+
+                    executed_buy_orders.append(o)
                 for order in executed_buy_orders:
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
                     # Previously only orders WITHOUT execution_price were checked, causing
@@ -1162,6 +1188,7 @@ class UnifiedOrderMonitor:
 
             # Use full symbol (already has suffix from broker/order)
             full_symbol = symbol.upper()
+            base_symbol = full_symbol
 
             # Extract entry RSI from order metadata
             entry_rsi = None
@@ -1686,7 +1713,7 @@ class UnifiedOrderMonitor:
                         auto_commit=False,  # Transaction handles commit
                     )
                 logger.info(
-                    f"Created position for {base_symbol}: qty={execution_qty}, "
+                    f"Created position for {full_symbol}: qty={execution_qty}, "
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
 
@@ -2081,11 +2108,12 @@ class UnifiedOrderMonitor:
                         or db_order.avg_price
                         or db_order.price
                     )
-                    execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
+                    execution_qty = getattr(db_order, "execution_qty", None)
 
-                    if not execution_price or execution_qty <= 0:
+                    if not execution_price or not execution_qty or execution_qty <= 0:
                         logger.warning(
-                            f"Skipping {full_symbol}: Invalid execution price or quantity"
+                            f"Skipping {full_symbol}: Invalid execution price or quantity "
+                            "(execution_qty missing from execution sync)"
                         )
                         continue
 

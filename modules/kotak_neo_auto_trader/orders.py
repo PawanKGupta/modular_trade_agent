@@ -344,6 +344,29 @@ class KotakNeoOrders:
                 pending.append(o)
         return pending
 
+    def get_executed_orders(self) -> list[dict] | None:
+        """
+        Compatibility helper used by legacy sell/manual-reconciliation paths.
+        Returns executed/filled orders from current order book payload.
+        """
+        orders = self.get_orders()
+        if not orders or "data" not in orders:
+            return None
+        data = orders.get("data") or []
+        if not isinstance(data, list):
+            return None
+
+        executed: list[dict] = []
+        for o in data:
+            if not isinstance(o, dict):
+                continue
+            st = str(
+                o.get("ordSt") or o.get("orderStatus") or o.get("status") or o.get("stat") or ""
+            ).lower()
+            if any(x in st for x in ("executed", "complete", "completed", "filled")):
+                executed.append(o)
+        return executed
+
     def cancel_pending_buys_for_symbol(self, symbol_variants: list[str] | str) -> int:
         variants = symbol_variants if isinstance(symbol_variants, list) else [symbol_variants]
         variants_upper = {v.upper() for v in variants}
