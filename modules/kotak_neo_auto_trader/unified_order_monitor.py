@@ -418,6 +418,21 @@ class UnifiedOrderMonitor:
                         if not executed_at or executed_at < today_start:
                             continue
 
+                    # This sync path is for missing execution data / missing open position only.
+                    # Skip already-synced orders to avoid repeatedly adding same qty every cycle.
+                    has_execution = bool(
+                        getattr(o, "execution_price", None) and getattr(o, "execution_qty", None)
+                    )
+                    has_open_position = False
+                    if self.positions_repo and getattr(o, "symbol", None):
+                        try:
+                            pos = self.positions_repo.get_by_symbol(self.user_id, str(o.symbol).upper())
+                            has_open_position = bool(pos and pos.closed_at is None)
+                        except Exception:
+                            has_open_position = False
+                    if has_execution and has_open_position:
+                        continue
+
                     executed_buy_orders.append(o)
                 for order in executed_buy_orders:
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
@@ -2068,6 +2083,52 @@ class UnifiedOrderMonitor:
             except Exception as e:
                 logger.debug(f"Failed to fetch orders for place_sell_orders_for_new_positions: {e}")
 
+            # Build current sellable quantity map from holdings to avoid re-placing
+            # sells for non-sellable/T1-only inventory.
+            sellable_qty_map: dict[str, int] = {}
+            try:
+                holdings_response = (
+                    self.sell_manager.portfolio.get_holdings()
+                    if self.sell_manager and hasattr(self.sell_manager, "portfolio")
+                    else None
+                )
+                holdings_rows = []
+                if isinstance(holdings_response, dict):
+                    if isinstance(holdings_response.get("data"), list):
+                        holdings_rows = holdings_response.get("data", [])
+                    elif isinstance(holdings_response.get("holdings"), list):
+                        holdings_rows = holdings_response.get("holdings", [])
+                elif isinstance(holdings_response, list):
+                    holdings_rows = holdings_response
+
+                for h in holdings_rows:
+                    if not isinstance(h, dict):
+                        continue
+                    symbol = (
+                        h.get("tradingSymbol")
+                        or h.get("symbol")
+                        or h.get("trdSym")
+                        or h.get("securitySymbol")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+                    try:
+                        qty = int(
+                            float(
+                                h.get("sellableQuantity")
+                                or h.get("sellQty")
+                                or h.get("sellableQty")
+                                or h.get("quantity")
+                                or 0
+                            )
+                        )
+                    except (TypeError, ValueError):
+                        qty = 0
+                    sellable_qty_map[str(symbol).upper()] = max(qty, 0)
+            except Exception as e:
+                logger.debug(f"Failed to build sellable quantity map for new holdings: {e}")
+
             orders_placed = 0
 
             for db_order in newly_executed_orders:
@@ -2116,6 +2177,18 @@ class UnifiedOrderMonitor:
                             "(execution_qty missing from execution sync)"
                         )
                         continue
+
+                    # Do not place sells when holdings are not sellable at broker side.
+                    # This avoids repeated RMS rejections and quantity amplification loops.
+                    sellable_qty = sellable_qty_map.get(full_symbol)
+                    if sellable_qty is not None:
+                        if sellable_qty <= 0:
+                            logger.info(
+                                f"Skipping {full_symbol}: holdings sellableQuantity is 0 "
+                                "(likely T1/not yet sellable)."
+                            )
+                            continue
+                        execution_qty = min(float(execution_qty), float(sellable_qty))
 
                     # FIX: Ensure position exists before placing sell order
                     # If position doesn't exist or is closed, create it from the executed order

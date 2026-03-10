@@ -795,11 +795,7 @@ class SellOrderManager:
                     broker_qty = broker_holdings_map.get(symbol_upper)
                     if broker_qty is None:
                         base_sym = extract_base_symbol(symbol_upper)
-                        broker_qty = (
-                            broker_holdings_map.get(base_sym, positions_qty)
-                            if base_sym
-                            else positions_qty
-                        )
+                        broker_qty = broker_holdings_map.get(base_sym, 0) if base_sym else 0
 
                 # Use the minimum to ensure we don't sell more than available
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
