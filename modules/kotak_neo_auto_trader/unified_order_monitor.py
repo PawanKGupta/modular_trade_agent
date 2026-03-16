@@ -80,6 +80,8 @@ class UnifiedOrderMonitor:
 
         # Track active buy orders {order_id: {'symbol': str, 'quantity': float, ...}}
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
+        # Deduplicate buy execution handling/notifications within service runtime.
+        self._processed_buy_execution_ids: set[str] = set()
 
         # Issue #1 Fix: Metrics tracking for position creation
         self._position_creation_metrics = {
@@ -435,6 +437,9 @@ class UnifiedOrderMonitor:
 
                     executed_buy_orders.append(o)
                 for order in executed_buy_orders:
+                    order_id = str(order.broker_order_id or order.order_id or "")
+                    if order_id and order_id in self._processed_buy_execution_ids:
+                        continue
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
                     # Previously only orders WITHOUT execution_price were checked, causing
                     # positions to never be created for executed orders that already had
@@ -949,6 +954,9 @@ class UnifiedOrderMonitor:
             broker_order: Broker order dict
         """
         symbol = order_info.get("symbol", "")
+        if order_id in self._processed_buy_execution_ids:
+            logger.debug(f"Skipping duplicate buy execution handling for order_id={order_id}")
+            return
         execution_price = OrderFieldExtractor.get_price(broker_order)
 
         # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
@@ -1005,6 +1013,7 @@ class UnifiedOrderMonitor:
         self._create_position_from_executed_order(
             order_id, order_info, execution_price, execution_qty
         )
+        self._processed_buy_execution_ids.add(order_id)
 
     def _validate_reentry_data(self, reentry_data: dict[str, Any]) -> bool:
         """
@@ -2157,6 +2166,7 @@ class UnifiedOrderMonitor:
                     sellable_qty_map[base_symbol] = qty
             except Exception as e:
                 logger.debug(f"Failed to build sellable quantity map for new holdings: {e}")
+            has_sellable_data = len(sellable_qty_map) > 0
 
             orders_placed = 0
 
@@ -2212,7 +2222,7 @@ class UnifiedOrderMonitor:
                     sellable_qty = sellable_qty_map.get(full_symbol)
                     if sellable_qty is None:
                         sellable_qty = sellable_qty_map.get(full_symbol.split("-")[0])
-                    if sellable_qty is None or sellable_qty <= 0:
+                    if has_sellable_data and (sellable_qty is None or sellable_qty <= 0):
                         logger.info(
                             f"Skipping {full_symbol}: holdings sellableQuantity is 0/unknown "
                             "(likely T1/not yet sellable)."
@@ -2290,18 +2300,18 @@ class UnifiedOrderMonitor:
                                 f"Error fetching open position qty for {full_symbol}: {pos_qty_err}"
                             )
 
-                    if db_open_qty <= 0:
-                        logger.info(
-                            f"Skipping {full_symbol}: no open DB position quantity available "
-                            "after execution sync."
-                        )
-                        continue
-
-                    place_qty = min(float(db_open_qty), float(sellable_qty))
+                    base_qty = float(db_open_qty) if db_open_qty > 0 else float(execution_qty)
+                    if has_sellable_data and sellable_qty is not None:
+                        place_qty = min(base_qty, float(sellable_qty))
+                    else:
+                        # Fallback when holdings payload is unavailable in this cycle.
+                        # Keep execution-based sizing to avoid total failure due temporary DB read issues.
+                        place_qty = base_qty
                     if place_qty <= 0:
                         logger.info(
                             f"Skipping {full_symbol}: computed sell qty is 0 "
-                            f"(db_open_qty={db_open_qty}, sellable_qty={sellable_qty})."
+                            f"(db_open_qty={db_open_qty}, execution_qty={execution_qty}, "
+                            f"sellable_qty={sellable_qty})."
                         )
                         continue
 

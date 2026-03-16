@@ -961,6 +961,21 @@ class TestUnifiedOrderMonitor:
 
         mock_telegram.notify_order_execution.assert_not_called()
 
+    def test_handle_buy_order_execution_dedupes_notification_by_order_id(self, unified_monitor):
+        """Repeated handling for same order_id should not notify repeatedly."""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_execution = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_execution.assert_called_once()
+
     def test_handle_buy_order_rejection_sends_notification(self, unified_monitor):
         """Test that rejection handler sends notification with broker reason (Phase 9)"""
         mock_telegram = Mock()

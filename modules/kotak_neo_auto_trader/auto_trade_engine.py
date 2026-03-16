@@ -3155,8 +3155,8 @@ class AutoTradeEngine:
                                     # Update order status to rejected
 
                                     self.orders_repo.mark_rejected(
-                                        order_id=db_order.id,
-                                        rejection_reason=rejection_reason,
+                                        db_order,
+                                        rejection_reason,
                                     )
                                     logger.info(
                                         f"Updated order {order_id} status to REJECTED in database"
@@ -3184,7 +3184,7 @@ class AutoTradeEngine:
                                         symbol=symbol,
                                         order_id=order_id,
                                         quantity=0,  # Quantity not available in this context
-                                        reason=rejection_reason,
+                                        rejection_reason=rejection_reason,
                                         user_id=self.user_id,
                                     )
                                 except Exception as notify_err:
