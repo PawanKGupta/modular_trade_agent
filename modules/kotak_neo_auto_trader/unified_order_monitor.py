@@ -2144,10 +2144,26 @@ class UnifiedOrderMonitor:
             except Exception as e:
                 logger.debug(f"Failed to fetch orders for place_sell_orders_for_new_positions: {e}")
 
-            # Build current sellable quantity map from holdings to avoid re-placing
-            # sells for non-sellable/T1-only inventory.
+            # Build current sellable quantity map. Prefer holdings sellable fields,
+            # then use positions as a fallback for symbols missing in holdings.
+            # Some broker payloads lag/omit sellable fields even when manual app allows sell.
             sellable_qty_map: dict[str, int] = {}
+            holdings_qty_map: dict[str, int] = {}
+            positions_qty_map: dict[str, int] = {}
             try:
+                def _to_int(value: Any) -> int:
+                    try:
+                        if value is None:
+                            return 0
+                        if isinstance(value, str):
+                            cleaned = value.replace(",", "").strip()
+                            if cleaned == "":
+                                return 0
+                            return int(float(cleaned))
+                        return int(float(value))
+                    except (TypeError, ValueError):
+                        return 0
+
                 holdings_response = (
                     self.sell_manager.portfolio.get_holdings()
                     if self.sell_manager and hasattr(self.sell_manager, "portfolio")
@@ -2176,37 +2192,107 @@ class UnifiedOrderMonitor:
                         continue
                     full_symbol = str(symbol).upper()
                     base_symbol = full_symbol.split("-")[0]
-                    try:
-                        # Prefer true sellable quantity. Fallback to quantity only when
-                        # sellable fields are entirely absent in payload.
-                        has_sellable_field = any(
-                            k in h
-                            for k in (
-                                "sellableQuantity",
-                                "sellQty",
-                                "sellableQty",
-                                "sellable_quantity",
-                            )
+                    # Prefer explicit sellable quantity fields from holdings.
+                    has_sellable_field = any(
+                        k in h
+                        for k in (
+                            "sellableQuantity",
+                            "sellQty",
+                            "sellableQty",
+                            "sellable_quantity",
                         )
-                        if has_sellable_field:
-                            raw_qty = (
-                                h.get("sellableQuantity")
-                                or h.get("sellQty")
-                                or h.get("sellableQty")
-                                or h.get("sellable_quantity")
-                                or 0
-                            )
-                        else:
-                            raw_qty = h.get("quantity") or h.get("qty") or 0
-                        qty = int(float(raw_qty))
-                    except (TypeError, ValueError):
-                        qty = 0
+                    )
+                    if has_sellable_field:
+                        raw_qty = (
+                            h.get("sellableQuantity")
+                            or h.get("sellQty")
+                            or h.get("sellableQty")
+                            or h.get("sellable_quantity")
+                            or 0
+                        )
+                    else:
+                        raw_qty = h.get("quantity") or h.get("qty") or 0
+                    qty = _to_int(raw_qty)
                     qty = max(qty, 0)
+                    holdings_qty_map[full_symbol] = qty
                     sellable_qty_map[full_symbol] = qty
                     sellable_qty_map[base_symbol] = qty
+
+                # Fallback: positions can show same-day buy qty earlier than holdings.
+                # Do not override holdings entries; only fill missing keys.
+                positions_response = (
+                    self.sell_manager.portfolio.get_positions()
+                    if self.sell_manager
+                    and hasattr(self.sell_manager, "portfolio")
+                    and hasattr(self.sell_manager.portfolio, "get_positions")
+                    else None
+                )
+                positions_rows = []
+                if isinstance(positions_response, dict):
+                    if isinstance(positions_response.get("data"), list):
+                        positions_rows = positions_response.get("data", [])
+                    elif isinstance(positions_response.get("positions"), list):
+                        positions_rows = positions_response.get("positions", [])
+                elif isinstance(positions_response, list):
+                    positions_rows = positions_response
+
+                for p in positions_rows:
+                    if not isinstance(p, dict):
+                        continue
+                    symbol = (
+                        p.get("trdSym")
+                        or p.get("tradingSymbol")
+                        or p.get("symbol")
+                        or p.get("sym")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+                    full_symbol = str(symbol).upper()
+                    base_symbol = full_symbol.split("-")[0]
+                    qty = _to_int(
+                        p.get("qty")
+                        or p.get("netQty")
+                        or p.get("netQuantity")
+                        or p.get("flBuyQty")
+                        or 0
+                    )
+                    if qty <= 0:
+                        continue
+                    positions_qty_map[full_symbol] = qty
+                    if full_symbol not in sellable_qty_map:
+                        sellable_qty_map[full_symbol] = qty
+                    if base_symbol not in sellable_qty_map:
+                        sellable_qty_map[base_symbol] = qty
             except Exception as e:
                 logger.debug(f"Failed to build sellable quantity map for new holdings: {e}")
             has_sellable_data = len(sellable_qty_map) > 0
+
+            # Diagnostic: symbol-wise source quantities used to decide sell eligibility.
+            debug_symbols = sorted(
+                {
+                    s
+                    for s in (
+                        list(holdings_qty_map.keys())
+                        + list(positions_qty_map.keys())
+                        + [str(getattr(o, "symbol", "")).upper() for o in newly_executed_orders]
+                    )
+                    if s
+                }
+            )
+            if debug_symbols:
+                debug_rows = []
+                for sym in debug_symbols:
+                    base_sym = sym.split("-")[0]
+                    h_qty = holdings_qty_map.get(sym)
+                    p_qty = positions_qty_map.get(sym)
+                    s_qty = sellable_qty_map.get(sym)
+                    if s_qty is None:
+                        s_qty = sellable_qty_map.get(base_sym)
+                    debug_rows.append(f"{sym}:H={h_qty if h_qty is not None else '-'}|P={p_qty if p_qty is not None else '-'}|S={s_qty if s_qty is not None else '-'}")
+                logger.info(
+                    "Sell monitor qty sources (new executions): " + ", ".join(debug_rows)
+                )
 
             orders_placed = 0
 
