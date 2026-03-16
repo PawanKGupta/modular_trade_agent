@@ -2074,6 +2074,46 @@ class UnifiedOrderMonitor:
                 else:
                     skipped_orders.append(f"{order.symbol}: no execution_time or filled_at")
 
+            # Guard against duplicate DB rows for the same broker execution.
+            # Keep a single order per (broker_order_id, execution_qty) so downstream
+            # position creation / sell-placement logic does not run twice in one cycle.
+            deduped_orders: dict[str, Any] = {}
+            duplicate_count = 0
+            for order in newly_executed_orders:
+                execution_qty = getattr(order, "execution_qty", None) or 0
+                try:
+                    normalized_exec_qty = int(float(execution_qty))
+                except (TypeError, ValueError):
+                    normalized_exec_qty = 0
+                order_identity = str(
+                    getattr(order, "broker_order_id", None) or getattr(order, "order_id", None) or ""
+                ).strip()
+                if not order_identity:
+                    # Fallback identity for legacy rows without broker ids.
+                    order_identity = f"db:{getattr(order, 'id', '')}"
+                dedup_key = f"{order_identity}:{normalized_exec_qty}"
+
+                if dedup_key in deduped_orders:
+                    duplicate_count += 1
+                    existing = deduped_orders[dedup_key]
+                    existing_updated = getattr(existing, "updated_at", None) or getattr(
+                        existing, "execution_time", None
+                    )
+                    current_updated = getattr(order, "updated_at", None) or getattr(
+                        order, "execution_time", None
+                    )
+                    if current_updated and (not existing_updated or current_updated > existing_updated):
+                        deduped_orders[dedup_key] = order
+                else:
+                    deduped_orders[dedup_key] = order
+
+            if duplicate_count > 0:
+                logger.info(
+                    f"Deduplicated {duplicate_count} duplicate executed buy order row(s) "
+                    "by broker_order_id+execution_qty."
+                )
+            newly_executed_orders = list(deduped_orders.values())
+
             if skipped_orders:
                 logger.debug(
                     f"Skipped {len(skipped_orders)} ONGOING orders (not executed today): "
