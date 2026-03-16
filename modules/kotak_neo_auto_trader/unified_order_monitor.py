@@ -2130,12 +2130,14 @@ class UnifiedOrderMonitor:
             existing_symbols = {
                 symbol.upper() for symbol in existing_sell_orders.keys()  # Already full symbols
             }
+            existing_base_symbols = {s.split("-")[0] for s in existing_symbols if s}
 
             # Get currently tracked sell orders
             active_sell_symbols = {
                 symbol.upper()
                 for symbol in self.sell_manager.active_sell_orders.keys()  # Already full symbols
             }
+            active_base_symbols = {s.split("-")[0] for s in active_sell_symbols if s}
 
             # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
             all_orders_response = None
@@ -2150,6 +2152,7 @@ class UnifiedOrderMonitor:
             sellable_qty_map: dict[str, int] = {}
             holdings_qty_map: dict[str, int] = {}
             positions_qty_map: dict[str, int] = {}
+            base_active_qty_map: dict[str, int] = {}
             try:
                 def _to_int(value: Any) -> int:
                     try:
@@ -2217,6 +2220,8 @@ class UnifiedOrderMonitor:
                     holdings_qty_map[full_symbol] = qty
                     sellable_qty_map[full_symbol] = qty
                     sellable_qty_map[base_symbol] = qty
+                    if qty > 0:
+                        base_active_qty_map[base_symbol] = base_active_qty_map.get(base_symbol, 0) + qty
 
                 # Fallback: positions can show same-day buy qty earlier than holdings.
                 # Do not override holdings entries; only fill missing keys.
@@ -2257,9 +2262,11 @@ class UnifiedOrderMonitor:
                         or p.get("flBuyQty")
                         or 0
                     )
+                    # Safeguard: only active long positions are considered sellable.
                     if qty <= 0:
                         continue
                     positions_qty_map[full_symbol] = qty
+                    base_active_qty_map[base_symbol] = base_active_qty_map.get(base_symbol, 0) + qty
                     if full_symbol not in sellable_qty_map:
                         sellable_qty_map[full_symbol] = qty
                     if base_symbol not in sellable_qty_map:
@@ -2289,7 +2296,13 @@ class UnifiedOrderMonitor:
                     s_qty = sellable_qty_map.get(sym)
                     if s_qty is None:
                         s_qty = sellable_qty_map.get(base_sym)
-                    debug_rows.append(f"{sym}:H={h_qty if h_qty is not None else '-'}|P={p_qty if p_qty is not None else '-'}|S={s_qty if s_qty is not None else '-'}")
+                    b_qty = base_active_qty_map.get(base_sym)
+                    debug_rows.append(
+                        f"{sym}:H={h_qty if h_qty is not None else '-'}|"
+                        f"P={p_qty if p_qty is not None else '-'}|"
+                        f"B={b_qty if b_qty is not None else '-'}|"
+                        f"S={s_qty if s_qty is not None else '-'}"
+                    )
                 logger.info(
                     "Sell monitor qty sources (new executions): " + ", ".join(debug_rows)
                 )
@@ -2299,11 +2312,7 @@ class UnifiedOrderMonitor:
             for db_order in newly_executed_orders:
                 try:
                     full_symbol = db_order.symbol.upper()  # Already full symbol from orders table
-
-                    # Skip if already has sell order
-                    if full_symbol in existing_symbols or full_symbol in active_sell_symbols:
-                        logger.info(f"Skipping {full_symbol}: Already has sell order")
-                        continue
+                    base_symbol = full_symbol.split("-")[0]
 
                     # Check if position already has a completed sell order
                     # Reuse orders data to avoid duplicate API calls
@@ -2345,9 +2354,17 @@ class UnifiedOrderMonitor:
 
                     # Do not place sells when holdings are not sellable at broker side.
                     # This avoids repeated RMS rejections and quantity amplification loops.
-                    sellable_qty = sellable_qty_map.get(full_symbol)
-                    if sellable_qty is None:
-                        sellable_qty = sellable_qty_map.get(full_symbol.split("-")[0])
+                    full_sellable_qty = sellable_qty_map.get(full_symbol)
+                    base_sellable_qty = base_active_qty_map.get(base_symbol)
+                    if full_sellable_qty is None and base_sellable_qty is None:
+                        sellable_qty = None
+                    elif full_sellable_qty is None:
+                        sellable_qty = base_sellable_qty
+                    elif base_sellable_qty is None:
+                        sellable_qty = full_sellable_qty
+                    else:
+                        # Use base-level aggregate when it is higher (e.g. AXISBANK + AXISBANK-EQ).
+                        sellable_qty = max(full_sellable_qty, base_sellable_qty)
                     if has_sellable_data and (sellable_qty is None or sellable_qty <= 0):
                         logger.info(
                             f"Skipping {full_symbol}: holdings sellableQuantity is 0/unknown "
@@ -2478,6 +2495,79 @@ class UnifiedOrderMonitor:
                     # Issue #4: EMA9 validation check removed - all positions will get sell orders
                     # This enables RSI 50 exit mechanism to work for all positions
                     # Note: Positions may be sold at loss if EMA9 is below entry price
+
+                    # If a base/full sell order already exists, either skip or replace if qty is lower.
+                    existing_info = (
+                        self.sell_manager.active_sell_orders.get(full_symbol)
+                        or existing_sell_orders.get(full_symbol)
+                        or self.sell_manager.active_sell_orders.get(base_symbol)
+                        or existing_sell_orders.get(base_symbol)
+                    )
+                    if existing_info:
+                        existing_qty_raw = (
+                            existing_info.get("qty")
+                            or existing_info.get("order_qty")
+                            or existing_info.get("quantity")
+                            or 0
+                        )
+                        try:
+                            existing_qty = int(float(existing_qty_raw))
+                        except (TypeError, ValueError):
+                            existing_qty = 0
+                        target_qty = int(place_qty)
+                        existing_order_id = str(existing_info.get("order_id") or "").strip()
+
+                        if existing_qty >= target_qty:
+                            logger.info(
+                                f"Skipping {full_symbol}: Already has sell order "
+                                f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty})"
+                            )
+                            continue
+
+                        if existing_order_id:
+                            logger.info(
+                                f"Existing sell qty lower for {full_symbol} "
+                                f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty}). "
+                                "Attempting replace/update."
+                            )
+                            replaced = self.sell_manager.update_sell_order(
+                                order_id=existing_order_id,
+                                symbol=full_symbol,
+                                qty=target_qty,
+                                new_price=ema9,
+                            )
+                            if replaced:
+                                if not isinstance(
+                                    getattr(self.sell_manager, "lowest_ema9", None), dict
+                                ):
+                                    self.sell_manager.lowest_ema9 = {}
+                                self.sell_manager._register_order(
+                                    symbol=full_symbol,
+                                    order_id=existing_order_id,
+                                    target_price=ema9,
+                                    qty=target_qty,
+                                    ticker=ticker,
+                                    placed_symbol=broker_sym,
+                                )
+                                self.sell_manager.lowest_ema9[full_symbol] = ema9
+                                active_sell_symbols.add(full_symbol)
+                                active_base_symbols.add(base_symbol)
+                                logger.info(
+                                    f"Updated existing sell order for {full_symbol}: "
+                                    f"order_id={existing_order_id}, qty={target_qty}, target=Rs {ema9:.2f}"
+                                )
+                                continue
+                            logger.warning(
+                                f"Failed to replace existing sell order for {full_symbol} "
+                                f"(order_id={existing_order_id}). Keeping current active order."
+                            )
+                            continue
+
+                        logger.info(
+                            f"Skipping {full_symbol}: Existing sell order without order_id "
+                            f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty})"
+                        )
+                        continue
 
                     # Place sell order
                     logger.info(

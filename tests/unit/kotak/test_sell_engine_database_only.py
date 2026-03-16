@@ -251,6 +251,46 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_aggregates_active_base_qty_across_holdings_and_positions(
+        self, mock_scrip_master, mock_auth
+    ):
+        """Use aggregated active base quantity when holdings/positions are split by symbol variant."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_position = Mock()
+        mock_position.symbol = "AXISBANK-EQ"
+        mock_position.quantity = 10.0
+        mock_position.avg_price = 1200.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+        )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "AXISBANK", "sellableQuantity": 7}]
+        }
+        manager.portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "AXISBANK-EQ", "qty": "5"}]
+        }
+
+        result = manager.get_open_positions()
+
+        assert len(result) == 1
+        # full symbol qty=5, aggregated base qty=12, db qty=10 => min(10, 12)=10
+        assert result[0]["symbol"] == "AXISBANK-EQ"
+        assert result[0]["qty"] == 10.0
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
     def test_get_open_positions_skips_manual_only_positions(self, mock_scrip_master, mock_auth):
         """Do not place bot sell orders for manual-only buy positions."""
         mock_auth_instance = Mock()

@@ -630,6 +630,7 @@ class SellOrderManager:
                 return 0
 
         broker_holdings_map: dict[str, int] = {}
+        broker_base_active_qty_map: dict[str, int] = {}
         holdings_valid = False
         positions_valid = False
         try:
@@ -687,6 +688,11 @@ class SellOrderManager:
                         broker_holdings_map[full_symbol] = qty
                     if base_symbol:
                         broker_holdings_map[base_symbol.upper()] = qty
+                        if qty > 0:
+                            base_key = base_symbol.upper()
+                            broker_base_active_qty_map[base_key] = (
+                                broker_base_active_qty_map.get(base_key, 0) + qty
+                            )
 
             # Positions endpoint can reflect same-day executed buys earlier than holdings.
             positions_response = None
@@ -719,6 +725,7 @@ class SellOrderManager:
                         or pos.get("netQuantity")
                         or pos.get("flBuyQty")
                     )
+                    # Safeguard: only active long positions are considered for sell sizing.
                     if qty <= 0:
                         continue
 
@@ -729,6 +736,9 @@ class SellOrderManager:
                     base_key = base_symbol.upper()
                     if base_key not in broker_holdings_map:
                         broker_holdings_map[base_key] = max(qty, 0)
+                    broker_base_active_qty_map[base_key] = (
+                        broker_base_active_qty_map.get(base_key, 0) + max(qty, 0)
+                    )
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
@@ -794,10 +804,17 @@ class SellOrderManager:
                     broker_qty = 0
                 else:
                     symbol_upper = pos.symbol.upper()
-                    broker_qty = broker_holdings_map.get(symbol_upper)
-                    if broker_qty is None:
-                        base_sym = extract_base_symbol(symbol_upper)
-                        broker_qty = broker_holdings_map.get(base_sym, 0) if base_sym else 0
+                    full_symbol_qty = broker_holdings_map.get(symbol_upper)
+                    base_sym = extract_base_symbol(symbol_upper)
+                    base_active_qty = (
+                        broker_base_active_qty_map.get(base_sym, 0) if base_sym else 0
+                    )
+                    if full_symbol_qty is None:
+                        broker_qty = base_active_qty
+                    else:
+                        # Use base aggregate when higher to account for split payloads
+                        # like AXISBANK (holdings) + AXISBANK-EQ (positions).
+                        broker_qty = max(int(full_symbol_qty), int(base_active_qty))
 
                 # Use the minimum to ensure we don't sell more than available
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
