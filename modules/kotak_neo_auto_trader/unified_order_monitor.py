@@ -2559,6 +2559,28 @@ class UnifiedOrderMonitor:
                                 exc_info=True,
                             )
                             continue
+                    else:
+                        # Backfill/idempotent sync: even when an open position exists,
+                        # apply this executed buy leg once so missed re-entry executions
+                        # can still update quantity/reentries after restart/polling gaps.
+                        try:
+                            order_info = {
+                                "symbol": full_symbol,
+                                "db_order_id": db_order.id,
+                            }
+                            self._create_position_from_executed_order(
+                                str(db_order.broker_order_id or db_order.order_id),
+                                order_info,
+                                execution_price,
+                                execution_qty,
+                            )
+                        except Exception as pos_sync_err:
+                            logger.error(
+                                f"Failed to sync executed position for {full_symbol}: {pos_sync_err}. "
+                                f"Skipping sell order placement for this execution.",
+                                exc_info=True,
+                            )
+                            continue
 
                     # Uniform sell quantity rule: qty = min(db_open_position_qty, broker_sellable_qty)
                     current_open_position = None
