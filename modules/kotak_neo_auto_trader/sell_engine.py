@@ -1314,6 +1314,7 @@ class SellOrderManager:
                 # But we need to prevent false positives from old manual sell orders that happened
                 # BEFORE the system bought the stock.
                 is_system_position = False
+                position_entry_source = "unknown"
                 if self.orders_repo and position_obj.opened_at:
                     try:
                         # Check if there's a system buy order (orig_source != 'manual') for this symbol
@@ -1338,10 +1339,12 @@ class SellOrderManager:
                             ):
                                 # Treat as system position based on presence of matching non-manual buy
                                 is_system_position = True
+                                position_entry_source = "system"
                                 logger.debug(
                                     f"Position {full_symbol} identified as system position via buy order {getattr(buy_order, 'id', 'N/A')}"
                                 )
                                 break
+                            position_entry_source = "manual"
 
                     except Exception as e:
                         logger.debug(
@@ -1455,6 +1458,45 @@ class SellOrderManager:
                     # Treat non-positive avgPrc as unavailable
                     exit_price = None
 
+                # Determine whether this sell should be treated as system/bot managed.
+                # If we already have a DB sell order for this broker order id and it is
+                # not explicitly marked manual, this is a system close, not user manual.
+                detected_sell_order = None
+                is_system_managed_sell = False
+                if order_id and self.orders_repo:
+                    try:
+                        detected_sell_order = self.orders_repo.get_by_broker_order_id(
+                            self.user_id, order_id
+                        )
+                        if (
+                            detected_sell_order
+                            and str(getattr(detected_sell_order, "side", "")).lower() == "sell"
+                            and str(getattr(detected_sell_order, "orig_source", "") or "").lower()
+                            != "manual"
+                        ):
+                            is_system_managed_sell = True
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not resolve sell order ownership for {order_id}: {e}"
+                        )
+
+                default_exit_source = "system" if is_system_managed_sell else "manual"
+                default_exit_reason = "SYSTEM_EXIT" if is_system_managed_sell else "MANUAL"
+                resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                    self._resolve_close_reason_and_audit(
+                        full_symbol=full_symbol,
+                        broker_order_id=order_id,
+                        sell_order=detected_sell_order,
+                        default_exit_reason=default_exit_reason,
+                        default_exit_source=default_exit_source,
+                        entry_source_hint=position_entry_source,
+                        detection_path="manual_sell_detection_get_orders",
+                        persist_audit=True,
+                    )
+                )
+                detected_sell_label = resolved_exit_source
+                is_system_managed_sell = resolved_exit_source == "system"
+
                 # Track manual sell order in active_sell_orders to prevent duplicate placement
                 # This ensures system doesn't place another sell order for the same symbol
                 try:
@@ -1470,15 +1512,15 @@ class SellOrderManager:
                         target_price=sell_order_price,
                         qty=int(sell_order_qty),
                         ticker=None,  # Will be constructed if needed
-                        is_manual=True,  # Mark as manual sell order
+                        is_manual=not is_system_managed_sell,
                     )
                     logger.info(
-                        f"Tracked manual sell order {order_id} for {full_symbol}: "
+                        f"Tracked {detected_sell_label} sell order {order_id} for {full_symbol}: "
                         f"qty={sell_order_qty}, price=Rs {sell_order_price:.2f}"
                     )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to track manual sell order {order_id} for {full_symbol}: {e}. "
+                        f"Failed to track {detected_sell_label} sell order {order_id} for {full_symbol}: {e}. "
                         f"Will still close position."
                     )
 
@@ -1486,7 +1528,7 @@ class SellOrderManager:
                 if executed_qty >= position_qty:
                     price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                     logger.warning(
-                        f"Manual full sell detected for {full_symbol} via get_orders(): "
+                        f"{detected_sell_label.capitalize()} full sell detected for {full_symbol} via get_orders(): "
                         f"Order ID {order_id}, executed {executed_qty} shares @ Rs {price_str}. "
                         f"Position had {position_qty} shares. Marking position as closed."
                     )
@@ -1537,31 +1579,13 @@ class SellOrderManager:
                         )
 
                         if closed_at_time:
-                            # Phase 0.2: Determine exit_reason dynamically from sell order metadata
-                            exit_reason = "MANUAL"  # Default: user manual sell
-
-                            # Try to find the sell order and extract exit_reason from metadata
-                            if order_id and self.orders_repo:
-                                try:
-                                    sell_order = self.orders_repo.get_by_broker_order_id(
-                                        self.user_id, order_id
-                                    )
-                                    if sell_order and sell_order.order_metadata:
-                                        exit_reason = sell_order.order_metadata.get(
-                                            "exit_reason", "MANUAL"
-                                        )
-                                except Exception as e:
-                                    logger.debug(
-                                        f"Could not retrieve exit_reason from order {order_id}: {e}. "
-                                        f"Using default 'MANUAL'"
-                                    )
-
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,
-                                exit_reason=exit_reason,
+                                exit_reason=resolved_exit_reason,
+                                sell_order_id=resolved_sell_order_db_id,
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -1575,7 +1599,7 @@ class SellOrderManager:
                         stats["closed"] += 1
                         price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                         logger.info(
-                            f"Position {full_symbol} marked as closed due to manual full sell "
+                            f"Position {full_symbol} marked as closed due to {detected_sell_label} full sell "
                             f"(detected via get_orders()): exit_price=Rs {price_str}, "
                             f"closed_at={closed_at_time}"
                         )
@@ -2013,10 +2037,13 @@ class SellOrderManager:
                         f"but broker has 0 shares. Marking position as closed."
                     )
                     try:
+                        resolved_exit_source = "manual"
                         if ist_now:
                             # Try to find exit price from executed sell orders for this symbol
                             exit_price = None
                             sell_order_id = None
+                            broker_order_id_for_close = None
+                            matched_sell_order = None
                             if self.orders_repo:
                                 try:
                                     # Search for executed sell orders around the time of closure
@@ -2059,6 +2086,10 @@ class SellOrderManager:
                                             if time_diff < 86400:  # Within 24 hours
                                                 exit_price = order.execution_price
                                                 sell_order_id = order.id
+                                                broker_order_id_for_close = str(
+                                                    getattr(order, "broker_order_id", "") or ""
+                                                )
+                                                matched_sell_order = order
                                                 logger.info(
                                                     f"Found executed sell order {order.id} for manual sell detection: "
                                                     f"exit_price={exit_price}, sell_order_id={sell_order_id}"
@@ -2068,6 +2099,10 @@ class SellOrderManager:
                                             # No timestamp available, but order is executed - use most recent one anyway
                                             exit_price = order.execution_price
                                             sell_order_id = order.id
+                                            broker_order_id_for_close = str(
+                                                getattr(order, "broker_order_id", "") or ""
+                                            )
+                                            matched_sell_order = order
                                             logger.info(
                                                 f"Found executed sell order {order.id} for manual sell detection (no timestamp): "
                                                 f"exit_price={exit_price}, sell_order_id={sell_order_id}"
@@ -2117,6 +2152,8 @@ class SellOrderManager:
                                                 db_order = self.orders_repo.get_by_broker_order_id(self.user_id, broker_ord_id)
                                                 if db_order:
                                                     sell_order_id = db_order.id
+                                                    matched_sell_order = db_order
+                                                    broker_order_id_for_close = str(broker_ord_id)
                                             except Exception:
                                                 pass
                                         logger.info(
@@ -2126,13 +2163,24 @@ class SellOrderManager:
                                 except Exception as e:
                                     logger.debug(f"Could not get exit price from broker orders for {symbol}: {e}")
 
+                            resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                                self._resolve_close_reason_and_audit(
+                                    full_symbol=symbol,
+                                    broker_order_id=broker_order_id_for_close,
+                                    sell_order=matched_sell_order,
+                                    default_exit_reason="MANUAL",
+                                    default_exit_source="manual",
+                                    detection_path="holdings_reconciliation_broker_zero",
+                                    persist_audit=True,
+                                )
+                            )
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 closed_at=ist_now(),
                                 exit_price=exit_price,  # Use found price or None
-                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
-                                sell_order_id=sell_order_id,  # Link to sell order if found
+                                exit_reason=resolved_exit_reason,
+                                sell_order_id=resolved_sell_order_db_id or sell_order_id,
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -2144,7 +2192,10 @@ class SellOrderManager:
                                     f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
                                 )
                         stats["closed"] += 1
-                        logger.info(f"Position {symbol} marked as closed due to manual full sell")
+                        logger.info(
+                            f"Position {symbol} marked as closed due to "
+                            f"{resolved_exit_source} full sell"
+                        )
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
@@ -2535,11 +2586,22 @@ class SellOrderManager:
                     f"Marking position as closed."
                 )
                 if ist_now:
+                    resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                        self._resolve_close_reason_and_audit(
+                            full_symbol=symbol,
+                            default_exit_reason="MANUAL",
+                            default_exit_source="manual",
+                            detection_path="single_symbol_reconciliation_broker_zero",
+                            persist_audit=False,
+                        )
+                    )
                     self.positions_repo.mark_closed(
                         user_id=self.user_id,
                         symbol=symbol,
                         closed_at=ist_now(),
                         exit_price=None,
+                        exit_reason=resolved_exit_reason,
+                        sell_order_id=resolved_sell_order_db_id,
                     )
                     # Close corresponding ONGOING buy orders
                     try:
@@ -2550,6 +2612,9 @@ class SellOrderManager:
                         logger.warning(
                             f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
                         )
+                    logger.info(
+                        f"Position {symbol} marked as closed via {resolved_exit_source} reconciliation"
+                    )
                 return True
 
             # Manual partial sell detected
@@ -3907,18 +3972,120 @@ class SellOrderManager:
             or "no holding" in reason_lower
         )
 
+    def _resolve_entry_source_for_symbol(self, full_symbol: str) -> str:
+        """
+        Resolve entry source for a symbol from buy orders.
+        Returns 'system', 'manual', or 'unknown'.
+        """
+        if not self.orders_repo or not self.user_id:
+            return "unknown"
+        try:
+            all_orders, _ = self.orders_repo.list(self.user_id)
+            has_system = False
+            has_manual = False
+            for order in all_orders:
+                if str(getattr(order, "side", "")).lower() != "buy":
+                    continue
+                if str(getattr(order, "symbol", "")).upper() != str(full_symbol).upper():
+                    continue
+                source = str(getattr(order, "orig_source", "") or "").strip().lower()
+                if source == "manual":
+                    has_manual = True
+                else:
+                    has_system = True
+            if has_system:
+                return "system"
+            if has_manual:
+                return "manual"
+        except Exception as e:
+            logger.debug(f"Failed to resolve entry source for {full_symbol}: {e}")
+        return "unknown"
+
+    def _resolve_close_reason_and_audit(  # noqa: PLR0913
+        self,
+        *,
+        full_symbol: str,
+        broker_order_id: str | None = None,
+        sell_order=None,
+        default_exit_reason: str = "MANUAL",
+        default_exit_source: str = "manual",
+        entry_source_hint: str | None = None,
+        detection_path: str | None = None,
+        persist_audit: bool = False,
+    ) -> tuple[str, int | None, str]:
+        """
+        Single resolver for close reason/source across all close paths.
+
+        Returns:
+            (exit_reason, sell_order_db_id, exit_source)
+        """
+        resolved_sell_order = sell_order
+        if not resolved_sell_order and broker_order_id and self.orders_repo and self.user_id:
+            try:
+                resolved_sell_order = self.orders_repo.get_by_broker_order_id(
+                    self.user_id, str(broker_order_id)
+                )
+            except Exception as e:
+                logger.debug(f"Could not fetch sell order by broker id {broker_order_id}: {e}")
+
+        exit_reason = default_exit_reason
+        exit_source = default_exit_source
+        sell_order_db_id: int | None = None
+
+        if resolved_sell_order:
+            sell_order_db_id = getattr(resolved_sell_order, "id", None)
+            order_side = str(getattr(resolved_sell_order, "side", "")).lower()
+            order_source = str(getattr(resolved_sell_order, "orig_source", "") or "").lower()
+            if order_side == "sell":
+                exit_source = "manual" if order_source == "manual" else "system"
+
+            metadata = (
+                resolved_sell_order.order_metadata
+                if isinstance(getattr(resolved_sell_order, "order_metadata", None), dict)
+                else {}
+            )
+            if metadata:
+                metadata_reason = metadata.get("exit_reason") or metadata.get("exit_note")
+                if metadata_reason:
+                    exit_reason = metadata_reason
+
+            if persist_audit and self.orders_repo:
+                try:
+                    entry_source = entry_source_hint or self._resolve_entry_source_for_symbol(
+                        full_symbol
+                    )
+                    updated_metadata = dict(metadata)
+                    audit_sources = dict(updated_metadata.get("audit_sources") or {})
+                    if entry_source in ("system", "manual"):
+                        audit_sources["entry_source"] = entry_source
+                    audit_sources["exit_source"] = exit_source
+                    if detection_path:
+                        audit_sources["detection_path"] = detection_path
+                    updated_metadata["audit_sources"] = audit_sources
+                    resolved_sell_order.order_metadata = updated_metadata
+                    self.orders_repo.update(resolved_sell_order)
+                except Exception as e:
+                    logger.debug(
+                        f"Could not persist audit_sources metadata for {full_symbol} "
+                        f"(order_id={broker_order_id}): {e}"
+                    )
+
+        return exit_reason, sell_order_db_id, exit_source
+
     def _get_exit_details_from_executed_sell_orders(
         self, full_symbol: str
-    ) -> tuple[float | None, int | None]:
+    ) -> tuple[float | None, int | None, str | None, Any | None]:
         """
         Find exit price and sell_order_id from executed sell orders for this symbol.
-        Returns (exit_price, sell_order_id); either may be None.
+        Returns (exit_price, sell_order_id, broker_order_id, sell_order_obj); values may be None.
         Uses most recent executed sell within 24 hours when available.
         """
         exit_price: float | None = None
         sell_order_id: int | None = None
+        broker_order_id: str | None = None
+        sell_order_obj = None
         if not self.orders_repo or not ist_now:
-            return (exit_price, sell_order_id)
+            return (exit_price, sell_order_id, broker_order_id, sell_order_obj)
         try:
             all_orders, _ = self.orders_repo.list(self.user_id)
             matching_orders = [
@@ -3946,14 +4113,18 @@ class SellOrderManager:
                     if abs((order_time - now_time).total_seconds()) < 86400:  # 24h
                         exit_price = order.execution_price
                         sell_order_id = order.id
+                        broker_order_id = str(getattr(order, "broker_order_id", "") or "")
+                        sell_order_obj = order
                         break
                 else:
                     exit_price = order.execution_price
                     sell_order_id = order.id
+                    broker_order_id = str(getattr(order, "broker_order_id", "") or "")
+                    sell_order_obj = order
                     break
         except Exception as e:
             logger.debug(f"Could not get exit details from orders for {full_symbol}: {e}")
-        return (exit_price, sell_order_id)
+        return (exit_price, sell_order_id, broker_order_id, sell_order_obj)
 
     def _mark_position_closed_for_no_holdings_rejection(self, symbol: str) -> None:
         """
@@ -3978,19 +4149,31 @@ class SellOrderManager:
             ]
             for pos in open_positions:
                 try:
-                    exit_price, sell_order_id = self._get_exit_details_from_executed_sell_orders(
-                        pos.symbol
+                    exit_price, sell_order_id, broker_order_id, sell_order = (
+                        self._get_exit_details_from_executed_sell_orders(pos.symbol)
+                    )
+                    resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                        self._resolve_close_reason_and_audit(
+                            full_symbol=pos.symbol,
+                            broker_order_id=broker_order_id,
+                            sell_order=sell_order,
+                            default_exit_reason="SYSTEM_EXIT",
+                            default_exit_source="system",
+                            detection_path="no_holdings_rejection",
+                            persist_audit=True,
+                        )
                     )
                     self.positions_repo.mark_closed(
                         user_id=self.user_id,
                         symbol=pos.symbol,
                         closed_at=ist_now(),
                         exit_price=exit_price,
-                        exit_reason="MANUAL",
-                        sell_order_id=sell_order_id,
+                        exit_reason=resolved_exit_reason,
+                        sell_order_id=resolved_sell_order_db_id or sell_order_id,
                     )
                     logger.info(
-                        f"Position {pos.symbol} marked as closed (sell rejected: No Holdings Present)"
+                        f"Position {pos.symbol} marked as closed via {resolved_exit_source} "
+                        "(sell rejected: No Holdings Present)"
                         + (f", exit_price=Rs {exit_price:.2f}" if exit_price is not None else "")
                         + "."
                     )
@@ -5785,25 +5968,19 @@ class SellOrderManager:
                                 # Full execution - mark position as closed
                                 # Wrap position and order updates in transaction for atomicity
                                 if transaction and ist_now:
-                                    # Phase 0.2: Get exit details from sell order
-                                    exit_reason = "EMA9_TARGET"  # Default
                                     exit_rsi = None
                                     sell_order_db_id = None
+                                    sell_order = None
 
-                                    # Try to get sell order from database to extract exit details
                                     if self.orders_repo and completed_order_id:
                                         try:
                                             sell_order = self.orders_repo.get_by_broker_order_id(
                                                 self.user_id, completed_order_id
                                             )
                                             if sell_order:
-                                                sell_order_db_id = sell_order.id
                                                 if sell_order.order_metadata and isinstance(
                                                     sell_order.order_metadata, dict
                                                 ):
-                                                    exit_reason = sell_order.order_metadata.get(
-                                                        "exit_note", "EMA9_TARGET"
-                                                    )
                                                     exit_rsi = sell_order.order_metadata.get(
                                                         "exit_rsi"
                                                     )
@@ -5811,6 +5988,19 @@ class SellOrderManager:
                                             logger.debug(
                                                 f"Could not get sell order for exit details: {e}"
                                             )
+
+                                    exit_reason, resolved_sell_order_db_id, _ = (
+                                        self._resolve_close_reason_and_audit(
+                                            full_symbol=full_symbol,
+                                            broker_order_id=completed_order_id,
+                                            sell_order=sell_order,
+                                            default_exit_reason="EMA9_TARGET",
+                                            default_exit_source="system",
+                                            detection_path="tracked_sell_full_execution",
+                                            persist_audit=True,
+                                        )
+                                    )
+                                    sell_order_db_id = resolved_sell_order_db_id or sell_order_db_id
 
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
@@ -5903,10 +6093,9 @@ class SellOrderManager:
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
                         if transaction and ist_now:
-                            # Phase 0.2: Get exit details from sell order
-                            exit_reason = "EMA9_TARGET"  # Default
                             exit_rsi = None
                             sell_order_db_id = None
+                            sell_order = None
 
                             # Try to get sell order from database to extract exit details
                             if self.orders_repo and order_id:
@@ -5915,16 +6104,25 @@ class SellOrderManager:
                                         self.user_id, order_id
                                     )
                                     if sell_order:
-                                        sell_order_db_id = sell_order.id
                                         if sell_order.order_metadata and isinstance(
                                             sell_order.order_metadata, dict
                                         ):
-                                            exit_reason = sell_order.order_metadata.get(
-                                                "exit_note", "EMA9_TARGET"
-                                            )
                                             exit_rsi = sell_order.order_metadata.get("exit_rsi")
                                 except Exception as e:
                                     logger.debug(f"Could not get sell order for exit details: {e}")
+
+                            exit_reason, resolved_sell_order_db_id, _ = (
+                                self._resolve_close_reason_and_audit(
+                                    full_symbol=full_symbol,
+                                    broker_order_id=order_id,
+                                    sell_order=sell_order,
+                                    default_exit_reason="EMA9_TARGET",
+                                    default_exit_source="system",
+                                    detection_path="executed_ids_full_execution",
+                                    persist_audit=True,
+                                )
+                            )
+                            sell_order_db_id = resolved_sell_order_db_id or sell_order_db_id
 
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
