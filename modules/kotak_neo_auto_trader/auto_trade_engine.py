@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
-from math import floor
+from math import floor, isfinite
 from pathlib import Path
 from typing import Any
 
@@ -2141,7 +2141,7 @@ class AutoTradeEngine:
             )
             return has_sufficient, avl_cash, req_margin, shortfall, margin_api_ok
         except Exception as e:
-            # No fallback: margin API must succeed for order validation.
+            # Hard-fail policy: if check-margin is unavailable/invalid, do not place order.
             logger.error(f"check-margin failed for {symbol}: {e}")
             return False, 0.0, required_cash, required_cash, False
 
@@ -3496,8 +3496,12 @@ class AutoTradeEngine:
                     summary["skipped"] += 1
                     continue
 
-                close = ind["close"]
-                if close <= 0:
+                raw_close = ind["close"]
+                try:
+                    close = float(raw_close)
+                except (TypeError, ValueError):
+                    close = 0.0
+                if not isfinite(close) or close <= 0:
                     logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
                     summary["skipped"] += 1
                     continue
@@ -4557,7 +4561,8 @@ class AutoTradeEngine:
                 """Fetch indicator for a single ticker (thread-safe)"""
                 try:
                     logger.debug(f"[Parallel Fetch] Starting fetch for {rec_ticker}")
-                    ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                    # Use instance method so tests/mocks can override data source.
+                    ind = self.get_daily_indicators(rec_ticker)
                     if ind:
                         logger.debug(
                             f"[Parallel Fetch] Fetched {rec_ticker}: "
@@ -5006,9 +5011,13 @@ class AutoTradeEngine:
                 ticker_attempt["reason"] = "missing_indicators"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
-            close = ind["close"]
+            raw_close = ind["close"]
+            try:
+                close = float(raw_close)
+            except (TypeError, ValueError):
+                close = 0.0
             logger.info(f"{rec.ticker}: Using close price = Rs {close:.2f} from indicators")
-            if close <= 0:
+            if not isfinite(close) or close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
                 summary["skipped"] += 1  # Increment general counter

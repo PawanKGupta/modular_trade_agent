@@ -874,22 +874,20 @@ class SellOrderManager:
             return 0
 
         try:
-            open_positions = self.get_open_positions()
-            if not open_positions:
+            db_positions = self.positions_repo.list(self.user_id)
+            open_symbols = {
+                str(getattr(pos, "symbol", "") or "").upper()
+                for pos in db_positions
+                if getattr(pos, "closed_at", None) is None
+            }
+            if not open_symbols:
                 return 0
 
-            # Get existing sell orders (from broker API)
+            # Existing sell orders can come from broker API and/or in-memory tracking.
             existing_orders = self.get_existing_sell_orders()
-            existing_symbols = set(existing_orders.keys())
+            existing_symbols = {str(sym or "").upper() for sym in existing_orders.keys()}
 
-            # Count positions without sell orders
-            positions_without_orders = 0
-            for position in open_positions:
-                symbol = position.get("symbol", "").upper()
-                if symbol not in existing_symbols:
-                    positions_without_orders += 1
-
-            return positions_without_orders
+            return sum(1 for symbol in open_symbols if symbol and symbol not in existing_symbols)
         except Exception as e:
             logger.debug(f"Failed to check positions without sell orders: {e}")
             return 0
@@ -1245,7 +1243,19 @@ class SellOrderManager:
 
         # Get all open positions
         try:
-            open_positions = self.get_open_positions()
+            # Manual sell detection should rely on DB open positions and executed
+            # SELL orders, not broker holdings availability.
+            db_positions = self.positions_repo.list(self.user_id)
+            open_positions = []
+            for pos in db_positions:
+                if getattr(pos, "closed_at", None) is not None:
+                    continue
+                open_positions.append(
+                    {
+                        "symbol": str(getattr(pos, "symbol", "") or "").upper(),
+                        "qty": float(getattr(pos, "quantity", 0) or 0),
+                    }
+                )
             if not open_positions:
                 return stats
 

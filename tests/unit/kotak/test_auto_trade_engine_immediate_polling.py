@@ -119,14 +119,14 @@ class TestImmediateOrderVerification:
         assert is_valid is False
         assert reason == "Insufficient balance"
         auto_trade_engine.orders_repo.mark_rejected.assert_called_once_with(
-            order_id=1, rejection_reason="Insufficient balance"
+            mock_db_order, "Insufficient balance"
         )
         # Verify notify_order_rejection was called
         mock_telegram_notifier.notify_order_rejection.assert_called_once()
         call_kwargs = mock_telegram_notifier.notify_order_rejection.call_args[1]
         assert call_kwargs["symbol"] == "RELIANCE"
         assert call_kwargs["order_id"] == "ORDER123"
-        assert call_kwargs["reason"] == "Insufficient balance"
+        assert call_kwargs["rejection_reason"] == "Insufficient balance"
 
     def test_verify_order_placement_executed(self, auto_trade_engine):
         """Test verification when order is immediately executed (rare for AMO)"""
