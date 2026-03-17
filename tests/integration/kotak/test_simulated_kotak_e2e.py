@@ -79,6 +79,7 @@ def _build_monitor(
     db_open_qty: float,
     holdings_qty: int = 7,
     positions_qty: int = 5,
+    db_extra_positions: list[tuple[str, float]] | None = None,
 ):
     # Seed user required for FK relationships.
     user = Users(
@@ -123,6 +124,14 @@ def _build_monitor(
         avg_price=1288.30,
         entry_rsi=29.5,
     )
+    for extra_symbol, extra_qty in (db_extra_positions or []):
+        positions_repo.upsert(
+            user_id=user_id,
+            symbol=extra_symbol,
+            quantity=extra_qty,
+            avg_price=1288.30,
+            entry_rsi=29.5,
+        )
 
     fake_rest = FakeKotakRestClient(
         holdings_rows=[{"tradingSymbol": "AXISBANK", "sellableQuantity": holdings_qty}],
@@ -243,4 +252,25 @@ def test_simulated_kotak_skips_when_no_sellable_qty_available(db_session):
     assert placed_count == 0
     assert fake_rest.modified_orders == []
     assert fake_rest.placed_orders == []
+    sell_manager.place_sell_order.assert_not_called()
+
+
+def test_simulated_kotak_replaces_existing_sell_using_db_base_aggregate(db_session):
+    monitor, sell_manager, fake_rest = _build_monitor(
+        db_session,
+        existing_sell_qty=5,
+        db_open_qty=5.0,  # full symbol row
+        holdings_qty=10,
+        positions_qty=5,
+        db_extra_positions=[("AXISBANK", 5.0)],  # base symbol split row
+    )
+
+    placed_count = monitor.check_and_place_sell_orders_for_new_holdings()
+
+    # Existing sell is upgraded to 10 using DB base aggregate (5 + 5).
+    assert placed_count == 0
+    assert len(fake_rest.modified_orders) == 1
+    modify = fake_rest.modified_orders[0]
+    assert modify["order_id"] == "260316000554938"
+    assert str(modify["payload"].get("qt")) == "10"
     sell_manager.place_sell_order.assert_not_called()

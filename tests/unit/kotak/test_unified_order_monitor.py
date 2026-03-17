@@ -1161,6 +1161,43 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager._register_order.assert_called_once()
         assert "RELIANCE-EQ" in mock_sell_manager.lowest_ema9
 
+    def test_check_and_place_sell_orders_for_new_holdings_skips_already_synced_execution(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Executed buy with position_sync marker must not be re-applied."""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+        mock_order = Mock()
+        mock_order.id = 9991
+        mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.broker_order_id = "BID-123"
+        mock_order.execution_qty = 10.0
+        mock_order.execution_price = 2450.50
+        mock_order.quantity = 10.0
+        mock_order.execution_time = execution_time
+        mock_order.filled_at = execution_time
+        mock_order.order_metadata = {
+            "ticker": "RELIANCE.NS",
+            "position_sync": {"applied": True, "execution_key": "BID-123:10"},
+        }
+
+        mock_orders_repo.list.return_value = [mock_order]
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.place_sell_order = Mock(return_value="SELL123")
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_not_called()
+        mock_sell_manager._register_order.assert_not_called()
+
     def test_check_and_place_sell_orders_for_new_holdings_uses_aggregated_active_base_qty(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
     ):
@@ -1365,19 +1402,19 @@ class TestUnifiedOrderMonitor:
     def test_check_and_place_sell_orders_for_new_holdings_skips_old_orders(
         self, unified_monitor, mock_orders_repo
     ):
-        """Test that orders executed before today are skipped"""
+        """Test that orders older than backfill window are skipped."""
         from datetime import timedelta
 
         from src.infrastructure.db.timezone_utils import ist_now
 
-        # Order executed yesterday
-        yesterday = ist_now() - timedelta(days=1)
+        # Older than the backfill window (3 days).
+        old_execution = ist_now() - timedelta(days=10)
 
         mock_order = Mock()
         mock_order.side = "buy"
         mock_order.status = OrderStatus.CLOSED  # Executed (filled)
-        mock_order.execution_time = yesterday
-        mock_order.filled_at = yesterday
+        mock_order.execution_time = old_execution
+        mock_order.filled_at = old_execution
 
         mock_orders_repo.list.return_value = [mock_order]
 
