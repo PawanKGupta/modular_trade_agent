@@ -764,11 +764,13 @@ class TestCheckPositionsWithoutSellOrders:
     def test_returns_zero_when_all_have_orders(self, sell_manager, mock_positions_repo):
         """Test that method returns 0 when all positions have sell orders."""
         pos = Mock(spec=Positions)
-        pos.symbol = "RELIANCE"
+        pos.symbol = "RELIANCE-EQ"
         pos.closed_at = None
 
         mock_positions_repo.list.return_value = [pos]
-        sell_manager.active_sell_orders = {"RELIANCE": {"order_id": "ORDER123"}}
+        sell_manager.get_existing_sell_orders = Mock(
+            return_value={"RELIANCE-EQ": {"order_id": "ORDER123"}}
+        )
 
         count = sell_manager._check_positions_without_sell_orders()
 

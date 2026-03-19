@@ -58,6 +58,9 @@ class TestDuplicatePreventionMultipleRuns:
 
             mock_scrip_master.get_instrument = mock_get_instrument
             engine.scrip_master = mock_scrip_master
+            engine._check_order_margin = MagicMock(
+                return_value=(True, 200000.0, 50000.0, 0.0, True)
+            )
 
             return engine
 

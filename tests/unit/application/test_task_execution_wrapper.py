@@ -119,19 +119,20 @@ class TestExecuteTask:
         """Test that task duration is accurately tracked"""
         from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
 
-        sleep_duration = 0.1
-
-        with execute_task(test_user.id, db_session, "test_task", mock_logger):
-            time.sleep(sleep_duration)
+        expected_duration = 0.1
+        # Use deterministic timestamps to avoid flakiness from scheduler/CI load.
+        with patch(
+            "src.application.services.task_execution_wrapper.time.time",
+            side_effect=[1000.0, 1000.0 + expected_duration],
+        ):
+            with execute_task(test_user.id, db_session, "test_task", mock_logger):
+                pass
 
         task_repo = ServiceTaskRepository(db_session)
         tasks = task_repo.list(test_user.id, task_name="test_task", limit=1)
 
         assert len(tasks) == 1
-        # Duration should be at least sleep_duration (may be slightly more)
-        assert tasks[0].duration_seconds >= sleep_duration
-        # But shouldn't be too much more (allow 0.05s overhead)
-        assert tasks[0].duration_seconds < sleep_duration + 0.05
+        assert tasks[0].duration_seconds == pytest.approx(expected_duration, abs=1e-6)
 
     def test_task_updates_service_status(self, db_session, test_user, mock_logger):
         """Test that task execution updates service status"""

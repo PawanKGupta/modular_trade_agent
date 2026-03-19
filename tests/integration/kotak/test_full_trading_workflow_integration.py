@@ -203,6 +203,8 @@ def mock_engine(db_session, mock_broker):
         engine.order_validation_service.portfolio_service = engine.portfolio_service
         engine.order_validation_service.orders_repo = engine.orders_repo
         engine.order_validation_service.user_id = user_id
+        # New order path uses check-margin as hard gate; default success for integration happy paths.
+        engine._check_order_margin = Mock(return_value=(True, 100000.0, 1000.0, 0.0, True))
 
         # Mock scrip_master for symbol resolution
         engine.scrip_master = Mock()

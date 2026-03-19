@@ -201,12 +201,13 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
                 "ema200": 2400.0,
                 "avg_volume": 1000000.0,
             }
+            # New implementation uses check-margin API as the final balance gate.
+            engine._check_order_margin = Mock(
+                return_value=(False, 1000.0, 50000.0, 49000.0, True)
+            )
 
-            summary = engine.place_new_entries([rec])
-
-            # Verify OrderValidationService.check_balance() was called
-            mock_validation_service.check_balance.assert_called()
-            # Balance check happens after volume ratio, so we expect it to be called if volume passes
+            engine.place_new_entries([rec])
+            engine._check_order_margin.assert_called()
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_place_new_entries_uses_order_validation_service_portfolio_capacity(self, mock_auth):
