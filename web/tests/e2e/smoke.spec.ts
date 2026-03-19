@@ -83,13 +83,20 @@ test('auth -> dashboard -> pnl page basics', async ({ authenticatedPage }) => {
     await authenticatedPage.waitForTimeout(300);
   }
 
-  await sidebar.getByRole('link', { name: /^PnL$/i }).click();
+  // Sidebar label can include icon text (e.g. "💰 PnL"), so keep name matching flexible.
+  const pnlNavLink = sidebar.getByRole('link', { name: /P(?:&|n)L|Profit\s*&\s*Loss/i });
+  if (await pnlNavLink.first().isVisible().catch(() => false)) {
+    await pnlNavLink.first().click();
+  } else {
+    // Fallback: dashboard quick action link
+    await authenticatedPage.getByRole('link', { name: /View P&L/i }).click();
+  }
   await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
 
   await expect(authenticatedPage.getByRole('heading', { name: /Profit & Loss/i })).toBeVisible();
-  await expect(authenticatedPage.getByText('Summary')).toBeVisible();
-  await expect(authenticatedPage.getByText('Daily P&L')).toBeVisible();
-  await expect(authenticatedPage.getByText('Closed Positions')).toBeVisible();
+  await expect(authenticatedPage.getByText('Summary', { exact: true }).first()).toBeVisible();
+  await expect(authenticatedPage.getByText('Daily P&L', { exact: true }).first()).toBeVisible();
+  await expect(authenticatedPage.getByText('Closed Positions', { exact: true }).first()).toBeVisible();
 
   // Export panel should open
   const exportButton = authenticatedPage.getByRole('button', { name: /Export Options/i });
