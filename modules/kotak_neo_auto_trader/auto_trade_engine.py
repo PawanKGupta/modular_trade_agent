@@ -1479,7 +1479,9 @@ class AutoTradeEngine:
 
             strategy_config = StrategyConfig.default()
             return indicator_service.get_daily_indicators_dict(
-                ticker=ticker, rsi_period=None, config=strategy_config
+                ticker=ticker,
+                rsi_period=None,
+                config=strategy_config,
             )
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
@@ -5518,6 +5520,21 @@ class AutoTradeEngine:
             return summary
 
         logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+        from datetime import time as dt_time
+
+        from core.volume_analysis import is_market_hours
+
+        # Re-entry RSI source policy:
+        # - At/after market close on trading days, use current day close-inclusive RSI.
+        # - During next-day market hours, keep using previous closed-day RSI snapshot
+        #   until the next post-close evaluation window.
+        now_time = datetime.now().time()
+        market_close = dt_time(15, 30)
+        use_latest_rsi_after_close = (
+            self.is_trading_weekday()
+            and (not is_market_hours())
+            and now_time >= market_close
+        )
 
         # Get portfolio snapshot for capacity checks
         if self.portfolio_service:
@@ -5557,7 +5574,18 @@ class AutoTradeEngine:
                 )
 
                 # Get current indicators
-                ind = self.get_daily_indicators(ticker)
+                uses_default_get_daily_indicators = (
+                    self.get_daily_indicators is AutoTradeEngine.get_daily_indicators
+                )
+                if self.indicator_service and uses_default_get_daily_indicators:
+                    ind = self.indicator_service.get_daily_indicators_dict(
+                        ticker=ticker,
+                        rsi_period=None,
+                        config=self.strategy_config,
+                        add_current_day=use_latest_rsi_after_close,
+                    )
+                else:
+                    ind = self.get_daily_indicators(ticker)
                 if not ind:
                     logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
                     summary["skipped_missing_data"] += 1

@@ -415,6 +415,7 @@ class IndicatorService:
         ticker: str,
         rsi_period: int | None = None,
         config: StrategyConfig | None = None,
+        add_current_day: bool = False,
     ) -> dict[str, Any] | None:
         """
         Get daily indicators as a dictionary (matches get_daily_indicators() return format).
@@ -426,6 +427,8 @@ class IndicatorService:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
             rsi_period: RSI calculation period (uses config if None)
             config: Optional StrategyConfig (uses default if None)
+            add_current_day: Include current-day candle in daily OHLCV before
+                indicator calculation. Defaults to False for backward compatibility.
 
         Returns:
             Dict with keys: close, rsi10, ema9, ema200, avg_volume
@@ -440,11 +443,13 @@ class IndicatorService:
             # Get price data
             if self.price_service:
                 df = self.price_service.get_price(
-                    ticker, days=800, interval="1d", add_current_day=False
+                    ticker, days=800, interval="1d", add_current_day=add_current_day
                 )
             else:
                 # Fallback to direct fetch
-                df = fetch_ohlcv_yf(ticker, days=800, interval="1d", add_current_day=False)
+                df = fetch_ohlcv_yf(
+                    ticker, days=800, interval="1d", add_current_day=add_current_day
+                )
 
             if df is None or df.empty:
                 return None
