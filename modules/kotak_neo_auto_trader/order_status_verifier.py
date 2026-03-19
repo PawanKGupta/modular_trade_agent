@@ -70,6 +70,11 @@ class OrderStatusVerifier:
         # Phase 3.2: Store verification results for sharing
         self._verification_results: dict[str, dict[str, Any]] = {}  # order_id -> result
         self._last_verification_counts: dict[str, int] = {}  # Last verification counts
+        # Track broker fetch health so we never infer cancellation on API/parse failures.
+        self._last_broker_fetch_ok: bool = True
+        self._last_broker_fetch_error: str | None = None
+        self._last_history_fetch_ok: bool = True
+        self._last_history_fetch_error: str | None = None
 
     def start(self, daemon: bool = True) -> None:
         """
@@ -167,6 +172,20 @@ class OrderStatusVerifier:
                 "partial": 0,
                 "still_pending": len(pending_orders),
             }
+        if not self._last_broker_fetch_ok:
+            logger.warning(
+                "Broker orders fetch failed (%s). Skipping status inference and keeping %d order(s) pending.",
+                self._last_broker_fetch_error or "unknown error",
+                len(pending_orders),
+            )
+            return {
+                "checked": len(pending_orders),
+                "executed": 0,
+                "rejected": 0,
+                "cancelled": 0,
+                "partial": 0,
+                "still_pending": len(pending_orders),
+            }
 
         counts = {
             "checked": len(pending_orders),
@@ -226,6 +245,24 @@ class OrderStatusVerifier:
                         self._handle_rejection(pending_order, broker_order, broker_status)
                         counts["rejected"] += 1
                         continue
+
+                if not self._last_history_fetch_ok:
+                    logger.warning(
+                        "Skipping cancellation assumption for %s due to history fetch failure (%s).",
+                        order_id,
+                        self._last_history_fetch_error or "unknown error",
+                    )
+                    self._verification_results[order_id] = {
+                        "order_id": order_id,
+                        "symbol": symbol,
+                        "status": "PENDING",
+                        "executed_qty": 0,
+                        "rejection_reason": None,
+                        "verified_at": datetime.now().isoformat(),
+                        "broker_order": None,
+                    }
+                    counts["still_pending"] += 1
+                    continue
 
                 # Still not found - check if we should assume cancellation based on time
                 if self._should_assume_cancelled(pending_order):
@@ -434,65 +471,90 @@ class OrderStatusVerifier:
         Returns:
             List of order dicts from broker
         """
+        self._last_broker_fetch_ok = False
+        self._last_broker_fetch_error = None
         try:
-            def _has_callable_method(obj, name: str) -> bool:
-                """
-                Return True when object exposes a callable method name.
-
-                Supports:
-                - normal class-defined methods (e.g. KotakNeoOrders.get_orders)
-                - explicitly attached mock methods in instance __dict__
-
-                Avoids generic Mock attribute auto-creation being treated as real API methods.
-                """
-                try:
-                    method = getattr(obj, name, None)
-                    if not callable(method):
-                        return False
-                    return name in getattr(type(obj), "__dict__", {}) or name in getattr(
-                        obj, "__dict__", {}
-                    )
-                except Exception:
-                    return False
-
             # Prefer REST wrapper method
-            if _has_callable_method(self.broker_client, "get_orders"):
+            if self._has_callable_method(self.broker_client, "get_orders"):
                 response = self.broker_client.get_orders()
-            elif _has_callable_method(self.broker_client, "get_order_book"):
+            elif self._has_callable_method(self.broker_client, "get_order_book"):
                 response = self.broker_client.get_order_book()
-            elif _has_callable_method(self.broker_client, "order_report"):
+            elif self._has_callable_method(self.broker_client, "order_report"):
                 response = self.broker_client.order_report()
             else:
                 logger.error(
                     f"broker_client does not have get_orders()/get_order_book()/order_report(). Type: {type(self.broker_client)}"
                 )
+                self._last_broker_fetch_error = "missing broker order methods"
                 return []
 
             if isinstance(response, list):
+                self._last_broker_fetch_ok = True
                 return response
             elif isinstance(response, dict):
+                stat = str(response.get("stat") or "").strip().lower()
+                if stat == "not_ok":
+                    emsg = str(response.get("emsg") or "broker returned stat=Not_Ok")
+                    self._last_broker_fetch_error = emsg
+                    logger.error(f"Broker order fetch returned Not_Ok: {emsg}")
+                    return []
                 # Handle dict response - check for 'data' key
                 if "data" in response:
                     data = response["data"]
                     if isinstance(data, list):
+                        self._last_broker_fetch_ok = True
                         return data
                     elif isinstance(data, dict):
                         # Sometimes data is a dict with order details
+                        self._last_broker_fetch_ok = True
                         return [data] if data else []
+                    self._last_broker_fetch_error = (
+                        f"invalid data payload type: {type(data)}"
+                    )
                     return []
                 # Check if response itself is structured as orders
                 if "orders" in response:
                     orders = response["orders"]
-                    return orders if isinstance(orders, list) else []
+                    if isinstance(orders, list):
+                        self._last_broker_fetch_ok = True
+                        return orders
+                    self._last_broker_fetch_error = (
+                        f"invalid orders payload type: {type(orders)}"
+                    )
+                    return []
                 # Empty dict means no orders
+                self._last_broker_fetch_ok = True
                 return []
             else:
                 logger.error(f"Unexpected broker response format: {type(response)}")
+                self._last_broker_fetch_error = f"unexpected broker response type: {type(response)}"
                 return []
 
         except Exception as e:
             logger.error(f"Error fetching broker orders: {e}", exc_info=True)
+            self._last_broker_fetch_error = str(e)
             return []
+
+    @staticmethod
+    def _has_callable_method(obj, name: str) -> bool:
+        """
+        Return True when object exposes a callable method name.
+
+        Supports:
+        - normal class-defined methods (e.g. KotakNeoOrders.get_orders)
+        - explicitly attached mock methods in instance __dict__
+
+        Avoids generic Mock attribute auto-creation being treated as real API methods.
+        """
+        try:
+            method = getattr(obj, name, None)
+            if not callable(method):
+                return False
+            return name in getattr(type(obj), "__dict__", {}) or name in getattr(
+                obj, "__dict__", {}
+            )
+        except Exception:
+            return False
 
     def _find_order_in_broker_orders(
         self, order_id: str, broker_orders: list[dict[str, Any]]
@@ -537,10 +599,67 @@ class OrderStatusVerifier:
         Returns:
             Order dict from order_report if found, None otherwise
         """
+        self._last_history_fetch_ok = False
+        self._last_history_fetch_error = None
         try:
+            # Prefer per-order history API for deterministic lookup by order ID.
+            if self._has_callable_method(self.broker_client, "get_order_history"):
+                response = self.broker_client.get_order_history(order_id)
+                if isinstance(response, dict):
+                    stat = str(response.get("stat") or "").strip().lower()
+                    if stat == "not_ok":
+                        emsg = str(response.get("emsg") or "history stat=Not_Ok")
+                        self._last_history_fetch_error = emsg
+                        logger.warning(
+                            "Order history fetch returned Not_Ok for %s: %s", order_id, emsg
+                        )
+                        return None
+                    data = response.get("data")
+                    if isinstance(data, list):
+                        # Return an entry that matches requested order id, preferring latest list item.
+                        for order in reversed(data):
+                            broker_order_id = (
+                                order.get("nOrdNo")
+                                or order.get("neoOrdNo")
+                                or order.get("orderId")
+                                or order.get("order_id")
+                            )
+                            if broker_order_id and str(broker_order_id) == str(order_id):
+                                self._last_history_fetch_ok = True
+                                return order
+                        self._last_history_fetch_ok = True
+                        return None
+                    if isinstance(data, dict):
+                        broker_order_id = (
+                            data.get("nOrdNo")
+                            or data.get("neoOrdNo")
+                            or data.get("orderId")
+                            or data.get("order_id")
+                        )
+                        self._last_history_fetch_ok = True
+                        if broker_order_id and str(broker_order_id) == str(order_id):
+                            return data
+                        return None
+                    self._last_history_fetch_error = (
+                        f"invalid order history payload type: {type(data)}"
+                    )
+                    return None
+                if response is None:
+                    self._last_history_fetch_error = "history response is None"
+                    return None
+                self._last_history_fetch_error = (
+                    f"unexpected order history response type: {type(response)}"
+                )
+                return None
+
             # Use order_report() to get all orders (includes cancelled/executed orders)
             # Note: order_history(order_id) API may not work for all orders
             all_orders_response = self._fetch_broker_orders()
+            if not self._last_broker_fetch_ok:
+                self._last_history_fetch_error = (
+                    self._last_broker_fetch_error or "broker orders fetch failed"
+                )
+                return None
 
             # Search for order matching order_id in all orders
             for order in all_orders_response:
@@ -551,12 +670,15 @@ class OrderStatusVerifier:
                     or order.get("order_id")
                 )
                 if broker_order_id and str(broker_order_id) == str(order_id):
+                    self._last_history_fetch_ok = True
                     return order
 
+            self._last_history_fetch_ok = True
             return None
 
         except Exception as e:
             logger.debug(f"Error checking order history for {order_id}: {e}")
+            self._last_history_fetch_error = str(e)
             return None
 
     def _should_assume_cancelled(self, pending_order: dict[str, Any]) -> bool:
