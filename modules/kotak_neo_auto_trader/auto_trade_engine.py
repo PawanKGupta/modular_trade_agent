@@ -3390,6 +3390,27 @@ class AutoTradeEngine:
 
             logger.info(f"Found {len(retriable_orders)} retriable FAILED orders to retry")
 
+            # Safety guard: never retry a buy for symbols that already have an open position.
+            # Re-entry logic is handled by dedicated re-entry task, not premarket retry.
+            open_position_base_symbols: set[str] = set()
+            if self.positions_repo and self.user_id:
+                try:
+                    for pos in self.positions_repo.list(self.user_id):
+                        if getattr(pos, "closed_at", None) is not None:
+                            continue
+                        qty = float(getattr(pos, "quantity", 0) or 0)
+                        if qty <= 0:
+                            continue
+                        sym = str(getattr(pos, "symbol", "") or "").upper()
+                        if not sym:
+                            continue
+                        open_position_base_symbols.add(sym.split("-")[0])
+                except Exception as open_pos_err:
+                    logger.warning(
+                        f"Open-position guard unavailable during retry: {open_pos_err}. "
+                        "Continuing without position guard."
+                    )
+
             # Check portfolio limit using OrderValidationService (Phase 3.1)
             # Update portfolio_service with current portfolio/orders if available
             if self.portfolio and hasattr(self.portfolio_service, "portfolio"):
@@ -3414,6 +3435,25 @@ class AutoTradeEngine:
             for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
+                base_symbol = str(symbol or "").upper().split("-")[0]
+
+                # Guard against unintended duplicate buys: skip retry if open position exists.
+                if base_symbol and base_symbol in open_position_base_symbols:
+                    logger.info(
+                        f"Skipping retry for {symbol}: open position already exists for base symbol "
+                        f"{base_symbol}. Marking failed retry row as cancelled."
+                    )
+                    try:
+                        self.orders_repo.mark_cancelled(
+                            db_order,
+                            f"Open position exists for {base_symbol} - retry not needed",
+                        )
+                    except Exception as cancel_err:
+                        logger.warning(
+                            f"Failed to cancel stale retry row for {symbol}: {cancel_err}"
+                        )
+                    summary["skipped"] += 1
+                    continue
 
                 # Validate symbol exists in scrip master (single source of truth)
                 # Symbol in DB should already be resolved, but validate it exists
@@ -4652,6 +4692,24 @@ class AutoTradeEngine:
             logger.warning(f"Manual buy check failed: {e}")
 
         # Process new recommendations (retries handled separately at scheduled time)
+        open_position_base_symbols: set[str] = set()
+        if self.positions_repo and self.user_id:
+            try:
+                for pos in self.positions_repo.list(self.user_id):
+                    if getattr(pos, "closed_at", None) is not None:
+                        continue
+                    qty = float(getattr(pos, "quantity", 0) or 0)
+                    if qty <= 0:
+                        continue
+                    sym = str(getattr(pos, "symbol", "") or "").upper()
+                    if sym:
+                        open_position_base_symbols.add(sym.split("-")[0])
+            except Exception as open_pos_err:
+                logger.warning(
+                    f"Open-position guard unavailable in place_new_entries: {open_pos_err}. "
+                    "Continuing without DB open-position guard."
+                )
+
         for rec in recommendations:
             base_symbol = self.parse_symbol_for_broker(rec.ticker)  # "SALSTEEL"
 
@@ -4670,6 +4728,27 @@ class AutoTradeEngine:
                     "verdict": rec.verdict,
                     "status": "skipped",
                     "reason": f"scrip_master_resolution_failed: {str(e)}",
+                    "qty": None,
+                    "execution_capital": None,
+                    "price": None,
+                    "order_id": None,
+                }
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
+            if base_symbol.upper() in open_position_base_symbols:
+                logger.info(
+                    f"Skipping {broker_symbol}: open position already exists for base symbol "
+                    f"{base_symbol.upper()} (DB guard)."
+                )
+                summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1
+                ticker_attempt = {
+                    "ticker": rec.ticker,
+                    "symbol": broker_symbol,
+                    "verdict": rec.verdict,
+                    "status": "skipped",
+                    "reason": "open_position_exists",
                     "qty": None,
                     "execution_capital": None,
                     "price": None,
@@ -5451,10 +5530,13 @@ class AutoTradeEngine:
             symbol = position.symbol
             entry_rsi = position.entry_rsi
 
-            # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
             if entry_rsi is None:
-                entry_rsi = 29.5
-                logger.debug(f"Position {symbol} missing entry_rsi, defaulting to 29.5")
+                logger.warning(
+                    f"Skipping {symbol}: missing entry_rsi on open position. "
+                    "Re-entry requires actual entry RSI; no synthetic default applied."
+                )
+                summary["skipped_missing_data"] += 1
+                continue
 
             summary["attempted"] += 1
 
@@ -5487,6 +5569,49 @@ class AutoTradeEngine:
 
                 if current_rsi is None or current_price is None:
                     logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Re-entry safety guard:
+                # Reject clearly anomalous prices when at least one stable reference exists.
+                # This protects sizing from stale/cross-symbol indicator payloads.
+                try:
+                    current_price = float(current_price)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"Skipping {symbol}: current_price is not numeric ({current_price!r})"
+                    )
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                if not isfinite(current_price) or current_price <= 0:
+                    logger.warning(f"Skipping {symbol}: invalid current_price ({current_price})")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                reference_prices: list[float] = []
+                for candidate in (
+                    getattr(position, "avg_price", None),
+                    getattr(position, "entry_price", None),
+                    ind.get("ema200"),
+                ):
+                    try:
+                        value = float(candidate)
+                    except (TypeError, ValueError):
+                        continue
+                    if isfinite(value) and value > 0:
+                        reference_prices.append(value)
+
+                # Keep the guard broad to avoid false positives:
+                # allow 65% drawdown to 3x from any available reference.
+                # Apply only when at least one reference is available.
+                if reference_prices and not any(
+                    (ref * 0.35) <= current_price <= (ref * 3.0) for ref in reference_prices
+                ):
+                    logger.warning(
+                        f"Skipping {symbol}: current_price looks anomalous for re-entry sizing "
+                        f"(current_price={current_price}, references={reference_prices})"
+                    )
                     summary["skipped_missing_data"] += 1
                     continue
 

@@ -141,6 +141,43 @@ class TestIndicatorService:
         assert "ema9" in result.columns
         assert "ema200" in result.columns
 
+    def test_calculate_all_indicators_cache_is_symbol_safe(self):
+        """Different symbols with same date index must not share cached indicators."""
+        idx = pd.date_range("2024-01-01", periods=250)
+
+        df_symbol_a = pd.DataFrame(
+            {
+                "close": range(100, 350),
+                "open": range(99, 349),
+                "high": range(101, 351),
+                "low": range(98, 348),
+                "volume": range(1000, 1250),
+            },
+            index=idx,
+        )
+        df_symbol_b = pd.DataFrame(
+            {
+                "close": range(1000, 1250),
+                "open": range(999, 1249),
+                "high": range(1001, 1251),
+                "low": range(998, 1248),
+                "volume": range(2000, 2250),
+            },
+            index=idx,
+        )
+
+        service = IndicatorService(enable_caching=True)
+
+        # Prime cache with first dataset.
+        result_a = service.calculate_all_indicators(df_symbol_a)
+        assert result_a is not None
+        assert float(result_a["close"].iloc[-1]) == 349.0
+
+        # Second dataset uses same index but different values.
+        result_b = service.calculate_all_indicators(df_symbol_b)
+        assert result_b is not None
+        assert float(result_b["close"].iloc[-1]) == 1249.0
+
     @patch("modules.kotak_neo_auto_trader.services.indicator_service.fetch_ohlcv_yf")
     def test_calculate_ema9_realtime(self, mock_fetch):
         """Test real-time EMA9 calculation"""
