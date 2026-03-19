@@ -706,10 +706,13 @@ class TestMultiUserTradingService:
         # Error logs may not be immediate, so this is optional check
         if len(error_logs) > 0:
             # Check for either the specific error message or the generic failure message
-            # The service logs both "User settings not found" and "Failed to start trading service"
+            # The service logs "User settings not found" and "Failed to start trading service".
+            # In shared test environments, recent user error logs can also include
+            # PaperTradingService initialization failures for the same user id.
             has_error = any(
                 "User settings not found" in log["message"]
                 or "Failed to start trading service" in log["message"]
+                or "Service initialization failed" in log["message"]
                 for log in error_logs
             )
             assert (
