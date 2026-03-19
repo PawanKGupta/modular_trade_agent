@@ -2675,6 +2675,30 @@ class UnifiedOrderMonitor:
                             existing_qty = 0
                         target_qty = int(place_qty)
                         existing_order_id = str(existing_info.get("order_id") or "").strip()
+                        existing_price_raw = (
+                            existing_info.get("price")
+                            or existing_info.get("target_price")
+                            or 0
+                        )
+                        try:
+                            existing_price = float(existing_price_raw)
+                        except (TypeError, ValueError):
+                            existing_price = 0.0
+
+                        # Keep DB orders list in sync for system-tracked positions when we detect
+                        # an existing broker sell order and skip fresh placement.
+                        sync_existing_sell = getattr(
+                            self.sell_manager, "_persist_existing_broker_sell_order", None
+                        )
+                        if callable(sync_existing_sell):
+                            sync_existing_sell(
+                                symbol=full_symbol,
+                                ticker=ticker,
+                                order_id=existing_order_id,
+                                qty=max(existing_qty, target_qty),
+                                price=existing_price if existing_price > 0 else ema9,
+                                source="unified_monitor_existing_order_sync",
+                            )
 
                         if existing_qty >= target_qty:
                             logger.info(

@@ -296,6 +296,137 @@ class SellOrderManager:
                 **kwargs,
             }
 
+    def _persist_existing_broker_sell_order(
+        self,
+        *,
+        symbol: str,
+        ticker: str | None,
+        order_id: str,
+        qty: int | float,
+        price: float | None,
+        source: str = "sell_engine_existing_broker_order_sync",
+    ) -> None:
+        """
+        Ensure an existing broker sell order is present in DB Orders table.
+
+        Safety: this is only called from system-managed open position flows
+        (market-open sell placement and new-execution sell monitor), not from
+        arbitrary broker order snapshots.
+        """
+        if not self.orders_repo or not self.user_id:
+            return
+        order_id_str = str(order_id or "").strip()
+        if not order_id_str:
+            return
+
+        try:
+            db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id_str)
+            if db_order:
+                # Keep behavior conservative: avoid overwriting lifecycle statuses.
+                db_status = getattr(db_order, "status", None)
+                if DbOrderStatus is not None and db_status not in (
+                    DbOrderStatus.PENDING,
+                    DbOrderStatus.ONGOING,
+                ):
+                    return
+
+                changed = False
+                if symbol and getattr(db_order, "symbol", None) != symbol:
+                    db_order.symbol = symbol
+                    changed = True
+
+                try:
+                    qty_val = int(float(qty or 0))
+                except (TypeError, ValueError):
+                    qty_val = 0
+                if qty_val > 0:
+                    try:
+                        existing_qty_val = int(float(getattr(db_order, "quantity", 0) or 0))
+                    except (TypeError, ValueError):
+                        existing_qty_val = 0
+                    if existing_qty_val != qty_val:
+                        db_order.quantity = float(qty_val)
+                        changed = True
+
+                try:
+                    price_val = float(price) if price is not None else 0.0
+                except (TypeError, ValueError):
+                    price_val = 0.0
+                if price_val > 0 and (
+                    getattr(db_order, "price", None) is None
+                    or float(getattr(db_order, "price", 0) or 0) <= 0
+                ):
+                    db_order.price = price_val
+                    changed = True
+
+                metadata = (
+                    dict(getattr(db_order, "order_metadata", {}) or {})
+                    if isinstance(getattr(db_order, "order_metadata", None), dict)
+                    else {}
+                )
+                if ticker and not metadata.get("ticker"):
+                    metadata["ticker"] = ticker
+                    changed = True
+                if source and not metadata.get("source"):
+                    metadata["source"] = source
+                    changed = True
+                if metadata:
+                    db_order.order_metadata = metadata
+
+                if changed:
+                    self.orders_repo.update(db_order)
+                return
+
+            # Missing in DB: create sell row for UI/reporting consistency.
+            try:
+                qty_val = max(1, int(float(qty or 0)))
+            except (TypeError, ValueError):
+                qty_val = 1
+            try:
+                price_val = float(price) if price is not None else None
+                if price_val is not None and price_val <= 0:
+                    price_val = None
+            except (TypeError, ValueError):
+                price_val = None
+
+            base_symbol = extract_base_symbol(symbol)
+            order_metadata = {
+                "ticker": ticker,
+                "exchange": (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                ),
+                "base_symbol": base_symbol,
+                "full_symbol": symbol,
+                "variety": "REGULAR",
+                "source": source,
+                "sync_origin": "existing_broker_sell_detected",
+            }
+
+            self.orders_repo.create_amo(
+                user_id=self.user_id,
+                symbol=symbol,
+                side="sell",
+                order_type="limit",
+                quantity=float(qty_val),
+                price=price_val,
+                order_id=order_id_str,
+                broker_order_id=order_id_str,
+                entry_type="exit",
+                order_metadata=order_metadata,
+                reason="Synced existing broker sell order into DB",
+            )
+            logger.info(
+                f"Synced existing broker sell order to DB: {symbol} "
+                f"(order_id={order_id_str}, qty={qty_val}, price={price_val})"
+            )
+        except Exception as sync_err:
+            logger.debug(
+                f"Could not sync existing broker sell order to DB for {symbol} "
+                f"(order_id={order_id_str}): {sync_err}"
+            )
+
     def _update_order_price(self, symbol: str, new_price: float) -> bool:
         """
         Helper method to update order price using OrderStateManager if available.
@@ -5118,6 +5249,17 @@ class SellOrderManager:
                         )
                     else:
                         tracked_price = 0.0
+
+                # Keep DB orders view aligned with broker existing sell orders discovered from
+                # system-managed open positions (no action for unrelated broker holdings).
+                self._persist_existing_broker_sell_order(
+                    symbol=symbol,
+                    ticker=ticker,
+                    order_id=str(existing.get("order_id") or ""),
+                    qty=existing_qty,
+                    price=tracked_price,
+                    source="sell_engine_run_at_market_open_existing_order",
+                )
 
                 if existing_qty == qty:
                     # Same quantity - just track the existing order

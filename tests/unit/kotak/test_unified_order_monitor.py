@@ -1338,11 +1338,14 @@ class TestUnifiedOrderMonitor:
             "RELIANCE": {"order_id": "EXISTING"}
         }
         mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager._persist_existing_broker_sell_order = Mock()
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
         assert count == 0
         mock_sell_manager.place_sell_order.assert_not_called()
+        mock_sell_manager._persist_existing_broker_sell_order.assert_called_once()
 
     def test_check_and_place_sell_orders_for_new_holdings_ema9_below_entry(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
