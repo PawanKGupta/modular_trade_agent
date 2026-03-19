@@ -5097,14 +5097,27 @@ class SellOrderManager:
                     )
                 continue
 
-            # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
-            # BUG FIX: existing_orders uses base symbols (e.g., "INDIAGLYCO") but symbol from positions
-            # is full symbol (e.g., "INDIAGLYCO-EQ"). Extract base symbol for lookup.
+            # Check for existing order with same symbol (avoid duplicate or update if quantity changed).
+            # Match full symbol first, then base symbol as a compatibility fallback.
             base_symbol = extract_base_symbol(symbol).upper()
-            if base_symbol in existing_orders:
-                existing = existing_orders[base_symbol]
+            existing = existing_orders.get(str(symbol).upper()) or existing_orders.get(base_symbol)
+            if existing:
                 existing_qty = existing["qty"]
                 existing_price = existing["price"]
+                tracked_price = existing_price
+                if tracked_price is None or float(tracked_price) <= 0:
+                    broker_sym = trade.get("placed_symbol") or symbol
+                    fallback_ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=symbol
+                    )
+                    if fallback_ema9:
+                        tracked_price = float(fallback_ema9)
+                        logger.info(
+                            f"{symbol}: Existing broker sell order has zero/missing price. "
+                            f"Using EMA9 baseline Rs {tracked_price:.2f} for monitoring."
+                        )
+                    else:
+                        tracked_price = 0.0
 
                 if existing_qty == qty:
                     # Same quantity - just track the existing order
@@ -5116,12 +5129,13 @@ class SellOrderManager:
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing_price,
+                        target_price=tracked_price,
                         qty=qty,
                         ticker=ticker,  # From trade history (e.g., GLENMARK.NS)
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing_price
+                    if tracked_price > 0:
+                        self.lowest_ema9[symbol] = tracked_price
                     orders_placed += 1  # Count as placed (existing)
                     logger.debug(
                         f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}"
@@ -5171,22 +5185,23 @@ class SellOrderManager:
                         order_id=existing["order_id"],
                         symbol=symbol,
                         qty=int(qty),  # Ensure integer for order quantity
-                        new_price=existing_price,  # Keep same price
+                        new_price=tracked_price if tracked_price > 0 else existing_price,
                     ):
                         logger.info(
                             f"Successfully updated sell order for {symbol}: {existing_qty} -> {qty} shares "
-                            f"@ Rs {existing_price:.2f}"
+                            f"@ Rs {(tracked_price if tracked_price > 0 else existing_price):.2f}"
                         )
                         # Update tracking with new quantity
                         self._register_order(
                             symbol=symbol,
                             order_id=existing["order_id"],
-                            target_price=existing_price,
+                            target_price=tracked_price,
                             qty=qty,  # Updated quantity
                             ticker=ticker,
                             placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                         )
-                        self.lowest_ema9[symbol] = existing_price
+                        if tracked_price > 0:
+                            self.lowest_ema9[symbol] = tracked_price
                         orders_placed += 1  # Count as updated
                     else:
                         logger.warning(
@@ -5204,12 +5219,13 @@ class SellOrderManager:
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing_price,
+                        target_price=tracked_price,
                         qty=existing_qty,  # Keep existing quantity
                         ticker=ticker,
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing_price
+                    if tracked_price > 0:
+                        self.lowest_ema9[symbol] = tracked_price
                     orders_placed += 1
                     continue
 
@@ -5522,6 +5538,19 @@ class SellOrderManager:
                     self.lowest_ema9[symbol] = rounded_ema9
 
             lowest_so_far = self.lowest_ema9.get(symbol, float("inf"))
+            # Heal invalid in-memory baseline from older runs (e.g., tracked as 0.0 when broker
+            # omitted pending order price). Use current EMA9 as first valid baseline.
+            invalid_lowest = False
+            if lowest_so_far is None or lowest_so_far == float("inf"):
+                invalid_lowest = True
+            else:
+                try:
+                    invalid_lowest = float(lowest_so_far) <= 0
+                except (TypeError, ValueError):
+                    invalid_lowest = True
+            if invalid_lowest:
+                lowest_so_far = rounded_ema9
+                self.lowest_ema9[symbol] = rounded_ema9
             current_target = order_info.get("target_price", 0)
 
             # If target_price is 0 or missing, use lowest_so_far as target
