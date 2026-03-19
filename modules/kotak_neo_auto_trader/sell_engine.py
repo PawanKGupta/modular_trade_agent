@@ -4781,6 +4781,24 @@ class SellOrderManager:
         try:
             existing_orders = {}
 
+            def _to_positive_float(value: Any) -> float | None:
+                """Parse positive numeric values from broker/db fields safely."""
+                try:
+                    if value is None:
+                        return None
+                    if isinstance(value, str):
+                        cleaned = value.replace(",", "").strip()
+                        if not cleaned:
+                            return None
+                        parsed = float(cleaned)
+                    else:
+                        parsed = float(value)
+                    if parsed > 0:
+                        return parsed
+                except (TypeError, ValueError):
+                    return None
+                return None
+
             # Get pending orders from broker
             pending = self.orders.get_pending_orders()
             if not pending:
@@ -4792,8 +4810,11 @@ class SellOrderManager:
                     if not OrderFieldExtractor.is_sell_order(order):
                         continue
 
-                    # Extract symbol (remove -EQ suffix)
-                    symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
+                    raw_symbol = OrderFieldExtractor.get_symbol(order)
+                    full_symbol = str(raw_symbol or "").strip().upper()
+                    if not full_symbol:
+                        continue
+                    base_symbol = extract_base_symbol(full_symbol)
 
                     # Extract order details
                     qty = OrderFieldExtractor.get_quantity(order)
@@ -4813,13 +4834,15 @@ class SellOrderManager:
                                 or order.get("triggerPrice")
                                 or order.get("trigger_price")
                                 or order.get("trgPrc")
-                                or 0.0
+                                or None
                             )
+                            parsed_limit_price = _to_positive_float(limit_price)
 
-                            if limit_price and limit_price > 0:
-                                price = float(limit_price)
+                            if parsed_limit_price is not None:
+                                price = parsed_limit_price
                                 logger.debug(
-                                    f"Using limit price from broker response for {symbol} order {order_id}: Rs {price:.2f}"
+                                    "Using limit price from broker response for "
+                                    f"{full_symbol} order {order_id}: Rs {price:.2f}"
                                 )
                                 # Sync this price to database if different
                                 try:
@@ -4833,7 +4856,8 @@ class SellOrderManager:
                                         db_order.price = price
                                         self.orders_repo.update(db_order)
                                         logger.debug(
-                                            f"Updated database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                            "Updated database price for "
+                                            f"{full_symbol} order {order_id}: Rs {price:.2f}"
                                         )
                                 except Exception as sync_error:
                                     # Don't fail the main flow if sync fails
@@ -4845,8 +4869,12 @@ class SellOrderManager:
                                 db_order = self.orders_repo.get_by_broker_order_id(
                                     self.user_id, order_id
                                 )
-                                if db_order and db_order.price is not None and db_order.price > 0:
-                                    db_price = float(db_order.price)
+                                db_price = (
+                                    _to_positive_float(getattr(db_order, "price", None))
+                                    if db_order
+                                    else None
+                                )
+                                if db_price is not None:
 
                                     # STALENESS DETECTION (read-only, no side effects)
                                     is_stale = False
@@ -4897,12 +4925,15 @@ class SellOrderManager:
                                             order.get("limitPrice")
                                             or order.get("limit_price")
                                             or order.get("lmtPrc")
-                                            or 0.0
+                                            or None
+                                        )
+                                        parsed_broker_limit_price = _to_positive_float(
+                                            broker_limit_price
                                         )
 
                                         # If we found a price in broker response, use it and update DB
-                                        if broker_limit_price and broker_limit_price > 0:
-                                            fresh_price = float(broker_limit_price)
+                                        if parsed_broker_limit_price is not None:
+                                            fresh_price = parsed_broker_limit_price
                                             try:
                                                 # Only update if price actually changed (avoid unnecessary writes)
                                                 if abs(float(db_order.price) - fresh_price) > 0.01:
@@ -4911,7 +4942,7 @@ class SellOrderManager:
                                                         db_order
                                                     )  # auto_commit=True by default
                                                     logger.info(
-                                                        f"Synced stale price for {symbol} order {order_id}: "
+                                                        f"Synced stale price for {full_symbol} order {order_id}: "
                                                         f"Rs {db_price:.2f} -> Rs {fresh_price:.2f} ({staleness_reason})"
                                                     )
                                                     price = fresh_price  # Use the synced price
@@ -4919,7 +4950,7 @@ class SellOrderManager:
                                                     # Price unchanged, just refresh timestamp to mark as checked
                                                     self.orders_repo.update(db_order)
                                                     logger.debug(
-                                                        f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                        f"Refreshed timestamp for stale {full_symbol} order {order_id} "
                                                         f"(price unchanged: Rs {db_price:.2f}, {staleness_reason})"
                                                     )
                                                     price = (
@@ -4936,7 +4967,7 @@ class SellOrderManager:
                                             try:
                                                 self.orders_repo.update(db_order)
                                                 logger.debug(
-                                                    f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                    f"Refreshed timestamp for stale {full_symbol} order {order_id} "
                                                     f"(no broker price available, {staleness_reason})"
                                                 )
                                             except Exception:
@@ -4946,7 +4977,7 @@ class SellOrderManager:
                                         # Fresh database price - use it
                                         price = db_price
                                         logger.debug(
-                                            f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                            f"Using database price for {full_symbol} order {order_id}: Rs {price:.2f}"
                                         )
 
                         except (AttributeError, ValueError, TypeError) as e:
@@ -4960,13 +4991,20 @@ class SellOrderManager:
                                 f"Unexpected error fetching database price for order {order_id}: {e}"
                             )
 
-                    if symbol and qty > 0:
-                        existing_orders[symbol.upper()] = {
+                    if full_symbol and qty > 0:
+                        order_info = {
                             "order_id": order_id,
                             "qty": qty,
                             "price": price,
                         }
-                        logger.debug(f"Found existing sell order: {symbol} x{qty} @ Rs {price:.2f}")
+                        # Keep both full and base symbol keys for compatibility across callers.
+                        existing_orders[full_symbol] = order_info
+                        if base_symbol and base_symbol != full_symbol:
+                            existing_orders.setdefault(base_symbol, order_info)
+                        logger.debug(
+                            f"Found existing sell order: {full_symbol} (base={base_symbol}) "
+                            f"x{qty} @ Rs {price:.2f}"
+                        )
 
                 except Exception as e:
                     logger.debug(f"Error parsing order: {e}")
