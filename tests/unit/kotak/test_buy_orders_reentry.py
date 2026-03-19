@@ -749,6 +749,59 @@ class TestPlaceReentryOrders:
         mock_place_order.assert_not_called()
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
+    def test_place_reentry_orders_persists_failed_placement_for_retry_flow(
+        self, mock_place_order, mock_auth
+    ):
+        """Persist re-entry placement failures into failed orders list."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentries = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        engine._resolve_broker_symbol = Mock(return_value="RELIANCE-EQ")
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=500)
+        engine._add_failed_order = Mock()
+
+        mock_place_order.return_value = (False, "Broker rejected: test rejection")
+
+        summary = engine.place_reentry_orders()
+
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 0
+        engine._add_failed_order.assert_called_once()
+        failure_payload = engine._add_failed_order.call_args[0][0]
+        assert failure_payload["symbol"] == "RELIANCE-EQ"
+        assert failure_payload["entry_type"] == "reentry"
+        assert "order_placement_failed" in failure_payload["reason"]
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_place_reentry_uses_post_close_snapshot_until_next_eod_window(self, mock_auth):
         """Use current-day RSI after close, and previous snapshot during next market hours."""
         mock_auth_instance = Mock()

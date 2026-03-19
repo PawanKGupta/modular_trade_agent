@@ -5405,6 +5405,12 @@ class AutoTradeEngine:
             else:
                 # Broker/API error - log and continue with other recommendations
                 # Don't stop the entire run for one failed order
+                placement_failure_detail = str(order_id or "").strip()
+                failure_reason = (
+                    f"order_placement_failed: {placement_failure_detail}"
+                    if placement_failure_detail
+                    else "order_placement_failed"
+                )
                 error_msg = (
                     f"Broker/API error while placing order for {broker_symbol}. "
                     "Skipping this order and continuing with other recommendations."
@@ -5424,13 +5430,12 @@ class AutoTradeEngine:
                     "qty": qty,
                     "required_cash": qty * close,
                     "shortfall": 0.0,  # Not a balance issue
-                    "reason": "broker_api_error",
+                    "reason": failure_reason,
                     "verdict": rec.verdict,
                     "rsi10": ind.get("rsi10"),
                     "ema9": ind.get("ema9"),
                     "ema200": ind.get("ema200"),
                     "execution_capital": execution_capital,
-                    "non_retryable": True,  # Mark as non-retryable since it's a broker API issue
                 }
                 try:
                     self._add_failed_order(failed_order_info)
@@ -5849,7 +5854,34 @@ class AutoTradeEngine:
                         f"qty: {qty}, level: {next_level})"
                     )
                 else:
+                    placement_failure_detail = str(order_id or "").strip()
+                    failure_reason = (
+                        f"order_placement_failed: {placement_failure_detail}"
+                        if placement_failure_detail
+                        else "order_placement_failed"
+                    )
                     logger.warning(f"Failed to place re-entry order for {symbol}")
+                    failed_order_info = {
+                        "symbol": broker_symbol,
+                        "ticker": ticker,
+                        "close": current_price,
+                        "qty": qty,
+                        "required_cash": qty * current_price,
+                        "shortfall": 0.0,
+                        "reason": failure_reason,
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "execution_capital": execution_capital,
+                        "entry_type": "reentry",
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                        "cycle": current_cycle,
+                    }
+                    try:
+                        self._add_failed_order(failed_order_info)
+                    except Exception as e:
+                        logger.warning(f"Failed to save re-entry placement failure: {e}")
 
             except Exception as e:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
