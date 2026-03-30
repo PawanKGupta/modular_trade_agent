@@ -13,6 +13,15 @@ def test_chartink_scraper_parses_stocks(monkeypatch):
     assert lst == ['RELIANCE', 'TCS', 'INFY']
     assert s.get_stocks_with_suffix('.NS') == ['RELIANCE.NS', 'TCS.NS', 'INFY.NS']
 
+def test_chartink_scraper_excludes_bees_etfs(monkeypatch):
+    import src.infrastructure.web_scraping.chartink_scraper as mod
+
+    monkeypatch.setattr(mod, 'get_stock_list', lambda: 'LTGILTBEES, RELIANCE, NIFTYBEES')
+
+    s = ChartInkScraper()
+    assert s.get_stocks() == ['RELIANCE']
+    assert s.get_stocks_with_suffix('.NS') == ['RELIANCE.NS']
+
 
 def test_chartink_scraper_failures(monkeypatch):
     import src.infrastructure.web_scraping.chartink_scraper as mod

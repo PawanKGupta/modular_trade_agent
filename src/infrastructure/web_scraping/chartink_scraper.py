@@ -37,7 +37,25 @@ class ChartInkScraper:
                 return []
             
             # Parse comma-separated list
-            stocks = [s.strip().upper() for s in stocks_str.split(",") if s.strip()]
+            # ChartInk screens can include ETFs/indices; we only want single-stock equities.
+            excluded_suffixes = ("BEES",)
+            excluded_contains = (
+                "ETF",
+                "NIFTY",
+                "BANKNIFTY",
+                "FINNIFTY",
+                "MIDCPNIFTY",
+            )
+
+            stocks: List[str] = []
+            for raw in stocks_str.split(","):
+                sym = raw.strip().upper()
+                if not sym:
+                    continue
+                if sym.endswith(excluded_suffixes) or any(p in sym for p in excluded_contains):
+                    logger.info(f"Skipping non-stock symbol from screener: {sym}")
+                    continue
+                stocks.append(sym)
             
             logger.info(f"Scraped {len(stocks)} stocks from ChartInk")
             return stocks
