@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from 'recharts';
+import type { ValueType } from 'recharts/types/component/DefaultTooltipContent';
 import { ChartContainer } from './ChartContainer';
 import { ResponsiveChart } from './ResponsiveChart';
 import { chartStyles } from './chartStyles';
@@ -162,7 +163,9 @@ export function PortfolioValueChart({ height = 360 }: PortfolioValueChartProps) 
 						<YAxis {...chartStyles.axis} tickMargin={12} />
 						<Tooltip
 							{...chartStyles.tooltip}
-							formatter={(value: number | undefined) => value ? `₹${value.toLocaleString('en-IN')}` : '-'}
+							formatter={(value: ValueType | undefined) =>
+								typeof value === 'number' ? `₹${value.toLocaleString('en-IN')}` : '-'
+							}
 						/>
 						<Legend {...chartStyles.legend} />
 						{chartData.length > 0 && (

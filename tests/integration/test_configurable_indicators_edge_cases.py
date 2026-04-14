@@ -251,6 +251,7 @@ class TestErrorHandling:
         
         # Add some Inf values
         df.loc[df.index[10], 'close'] = np.inf
+        df['volume'] = df['volume'].astype(float)
         df.loc[df.index[20], 'volume'] = np.inf
         
         result = compute_indicators(df)

@@ -328,7 +328,7 @@ http.post(API('/auth/refresh'), async () => {
 			const pageSize = Number(reqUrl.searchParams.get('page_size') ?? '50');
 			const now = new Date().toISOString();
 
-			const byStatus: Record<string, any[]> = {
+			const byStatus: Record<string, unknown[]> = {
 				pending: [
 					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
 					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
