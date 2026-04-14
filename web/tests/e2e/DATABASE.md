@@ -47,6 +47,15 @@ The tests make HTTP requests to the API server. The API server reads/writes to i
 | `E2E_DB_URL` | Database URL for E2E tests/seeding | `sqlite:///./data/e2e.db` |
 | `E2E_SEED_DATA` | Enable automatic seeding in global-setup | `false` |
 
+### Seeding (`global-setup.ts`) constraints
+
+When `E2E_SEED_DATA` is enabled, the seed script is invoked with **`execFileSync` (no shell)** for safety. That imposes:
+
+- **`E2E_DB_URL`** must start with **`sqlite:`** or **`file:`** (case-insensitive). Other schemes (e.g. `postgresql://`) are rejected. The value must not contain shell metacharacters such as `` ` ``, `$`, `;`, or newlines.
+- **`E2E_SEED_SIGNALS`**, **`E2E_SEED_ORDERS`**, **`E2E_SEED_NOTIFICATIONS`** must be non-negative integers as digit strings (defaults: `5`, `3`, `5`; max `100000`).
+
+Use a normal SQLite file or in-memory-style URL under `sqlite:` / `file:` as in the defaults above.
+
 ### Test Runner Scripts (Recommended)
 
 The test runner scripts automatically configure the correct database:
