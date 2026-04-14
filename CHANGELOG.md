@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2] - 2026-04-14
+
+### Changed
+- Upgraded Python and web dependencies; updated Tailwind v4 PostCSS integration.
+- Updated frontend auth guard store selectors to avoid infinite render loops under React 19.
+
+### Fixed
+- Fixed test isolation for multi-user trading service shared lock state.
+- Made integrated backtest unit tests offline-safe by resetting/mocking yfinance + circuit breaker.
+
 ## [26.1.0] - 2025-12-02
 
 ### Added
