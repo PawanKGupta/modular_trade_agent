@@ -143,31 +143,31 @@ class KotakNeoAuth:
             ]
             raise ValueError(f"Missing credentials: {', '.join(missing)}")
 
-        # Log masked fingerprint for debugging credential source mismatches
+        # Log only non-sensitive metadata (CodeQL: no partial secrets or PII in logs)
         self.logger.info(
-            "Kotak credential fingerprint loaded: "
-            f"{self._credentials_fingerprint()} from config_file={self.config_file}"
+            "Kotak credentials loaded: %s (config=%s)",
+            self._credentials_fingerprint(),
+            self._config_file_basename(),
         )
 
+    def _config_file_basename(self) -> str:
+        if not self.config_file:
+            return "none"
+        from os.path import basename
+
+        return basename(str(self.config_file))
+
     def _credentials_fingerprint(self) -> str:
-        """Return masked credential fingerprint (no secret leakage)."""
+        """Return non-sensitive credential presence metadata for troubleshooting."""
 
-        def _tail(value: str, n: int = 4) -> str:
-            v = (value or "").strip()
-            if not v:
-                return "none"
-            return f"...{v[-n:]}" if len(v) >= n else v
-
-        mobile = (self.mobile_number or "").strip()
-        mobile_mask = f"...{mobile[-3:]}" if len(mobile) >= 3 else (mobile or "none")
-        env = (self.environment or "prod").strip()
+        env = (self.environment or "prod").strip() or "prod"
         return (
-            f"key={_tail(self.consumer_key, 6)}, "
-            f"ucc={_tail(self.consumer_secret, 4)}, "
-            f"mobile={mobile_mask}, "
-            f"mpin_len={len((self.mpin or '').strip())}, "
-            f"totp_len={len((self.totp_secret or '').strip())}, "
-            f"env={env}"
+            f"env={env}, "
+            f"has_api_key={bool((self.consumer_key or '').strip())}, "
+            f"has_ucc={bool((self.consumer_secret or '').strip())}, "
+            f"has_mobile={bool((self.mobile_number or '').strip())}, "
+            f"has_mpin={bool((self.mpin or '').strip())}, "
+            f"has_totp={bool((self.totp_secret or '').strip())}"
         )
 
     def _perform_rest_login(self) -> bool:
@@ -352,9 +352,12 @@ class KotakNeoAuth:
 
         try:
             self.logger.info("Starting Kotak Neo API login process...")
-            self.logger.info(f"Mobile: {self.mobile_number}")
+            self.logger.info(
+                "Mobile present: %s",
+                bool((self.mobile_number or "").strip()),
+            )
             self.logger.info(f"Environment: {self.environment}")
-            self.logger.info(f"Login fingerprint: {self._credentials_fingerprint()}")
+            self.logger.info("Login credential metadata: %s", self._credentials_fingerprint())
 
             # Suppress output during entire login process
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):

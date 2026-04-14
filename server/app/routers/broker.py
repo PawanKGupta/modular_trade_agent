@@ -100,23 +100,16 @@ class KotakNeoCreds:
 
 
 def _masked_creds_fingerprint(creds: KotakNeoCreds) -> str:
-    """Return masked broker credential fingerprint for troubleshooting."""
+    """Return non-sensitive broker credential metadata for troubleshooting (no secret tails)."""
 
-    def _tail(value: str | None, n: int = 4) -> str:
-        v = (value or "").strip()
-        if not v:
-            return "none"
-        return f"...{v[-n:]}" if len(v) >= n else v
-
-    mobile = (creds.mobile_number or "").strip()
-    mobile_mask = f"...{mobile[-3:]}" if len(mobile) >= 3 else (mobile or "none")
+    env = (creds.environment or "prod").strip() or "prod"
     return (
-        f"key={_tail(creds.consumer_key, 6)}, "
-        f"ucc={_tail(creds.consumer_secret, 4)}, "
-        f"mobile={mobile_mask}, "
-        f"mpin_len={len((creds.mpin or '').strip())}, "
-        f"totp_len={len((creds.totp_secret or '').strip())}, "
-        f"env={(creds.environment or 'prod').strip()}"
+        f"env={env}, "
+        f"has_key={bool((creds.consumer_key or '').strip())}, "
+        f"has_secret={bool((creds.consumer_secret or '').strip())}, "
+        f"has_mobile={bool((creds.mobile_number or '').strip())}, "
+        f"has_mpin={bool((creds.mpin or '').strip())}, "
+        f"has_totp={bool((creds.totp_secret or '').strip())}"
     )
 
 

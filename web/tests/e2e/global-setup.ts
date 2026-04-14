@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { FullConfig } from '@playwright/test';
 import { TestConfig } from './config/test-config';
@@ -57,28 +57,45 @@ async function globalSetup(_config: FullConfig) {
 			// From web/tests/e2e/global-setup.ts to web/tests/e2e/utils/seed-db.py
 			const projectRoot = process.cwd();
 			const scriptPath = join(projectRoot, 'web', 'tests', 'e2e', 'utils', 'seed-db.py');
-			const signalsCount = process.env.E2E_SEED_SIGNALS || '5';
-			const ordersCount = process.env.E2E_SEED_ORDERS || '3';
-			const notificationsCount = process.env.E2E_SEED_NOTIFICATIONS || '5';
-			const dbUrl = process.env.E2E_DB_URL || 'sqlite:///./data/e2e.db';
 
-			// Execute Python seeding script
-			// Change to project root directory for relative path resolution
-			const command = [
-				'python',
-				scriptPath.replace(/\\/g, '/'), // Normalize path separators
-				'--signals', signalsCount,
-				'--orders', ordersCount,
-				'--notifications', notificationsCount,
-				'--db-url', dbUrl,
+			const parseSeedCount = (raw: string | undefined, fallback: string): string => {
+				const v = (raw ?? fallback).trim();
+				if (!/^\d+$/.test(v)) {
+					throw new Error(`Invalid seed count (expected digits): ${v}`);
+				}
+				const n = Number(v);
+				if (n < 0 || n > 100_000) {
+					throw new Error(`Invalid seed count (out of range): ${v}`);
+				}
+				return v;
+			};
+
+			const signalsCount = parseSeedCount(process.env.E2E_SEED_SIGNALS, '5');
+			const ordersCount = parseSeedCount(process.env.E2E_SEED_ORDERS, '3');
+			const notificationsCount = parseSeedCount(process.env.E2E_SEED_NOTIFICATIONS, '5');
+			const dbUrl = (process.env.E2E_DB_URL || 'sqlite:///./data/e2e.db').trim();
+			if (!/^(sqlite:|file:)/i.test(dbUrl) || /[\r\n;&|`$]/.test(dbUrl)) {
+				throw new Error('Invalid E2E_DB_URL for seed script (allowed: sqlite:/ or file: URLs only)');
+			}
+
+			const args = [
+				scriptPath,
+				'--signals',
+				signalsCount,
+				'--orders',
+				ordersCount,
+				'--notifications',
+				notificationsCount,
+				'--db-url',
+				dbUrl,
 				...(process.env.E2E_CLEAR_BEFORE_SEED === 'true' ? ['--clear'] : []),
-			].join(' ');
+			];
 
-			execSync(command, {
-				cwd: projectRoot, // Run from project root
+			// argv array + no shell avoids command-injection findings on env-derived strings
+			execFileSync('python', args, {
+				cwd: projectRoot,
 				stdio: 'inherit',
 				encoding: 'utf-8',
-				shell: true, // Use shell for better cross-platform support
 			});
 
 			console.log('✓ Test data seeded successfully');
