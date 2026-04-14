@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
-from math import floor
+from math import floor, isfinite
 from pathlib import Path
 from typing import Any
 
@@ -1479,7 +1479,9 @@ class AutoTradeEngine:
 
             strategy_config = StrategyConfig.default()
             return indicator_service.get_daily_indicators_dict(
-                ticker=ticker, rsi_period=None, config=strategy_config
+                ticker=ticker,
+                rsi_period=None,
+                config=strategy_config,
             )
         except Exception as e:
             logger.warning(f"Failed to get indicators for {ticker}: {e}")
@@ -1705,10 +1707,10 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                self.scrip_master = KotakNeoScripMaster(
-                    auth_client=self.auth.client if hasattr(self.auth, "client") else None
-                )
-                self.scrip_master.load_scrip_master(force_download=False)
+                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
+                if not self.scrip_master.load_scrip_master(force_download=False):
+                    raise RuntimeError("Scrip master load failed")
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
                 logger.error(
@@ -1741,10 +1743,10 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                self.scrip_master = KotakNeoScripMaster(
-                    auth_client=self.auth.client if hasattr(self.auth, "client") else None
-                )
-                self.scrip_master.load_scrip_master(force_download=False)
+                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
+                if not self.scrip_master.load_scrip_master(force_download=False):
+                    raise RuntimeError("Scrip master load failed")
                 logger.info("Scrip master loaded for buy order symbol resolution")
             except Exception as e:
                 logger.error(
@@ -1976,53 +1978,7 @@ class AutoTradeEngine:
         if not self.portfolio or not price or price <= 0:
             return 0
         lim = self.portfolio.get_limits() or {}
-        data = lim.get("data") if isinstance(lim, dict) else None
-        avail = 0.0
-        used_key = None
-        if isinstance(data, dict):
-            # Prefer explicit cash-like fields first (CNC), then margin keys, then Net
-            candidates = [
-                "cash",
-                "availableCash",
-                "available_cash",
-                "availableBalance",
-                "available_balance",
-                "available_bal",
-                "fundsAvailable",
-                "funds_available",
-                "fundAvailable",
-                "marginAvailable",
-                "margin_available",
-                "availableMargin",
-                "Net",
-                "net",
-            ]
-            for k in candidates:
-                try:
-                    v = data.get(k)
-                    if v is None or v == "":
-                        continue
-                    fv = float(v)
-                    if fv > 0:
-                        avail = fv
-                        used_key = k
-                        break
-                except Exception:
-                    continue
-            # Absolute fallback: pick the max numeric value in the payload
-            if avail <= 0:
-                try:
-                    nums = []
-                    for v in data.values():
-                        try:
-                            nums.append(float(v))
-                        except Exception:
-                            pass
-                    if nums:
-                        avail = max(nums)
-                        used_key = used_key or "max_numeric_field"
-                except Exception:
-                    pass
+        avail, used_key = self._extract_available_cash_from_limits(lim)
         logger.debug(
             f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
         )
@@ -2038,60 +1994,220 @@ class AutoTradeEngine:
         if not self.portfolio:
             return 0.0
         lim = self.portfolio.get_limits() or {}
-        data = lim.get("data") if isinstance(lim, dict) else None
-        avail = 0.0
-        used_key = None
-        if isinstance(data, dict):
-            try:
-                # Prefer cash-like fields first, then margin, then Net
-                candidates = [
-                    "cash",
+        avail, used_key = self._extract_available_cash_from_limits(lim)
+        logger.debug(f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})")
+        return float(avail)
+
+    def _check_order_margin(
+        self, symbol: str, price: float, qty: int, transaction_type: str = "B", product: str = "CNC"
+    ) -> tuple[bool, float, float, float, bool]:
+        """
+        Validate order funds using Kotak check-margin API.
+
+        Returns:
+            (has_sufficient, available_cash, required_margin, shortfall, margin_api_ok)
+        """
+        required_cash = max(0.0, float(price) * float(qty))
+
+        try:
+            if not self.auth or not hasattr(self.auth, "get_rest_client"):
+                raise RuntimeError("REST client unavailable")
+            rest = self.auth.get_rest_client()
+            if not rest:
+                raise RuntimeError("REST client unavailable")
+
+            token = None
+            if self.scrip_master:
+                # Prefer exact symbol first (e.g., RELIANCE-EQ), then base symbol.
+                token = self.scrip_master.get_token(symbol, exchange="NSE")
+                if not token and "-" in symbol:
+                    token = self.scrip_master.get_token(symbol.split("-")[0], exchange="NSE")
+            if not token:
+                raise RuntimeError(f"instrument token unavailable for {symbol}")
+
+            ex_seg = "nse_cm"
+            prc_tp = "MKT" if float(price) <= 0 else "L"
+            jdata = {
+                "brkName": "KOTAK",
+                "brnchId": "ONLINE",
+                "exSeg": ex_seg,
+                "prc": str(0 if prc_tp == "MKT" else float(price)),
+                "prcTp": prc_tp,
+                "prod": product,
+                "qty": str(int(qty)),
+                "tok": str(token),
+                "trnsTp": "B" if str(transaction_type).upper().startswith("B") else "S",
+            }
+
+            resp = rest.check_margin(jdata) or {}
+            if not isinstance(resp, dict):
+                raise RuntimeError(f"invalid check-margin response type: {type(resp)}")
+
+            def _to_num(v: Any, default: float = 0.0) -> float:
+                try:
+                    if v is None:
+                        return default
+                    return float(str(v).replace(",", "").strip())
+                except Exception:
+                    return default
+
+            # Kotak payloads can be either flat or wrapped under `data`
+            # (dict/list). Parse both envelope and data-body fields.
+            body: dict[str, Any] = resp
+            data_node = resp.get("data")
+            if isinstance(data_node, dict):
+                body = data_node
+            elif isinstance(data_node, list) and data_node and isinstance(data_node[0], dict):
+                body = data_node[0]
+
+            def _first(*keys: str, source: dict[str, Any]) -> Any:
+                for key in keys:
+                    if key in source and source.get(key) is not None:
+                        return source.get(key)
+                return None
+
+            avl_raw = _first(
+                "avlCash",
+                "availableCash",
+                "cash",
+                "netCash",
+                source=body,
+            )
+            if avl_raw is None:
+                avl_raw = _first(
+                    "avlCash",
                     "availableCash",
-                    "available_cash",
-                    "availableBalance",
-                    "available_balance",
-                    "available_bal",
-                    "fundsAvailable",
-                    "funds_available",
-                    "fundAvailable",
-                    "marginAvailable",
-                    "margin_available",
-                    "availableMargin",
-                    "Net",
-                    "net",
-                ]
-                for k in candidates:
-                    v = data.get(k)
-                    if v is None or v == "":
-                        continue
-                    try:
-                        fv = float(v)
-                    except Exception:
-                        continue
-                    if fv > 0:
-                        avail = fv
-                        used_key = k
-                        break
-                # Absolute fallback: use the max numeric value in payload
-                if avail <= 0:
-                    nums = []
-                    for v in data.values():
-                        try:
-                            nums.append(float(v))
-                        except Exception:
-                            pass
-                    if nums:
-                        avail = max(nums)
-                        used_key = used_key or "max_numeric_field"
-                logger.debug(
-                    f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})"
+                    "cash",
+                    "netCash",
+                    source=resp,
                 )
-                return float(avail)
-            except Exception as e:
-                logger.warning(f"Error parsing available cash: {e}")
-                return 0.0
-        logger.debug("Limits API returned no usable 'data' object; assuming Rs 0.00 available")
-        return 0.0
+
+            req_raw = _first(
+                "reqdMrgn",
+                "requiredMargin",
+                "reqMargin",
+                "ordMrgn",
+                source=body,
+            )
+            if req_raw is None:
+                req_raw = _first(
+                    "reqdMrgn",
+                    "requiredMargin",
+                    "reqMargin",
+                    "ordMrgn",
+                    source=resp,
+                )
+
+            insuf_raw = _first(
+                "insufFund",
+                "insufficientFund",
+                "shortfall",
+                source=body,
+            )
+            if insuf_raw is None:
+                insuf_raw = _first(
+                    "insufFund",
+                    "insufficientFund",
+                    "shortfall",
+                    source=resp,
+                )
+
+            rms_raw = _first("rmsVldtd", "rmsValidated", source=body)
+            if rms_raw is None:
+                rms_raw = _first("rmsVldtd", "rmsValidated", source=resp)
+
+            stat_raw = _first("stat", "status", source=resp)
+            if stat_raw is None:
+                stat_raw = _first("stat", "status", source=body)
+
+            stcode_raw = _first("stCode", "statusCode", "code", source=resp)
+            if stcode_raw is None:
+                stcode_raw = _first("stCode", "statusCode", "code", source=body)
+
+            avl_cash = _to_num(avl_raw, 0.0)
+            req_margin = _to_num(req_raw, required_cash)
+            insuf_fund = _to_num(insuf_raw, max(0.0, req_margin - avl_cash))
+            rms_valid = str(rms_raw or "").upper().strip()
+            stat_ok = str(stat_raw or "").lower().strip() in {"ok", "success", "true"}
+            stcode = str(stcode_raw or "").strip()
+            has_sufficient = bool(
+                stat_ok
+                and stcode in {"200", "0", ""}
+                and (rms_valid == "OK" or insuf_fund <= 0.0 or avl_cash >= req_margin)
+            )
+            margin_api_ok = bool(stat_ok and stcode in {"200", "0", ""})
+            shortfall = max(0.0, insuf_fund if insuf_fund > 0 else (req_margin - avl_cash))
+            logger.debug(
+                f"check-margin {symbol}: sufficient={has_sufficient}, avlCash={avl_cash:.2f}, "
+                f"reqdMrgn={req_margin:.2f}, insufFund={shortfall:.2f}, rmsVldtd={rms_valid or 'n/a'}"
+            )
+            return has_sufficient, avl_cash, req_margin, shortfall, margin_api_ok
+        except Exception as e:
+            # Hard-fail policy: if check-margin is unavailable/invalid, do not place order.
+            logger.error(f"check-margin failed for {symbol}: {e}")
+            return False, 0.0, required_cash, required_cash, False
+
+    def _extract_available_cash_from_limits(self, limits_payload: Any) -> tuple[float, str | None]:
+        """Parse available cash from nested/flat limits payloads."""
+        if not isinstance(limits_payload, dict):
+            return 0.0, None
+
+        candidates = [
+            "cash",
+            "availableCash",
+            "available_cash",
+            "availableBalance",
+            "available_balance",
+            "available_bal",
+            "fundsAvailable",
+            "funds_available",
+            "fundAvailable",
+            "marginAvailable",
+            "margin_available",
+            "availableMargin",
+            "Net",
+            "net",
+        ]
+
+        def _to_num(raw: Any) -> float | None:
+            try:
+                if raw is None:
+                    return None
+                # Support Money-like objects
+                if hasattr(raw, "amount"):
+                    raw = getattr(raw, "amount")
+                if isinstance(raw, str):
+                    s = raw.replace(",", "").strip()
+                    if s.lower().startswith("rs"):
+                        s = s[2:].strip(" .:")
+                    if not s:
+                        return None
+                    return float(s)
+                return float(raw)
+            except Exception:
+                return None
+
+        payloads: list[tuple[str, dict[str, Any]]] = []
+        data = limits_payload.get("data")
+        if isinstance(data, dict):
+            payloads.append(("data.", data))
+        payloads.append(("", limits_payload))
+
+        for prefix, payload in payloads:
+            for key in candidates:
+                value = _to_num(payload.get(key))
+                if value is not None and value > 0:
+                    return value, f"{prefix}{key}"
+
+            nums: list[float] = []
+            for value in payload.values():
+                num = _to_num(value)
+                if num is not None:
+                    nums.append(num)
+            if nums:
+                return max(nums), f"{prefix}max_numeric_field"
+
+        return 0.0, None
 
     # ---------------------- De-dup helpers ----------------------
     @staticmethod
@@ -3041,8 +3157,8 @@ class AutoTradeEngine:
                                     # Update order status to rejected
 
                                     self.orders_repo.mark_rejected(
-                                        order_id=db_order.id,
-                                        rejection_reason=rejection_reason,
+                                        db_order,
+                                        rejection_reason,
                                     )
                                     logger.info(
                                         f"Updated order {order_id} status to REJECTED in database"
@@ -3070,7 +3186,7 @@ class AutoTradeEngine:
                                         symbol=symbol,
                                         order_id=order_id,
                                         quantity=0,  # Quantity not available in this context
-                                        reason=rejection_reason,
+                                        rejection_reason=rejection_reason,
                                         user_id=self.user_id,
                                     )
                                 except Exception as notify_err:
@@ -3276,6 +3392,27 @@ class AutoTradeEngine:
 
             logger.info(f"Found {len(retriable_orders)} retriable FAILED orders to retry")
 
+            # Safety guard: never retry a buy for symbols that already have an open position.
+            # Re-entry logic is handled by dedicated re-entry task, not premarket retry.
+            open_position_base_symbols: set[str] = set()
+            if self.positions_repo and self.user_id:
+                try:
+                    for pos in self.positions_repo.list(self.user_id):
+                        if getattr(pos, "closed_at", None) is not None:
+                            continue
+                        qty = float(getattr(pos, "quantity", 0) or 0)
+                        if qty <= 0:
+                            continue
+                        sym = str(getattr(pos, "symbol", "") or "").upper()
+                        if not sym:
+                            continue
+                        open_position_base_symbols.add(sym.split("-")[0])
+                except Exception as open_pos_err:
+                    logger.warning(
+                        f"Open-position guard unavailable during retry: {open_pos_err}. "
+                        "Continuing without position guard."
+                    )
+
             # Check portfolio limit using OrderValidationService (Phase 3.1)
             # Update portfolio_service with current portfolio/orders if available
             if self.portfolio and hasattr(self.portfolio_service, "portfolio"):
@@ -3300,6 +3437,25 @@ class AutoTradeEngine:
             for db_order in retriable_orders:
                 summary["retried"] += 1
                 symbol = db_order.symbol
+                base_symbol = str(symbol or "").upper().split("-")[0]
+
+                # Guard against unintended duplicate buys: skip retry if open position exists.
+                if base_symbol and base_symbol in open_position_base_symbols:
+                    logger.info(
+                        f"Skipping retry for {symbol}: open position already exists for base symbol "
+                        f"{base_symbol}. Marking failed retry row as cancelled."
+                    )
+                    try:
+                        self.orders_repo.mark_cancelled(
+                            db_order,
+                            f"Open position exists for {base_symbol} - retry not needed",
+                        )
+                    except Exception as cancel_err:
+                        logger.warning(
+                            f"Failed to cancel stale retry row for {symbol}: {cancel_err}"
+                        )
+                    summary["skipped"] += 1
+                    continue
 
                 # Validate symbol exists in scrip master (single source of truth)
                 # Symbol in DB should already be resolved, but validate it exists
@@ -3382,8 +3538,12 @@ class AutoTradeEngine:
                     summary["skipped"] += 1
                     continue
 
-                close = ind["close"]
-                if close <= 0:
+                raw_close = ind["close"]
+                try:
+                    close = float(raw_close)
+                except (TypeError, ValueError):
+                    close = 0.0
+                if not isfinite(close) or close <= 0:
                     logger.warning(f"Skipping retry {symbol}: invalid close price {close}")
                     summary["skipped"] += 1
                     continue
@@ -3515,12 +3675,36 @@ class AutoTradeEngine:
                     summary["skipped"] += 1
                     continue
 
-                # Check balance
-                affordable = self.get_affordable_qty(close)
-                if affordable < config.MIN_QTY or qty > affordable:
-                    avail_cash = self.get_available_cash()
-                    required_cash = qty * close
-                    shortfall = max(0.0, required_cash - (avail_cash or 0.0))
+                # Check balance via check-margin (fallback: limits-based).
+                margin_result = self._check_order_margin(
+                    symbol=symbol,
+                    price=close,
+                    qty=qty,
+                    transaction_type="B",
+                    product="CNC",
+                )
+                if len(margin_result) == 4:
+                    has_sufficient, avail_cash, required_cash, shortfall = margin_result
+                    margin_api_ok = True
+                else:
+                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = margin_result
+
+                if not margin_api_ok:
+                    logger.error(
+                        f"Retry margin check failed for {symbol}; "
+                        "skipping this retry attempt (not a balance-shortfall decision)."
+                    )
+                    from src.infrastructure.db.timezone_utils import ist_now
+
+                    db_order.retry_count = (db_order.retry_count or 0) + 1
+                    db_order.last_retry_attempt = ist_now()
+                    db_order.reason = "margin_check_failed"
+                    self.orders_repo.update(db_order)
+                    summary["failed"] += 1
+                    continue
+
+                affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
+                if not has_sufficient or affordable < config.MIN_QTY or qty > affordable:
                     logger.warning(
                         f"Retry failed for {symbol}: still insufficient balance "
                         f"(need Rs {required_cash:,.0f}, have Rs {(avail_cash or 0.0):,.0f})"
@@ -3530,6 +3714,9 @@ class AutoTradeEngine:
 
                     db_order.retry_count = (db_order.retry_count or 0) + 1
                     db_order.last_retry_attempt = ist_now()
+                    db_order.reason = (
+                        f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
+                    )
                     self.orders_repo.update(db_order)
                     summary["failed"] += 1
                     continue
@@ -3540,13 +3727,88 @@ class AutoTradeEngine:
                     summary["placed"] += 1
                     # Update order status to PENDING and set broker_order_id
                     # Also update quantity in case it changed due to config changes
+                    try:
+                        self.orders_repo.update(
+                            db_order,
+                            broker_order_id=order_id,
+                            quantity=qty,  # Update with recalculated quantity
+                            status=DbOrderStatus.PENDING,
+                        )
+                    except Exception as update_err:
+                        # Some deployments may still have unique index
+                        # uq_orders_user_base_symbol_active applying to active BUY rows.
+                        # If a stale active row exists for same base_symbol, cancel it and retry once.
+                        err_text = str(update_err).lower()
+                        if "uq_orders_user_base_symbol_active" in err_text or "duplicate key value" in err_text:
+                            try:
+                                from src.infrastructure.db.timezone_utils import ist_now
 
-                    self.orders_repo.update(
-                        db_order,
-                        broker_order_id=order_id,
-                        quantity=qty,  # Update with recalculated quantity
-                        status=DbOrderStatus.PENDING,
-                    )
+                                # Clear failed transaction before further DB work.
+                                self.db.rollback()
+                                base_symbol = (
+                                    (symbol or "").upper().split("-")[0].strip()
+                                )
+                                existing_orders, _ = self.orders_repo.list(self.user_id)
+                                cancelled_conflicts = 0
+                                for existing_order in existing_orders:
+                                    existing_base = (
+                                        (getattr(existing_order, "base_symbol", None) or "")
+                                        .upper()
+                                        .split("-")[0]
+                                        .strip()
+                                    )
+                                    if not existing_base:
+                                        existing_base = (
+                                            (getattr(existing_order, "symbol", "") or "")
+                                            .upper()
+                                            .split("-")[0]
+                                            .strip()
+                                        )
+                                    if (
+                                        existing_order.id != db_order.id
+                                        and existing_order.user_id == self.user_id
+                                        and existing_order.side == "buy"
+                                        and existing_base == base_symbol
+                                        and existing_order.status
+                                        in {DbOrderStatus.PENDING, DbOrderStatus.ONGOING}
+                                    ):
+                                        self.orders_repo.update(
+                                            existing_order,
+                                            status=DbOrderStatus.CANCELLED,
+                                            reason=(
+                                                "Cancelled stale active order during retry "
+                                                "to satisfy unique active-symbol constraint"
+                                            ),
+                                            closed_at=ist_now(),
+                                            last_status_check=ist_now(),
+                                        )
+                                        cancelled_conflicts += 1
+                                if cancelled_conflicts:
+                                    logger.warning(
+                                        f"Retry DB conflict for {symbol}: cancelled "
+                                        f"{cancelled_conflicts} conflicting active buy row(s), retrying update."
+                                    )
+                                # Retry once after conflict cleanup.
+                                self.orders_repo.update(
+                                    db_order,
+                                    broker_order_id=order_id,
+                                    quantity=qty,
+                                    status=DbOrderStatus.PENDING,
+                                )
+                            except Exception as retry_update_err:
+                                logger.error(
+                                    f"Retry order DB update failed for {symbol} after conflict cleanup: {retry_update_err}",
+                                    exc_info=retry_update_err,
+                                )
+                                summary["failed"] += 1
+                                continue
+                        else:
+                            logger.error(
+                                f"Retry order DB update failed for {symbol}: {update_err}",
+                                exc_info=update_err,
+                            )
+                            summary["failed"] += 1
+                            continue
                     logger.info(
                         f"Successfully placed retry order for {symbol} (order_id: {order_id}, qty: {qty}). "
                         f"DB updated with new quantity based on current config."
@@ -4341,7 +4603,8 @@ class AutoTradeEngine:
                 """Fetch indicator for a single ticker (thread-safe)"""
                 try:
                     logger.debug(f"[Parallel Fetch] Starting fetch for {rec_ticker}")
-                    ind = AutoTradeEngine.get_daily_indicators(rec_ticker)
+                    # Use instance method so tests/mocks can override data source.
+                    ind = self.get_daily_indicators(rec_ticker)
                     if ind:
                         logger.debug(
                             f"[Parallel Fetch] Fetched {rec_ticker}: "
@@ -4431,6 +4694,24 @@ class AutoTradeEngine:
             logger.warning(f"Manual buy check failed: {e}")
 
         # Process new recommendations (retries handled separately at scheduled time)
+        open_position_base_symbols: set[str] = set()
+        if self.positions_repo and self.user_id:
+            try:
+                for pos in self.positions_repo.list(self.user_id):
+                    if getattr(pos, "closed_at", None) is not None:
+                        continue
+                    qty = float(getattr(pos, "quantity", 0) or 0)
+                    if qty <= 0:
+                        continue
+                    sym = str(getattr(pos, "symbol", "") or "").upper()
+                    if sym:
+                        open_position_base_symbols.add(sym.split("-")[0])
+            except Exception as open_pos_err:
+                logger.warning(
+                    f"Open-position guard unavailable in place_new_entries: {open_pos_err}. "
+                    "Continuing without DB open-position guard."
+                )
+
         for rec in recommendations:
             base_symbol = self.parse_symbol_for_broker(rec.ticker)  # "SALSTEEL"
 
@@ -4449,6 +4730,27 @@ class AutoTradeEngine:
                     "verdict": rec.verdict,
                     "status": "skipped",
                     "reason": f"scrip_master_resolution_failed: {str(e)}",
+                    "qty": None,
+                    "execution_capital": None,
+                    "price": None,
+                    "order_id": None,
+                }
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
+            if base_symbol.upper() in open_position_base_symbols:
+                logger.info(
+                    f"Skipping {broker_symbol}: open position already exists for base symbol "
+                    f"{base_symbol.upper()} (DB guard)."
+                )
+                summary["skipped_duplicates"] += 1
+                summary["skipped"] += 1
+                ticker_attempt = {
+                    "ticker": rec.ticker,
+                    "symbol": broker_symbol,
+                    "verdict": rec.verdict,
+                    "status": "skipped",
+                    "reason": "open_position_exists",
                     "qty": None,
                     "execution_capital": None,
                     "price": None,
@@ -4790,9 +5092,13 @@ class AutoTradeEngine:
                 ticker_attempt["reason"] = "missing_indicators"
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
-            close = ind["close"]
+            raw_close = ind["close"]
+            try:
+                close = float(raw_close)
+            except (TypeError, ValueError):
+                close = 0.0
             logger.info(f"{rec.ticker}: Using close price = Rs {close:.2f} from indicators")
-            if close <= 0:
+            if not isfinite(close) or close <= 0:
                 logger.warning(f"Skipping {rec.ticker}: invalid close price {close}")
                 summary["skipped_invalid_qty"] += 1
                 summary["skipped"] += 1  # Increment general counter
@@ -4947,14 +5253,60 @@ class AutoTradeEngine:
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
 
-            # Balance check (CNC needs cash) -> notify on insufficiency and save for retry
-            # Phase 3.1: Use OrderValidationService
-            has_sufficient_balance, avail_cash, affordable = (
-                self.order_validation_service.check_balance(close, qty)
+            # Balance check (CNC needs cash) via check-margin API.
+            margin_result = self._check_order_margin(
+                symbol=broker_symbol,
+                price=close,
+                qty=qty,
+                transaction_type="B",
+                product="CNC",
             )
+            if len(margin_result) == 4:
+                has_sufficient_balance, avail_cash, required_cash, shortfall = margin_result
+                margin_api_ok = True
+            else:
+                (
+                    has_sufficient_balance,
+                    avail_cash,
+                    required_cash,
+                    shortfall,
+                    margin_api_ok,
+                ) = margin_result
+            affordable = int((avail_cash or 0.0) // close) if close > 0 else 0
+            if not margin_api_ok:
+                logger.error(
+                    f"Margin check failed for {broker_symbol}; skipping order "
+                    "(not an insufficient-balance verdict)."
+                )
+                ticker_attempt["status"] = "failed"
+                ticker_attempt["reason"] = "margin_check_failed"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                summary["ticker_attempts"].append(ticker_attempt)
+
+                failed_order_info = {
+                    "symbol": broker_symbol,
+                    "ticker": rec.ticker,
+                    "close": close,
+                    "qty": qty,
+                    "required_cash": qty * close,
+                    "shortfall": 0.0,
+                    "reason": "margin_check_failed",
+                    "verdict": rec.verdict,
+                    "rsi10": ind.get("rsi10"),
+                    "ema9": ind.get("ema9"),
+                    "ema200": ind.get("ema200"),
+                    "execution_capital": execution_capital,
+                    "non_retryable": True,
+                }
+                try:
+                    self._add_failed_order(failed_order_info)
+                except Exception as db_err:
+                    logger.warning(f"Failed to persist margin_check_failed order: {db_err}")
+                summary["skipped"] += 1
+                continue
+
             if not has_sufficient_balance:
-                required_cash = qty * close
-                shortfall = max(0.0, required_cash - (avail_cash or 0.0))
                 # Telegram message with emojis
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
@@ -5053,6 +5405,12 @@ class AutoTradeEngine:
             else:
                 # Broker/API error - log and continue with other recommendations
                 # Don't stop the entire run for one failed order
+                placement_failure_detail = str(order_id or "").strip()
+                failure_reason = (
+                    f"order_placement_failed: {placement_failure_detail}"
+                    if placement_failure_detail
+                    else "order_placement_failed"
+                )
                 error_msg = (
                     f"Broker/API error while placing order for {broker_symbol}. "
                     "Skipping this order and continuing with other recommendations."
@@ -5072,13 +5430,12 @@ class AutoTradeEngine:
                     "qty": qty,
                     "required_cash": qty * close,
                     "shortfall": 0.0,  # Not a balance issue
-                    "reason": "broker_api_error",
+                    "reason": failure_reason,
                     "verdict": rec.verdict,
                     "rsi10": ind.get("rsi10"),
                     "ema9": ind.get("ema9"),
                     "ema200": ind.get("ema200"),
                     "execution_capital": execution_capital,
-                    "non_retryable": True,  # Mark as non-retryable since it's a broker API issue
                 }
                 try:
                     self._add_failed_order(failed_order_info)
@@ -5168,6 +5525,21 @@ class AutoTradeEngine:
             return summary
 
         logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+        from datetime import time as dt_time
+
+        from core.volume_analysis import is_market_hours
+
+        # Re-entry RSI source policy:
+        # - At/after market close on trading days, use current day close-inclusive RSI.
+        # - During next-day market hours, keep using previous closed-day RSI snapshot
+        #   until the next post-close evaluation window.
+        now_time = datetime.now().time()
+        market_close = dt_time(15, 30)
+        use_latest_rsi_after_close = (
+            self.is_trading_weekday()
+            and (not is_market_hours())
+            and now_time >= market_close
+        )
 
         # Get portfolio snapshot for capacity checks
         if self.portfolio_service:
@@ -5180,10 +5552,13 @@ class AutoTradeEngine:
             symbol = position.symbol
             entry_rsi = position.entry_rsi
 
-            # Default entry RSI to 29.5 if not available (assume entry at RSI < 30)
             if entry_rsi is None:
-                entry_rsi = 29.5
-                logger.debug(f"Position {symbol} missing entry_rsi, defaulting to 29.5")
+                logger.warning(
+                    f"Skipping {symbol}: missing entry_rsi on open position. "
+                    "Re-entry requires actual entry RSI; no synthetic default applied."
+                )
+                summary["skipped_missing_data"] += 1
+                continue
 
             summary["attempted"] += 1
 
@@ -5204,7 +5579,18 @@ class AutoTradeEngine:
                 )
 
                 # Get current indicators
-                ind = self.get_daily_indicators(ticker)
+                uses_default_get_daily_indicators = (
+                    self.get_daily_indicators is AutoTradeEngine.get_daily_indicators
+                )
+                if self.indicator_service and uses_default_get_daily_indicators:
+                    ind = self.indicator_service.get_daily_indicators_dict(
+                        ticker=ticker,
+                        rsi_period=None,
+                        config=self.strategy_config,
+                        add_current_day=use_latest_rsi_after_close,
+                    )
+                else:
+                    ind = self.get_daily_indicators(ticker)
                 if not ind:
                     logger.warning(f"Skipping {symbol}: missing indicators for re-entry evaluation")
                     summary["skipped_missing_data"] += 1
@@ -5216,6 +5602,49 @@ class AutoTradeEngine:
 
                 if current_rsi is None or current_price is None:
                     logger.warning(f"Skipping {symbol}: invalid indicators (RSI or price missing)")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                # Re-entry safety guard:
+                # Reject clearly anomalous prices when at least one stable reference exists.
+                # This protects sizing from stale/cross-symbol indicator payloads.
+                try:
+                    current_price = float(current_price)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"Skipping {symbol}: current_price is not numeric ({current_price!r})"
+                    )
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                if not isfinite(current_price) or current_price <= 0:
+                    logger.warning(f"Skipping {symbol}: invalid current_price ({current_price})")
+                    summary["skipped_missing_data"] += 1
+                    continue
+
+                reference_prices: list[float] = []
+                for candidate in (
+                    getattr(position, "avg_price", None),
+                    getattr(position, "entry_price", None),
+                    ind.get("ema200"),
+                ):
+                    try:
+                        value = float(candidate)
+                    except (TypeError, ValueError):
+                        continue
+                    if isfinite(value) and value > 0:
+                        reference_prices.append(value)
+
+                # Keep the guard broad to avoid false positives:
+                # allow 65% drawdown to 3x from any available reference.
+                # Apply only when at least one reference is available.
+                if reference_prices and not any(
+                    (ref * 0.35) <= current_price <= (ref * 3.0) for ref in reference_prices
+                ):
+                    logger.warning(
+                        f"Skipping {symbol}: current_price looks anomalous for re-entry sizing "
+                        f"(current_price={current_price}, references={reference_prices})"
+                    )
                     summary["skipped_missing_data"] += 1
                     continue
 
@@ -5425,7 +5854,34 @@ class AutoTradeEngine:
                         f"qty: {qty}, level: {next_level})"
                     )
                 else:
+                    placement_failure_detail = str(order_id or "").strip()
+                    failure_reason = (
+                        f"order_placement_failed: {placement_failure_detail}"
+                        if placement_failure_detail
+                        else "order_placement_failed"
+                    )
                     logger.warning(f"Failed to place re-entry order for {symbol}")
+                    failed_order_info = {
+                        "symbol": broker_symbol,
+                        "ticker": ticker,
+                        "close": current_price,
+                        "qty": qty,
+                        "required_cash": qty * current_price,
+                        "shortfall": 0.0,
+                        "reason": failure_reason,
+                        "rsi10": current_rsi,
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "execution_capital": execution_capital,
+                        "entry_type": "reentry",
+                        "entry_rsi": entry_rsi,
+                        "reentry_level": next_level,
+                        "cycle": current_cycle,
+                    }
+                    try:
+                        self._add_failed_order(failed_order_info)
+                    except Exception as e:
+                        logger.warning(f"Failed to save re-entry placement failure: {e}")
 
             except Exception as e:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)

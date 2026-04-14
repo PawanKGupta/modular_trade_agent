@@ -961,6 +961,21 @@ class TestUnifiedOrderMonitor:
 
         mock_telegram.notify_order_execution.assert_not_called()
 
+    def test_handle_buy_order_execution_dedupes_notification_by_order_id(self, unified_monitor):
+        """Repeated handling for same order_id should not notify repeatedly."""
+        mock_telegram = Mock()
+        mock_telegram.enabled = True
+        mock_telegram.notify_order_execution = Mock(return_value=True)
+        unified_monitor.telegram_notifier = mock_telegram
+
+        order_info = {"symbol": "RELIANCE-EQ", "quantity": 10.0}
+        broker_order = {"neoOrdNo": "ORDER1", "avgPrc": 2455.50, "qty": 10}
+
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+        unified_monitor._handle_buy_order_execution("ORDER1", order_info, broker_order)
+
+        mock_telegram.notify_order_execution.assert_called_once()
+
     def test_handle_buy_order_rejection_sends_notification(self, unified_monitor):
         """Test that rejection handler sends notification with broker reason (Phase 9)"""
         mock_telegram = Mock()
@@ -1146,6 +1161,158 @@ class TestUnifiedOrderMonitor:
         mock_sell_manager._register_order.assert_called_once()
         assert "RELIANCE-EQ" in mock_sell_manager.lowest_ema9
 
+    def test_check_and_place_sell_orders_for_new_holdings_skips_already_synced_execution(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Executed buy with position_sync marker must not be re-applied."""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+        mock_order = Mock()
+        mock_order.id = 9991
+        mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED
+        mock_order.symbol = "RELIANCE-EQ"
+        mock_order.broker_order_id = "BID-123"
+        mock_order.execution_qty = 10.0
+        mock_order.execution_price = 2450.50
+        mock_order.quantity = 10.0
+        mock_order.execution_time = execution_time
+        mock_order.filled_at = execution_time
+        mock_order.order_metadata = {
+            "ticker": "RELIANCE.NS",
+            "position_sync": {"applied": True, "execution_key": "BID-123:10"},
+        }
+
+        mock_orders_repo.list.return_value = [mock_order]
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager.place_sell_order = Mock(return_value="SELL123")
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 0
+        mock_sell_manager.place_sell_order.assert_not_called()
+        mock_sell_manager._register_order.assert_not_called()
+
+    def test_check_and_place_sell_orders_for_new_holdings_uses_aggregated_active_base_qty(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """Use base-level active aggregation when holdings and positions are split by symbol variant."""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED
+        mock_order.symbol = "AXISBANK-EQ"
+        mock_order.execution_price = 1212.10
+        mock_order.execution_qty = 5.0
+        mock_order.quantity = 5.0
+        mock_order.avg_price = 1212.10
+        mock_order.price = 1212.10
+        mock_order.execution_time = execution_time
+        mock_order.filled_at = execution_time
+        mock_order.order_metadata = {"ticker": "AXISBANK.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {}
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager._get_ema9_with_retry.return_value = 1266.1
+        mock_sell_manager.place_sell_order.return_value = "SELL-AXIS-1"
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+        mock_sell_manager.portfolio = Mock()
+        mock_sell_manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "AXISBANK", "sellableQuantity": 7}]
+        }
+        mock_sell_manager.portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "AXISBANK-EQ", "qty": "5"}]
+        }
+
+        # db open quantity can exceed execution quantity (legacy + re-entry consolidated position)
+        unified_monitor.positions_repo = Mock()
+        open_position = Mock()
+        open_position.quantity = 12.0
+        open_position.closed_at = None
+        unified_monitor.positions_repo.get_by_symbol.return_value = open_position
+        unified_monitor.positions_repo.get_by_symbol_any.return_value = open_position
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        assert count == 1
+        mock_sell_manager.place_sell_order.assert_called_once()
+        placed_trade = mock_sell_manager.place_sell_order.call_args[0][0]
+        assert placed_trade["symbol"] == "AXISBANK-EQ"
+        # aggregated active base qty = 7 + 5, db open qty=12 => place qty 12
+        assert placed_trade["qty"] == 12
+
+    def test_check_and_place_sell_orders_for_new_holdings_replaces_lower_existing_base_sell_qty(
+        self, unified_monitor, mock_orders_repo, mock_sell_manager
+    ):
+        """When an existing base sell has lower qty, update/replace it instead of skipping."""
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        execution_time = ist_now().replace(hour=10, minute=30)
+
+        mock_order = Mock()
+        mock_order.side = "buy"
+        mock_order.status = OrderStatus.CLOSED
+        mock_order.symbol = "AXISBANK-EQ"
+        mock_order.execution_price = 1212.10
+        mock_order.execution_qty = 5.0
+        mock_order.quantity = 5.0
+        mock_order.avg_price = 1212.10
+        mock_order.price = 1212.10
+        mock_order.execution_time = execution_time
+        mock_order.filled_at = execution_time
+        mock_order.order_metadata = {"ticker": "AXISBANK.NS"}
+
+        mock_orders_repo.list.return_value = [mock_order]
+
+        # Existing base-level sell order has lower qty (7)
+        mock_sell_manager.get_existing_sell_orders.return_value = {
+            "AXISBANK": {"order_id": "SELL-OLD-1", "qty": 7}
+        }
+        mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager._get_ema9_with_retry.return_value = 1266.1
+        mock_sell_manager.place_sell_order.return_value = "SELL-NEW-2"
+        mock_sell_manager.update_sell_order.return_value = True
+        mock_sell_manager._register_order = Mock()
+        mock_sell_manager.lowest_ema9 = {}
+        mock_sell_manager.portfolio = Mock()
+        mock_sell_manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "AXISBANK", "sellableQuantity": 7}]
+        }
+        mock_sell_manager.portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "AXISBANK-EQ", "qty": "5"}]
+        }
+
+        unified_monitor.positions_repo = Mock()
+        open_position = Mock()
+        open_position.quantity = 12.0
+        open_position.closed_at = None
+        unified_monitor.positions_repo.get_by_symbol.return_value = open_position
+        unified_monitor.positions_repo.get_by_symbol_any.return_value = open_position
+
+        count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
+
+        # Replacement path should update existing order (not place a fresh one here)
+        assert count == 0
+        mock_sell_manager.update_sell_order.assert_called_once()
+        mock_sell_manager.place_sell_order.assert_not_called()
+        update_kwargs = mock_sell_manager.update_sell_order.call_args.kwargs
+        assert update_kwargs["order_id"] == "SELL-OLD-1"
+        assert update_kwargs["symbol"] == "AXISBANK-EQ"
+        assert update_kwargs["qty"] == 12
+
     def test_check_and_place_sell_orders_for_new_holdings_already_has_sell_order(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
     ):
@@ -1171,11 +1338,14 @@ class TestUnifiedOrderMonitor:
             "RELIANCE": {"order_id": "EXISTING"}
         }
         mock_sell_manager.active_sell_orders = {}
+        mock_sell_manager.has_completed_sell_order.return_value = None
+        mock_sell_manager._persist_existing_broker_sell_order = Mock()
 
         count = unified_monitor.check_and_place_sell_orders_for_new_holdings()
 
         assert count == 0
         mock_sell_manager.place_sell_order.assert_not_called()
+        mock_sell_manager._persist_existing_broker_sell_order.assert_called_once()
 
     def test_check_and_place_sell_orders_for_new_holdings_ema9_below_entry(
         self, unified_monitor, mock_orders_repo, mock_sell_manager
@@ -1235,19 +1405,19 @@ class TestUnifiedOrderMonitor:
     def test_check_and_place_sell_orders_for_new_holdings_skips_old_orders(
         self, unified_monitor, mock_orders_repo
     ):
-        """Test that orders executed before today are skipped"""
+        """Test that orders older than backfill window are skipped."""
         from datetime import timedelta
 
         from src.infrastructure.db.timezone_utils import ist_now
 
-        # Order executed yesterday
-        yesterday = ist_now() - timedelta(days=1)
+        # Older than the backfill window (3 days).
+        old_execution = ist_now() - timedelta(days=10)
 
         mock_order = Mock()
         mock_order.side = "buy"
         mock_order.status = OrderStatus.CLOSED  # Executed (filled)
-        mock_order.execution_time = yesterday
-        mock_order.filled_at = yesterday
+        mock_order.execution_time = old_execution
+        mock_order.filled_at = old_execution
 
         mock_orders_repo.list.return_value = [mock_order]
 

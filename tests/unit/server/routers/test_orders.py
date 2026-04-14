@@ -386,7 +386,7 @@ def test_retry_order_success(orders_repo, current_user, mock_ist_now):
     assert result.status == "failed"
     assert order.retry_count == 1
     assert order.last_retry_attempt == mock_ist_now
-    assert "Manual retry requested" in order.reason
+    assert order.reason == "manual_retry_queued"
     assert len(orders_repo.update_calls) == 1
 
 
@@ -451,14 +451,13 @@ def test_retry_order_increments_retry_count(orders_repo, current_user):
     assert order.retry_count == 4
 
 
-def test_retry_order_appends_to_existing_reason(orders_repo, current_user):
+def test_retry_order_resets_reason_to_manual_queue_state(orders_repo, current_user):
     order = DummyOrder(id=1, user_id=42, status=OrderStatus.FAILED, reason="Network error")
     orders_repo.orders_by_id[1] = order
 
     orders.retry_order(order_id=1, db=None, current=current_user)
 
-    assert "Network error" in order.reason
-    assert "Manual retry requested" in order.reason
+    assert order.reason == "manual_retry_queued"
 
 
 def test_retry_order_exception_handling(orders_repo, current_user):

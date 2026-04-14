@@ -312,16 +312,17 @@ class TestSensitiveInformationLogging:
 
             auth = KotakNeoAuth(config_file=str(env_path))
 
-            # Simulate 2FA logging
-            auth._complete_2fa()  # Will fail but we check logs
+            # Simulate REST login logging
+            with patch.object(auth, "_perform_rest_login", return_value=False):
+                auth.login()  # Will fail but we check logs
 
             all_logs = caplog.text
 
             # MPIN value should NEVER appear in logs
             assert "987654" not in all_logs
 
-            # Generic mention of MPIN usage is OK
-            assert "MPIN" in all_logs or "2FA" in all_logs
+            # Generic mention of auth flow is OK
+            assert "MPIN" in all_logs or "REST" in all_logs or "login" in all_logs
 
         except Exception:
             # Expected to fail (no real client), we're just checking logs
@@ -343,6 +344,7 @@ class TestSensitiveInformationLogging:
                 "KOTAK_CONSUMER_KEY=test_key\n"
                 "KOTAK_CONSUMER_SECRET=secret\n"
                 "KOTAK_MOBILE_NUMBER=9999999999\n"
+                "KOTAK_TOTP_SECRET=BASE32SECRET3232\n"
                 "KOTAK_PASSWORD=pass123\n"
                 "KOTAK_MPIN=123456\n"
                 "KOTAK_ENVIRONMENT=sandbox\n",

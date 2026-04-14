@@ -4,6 +4,7 @@ Unit tests for Re-entry functionality in Buy Order Service
 Tests verify re-entry condition checking, level progression, and order placement.
 """
 
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
@@ -257,7 +258,7 @@ class TestPlaceReentryOrders:
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_place_reentry_orders_missing_entry_rsi_defaults(self, mock_auth):
-        """Test that missing entry_rsi defaults to 29.5"""
+        """Test that missing entry_rsi is skipped (no synthetic default)."""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
@@ -275,14 +276,16 @@ class TestPlaceReentryOrders:
         mock_positions_repo.list.return_value = [mock_position]
         engine.positions_repo = mock_positions_repo
         engine.user_id = 1
+        engine.orders = Mock()
+        engine.portfolio = Mock()
 
         # Mock get_daily_indicators to return None (will skip)
         engine.get_daily_indicators = Mock(return_value=None)
 
         summary = engine.place_reentry_orders()
 
-        # Verify that it attempted (entry_rsi defaulted to 29.5)
-        assert summary["attempted"] == 1
+        # Missing entry_rsi should skip before attempting re-entry evaluation.
+        assert summary["attempted"] == 0
         assert summary["skipped_missing_data"] == 1
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
@@ -698,3 +701,160 @@ class TestPlaceReentryOrders:
         assert summary["attempted"] == 1
         assert summary["placed"] == 0
         assert summary["skipped_missing_data"] == 1
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
+    def test_place_reentry_orders_skips_anomalous_price_for_sizing(
+        self, mock_place_order, mock_auth
+    ):
+        """Skip re-entry when indicator close is clearly inconsistent with references."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+
+        mock_position = Mock()
+        mock_position.symbol = "APLAPOLLO-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.avg_price = 1965.0
+        mock_position.reentries = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 121.5568,
+                "avg_volume": 1000000,
+                "ema9": 121.5568,
+                "ema200": 509.8131,
+            }
+        )
+
+        engine.parse_symbol_for_broker = Mock(return_value="APLAPOLLO")
+        engine._resolve_broker_symbol = Mock(return_value="APLAPOLLO-EQ")
+        engine.has_active_buy_order = Mock(return_value=False)
+
+        summary = engine.place_reentry_orders()
+
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 0
+        assert summary["skipped_missing_data"] == 1
+        mock_place_order.assert_not_called()
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
+    def test_place_reentry_orders_persists_failed_placement_for_retry_flow(
+        self, mock_place_order, mock_auth
+    ):
+        """Persist re-entry placement failures into failed orders list."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentries = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        engine._resolve_broker_symbol = Mock(return_value="RELIANCE-EQ")
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=500)
+        engine._add_failed_order = Mock()
+
+        mock_place_order.return_value = (False, "Broker rejected: test rejection")
+
+        summary = engine.place_reentry_orders()
+
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 0
+        engine._add_failed_order.assert_called_once()
+        failure_payload = engine._add_failed_order.call_args[0][0]
+        assert failure_payload["symbol"] == "RELIANCE-EQ"
+        assert failure_payload["entry_type"] == "reentry"
+        assert "order_placement_failed" in failure_payload["reason"]
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    def test_place_reentry_uses_post_close_snapshot_until_next_eod_window(self, mock_auth):
+        """Use current-day RSI after close, and previous snapshot during next market hours."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+
+        mock_position = Mock()
+        mock_position.symbol = "SBIN-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+
+        # Force default code path (IndicatorService-based fetch in place_reentry_orders)
+        engine.indicator_service = Mock()
+        engine.indicator_service.get_daily_indicators_dict.return_value = {
+            "rsi10": 25.0,
+            "close": 100.0,
+            "avg_volume": 1000000,
+            "ema9": 99.0,
+            "ema200": 95.0,
+        }
+
+        # Run 1: post-close on trading day -> include current day in RSI snapshot
+        with (
+            patch(
+                "core.volume_analysis.is_market_hours",
+                return_value=False,
+            ),
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.datetime") as mock_datetime,
+        ):
+            mock_datetime.now.return_value = datetime(2026, 3, 2, 16, 5, 0)  # Monday 4:05 PM
+            summary_after_close = engine.place_reentry_orders()
+            assert summary_after_close["attempted"] == 1
+
+        # Run 2: next-day market hours -> keep using previous closed-day snapshot
+        with (
+            patch(
+                "core.volume_analysis.is_market_hours",
+                return_value=True,
+            ),
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.datetime") as mock_datetime,
+        ):
+            mock_datetime.now.return_value = datetime(2026, 3, 3, 10, 0, 0)  # Tuesday 10:00 AM
+            summary_market_hours = engine.place_reentry_orders()
+            assert summary_market_hours["attempted"] == 1
+
+        calls = engine.indicator_service.get_daily_indicators_dict.call_args_list
+        assert len(calls) == 2
+        assert calls[0].kwargs["add_current_day"] is True
+        assert calls[1].kwargs["add_current_day"] is False

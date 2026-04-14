@@ -145,7 +145,7 @@ def test_retry_order_updates_reason_and_retry_count(monkeypatch):
     assert response.retry_count == 2
     assert response.quantity == 10
     assert response.price == 42.5
-    assert "Manual retry requested" in response.reason
+    assert response.reason == "manual_retry_queued"
 
 
 def test_drop_order_success(monkeypatch):

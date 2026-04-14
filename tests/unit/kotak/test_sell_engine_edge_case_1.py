@@ -243,3 +243,82 @@ class TestSellOrderUpdateAfterReentry:
         # When update fails, orders_placed is 0 (not counted as placed/updated)
         # The order will be updated next day by run_at_market_open()
         assert orders_placed == 0
+
+    def test_run_at_market_open_existing_order_zero_price_uses_ema9_baseline(self, sell_manager):
+        """Test existing broker sell orders with zero price are tracked with EMA9 baseline."""
+        existing_order_id = "SELL123"
+        existing_qty = 9
+        existing_price = 0.0
+
+        sell_manager.get_existing_sell_orders = Mock(
+            return_value={
+                "SBIN-EQ": {
+                    "order_id": existing_order_id,
+                    "qty": existing_qty,
+                    "price": existing_price,
+                }
+            }
+        )
+
+        sell_manager.get_open_positions = Mock(
+            return_value=[
+                {
+                    "symbol": "SBIN-EQ",
+                    "ticker": "SBIN.NS",
+                    "qty": 9,  # Same quantity -> track only
+                    "entry_price": 1043.30,
+                    "placed_symbol": "SBIN-EQ",
+                }
+            ]
+        )
+
+        sell_manager.has_completed_sell_order = Mock(return_value=None)
+        sell_manager._get_ema9_with_retry = Mock(return_value=1086.70)
+        sell_manager._register_order = Mock()
+
+        orders_placed = sell_manager.run_at_market_open()
+
+        sell_manager._register_order.assert_called_once()
+        call_args = sell_manager._register_order.call_args[1]
+        assert call_args["target_price"] == 1086.70
+        assert sell_manager.lowest_ema9["SBIN-EQ"] == 1086.70
+        assert orders_placed == 1
+
+    def test_run_at_market_open_existing_order_syncs_to_db(self, sell_manager):
+        """Existing broker sell detected from system position should be persisted to DB."""
+        existing_order_id = "260316000496734"
+        sell_manager.orders_repo = Mock()
+        sell_manager.user_id = 1
+        sell_manager.orders_repo.get_by_broker_order_id = Mock(return_value=None)
+        sell_manager.orders_repo.create_amo = Mock()
+
+        sell_manager.get_existing_sell_orders = Mock(
+            return_value={
+                "SBIN-EQ": {
+                    "order_id": existing_order_id,
+                    "qty": 9,
+                    "price": 1099.95,
+                }
+            }
+        )
+        sell_manager.get_open_positions = Mock(
+            return_value=[
+                {
+                    "symbol": "SBIN-EQ",
+                    "ticker": "SBIN.NS",
+                    "qty": 9,
+                    "entry_price": 1043.30,
+                    "placed_symbol": "SBIN-EQ",
+                }
+            ]
+        )
+        sell_manager.has_completed_sell_order = Mock(return_value=None)
+        sell_manager._register_order = Mock()
+
+        sell_manager.run_at_market_open()
+
+        sell_manager.orders_repo.create_amo.assert_called_once()
+        kwargs = sell_manager.orders_repo.create_amo.call_args.kwargs
+        assert kwargs["side"] == "sell"
+        assert kwargs["symbol"] == "SBIN-EQ"
+        assert kwargs["broker_order_id"] == existing_order_id

@@ -271,7 +271,9 @@ class ManualOrderMatcher:
             if tracked_symbol.upper() not in holdings_symbols:
                 # Wrap in try-catch to handle corrupted data gracefully
                 try:
-                    tracking_entry = self.tracking_scope.get_tracking_entry(tracked_symbol)
+                    tracking_entry = self.tracking_scope.get_tracking_entry(
+                        tracked_symbol, status="active"
+                    )
                     tracked_qty = (
                         tracking_entry.get("current_tracked_qty", 0) if tracking_entry else 0
                     )
@@ -329,7 +331,11 @@ class ManualOrderMatcher:
         # Wrap entire loop in try-catch to handle corrupted data gracefully
         for symbol in tracked_symbols:
             try:
-                tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
+                # IMPORTANT: request active entry explicitly; `status="any"` can
+                # return stale completed rows for symbols that were re-tracked.
+                tracking_entry = self.tracking_scope.get_tracking_entry(
+                    symbol, status="active"
+                )
 
                 if not tracking_entry:
                     logger.warning(f"Tracking entry not found for {symbol}")
@@ -515,7 +521,9 @@ class ManualOrderMatcher:
 
         for symbol in tracked_symbols:
             try:
-                tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
+                tracking_entry = self.tracking_scope.get_tracking_entry(
+                    symbol, status="active"
+                )
 
                 if not tracking_entry:
                     continue
@@ -571,7 +579,9 @@ class ManualOrderMatcher:
         results = {"partial_sells": [], "total_shares_sold": 0}
 
         for symbol in tracked_symbols:
-            tracking_entry = self.tracking_scope.get_tracking_entry(symbol)
+            tracking_entry = self.tracking_scope.get_tracking_entry(
+                symbol, status="active"
+            )
 
             if not tracking_entry:
                 continue

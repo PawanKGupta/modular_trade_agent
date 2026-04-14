@@ -72,6 +72,9 @@ def auto_trade_engine():
 
         # Mock orders_repo.update for retry_count updates
         engine.orders_repo.update = Mock()
+        engine._check_order_margin = Mock(
+            return_value=(True, 200000.0, 50000.0, 0.0, True)
+        )
 
         return engine
 
@@ -95,6 +98,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.ticker = ticker
         # After bug fix: ticker is now extracted from order_metadata first
         mock_db_order.order_metadata = {"ticker": ticker}
+        mock_db_order.retry_count = 0
+        type(mock_db_order).retry_count = 0
         mock_db_order.retry_count = 0  # Set actual integer, not Mock
         type(mock_db_order).retry_count = 0  # Ensure it's an integer attribute
 
@@ -261,6 +266,8 @@ class TestCapitalRecalculationOnRetry:
         mock_db_order.ticker = ticker
         # After bug fix: ticker is now extracted from order_metadata first
         mock_db_order.order_metadata = {"ticker": ticker}
+        mock_db_order.retry_count = 0
+        type(mock_db_order).retry_count = 0
 
         auto_trade_engine.orders_repo.get_retriable_failed_orders.return_value = [mock_db_order]
 

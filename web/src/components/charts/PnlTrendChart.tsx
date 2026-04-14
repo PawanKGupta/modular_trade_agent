@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from 'recharts';
+import type { ValueType } from 'recharts/types/component/DefaultTooltipContent';
 import { ChartContainer } from './ChartContainer';
 import { ResponsiveChart } from './ResponsiveChart';
 import { chartStyles } from './chartStyles';
@@ -159,7 +160,9 @@ export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: Pn
 						<YAxis {...chartStyles.axis} tickMargin={12} />
 						<Tooltip
 							{...chartStyles.tooltip}
-							formatter={(value: number | undefined) => value ? `₹${value.toLocaleString('en-IN')}` : '-'}
+							formatter={(value: ValueType | undefined) =>
+								typeof value === 'number' ? `₹${value.toLocaleString('en-IN')}` : '-'
+							}
 						/>
 						<Legend {...chartStyles.legend} />
 						<ReferenceLine y={0} stroke="#64748b" strokeDasharray="5 5" />

@@ -80,6 +80,9 @@ class TestCancelledStatusOnOrderUpdate:
                 return_value=(True, 0.01, None)
             )
             engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+            engine._check_order_margin = Mock(
+                return_value=(True, 200000.0, 50000.0, 0.0, True)
+            )
 
             # Mock scrip master for symbol resolution
             mock_scrip_master = Mock()

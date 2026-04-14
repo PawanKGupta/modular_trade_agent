@@ -354,8 +354,8 @@ cd web; npx playwright install chromium; npm run test:e2e
   - Body: `{ broker: str, api_key: str, api_secret: str, mobile_number?: str, password?: str, mpin?: str, totp_secret?: str, environment?: str }`
   - Returns: `{ ok: bool, message: str }`
   - **Basic test**: Only requires `api_key` and `api_secret` - validates client initialization
-  - **Full test**: Requires `mobile_number`, `password`, and `mpin` - performs actual login and 2FA authentication with Kotak Neo SDK
-  - Uses existing `neo_api_client` SDK integration for real authentication testing
+  - **Full test**: Requires `mobile_number`, `totp_secret`, and `mpin` - performs actual REST login and MPIN validation with Kotak Neo APIs
+  - Uses REST authentication flow (`tradeApiLogin` + `tradeApiValidate`) for real auth testing
 - GET `/api/v1/user/broker/status` — Get current broker connection status
   - Returns: `{ broker: str | null, status: str | null }`
 - GET `/api/v1/user/broker/creds/info` — Get stored broker credentials information

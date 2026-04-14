@@ -530,6 +530,31 @@ class TestRefactoredSellEngineMethods:
             assert any("Target=Rs 2095.30" in str(call) for call in log_calls)
             assert any("Lowest=Rs 2095.30" in str(call) for call in log_calls)
 
+    def test_check_and_update_single_stock_heals_stale_zero_lowest_baseline(self, sell_manager):
+        """Test that stale zero lowest_ema9 is repaired to current rounded EMA9."""
+        order_info = {
+            "order_id": "251106000008974",
+            "target_price": 0.0,
+            "qty": 233,
+            "ticker": "DALBHARAT.NS",
+            "placed_symbol": "DALBHARAT-EQ",
+        }
+        sell_manager.lowest_ema9 = {"DALBHARAT": 0.0}
+
+        rounded_ema9 = 2095.30
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=2095.27),
+            patch.object(sell_manager, "round_to_tick_size", return_value=rounded_ema9),
+            patch.object(sell_manager, "update_sell_order", return_value=False),
+            patch("modules.kotak_neo_auto_trader.sell_engine.logger") as mock_logger,
+        ):
+            sell_manager._check_and_update_single_stock("DALBHARAT", order_info, [])
+
+            assert sell_manager.lowest_ema9["DALBHARAT"] == rounded_ema9
+            log_calls = [str(call) for call in mock_logger.info.call_args_list]
+            assert any("Target=Rs 2095.30" in str(call) for call in log_calls)
+            assert any("Lowest=Rs 2095.30" in str(call) for call in log_calls)
+
     def test_check_and_update_single_stock_handles_missing_target_price(self, sell_manager):
         """Test that _check_and_update_single_stock handles missing target_price"""
         order_info = {

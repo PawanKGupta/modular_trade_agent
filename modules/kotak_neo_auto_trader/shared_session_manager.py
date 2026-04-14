@@ -80,6 +80,8 @@ class SharedSessionManager:
                     # Clear cooldown to allow immediate re-auth for expired sessions
                     if user_id in self._last_reauth_time:
                         del self._last_reauth_time[user_id]
+                    # Force new session creation below
+                    auth = None
                 else:
                     # Session is still valid - check cooldown to prevent OTP spam
                     if user_id in self._last_reauth_time:
@@ -93,59 +95,24 @@ class SharedSessionManager:
                             # (let API call handle it via @handle_reauth)
                             return auth
 
-                    # Phase -1: Check session health more carefully
-                    if auth.is_authenticated():
-                        client = auth.get_client()
+                # If expired, we cleared it and must create a new one
+                if auth is None:
+                    pass
+                # Phase -1: Check session health more carefully (REST-based auth)
+                elif auth.is_authenticated():
+                    # If session is valid, reuse it (REST has no SDK client object)
+                    logger.info(f"[SHARED_SESSION] Reusing existing session for user {user_id}")
+                    return auth
 
-                        # Only clear if BOTH are false/None AND session actually expired
-                        if not client:
-                            # Session valid but client None - check if cooldown expired
-                            # If cooldown expired, create fresh session instead of relying on recovery
-                            time_since_reauth = (
-                                time.time() - self._last_reauth_time.get(user_id, 0)
-                                if user_id in self._last_reauth_time
-                                else float("inf")  # No previous re-auth, allow immediate
-                            )
-
-                            if time_since_reauth >= self._REAUTH_COOLDOWN:
-                                # Cooldown expired - safe to create fresh session
-                                logger.warning(
-                                    f"[SHARED_SESSION] Cooldown expired, client None "
-                                    f"for user {user_id}, creating fresh session"
-                                )
-                                with self._manager_lock:
-                                    self._sessions.pop(user_id, None)
-                                # Clear cooldown to allow immediate re-auth
-                                if user_id in self._last_reauth_time:
-                                    del self._last_reauth_time[user_id]
-                                # Fall through to create new session (line 126)
-                            else:
-                                # Still in cooldown - return existing and let @handle_reauth fix it
-                                logger.warning(
-                                    f"[SHARED_SESSION] Session valid but client None "
-                                    f"for user {user_id}, cooldown active ({self._REAUTH_COOLDOWN - time_since_reauth:.0f}s remaining), "
-                                    "attempting recovery via @handle_reauth"
-                                )
-                                return (
-                                    auth  # Return existing, let API call handle via @handle_reauth
-                                )
-                        else:
-                            # Both authenticated and client available - reuse
-                            logger.info(
-                                f"[SHARED_SESSION] Reusing existing session for user {user_id}"
-                            )
-                            return auth
-                    else:
-                        # Not authenticated - clear
-                        logger.warning(
-                            f"[SHARED_SESSION] Existing session for user {user_id} "
-                            "is invalid, clearing"
-                        )
-                        with self._manager_lock:
-                            self._sessions.pop(user_id, None)
-                        # Clear cooldown when session is invalid
-                        if user_id in self._last_reauth_time:
-                            del self._last_reauth_time[user_id]
+                # Not authenticated - clear
+                logger.warning(
+                    f"[SHARED_SESSION] Existing session for user {user_id} is invalid, clearing"
+                )
+                with self._manager_lock:
+                    self._sessions.pop(user_id, None)
+                # Clear cooldown when session is invalid
+                if user_id in self._last_reauth_time:
+                    del self._last_reauth_time[user_id]
 
             # Create new session
             logger.info(f"[SHARED_SESSION] Creating new session for user {user_id}")

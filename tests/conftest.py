@@ -50,9 +50,10 @@ def clean_db_after_test():
     CRITICAL: This fixture MUST use a separate test engine, NOT the shared engine from
     session.py, to prevent accidentally dropping tables from the production database.
     """
-    # CRITICAL: Force in-memory database BEFORE any imports that might use DB_URL
-    # This prevents the shared session.py engine from connecting to the real database
-    original_db_url = os.environ.get("DB_URL")
+    # CRITICAL (Fix A): Keep DB_URL pinned to in-memory for the *entire* test run.
+    # Restoring DB_URL per-test can cause CI-only import-order issues where some modules
+    # import `src.infrastructure.db.session` after a previous test restored DB_URL to a
+    # non-memory URL, resulting in multiple engines / inconsistent DB state.
     os.environ["DB_URL"] = "sqlite:///:memory:"
 
     # Safety guard: prevent tests from using the real app DB path
@@ -108,11 +109,7 @@ def clean_db_after_test():
             pass
         test_engine.dispose()
 
-        # Restore original DB_URL if it was set
-        if original_db_url is not None:
-            os.environ["DB_URL"] = original_db_url
-        elif "DB_URL" in os.environ:
-            del os.environ["DB_URL"]
+        # NOTE: Do not restore DB_URL here; keep it pinned for the entire pytest run.
         # If a file-based SQLite URL was used in a test (e.g., overridden to a tmp file),
         # remove the file to avoid residue. We only remove if path exists and is within a temp directory.
         db_url = os.environ.get("DB_URL", "")

@@ -361,11 +361,10 @@ def retry_order(
         order.last_retry_attempt = ist_now()
         if not order.first_failed_at:
             order.first_failed_at = ist_now()
-        # Update reason to indicate manual retry (remove duplicate "Manual retry requested")
-        if order.reason and "(Manual retry requested)" not in order.reason:
-            order.reason = f"{order.reason} (Manual retry requested)"
-        elif not order.reason:
-            order.reason = "Manual retry requested"
+        # Reset reason for manual retry request so stale prior failures
+        # (e.g., old insufficient_balance shortfall) are not echoed as
+        # the outcome of this new retry attempt.
+        order.reason = "manual_retry_queued"
 
         updated_order = repo.update(order)
 

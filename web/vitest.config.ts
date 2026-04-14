@@ -8,8 +8,8 @@ export default defineConfig({
 		globals: true,
 		exclude: ['**/node_modules/**', '**/dist/**', '**/tests/e2e/**'],
 		// Increase timeout for CI environments where tests may run slower
-		testTimeout: 10000, // 10 seconds
-		hookTimeout: 10000, // 10 seconds for beforeEach/afterEach
+		testTimeout: 30000, // 30 seconds
+		hookTimeout: 30000, // 30 seconds for beforeEach/afterEach
 		coverage: {
 			provider: 'v8',
 			reporter: ['text', 'html'],

@@ -5,6 +5,7 @@ Tests verify the centralized holdings/positions check service
 maintains backward compatibility with existing methods.
 """
 
+from datetime import datetime
 from unittest.mock import Mock
 
 from modules.kotak_neo_auto_trader.services.portfolio_service import (
@@ -323,6 +324,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.CLOSED
         mock_db_order.symbol = "WIPRO-EQ"
+        mock_db_order.placed_at = datetime.now()
 
         mock_orders_repo = Mock()
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))

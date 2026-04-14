@@ -293,6 +293,10 @@ After logging in, you'll see the main dashboard with navigation to all features.
   - `failed` - Failed orders
   - `cancelled` - Cancelled orders
 
+**Status Normalization (Broker -> UI):**
+- Broker `executed` is normalized to UI/internal `closed`.
+- This keeps broker orders aligned with database order lifecycle semantics.
+
 **Order Information:**
 - Symbol
 - Quantity

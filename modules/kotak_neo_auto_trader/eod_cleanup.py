@@ -220,10 +220,25 @@ class EODCleanup:
             # Fetch current holdings from broker
             holdings_response = self.broker_client.get_holdings()
 
+            holdings: list[dict[str, Any]] = []
             if isinstance(holdings_response, list):
                 holdings = holdings_response
-            elif isinstance(holdings_response, dict) and "data" in holdings_response:
-                holdings = holdings_response["data"]
+            elif isinstance(holdings_response, dict):
+                data = holdings_response.get("data")
+                if isinstance(data, list):
+                    holdings = data
+                elif isinstance(data, dict):
+                    holdings = [data]
+                elif isinstance(holdings_response.get("holdings"), list):
+                    holdings = holdings_response.get("holdings") or []
+                else:
+                    # Common broker response when there are no holdings.
+                    # Treat as empty instead of erroring EOD cleanup.
+                    logger.info(
+                        "Holdings response did not include list payload; "
+                        "continuing reconciliation with empty holdings."
+                    )
+                    holdings = []
             else:
                 logger.error(f"Unexpected holdings response format: {type(holdings_response)}")
                 return {"error": "Invalid response format"}

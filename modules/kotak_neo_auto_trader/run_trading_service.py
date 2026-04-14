@@ -386,11 +386,10 @@ class TradingService:
             logger.info("Initializing live price cache for real-time WebSocket prices...")
 
             # Load scrip master for symbol/token mapping
-            self.scrip_master = KotakNeoScripMaster(
-                auth_client=self.auth.client if hasattr(self.auth, "client") else None,
-                exchanges=["NSE"],
-            )
-            self.scrip_master.load_scrip_master(force_download=False)
+            rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            self.scrip_master = KotakNeoScripMaster(auth_client=rest_client, exchanges=["NSE"])
+            if not self.scrip_master.load_scrip_master(force_download=False):
+                raise RuntimeError("Scrip master load failed")
             logger.info("[OK] Scrip master loaded")
 
             # Initialize LivePriceCache with WebSocket connection
@@ -631,6 +630,12 @@ class TradingService:
 
         # Respect stop request when used from unified service (do not place orders if stopped)
         if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
+            self.logger.warning(
+                "Skipping run_sell_monitor: service not running or shutdown requested "
+                f"(running={getattr(self, 'running', None)}, "
+                f"shutdown_requested={getattr(self, 'shutdown_requested', None)})",
+                action="sell_monitor",
+            )
             return
 
         # Only log to database on first start, not on every monitoring cycle
@@ -1834,6 +1839,10 @@ class TradingService:
             self.logger.info("Initialization complete - entering scheduler loop...", action="run")
 
             try:
+                # Mark service as active before entering scheduled task execution.
+                # run_sell_monitor() explicitly checks this flag and returns early when False.
+                self.running = True
+                self.shutdown_requested = False
                 # Run scheduler continuously
                 self.run_scheduler()
             except Exception as e:
@@ -1843,6 +1852,7 @@ class TradingService:
                 traceback.print_exc()
             finally:
                 # Always cleanup on exit
+                self.running = False
                 self.logger.info("Entering shutdown sequence...", action="run")
                 self.shutdown()
         finally:

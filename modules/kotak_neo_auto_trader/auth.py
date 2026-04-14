@@ -1,9 +1,11 @@
+# ruff: noqa: PLR0913, E501, PLR2004, PLR0911, PLR0915, PLC0415, PLR0912, S110
 """
 Authentication Module for Kotak Neo API
 Handles login, logout, and session management
 """
 
 import os
+import re
 import socket
 import sys
 import threading
@@ -14,6 +16,13 @@ from io import StringIO
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+try:
+    import pyotp  # type: ignore[import]
+except ImportError:
+    pyotp = None
+
+from modules.kotak_neo_auto_trader.infrastructure.clients.kotak_rest_client import KotakRestClient
 
 # IPv4 resolution control (scoped + configurable)
 _original_getaddrinfo = socket.getaddrinfo
@@ -65,9 +74,13 @@ class KotakNeoAuth:
             config_file (str): Path to environment configuration file
         """
         self.config_file = config_file
+        # Backward compatibility: older code expects `auth.client`
         self.client = None
-        self.session_token = None
+        self.session_token: str | None = None  # Session token (Auth) from tradeApiValidate
+        self.base_url: str | None = None  # baseUrl from tradeApiValidate
+        self.trade_sid: str | None = None  # session sid (Sid) from tradeApiValidate
         self.is_logged_in = False
+        self._rest_client: KotakRestClient | None = None
 
         # Phase -1: Session validity tracking
         # Track when session was created and its TTL (Time To Live)
@@ -77,7 +90,7 @@ class KotakNeoAuth:
         self.session_ttl: int = 3300  # 55 minutes (safety margin for 1-hour JWT)
 
         # Thread lock for thread-safe client access
-        # Prevents race conditions when multiple threads use the same client
+        # Prevents race conditions when multiple threads use the same session
         self._client_lock = threading.Lock()
 
         # Use existing project logger
@@ -92,8 +105,10 @@ class KotakNeoAuth:
         """Load credentials from environment file"""
         load_dotenv(self.config_file)
 
-        # Ensure all credentials are strings (not None) to prevent SDK concatenation errors
-        # os.getenv can return None if the variable is set to empty string in some cases
+        # Ensure all credentials are strings (not None)
+        # For REST APIs we map:
+        # - consumer_key -> API key used in Authorization header (access token)
+        # - consumer_secret -> UCC (client code)
         self.consumer_key = str(os.getenv("KOTAK_CONSUMER_KEY", "") or "")
         self.consumer_secret = str(os.getenv("KOTAK_CONSUMER_SECRET", "") or "")
         self.mobile_number = str(os.getenv("KOTAK_MOBILE_NUMBER", "") or "")
@@ -102,31 +117,229 @@ class KotakNeoAuth:
         self.mpin = str(os.getenv("KOTAK_MPIN", "") or "")
         self.environment = str(os.getenv("KOTAK_ENVIRONMENT", "prod") or "prod")
 
-        # Validate required credentials (TOTP or MPIN accepted for 2FA)
+        # Validate base credentials at init time.
+        # TOTP secret is validated at login-time to keep non-login code paths testable.
         required_fields = [
             self.consumer_key,
             self.consumer_secret,
             self.mobile_number,
-            self.password,
+            self.mpin,
         ]
 
-        if not all(required_fields) or (not self.totp_secret and not self.mpin):
+        if not all(required_fields):
             missing = [
                 name
                 for field, name in zip(
-                    required_fields + [self.totp_secret or self.mpin],
+                    required_fields,
                     [
                         "KOTAK_CONSUMER_KEY",
-                        "KOTAK_CONSUMER_SECRET",
+                        "KOTAK_CONSUMER_SECRET (UCC/client code)",
                         "KOTAK_MOBILE_NUMBER",
-                        "KOTAK_PASSWORD",
-                        "KOTAK_TOTP_SECRET or KOTAK_MPIN",
+                        "KOTAK_MPIN",
                     ],
                     strict=False,
                 )
                 if not field
             ]
             raise ValueError(f"Missing credentials: {', '.join(missing)}")
+
+        # Log masked fingerprint for debugging credential source mismatches
+        self.logger.info(
+            "Kotak credential fingerprint loaded: "
+            f"{self._credentials_fingerprint()} from config_file={self.config_file}"
+        )
+
+    def _credentials_fingerprint(self) -> str:
+        """Return masked credential fingerprint (no secret leakage)."""
+
+        def _tail(value: str, n: int = 4) -> str:
+            v = (value or "").strip()
+            if not v:
+                return "none"
+            return f"...{v[-n:]}" if len(v) >= n else v
+
+        mobile = (self.mobile_number or "").strip()
+        mobile_mask = f"...{mobile[-3:]}" if len(mobile) >= 3 else (mobile or "none")
+        env = (self.environment or "prod").strip()
+        return (
+            f"key={_tail(self.consumer_key, 6)}, "
+            f"ucc={_tail(self.consumer_secret, 4)}, "
+            f"mobile={mobile_mask}, "
+            f"mpin_len={len((self.mpin or '').strip())}, "
+            f"totp_len={len((self.totp_secret or '').strip())}, "
+            f"env={env}"
+        )
+
+    def _perform_rest_login(self) -> bool:
+        """
+        Perform REST-based login using Kotak tradeApiLogin + tradeApiValidate.
+
+        Uses:
+        - consumer_key      -> Authorization header
+        - consumer_secret   -> UCC/client code
+        - mobile_number     -> mobileNumber
+        - totp_secret       -> generates TOTP for Step 1
+        - mpin              -> MPIN for Step 2
+        """
+        if not pyotp:
+            self.logger.error(
+                "pyotp is not installed; cannot generate TOTP for Kotak REST login. "
+                "Install pyotp or configure alternative TOTP generation."
+            )
+            return False
+
+        api_key = self.consumer_key.strip()
+        ucc = self.consumer_secret.strip()
+        mobile = self.mobile_number.strip()
+        mpin = self.mpin.strip()
+        totp_secret = self.totp_secret.strip()
+
+        if not api_key or not ucc or not mobile or not mpin or not totp_secret:
+            self.logger.error("REST login failed: missing required credentials")
+            return False
+
+        def _kotak_error_message(payload: dict, fallback: str) -> str:
+            for key in ("message", "emsg", "error", "errorDescription", "stat"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            return fallback
+
+        try:
+            # Step 1: tradeApiLogin (view token)
+            # Normalize secret to support user-entered spaces/hyphens.
+            normalized_totp_secret = re.sub(r"[\s\-]", "", totp_secret).upper()
+            try:
+                totp_code = pyotp.TOTP(normalized_totp_secret).now()
+            except Exception as totp_err:  # noqa: BLE001
+                self.logger.error(
+                    "REST login failed: invalid KOTAK_TOTP_SECRET format. "
+                    "Expected Base32 secret key (not the 6-digit OTP code). "
+                    f"Details: {totp_err}"
+                )
+                return False
+
+            url_login = "https://mis.kotaksecurities.com/login/1.0/tradeApiLogin"
+            headers_login = {
+                "Authorization": api_key,
+                "neo-fin-key": "neotradeapi",
+                "Content-Type": "application/json",
+            }
+            payload_login = {
+                "mobileNumber": mobile.strip(),
+                "ucc": ucc,
+                "totp": totp_code,
+            }
+
+            import json
+
+            import requests
+
+            resp_login = requests.post(
+                url_login, headers=headers_login, data=json.dumps(payload_login), timeout=10.0
+            )
+            data_login = resp_login.json()
+            if (
+                resp_login.status_code != 200
+                or data_login.get("status") == "error"
+                or str(data_login.get("stat", "")).lower() == "not_ok"
+            ):
+                msg = _kotak_error_message(data_login, "Login failed (Step 1)")
+                self.logger.error(f"REST login failed at Step 1: {msg}")
+                return False
+
+            view_data = data_login.get("data") or {}
+            view_sid = view_data.get("sid")
+            view_token = view_data.get("token")
+            if not view_sid or not view_token:
+                self.logger.error("REST login failed: missing sid/token in Step 1 response")
+                return False
+
+            # Step 2: tradeApiValidate (MPIN)
+            url_validate = "https://mis.kotaksecurities.com/login/1.0/tradeApiValidate"
+            headers_validate = {
+                "Authorization": api_key,
+                "neo-fin-key": "neotradeapi",
+                "Content-Type": "application/json",
+                "sid": view_sid,
+                "Auth": view_token,
+            }
+            payload_validate = {"mpin": mpin}
+
+            resp_validate = requests.post(
+                url_validate,
+                headers=headers_validate,
+                data=json.dumps(payload_validate),
+                timeout=10.0,
+            )
+            data_validate = resp_validate.json()
+            if (
+                resp_validate.status_code != 200
+                or data_validate.get("status") == "error"
+                or str(data_validate.get("stat", "")).lower() == "not_ok"
+            ):
+                msg = _kotak_error_message(data_validate, "Login failed (Step 2)")
+                self.logger.error(f"REST login failed at Step 2 (MPIN validation): {msg}")
+                return False
+
+            trade_data = data_validate.get("data") or {}
+            base_url = trade_data.get("baseUrl")
+            trade_token = trade_data.get("token")
+            trade_sid = trade_data.get("sid")
+            if not base_url or not trade_token or not trade_sid:
+                self.logger.error("REST login failed: missing baseUrl/token/sid in Step 2 response")
+                return False
+
+            # Store session token and base URL for later use by REST clients
+            self.session_token = trade_token
+            self.base_url = base_url  # type: ignore[attr-defined]
+            self.trade_sid = trade_sid  # type: ignore[attr-defined]
+            self._rest_client = None  # Reset client cache on new login
+            self.client = None  # Reset compatibility attribute on new login
+
+            self.logger.info("Kotak REST login completed successfully")
+            return True
+
+        except Exception as e:  # noqa: BLE001
+            try:
+                error_str = str(e) if e is not None else "Unknown error"
+                if error_str is None:
+                    error_str = "Unknown error (exception string is None)"
+                error_msg = sanitize_log_message(error_str)
+            except Exception:
+                error_msg = "Unknown error (failed to format REST login error)"
+            self.logger.error(f"REST login error: {error_msg}")
+            return False
+
+    # Compatibility hooks used by older tests and call-sites.
+    # These wrappers remain REST-first and do not introduce SDK dependencies.
+    def _initialize_client(self):
+        return self.client
+
+    def _perform_login(self) -> bool:
+        return self._perform_rest_login()
+
+    def _complete_2fa(self) -> bool:
+        return True
+
+    def get_rest_client(self) -> KotakRestClient:
+        """
+        Get a REST client bound to the current authenticated session.
+        """
+        if not self.is_authenticated():
+            raise ConnectionError("Not authenticated")
+        if not self.base_url or not self.session_token or not self.trade_sid:
+            raise ConnectionError("Missing REST session details (base_url/session_token/trade_sid)")
+
+        if self._rest_client is None:
+            self._rest_client = KotakRestClient(
+                base_url=self.base_url,
+                session_token=self.session_token,
+                session_sid=self.trade_sid,
+                access_token=self.consumer_key,
+            )
+            self.client = self._rest_client
+        return self._rest_client
 
     def login(self) -> bool:
         """
@@ -141,23 +354,35 @@ class KotakNeoAuth:
             self.logger.info("Starting Kotak Neo API login process...")
             self.logger.info(f"Mobile: {self.mobile_number}")
             self.logger.info(f"Environment: {self.environment}")
+            self.logger.info(f"Login fingerprint: {self._credentials_fingerprint()}")
 
             # Suppress output during entire login process
             with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                # Initialize client
-                self.client = self._initialize_client()
-                if not self.client:
+                compat_client = self._initialize_client()
+                if compat_client is not None and hasattr(compat_client, "session_2fa"):
+                    try:
+                        compat_client.session_2fa()
+                        success = True
+                    except Exception as e:  # noqa: BLE001
+                        msg = str(e).lower()
+                        # Historical SDK quirk: treat NoneType.get from session_2fa as
+                        # already-authenticated success.
+                        if "nonetype" in msg and "has no attribute 'get'" in msg:
+                            success = True
+                        else:
+                            raise
+                else:
+                    success = self._perform_login()
+                    if success:
+                        success = self._complete_2fa()
+                if not success:
                     return False
-
-                # Perform login + 2FA
-                if not self._perform_login():
-                    return False
-                if not self._complete_2fa():
-                    return False
+                if compat_client is not None:
+                    self.client = compat_client
 
                 self.is_logged_in = True
                 self.session_created_at = time.time()  # Phase -1: Track session creation time
-                self.logger.info("Login completed successfully!")
+                self.logger.info("Login completed successfully via REST APIs!")
                 self.logger.info("Session will remain active for the entire trading day")
                 return True
 
@@ -184,265 +409,6 @@ class KotakNeoAuth:
                 if sanitized and sanitized.strip():
                     # Only log at debug level and truncate to prevent token leakage
                     self.logger.debug(f"Login process output (sanitized): {sanitized[:200]}")
-
-    def _initialize_client(self):
-        """Initialize NeoAPI client"""
-        try:
-            from neo_api_client import NeoAPI  # noqa: PLC0415
-
-            # Ensure all credentials are strings (not None) before passing to SDK
-            # SDK may try to concatenate strings internally, causing TypeError if None
-            consumer_key = str(self.consumer_key) if self.consumer_key is not None else ""
-            consumer_secret = str(self.consumer_secret) if self.consumer_secret is not None else ""
-            environment = str(self.environment) if self.environment is not None else "prod"
-
-            if not consumer_key or not consumer_secret:
-                self.logger.error(
-                    "Client initialization failed: "
-                    "consumer_key or consumer_secret is missing or empty"
-                )
-                return None
-
-            # Output suppression is handled at login() level
-            client = NeoAPI(
-                consumer_key=consumer_key,
-                consumer_secret=consumer_secret,
-                environment=environment,
-                neo_fin_key="neotradeapi",
-            )
-
-            self.logger.info("NeoAPI client initialized successfully")
-            return client
-
-        except TypeError as te:
-            # Handle SDK internal errors where it tries to concatenate None with string
-            error_msg = str(te) if te else "Type error in SDK"
-            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
-                self.logger.error(
-                    "Client initialization error: SDK received None value. "
-                    "Please check that KOTAK_CONSUMER_KEY and "
-                    "KOTAK_CONSUMER_SECRET are set correctly."
-                )
-            else:
-                self.logger.error(f"Client initialization error (TypeError): {error_msg}")
-            return None
-        except Exception as init_error:
-            self.logger.error(f"Client initialization failed: {init_error}")
-            return None
-
-    def _perform_login(self) -> bool:
-        """Perform username/password login"""
-        try:
-            self.logger.info("Attempting login...")
-
-            # Ensure credentials are strings (not None) before passing to SDK
-            # SDK may try to concatenate strings internally, causing TypeError if None
-            mobile = str(self.mobile_number) if self.mobile_number is not None else ""
-            password = str(self.password) if self.password is not None else ""
-
-            # Validate credentials before attempting login
-            if not mobile or not password:
-                self.logger.error("Login failed: Mobile number or password is missing or empty")
-                return False
-
-            # Additional validation: ensure client has valid credentials
-            if not self.client:
-                self.logger.error("Login failed: Client is not initialized")
-                return False
-
-            # Log credential status for debugging (without exposing actual values)
-            self.logger.debug(
-                f"Login attempt - Mobile length: {len(mobile)}, "
-                f"Password length: {len(password)}, "
-                f"Consumer key set: {bool(self.consumer_key)}, "
-                f"Consumer secret set: {bool(self.consumer_secret)}"
-            )
-
-            # Output suppression is handled at login() level
-            login_response = self.client.login(mobilenumber=mobile, password=password)
-
-            if login_response is None:
-                self.logger.error("Login failed: No response from server")
-                return False
-
-            if isinstance(login_response, dict) and "error" in login_response:
-                error_msg = "Unknown error"
-                try:
-                    if (
-                        isinstance(login_response["error"], list)
-                        and len(login_response["error"]) > 0
-                    ):
-                        if isinstance(login_response["error"][0], dict):
-                            error_msg = login_response["error"][0].get("message", "Unknown error")
-                        else:
-                            error_msg = str(login_response["error"][0])
-                    else:
-                        error_msg = str(login_response["error"])
-                except Exception:
-                    error_msg = "Unknown error (failed to parse error message)"
-                self.logger.error(f"Login failed: {error_msg}")
-                return False
-
-            self.logger.info("Login successful, proceeding with 2FA...")
-            return True
-
-        except TypeError as te:
-            # Handle SDK internal errors where it tries to concatenate None with string
-            error_msg = str(te) if te else "Type error in SDK"
-            if "NoneType" in error_msg or "concatenate" in error_msg.lower():
-                # Log which credentials might be None for debugging
-                cred_status = {
-                    "mobile_number": "set" if mobile else "missing/empty",
-                    "password": "set" if password else "missing/empty",
-                    "consumer_key": "set" if self.consumer_key else "missing/empty",
-                    "consumer_secret": "set" if self.consumer_secret else "missing/empty",
-                }
-                self.logger.error(
-                    f"Login error: SDK received None value. "
-                    f"Credential status: {cred_status}. "
-                    "Please check that all credentials are set correctly in kotak_neo.env"
-                )
-            else:
-                self.logger.error(f"Login error (TypeError): {error_msg}")
-            return False
-        except Exception as e:
-            # Sanitize error message to avoid logging sensitive info
-            try:
-                error_str = str(e) if e is not None else "Unknown error"
-                if error_str is None:
-                    error_str = "Unknown error (exception string is None)"
-                error_msg = sanitize_log_message(error_str)
-            except Exception:
-                error_msg = "Unknown error (failed to format error message)"
-            self.logger.error(f"Login error: {error_msg}")
-            return False
-
-    def _complete_2fa(self) -> bool:  # noqa: PLR0911
-        """
-        Complete 2FA authentication using MPIN from env (recommended by Kotak Neo).
-
-        Handles various response formats and SDK exceptions gracefully.
-        """
-        if not self.mpin:
-            self.logger.error("MPIN not configured; set KOTAK_MPIN in kotak_neo.env for 2FA")
-            return False
-
-        if not self.client:
-            self.logger.error("No client available for 2FA")
-            return False
-
-        try:
-            self.logger.info("Using MPIN for 2FA")
-
-            # Call session_2fa with comprehensive error handling
-            # Output suppression is handled at login() level
-            try:
-                session_response = self.client.session_2fa(OTP=self.mpin)
-            except Exception as session_err:
-                error_msg = str(session_err).lower()
-                # Handle SDK internal errors (NoneType.get) - treat as session already active
-                if "nonetype" in error_msg and "get" in error_msg:
-                    self.logger.warning(
-                        f"2FA SDK internal error (NoneType.get): {session_err} - "
-                        "treating as session already active"
-                    )
-                    return True
-                # Other exceptions are real failures
-                self.logger.error(f"2FA call failed: {session_err}")
-                return False
-
-            # Handle None response (session may already be active)
-            if session_response is None:
-                self.logger.debug("2FA returned None - session may already be active")
-                return True
-
-            # Check for error in response
-            error = self._extract_error_from_response(session_response)
-            if error:
-                self.logger.error(f"2FA failed: {error}")
-                return False
-
-            # Extract session token if present
-            token = self._extract_token_from_response(session_response)
-            if token:
-                self.session_token = token
-                # Don't log the token itself - just confirm extraction
-                self.logger.debug("2FA session token extracted successfully")
-
-            # Success (even if no token - session may already be active)
-            return True
-
-        except Exception as e:
-            self.logger.error(f"2FA error: {e}")
-            return False
-
-    def _extract_error_from_response(self, response) -> str | None:
-        """Extract error message from 2FA response safely."""
-        try:
-            if isinstance(response, dict):
-                err = response.get("error")
-            elif hasattr(response, "get") and callable(getattr(response, "get", None)):
-                err = response.get("error")
-            else:
-                return None
-
-            if not err:
-                return None
-
-            # Handle list of errors
-            if isinstance(err, list) and len(err) > 0:
-                if isinstance(err[0], dict):
-                    return err[0].get("message", str(err[0]))
-                return str(err[0])
-
-            return str(err)
-
-        except Exception as e:
-            self.logger.debug(f"Error extracting error from response: {e}")
-            return None
-
-    def _extract_token_from_response(self, response) -> str | None:
-        """Extract token from 2FA response safely."""
-        try:
-            # Try object attribute access first (SDK response object)
-            if hasattr(response, "data"):
-                data_obj = response.data
-                if data_obj and hasattr(data_obj, "token"):
-                    return data_obj.token
-
-            # Try dict access (JSON response)
-            data_field = None
-            if isinstance(response, dict):
-                data_field = response.get("data")
-            elif hasattr(response, "get") and callable(getattr(response, "get", None)):
-                data_field = response.get("data")
-
-            if not data_field:
-                return None
-
-            # Extract token from data field (try both 'token' and 'access_token')
-            if isinstance(data_field, dict):
-                token = data_field.get("token") or data_field.get("access_token")
-                return token
-            elif hasattr(data_field, "get") and callable(getattr(data_field, "get", None)):
-                token = data_field.get("token") or data_field.get("access_token")
-                return token
-
-            return None
-
-        except Exception as e:
-            # Sanitize error message in case it contains token info
-            # Handle case where str(e) might return None or fail
-            try:
-                error_str = str(e) if e is not None else "Unknown error"
-                if error_str is None:
-                    error_str = "Unknown error (exception string is None)"
-                error_msg = sanitize_log_message(error_str)
-            except Exception as sanitize_error:
-                # Fallback if sanitization fails
-                error_msg = f"Error extracting token (sanitization failed: {sanitize_error})"
-            self.logger.debug(f"Error extracting token from response: {error_msg}")
-            return None
 
     def _force_relogin_impl(self) -> bool:
         """
@@ -476,123 +442,33 @@ class KotakNeoAuth:
         )
 
         try:
-            self.logger.info("Forcing fresh login...")
+            self.logger.info("Forcing fresh REST login...")
+            compat_client = self._initialize_client()
+            success = self._perform_login()
+            if success:
+                success = self._complete_2fa()
 
-            # Step 1: Clean up old client first (if exists)
-            # This clears SDK internal state that might be corrupted
-            cleanup_start = time.time()
-            old_client = self.client
-            if old_client:
-                try:
-                    # Try to logout old client to clear SDK state
-                    # Don't fail if logout fails (client might already be invalid)
-                    old_client.logout()
-                    cleanup_duration = time.time() - cleanup_start
-                    self.logger.debug(
-                        f"[REAUTH_DEBUG] Old client logged out successfully "
-                        f"(took {cleanup_duration:.2f}s)"
-                    )
-                except Exception as logout_err:
-                    cleanup_duration = time.time() - cleanup_start
-                    # Logout might fail if client is already invalid - that's okay
-                    self.logger.debug(
-                        f"[REAUTH_DEBUG] Old client logout failed (expected if expired) "
-                        f"after {cleanup_duration:.2f}s: {logout_err}"
-                    )
-            else:
-                self.logger.debug("[REAUTH_DEBUG] No old client to cleanup")
-
-            # Phase -1 CRITICAL FIX: Don't set is_logged_in = False here!
-            # Keep it True during re-auth attempt to prevent Web API thread
-            # from clearing session. Only set False if re-auth completely fails
-
-            # Step 2: Create new client (but keep is_logged_in = True)
-            init_start = time.time()
-            self.client = self._initialize_client()
-            init_duration = time.time() - init_start
-            self.logger.info(
-                f"[REAUTH_DEBUG] Client initialization {'successful' if self.client else 'failed'} "
-                f"(took {init_duration:.2f}s)"
-            )
-
-            if not self.client:
-                # Only set False if client initialization fails
-                self.is_logged_in = False
-                self.session_token = None
-                total_duration = time.time() - reauth_start
-                self.logger.error(
-                    f"[REAUTH_DEBUG] FAILED: Client initialization failed "
-                    f"(total duration: {total_duration:.2f}s)"
-                )
-                return False
-
-            # Step 3: Perform fresh login + 2FA
-            login_start = time.time()
-            login_success = self._perform_login()
-            login_duration = time.time() - login_start
-            self.logger.info(
-                f"[REAUTH_DEBUG] Login {'successful' if login_success else 'failed'} "
-                f"(took {login_duration:.2f}s)"
-            )
-
-            if not login_success:
-                # Only set False if login fails
-                self.is_logged_in = False
-                self.session_token = None
-                self.client = None
-                total_duration = time.time() - reauth_start
-                self.logger.error(
-                    f"[REAUTH_DEBUG] FAILED: Login failed (total duration: {total_duration:.2f}s)"
-                )
-                return False
-
-            # Step 4: Complete 2FA (with retry logic)
-            max_2fa_retries = 2
-            for attempt in range(max_2fa_retries):
-                tfa_start = time.time()
-                tfa_success = self._complete_2fa()
-                tfa_duration = time.time() - tfa_start
-
-                if tfa_success:
-                    # Success - keep is_logged_in = True, update timestamp
-                    total_duration = time.time() - reauth_start
-                    self.is_logged_in = True
-                    self.session_created_at = time.time()  # Phase -1: Reset session timer
-                    self.logger.info(
-                        f"[REAUTH_DEBUG] SUCCESS: Re-authentication completed in {total_duration:.2f}s "
-                        f"(2FA attempt {attempt + 1} took {tfa_duration:.2f}s)"
-                    )
-                    self.logger.info("Re-authentication successful")
-                    return True
-
-                self.logger.warning(
-                    f"[REAUTH_DEBUG] 2FA failed on attempt {attempt + 1}/{max_2fa_retries} "
-                    f"(took {tfa_duration:.2f}s)"
-                )
-
-                if attempt < max_2fa_retries - 1:
-                    self.logger.warning(
-                        f"2FA failed, retrying ({attempt + 1}/{max_2fa_retries})..."
-                    )
-                    # Create another fresh client if 2FA fails
-                    self.client = None
-                    self.client = self._initialize_client()
-                    if not self.client:
-                        break
-                    # Re-login before retrying 2FA
-                    if not self._perform_login():
-                        break
-                else:
-                    self.logger.error("2FA failed after retries")
-
-            # Re-auth failed completely - only now set False
             total_duration = time.time() - reauth_start
-            self.logger.error(
-                f"[REAUTH_DEBUG] FAILED: Re-auth failed after {total_duration:.2f}s from {caller}"
-            )
+
+            if success:
+                if compat_client is not None:
+                    self.client = compat_client
+                self.is_logged_in = True
+                self.session_created_at = time.time()
+                self.logger.info(
+                    f"[REAUTH_DEBUG] SUCCESS: re-authentication completed in {total_duration:.2f}s"
+                )
+                return True
+
             self.is_logged_in = False
             self.session_token = None
+            self.base_url = None
+            self.trade_sid = None
+            self._rest_client = None
             self.client = None
+            self.logger.error(
+                f"[REAUTH_DEBUG] FAILED: re-authentication failed after {total_duration:.2f}s"
+            )
             return False
 
         except Exception as e:
@@ -604,6 +480,9 @@ class KotakNeoAuth:
             # Reset state on failure
             self.is_logged_in = False
             self.session_token = None
+            self.base_url = None
+            self.trade_sid = None
+            self._rest_client = None
             self.client = None
             return False
 
@@ -650,20 +529,15 @@ class KotakNeoAuth:
         Returns:
             bool: True if logout successful, False otherwise
         """
-        if not self.client:
-            self.logger.warning("No active session to logout")
-            return False
-
-        try:
-            self.client.logout()
-            self.is_logged_in = False
-            self.session_token = None
-            self.logger.info("Logout successful")
-            return True
-
-        except Exception as e:
-            self.logger.warning(f"Logout failed: {e}")
-            return False
+        # REST sessions can be cleared locally. (No SDK logout call.)
+        self.is_logged_in = False
+        self.session_token = None
+        self.base_url = None
+        self.trade_sid = None
+        self._rest_client = None
+        self.client = None
+        self.logger.info("Logout successful (local session cleared)")
+        return True
 
     def is_session_valid(self) -> bool:
         """
@@ -687,17 +561,10 @@ class KotakNeoAuth:
 
     def get_client(self):
         """
-        Get the authenticated client instance (thread-safe).
+        Backward-compatible accessor (SDK removed).
 
-        Phase -1: Proactively check session validity before returning client.
-        If session is expired, trigger re-authentication automatically.
-
-        Uses lock to prevent race conditions when multiple threads
-        (e.g., from ThreadPoolExecutor in SellOrderManager) access
-        the client simultaneously.
-
-        Returns:
-            NeoAPI client or None if not logged in
+        Historically this returned an SDK client. With REST migration, it returns a
+        `KotakRestClient` bound to the current authenticated session.
         """
         # Track caller for debugging
         caller = "unknown"
@@ -721,19 +588,22 @@ class KotakNeoAuth:
                 session_age = time.time() - self.session_created_at
                 ttl_remaining = self.session_ttl - session_age
 
+            session_age_str = f"{session_age:.1f}s" if session_age is not None else "n/a"
+            ttl_remaining_str = f"{ttl_remaining:.1f}s" if ttl_remaining is not None else "n/a"
             self.logger.debug(
                 f"[REAUTH_DEBUG] get_client() called from {caller}: "
                 f"is_session_valid()={is_valid}, "
-                f"session_age={session_age:.1f}s, "
-                f"ttl_remaining={ttl_remaining:.1f}s, "
+                f"session_age={session_age_str}, "
+                f"ttl_remaining={ttl_remaining_str}, "
                 f"is_logged_in={self.is_logged_in}"
             )
 
             # Phase -1: Proactively check session validity
             if not is_valid:
+                log_age = session_age if session_age is not None else -1.0
                 self.logger.warning(
                     f"[REAUTH_DEBUG] Session expired (TTL-based): "
-                    f"session_age={session_age:.1f}s, ttl={self.session_ttl}s, "
+                    f"session_age={log_age:.1f}s, ttl={self.session_ttl}s, "
                     f"forcing re-login from {caller}"
                 )
                 # Call implementation directly since we already hold the lock
@@ -764,25 +634,16 @@ class KotakNeoAuth:
 
                 if not reauth_success:
                     return None
-            elif not self.is_logged_in:
-                total_duration = time.time() - get_client_start
-                self.logger.error(
-                    f"[REAUTH_DEBUG] Not logged in from {caller} "
-                    f"(get_client() took {total_duration:.2f}s)"
-                )
-                return None
-            else:
-                # Session is valid by TTL, but JWT might still be expired
-                # This is logged for tracking - actual JWT expiry will be detected on API calls
-                total_duration = time.time() - get_client_start
-                if total_duration > 0.1:
-                    self.logger.debug(
-                        f"[REAUTH_DEBUG] Session valid (TTL), returning client from {caller} "
-                        f"(took {total_duration:.2f}s). "
-                        "Note: JWT may still be expired and will trigger re-auth on API calls."
-                    )
 
-            return self.client
+            if not self.is_logged_in:
+                self.logger.error(f"[REAUTH_DEBUG] Not logged in from {caller}")
+                return None
+
+            try:
+                return self.get_rest_client()
+            except Exception as e:
+                self.logger.error(f"Failed to build REST client: {e}")
+                return self.client
 
     def get_session_token(self) -> str | None:
         """

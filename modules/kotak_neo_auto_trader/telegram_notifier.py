@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402, E501, PLR0913, PLR2004, PLW0603
 """
 Telegram Notifier Module
 Sends notifications to Telegram for order rejections, executions, and alerts.
@@ -224,10 +225,27 @@ class TelegramNotifier:
 
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-
-            payload = {"chat_id": self.chat_id, "text": message, "parse_mode": parse_mode}
+            payload = {"chat_id": self.chat_id, "text": message}
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
 
             response = requests.post(url, json=payload, timeout=10)
+
+            # Some messages include dynamic text (e.g. BALANCE_SHORTFALL,
+            # insufficient_balance) that can break Markdown entity parsing.
+            # Retry once as plain text so alerts are still delivered.
+            if (
+                response.status_code == 400
+                and parse_mode
+                and "can't parse entities" in (response.text or "").lower()
+            ):
+                logger.warning(
+                    "Telegram parse_mode=%s failed with entity parse error; "
+                    "retrying as plain text.",
+                    parse_mode,
+                )
+                fallback_payload = {"chat_id": self.chat_id, "text": message}
+                response = requests.post(url, json=fallback_payload, timeout=10)
 
             if response.status_code == 200:
                 # Phase 9: Record successful notification timestamp

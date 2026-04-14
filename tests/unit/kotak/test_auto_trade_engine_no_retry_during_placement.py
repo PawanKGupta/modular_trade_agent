@@ -135,6 +135,9 @@ class TestNoRetryDuringPlacement:
         auto_trade_engine.order_validation_service.orders = auto_trade_engine.orders
         auto_trade_engine.order_validation_service.orders_repo = auto_trade_engine.orders_repo
 
+        # Margin check is now check-margin API based.
+        auto_trade_engine._check_order_margin = Mock(return_value=(True, 50000.0, 29500.0, 0.0))
+
         # Mock order placement
         auto_trade_engine._attempt_place_order = Mock(return_value=(True, "ORDER123"))
 
@@ -211,6 +214,11 @@ class TestNoRetryDuringPlacement:
         auto_trade_engine.order_validation_service.orders = auto_trade_engine.orders
         auto_trade_engine.order_validation_service.orders_repo = auto_trade_engine.orders_repo
 
+        # Margin check is now check-margin API based.
+        auto_trade_engine._check_order_margin = Mock(
+            return_value=(False, 10000.0, 29500.0, 19500.0)
+        )
+
         # Mock _add_failed_order
         auto_trade_engine._add_failed_order = Mock()
 
@@ -261,6 +269,9 @@ class TestNoRetryDuringPlacement:
         auto_trade_engine.get_available_cash = Mock(return_value=50000.0)
         auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
         auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
+
+        # Margin check is now check-margin API based.
+        auto_trade_engine._check_order_margin = Mock(return_value=(True, 50000.0, 29500.0, 0.0))
 
         # Mock order placement
         auto_trade_engine._attempt_place_order = Mock(return_value=(True, "ORDER123"))

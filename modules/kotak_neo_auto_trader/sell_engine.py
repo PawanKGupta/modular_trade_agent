@@ -197,14 +197,23 @@ class SellOrderManager:
                 self.state_manager = None
 
         # Initialize scrip master for symbol/token resolution
-        self.scrip_master = KotakNeoScripMaster(
-            auth_client=auth.client if hasattr(auth, "client") else None
-        )
+        rest_client = None
+        try:
+            if hasattr(auth, "get_rest_client"):
+                rest_client = auth.get_rest_client()
+            elif hasattr(auth, "get_client"):
+                rest_client = auth.get_client()
+        except Exception as e:
+            logger.debug(f"Scrip master init: failed to resolve REST client from auth: {e}")
+        self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
 
         # Load scrip master data (use cache if available)
         try:
-            self.scrip_master.load_scrip_master(force_download=False)
-            logger.info("Scrip master loaded successfully")
+            loaded = self.scrip_master.load_scrip_master(force_download=False)
+            if loaded:
+                logger.info("Scrip master loaded successfully")
+            else:
+                logger.warning("Scrip master load failed; will use symbols as-is where possible.")
         except Exception as e:
             logger.warning(f"Failed to load scrip master: {e}. Will use symbols as-is.")
 
@@ -286,6 +295,137 @@ class SellOrderManager:
                 "ticker": ticker,
                 **kwargs,
             }
+
+    def _persist_existing_broker_sell_order(
+        self,
+        *,
+        symbol: str,
+        ticker: str | None,
+        order_id: str,
+        qty: int | float,
+        price: float | None,
+        source: str = "sell_engine_existing_broker_order_sync",
+    ) -> None:
+        """
+        Ensure an existing broker sell order is present in DB Orders table.
+
+        Safety: this is only called from system-managed open position flows
+        (market-open sell placement and new-execution sell monitor), not from
+        arbitrary broker order snapshots.
+        """
+        if not self.orders_repo or not self.user_id:
+            return
+        order_id_str = str(order_id or "").strip()
+        if not order_id_str:
+            return
+
+        try:
+            db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id_str)
+            if db_order:
+                # Keep behavior conservative: avoid overwriting lifecycle statuses.
+                db_status = getattr(db_order, "status", None)
+                if DbOrderStatus is not None and db_status not in (
+                    DbOrderStatus.PENDING,
+                    DbOrderStatus.ONGOING,
+                ):
+                    return
+
+                changed = False
+                if symbol and getattr(db_order, "symbol", None) != symbol:
+                    db_order.symbol = symbol
+                    changed = True
+
+                try:
+                    qty_val = int(float(qty or 0))
+                except (TypeError, ValueError):
+                    qty_val = 0
+                if qty_val > 0:
+                    try:
+                        existing_qty_val = int(float(getattr(db_order, "quantity", 0) or 0))
+                    except (TypeError, ValueError):
+                        existing_qty_val = 0
+                    if existing_qty_val != qty_val:
+                        db_order.quantity = float(qty_val)
+                        changed = True
+
+                try:
+                    price_val = float(price) if price is not None else 0.0
+                except (TypeError, ValueError):
+                    price_val = 0.0
+                if price_val > 0 and (
+                    getattr(db_order, "price", None) is None
+                    or float(getattr(db_order, "price", 0) or 0) <= 0
+                ):
+                    db_order.price = price_val
+                    changed = True
+
+                metadata = (
+                    dict(getattr(db_order, "order_metadata", {}) or {})
+                    if isinstance(getattr(db_order, "order_metadata", None), dict)
+                    else {}
+                )
+                if ticker and not metadata.get("ticker"):
+                    metadata["ticker"] = ticker
+                    changed = True
+                if source and not metadata.get("source"):
+                    metadata["source"] = source
+                    changed = True
+                if metadata:
+                    db_order.order_metadata = metadata
+
+                if changed:
+                    self.orders_repo.update(db_order)
+                return
+
+            # Missing in DB: create sell row for UI/reporting consistency.
+            try:
+                qty_val = max(1, int(float(qty or 0)))
+            except (TypeError, ValueError):
+                qty_val = 1
+            try:
+                price_val = float(price) if price is not None else None
+                if price_val is not None and price_val <= 0:
+                    price_val = None
+            except (TypeError, ValueError):
+                price_val = None
+
+            base_symbol = extract_base_symbol(symbol)
+            order_metadata = {
+                "ticker": ticker,
+                "exchange": (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                ),
+                "base_symbol": base_symbol,
+                "full_symbol": symbol,
+                "variety": "REGULAR",
+                "source": source,
+                "sync_origin": "existing_broker_sell_detected",
+            }
+
+            self.orders_repo.create_amo(
+                user_id=self.user_id,
+                symbol=symbol,
+                side="sell",
+                order_type="limit",
+                quantity=float(qty_val),
+                price=price_val,
+                order_id=order_id_str,
+                broker_order_id=order_id_str,
+                entry_type="exit",
+                order_metadata=order_metadata,
+                reason="Synced existing broker sell order into DB",
+            )
+            logger.info(
+                f"Synced existing broker sell order to DB: {symbol} "
+                f"(order_id={order_id_str}, qty={qty_val}, price={price_val})"
+            )
+        except Exception as sync_err:
+            logger.debug(
+                f"Could not sync existing broker sell order to DB for {symbol} "
+                f"(order_id={order_id_str}): {sync_err}"
+            )
 
     def _update_order_price(self, symbol: str, new_price: float) -> bool:
         """
@@ -586,8 +726,44 @@ class SellOrderManager:
         # Fetch broker holdings for validation (Edge Case #17)
         # When holdings are unavailable/invalid, treat broker qty as 0 to avoid placing sell
         # orders for positions we cannot validate (prevents erroneous sells when API fails).
+        def _extract_holdings_rows(payload: Any) -> list[dict[str, Any]]:
+            """Normalize holdings payload across Kotak response variants."""
+            if not payload:
+                return []
+            if isinstance(payload, list):
+                return [row for row in payload if isinstance(row, dict)]
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                if isinstance(data, list):
+                    return [row for row in data if isinstance(row, dict)]
+                if isinstance(data, dict):
+                    nested = data.get("holdings") or data.get("data")
+                    if isinstance(nested, list):
+                        return [row for row in nested if isinstance(row, dict)]
+                holdings = payload.get("holdings")
+                if isinstance(holdings, list):
+                    return [row for row in holdings if isinstance(row, dict)]
+            return []
+
+        def _to_int(value: Any) -> int:
+            try:
+                if value is None:
+                    return 0
+                if hasattr(value, "amount"):
+                    return int(float(value.amount))
+                if isinstance(value, str):
+                    cleaned = value.replace(",", "").replace("Rs", "").replace("INR", "").strip()
+                    if cleaned == "":
+                        return 0
+                    return int(float(cleaned))
+                return int(float(value))
+            except (TypeError, ValueError):
+                return 0
+
         broker_holdings_map: dict[str, int] = {}
+        broker_base_active_qty_map: dict[str, int] = {}
         holdings_valid = False
+        positions_valid = False
         try:
             holdings_response = None
             if self.portfolio:
@@ -596,27 +772,41 @@ class SellOrderManager:
                 except Exception as e:
                     logger.debug(f"Failed to fetch holdings for validation: {e}")
 
-            if (
-                holdings_response
-                and isinstance(holdings_response, dict)
-                and "data" in holdings_response
-                and isinstance(holdings_response.get("data"), list)
-            ):
+            holdings_data = _extract_holdings_rows(holdings_response)
+            if holdings_data:
                 holdings_valid = True
-                holdings_data = holdings_response.get("data", [])
                 for holding in holdings_data:
                     symbol = (
                         holding.get("tradingSymbol")
                         or holding.get("symbol")
+                        or holding.get("sym")
                         or holding.get("securitySymbol")
+                        or holding.get("trdSym")
                         or ""
                     )
                     if not symbol:
                         continue
 
                     full_symbol = symbol.upper()  # Keep full symbol from broker
-                    qty = int(
-                        holding.get("quantity")
+                    base_symbol = extract_base_symbol(full_symbol) or full_symbol
+                    qty = _to_int(
+                        # Prefer explicitly sellable quantity where broker provides it
+                        holding.get("sellableQuantity")
+                        or holding.get("sellQty")
+                        or holding.get("sellableQty")
+                        or holding.get("dpQty")
+                        or holding.get("freeQty")
+                        or holding.get("availableQty")
+                        or holding.get("availableQuantity")
+                        or holding.get("sell_quantity")
+                        or holding.get("sellable_quantity")
+                        or holding.get("netSellableQty")
+                        or holding.get("net_sellable_qty")
+                        or holding.get("availQty")
+                        or holding.get("availQuantity")
+                        or holding.get("deliverableQty")
+                        or holding.get("deliveryQty")
+                        or holding.get("quantity")
                         or holding.get("qty")
                         or holding.get("netQuantity")
                         or holding.get("holdingsQuantity")
@@ -627,15 +817,70 @@ class SellOrderManager:
                     # This ensures we detect when broker has 0 shares (user sold all manually)
                     if full_symbol:
                         broker_holdings_map[full_symbol] = qty
+                    if base_symbol:
+                        broker_holdings_map[base_symbol.upper()] = qty
+                        if qty > 0:
+                            base_key = base_symbol.upper()
+                            broker_base_active_qty_map[base_key] = (
+                                broker_base_active_qty_map.get(base_key, 0) + qty
+                            )
+
+            # Positions endpoint can reflect same-day executed buys earlier than holdings.
+            positions_response = None
+            if self.portfolio and hasattr(self.portfolio, "get_positions"):
+                try:
+                    positions_response = self.portfolio.get_positions()
+                except Exception as e:
+                    logger.debug(f"Failed to fetch positions for validation: {e}")
+
+            positions_data = _extract_holdings_rows(positions_response)
+            if positions_data:
+                positions_valid = True
+                for pos in positions_data:
+                    # Prefer trdSym (documented full symbol like AXISBANK-EQ)
+                    full_symbol = (
+                        pos.get("trdSym")
+                        or pos.get("tradingSymbol")
+                        or pos.get("symbol")
+                        or pos.get("sym")
+                        or ""
+                    )
+                    if not full_symbol:
+                        continue
+                    full_symbol = str(full_symbol).upper()
+                    base_symbol = extract_base_symbol(full_symbol) or full_symbol
+
+                    qty = _to_int(
+                        pos.get("qty")
+                        or pos.get("netQty")
+                        or pos.get("netQuantity")
+                        or pos.get("flBuyQty")
+                    )
+                    # Safeguard: only active long positions are considered for sell sizing.
+                    if qty <= 0:
+                        continue
+
+                    # Positions data is only a fallback for symbols missing in holdings.
+                    # Never override holdings-derived sellable quantity with positions qty.
+                    if full_symbol not in broker_holdings_map:
+                        broker_holdings_map[full_symbol] = max(qty, 0)
+                    base_key = base_symbol.upper()
+                    if base_key not in broker_holdings_map:
+                        broker_holdings_map[base_key] = max(qty, 0)
+                    broker_base_active_qty_map[base_key] = (
+                        broker_base_active_qty_map.get(base_key, 0) + max(qty, 0)
+                    )
         except Exception as e:
             logger.debug(f"Could not fetch broker holdings for validation: {e}")
 
         open_positions = []
+        skipped_zero_qty = 0
+        skipped_manual_only = 0
         positions = self.positions_repo.list(self.user_id)
         open_count = sum(1 for p in positions if p.closed_at is None)
-        if not holdings_valid and open_count > 0:
+        if not (holdings_valid or positions_valid) and open_count > 0:
             logger.warning(
-                "Holdings unavailable or invalid; skipping sell placement for open positions "
+                "Holdings/positions unavailable or invalid; skipping sell placement for open positions "
                 "(treating broker qty as 0 to avoid erroneous sells)."
             )
 
@@ -649,7 +894,11 @@ class SellOrderManager:
                 # Try to get ticker and placed_symbol from most recent executed buy order (ONGOING legacy or CLOSED)
                 if self.orders_repo and DbOrderStatus:
                     try:
+                        # Keep system and manual trades separate:
+                        # skip symbols where only manual BUY orders exist.
                         all_orders, _ = self.orders_repo.list(self.user_id)
+                        has_non_manual_buy = False
+                        has_manual_buy = False
                         for order in all_orders:
                             if order.status not in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
                                 continue
@@ -657,11 +906,24 @@ class SellOrderManager:
                                 order.side.lower() == "buy"
                                 and order.symbol.upper() == pos.symbol.upper()  # Exact match
                             ):
+                                source = (order.orig_source or "").strip().lower()
+                                if source == "manual":
+                                    has_manual_buy = True
+                                else:
+                                    has_non_manual_buy = True
                                 # Found matching order - use its metadata
                                 if order.order_metadata and isinstance(order.order_metadata, dict):
                                     ticker = order.order_metadata.get("ticker", ticker)
                                 placed_symbol = order.symbol  # Full broker symbol
-                                break
+                                if has_non_manual_buy:
+                                    break
+
+                        if has_manual_buy and not has_non_manual_buy:
+                            skipped_manual_only += 1
+                            logger.info(
+                                f"Skipping {pos.symbol}: manual-only position (no system BUY order)."
+                            )
+                            continue
                     except Exception as e:
                         logger.debug(f"Failed to enrich position metadata from orders: {e}")
 
@@ -669,18 +931,21 @@ class SellOrderManager:
                 # When holdings fetch was invalid, use broker_qty=0 so we don't place sells.
                 # Match by full symbol (e.g. IDEA-EQ) then base symbol (e.g. IDEA) for broker format variance.
                 positions_qty = int(pos.quantity)
-                if not holdings_valid:
+                if not (holdings_valid or positions_valid):
                     broker_qty = 0
                 else:
                     symbol_upper = pos.symbol.upper()
-                    broker_qty = broker_holdings_map.get(symbol_upper)
-                    if broker_qty is None:
-                        base_sym = extract_base_symbol(symbol_upper)
-                        broker_qty = (
-                            broker_holdings_map.get(base_sym, positions_qty)
-                            if base_sym
-                            else positions_qty
-                        )
+                    full_symbol_qty = broker_holdings_map.get(symbol_upper)
+                    base_sym = extract_base_symbol(symbol_upper)
+                    base_active_qty = (
+                        broker_base_active_qty_map.get(base_sym, 0) if base_sym else 0
+                    )
+                    if full_symbol_qty is None:
+                        broker_qty = base_active_qty
+                    else:
+                        # Use base aggregate when higher to account for split payloads
+                        # like AXISBANK (holdings) + AXISBANK-EQ (positions).
+                        broker_qty = max(int(full_symbol_qty), int(base_active_qty))
 
                 # Use the minimum to ensure we don't sell more than available
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
@@ -690,6 +955,7 @@ class SellOrderManager:
                 # Issue #2 Fix: Filter zero quantity positions before adding to list
                 # Prevents positions from being added when sell_qty becomes 0 after validation
                 if sell_qty <= 0:
+                    skipped_zero_qty += 1
                     logger.warning(
                         f"Skipping {pos.symbol}: sell quantity is {sell_qty} "
                         f"(positions table: {positions_qty}, broker: {broker_qty}). "
@@ -717,6 +983,14 @@ class SellOrderManager:
                     }
                 )
 
+        holdings_rows = len(holdings_data) if "holdings_data" in locals() else 0
+        positions_rows = len(positions_data) if "positions_data" in locals() else 0
+        logger.info(
+            "Sell monitor input snapshot: "
+            f"holdings_rows={holdings_rows}, positions_rows={positions_rows}, "
+            f"db_open_positions={open_count}, eligible_open_positions={len(open_positions)}, "
+            f"skipped_zero_qty={skipped_zero_qty}, skipped_manual_only={skipped_manual_only}"
+        )
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
@@ -731,22 +1005,20 @@ class SellOrderManager:
             return 0
 
         try:
-            open_positions = self.get_open_positions()
-            if not open_positions:
+            db_positions = self.positions_repo.list(self.user_id)
+            open_symbols = {
+                str(getattr(pos, "symbol", "") or "").upper()
+                for pos in db_positions
+                if getattr(pos, "closed_at", None) is None
+            }
+            if not open_symbols:
                 return 0
 
-            # Get existing sell orders (from broker API)
+            # Existing sell orders can come from broker API and/or in-memory tracking.
             existing_orders = self.get_existing_sell_orders()
-            existing_symbols = set(existing_orders.keys())
+            existing_symbols = {str(sym or "").upper() for sym in existing_orders.keys()}
 
-            # Count positions without sell orders
-            positions_without_orders = 0
-            for position in open_positions:
-                symbol = position.get("symbol", "").upper()
-                if symbol not in existing_symbols:
-                    positions_without_orders += 1
-
-            return positions_without_orders
+            return sum(1 for symbol in open_symbols if symbol and symbol not in existing_symbols)
         except Exception as e:
             logger.debug(f"Failed to check positions without sell orders: {e}")
             return 0
@@ -1102,7 +1374,19 @@ class SellOrderManager:
 
         # Get all open positions
         try:
-            open_positions = self.get_open_positions()
+            # Manual sell detection should rely on DB open positions and executed
+            # SELL orders, not broker holdings availability.
+            db_positions = self.positions_repo.list(self.user_id)
+            open_positions = []
+            for pos in db_positions:
+                if getattr(pos, "closed_at", None) is not None:
+                    continue
+                open_positions.append(
+                    {
+                        "symbol": str(getattr(pos, "symbol", "") or "").upper(),
+                        "qty": float(getattr(pos, "quantity", 0) or 0),
+                    }
+                )
             if not open_positions:
                 return stats
 
@@ -1171,6 +1455,7 @@ class SellOrderManager:
                 # But we need to prevent false positives from old manual sell orders that happened
                 # BEFORE the system bought the stock.
                 is_system_position = False
+                position_entry_source = "unknown"
                 if self.orders_repo and position_obj.opened_at:
                     try:
                         # Check if there's a system buy order (orig_source != 'manual') for this symbol
@@ -1195,10 +1480,12 @@ class SellOrderManager:
                             ):
                                 # Treat as system position based on presence of matching non-manual buy
                                 is_system_position = True
+                                position_entry_source = "system"
                                 logger.debug(
                                     f"Position {full_symbol} identified as system position via buy order {getattr(buy_order, 'id', 'N/A')}"
                                 )
                                 break
+                            position_entry_source = "manual"
 
                     except Exception as e:
                         logger.debug(
@@ -1312,6 +1599,45 @@ class SellOrderManager:
                     # Treat non-positive avgPrc as unavailable
                     exit_price = None
 
+                # Determine whether this sell should be treated as system/bot managed.
+                # If we already have a DB sell order for this broker order id and it is
+                # not explicitly marked manual, this is a system close, not user manual.
+                detected_sell_order = None
+                is_system_managed_sell = False
+                if order_id and self.orders_repo:
+                    try:
+                        detected_sell_order = self.orders_repo.get_by_broker_order_id(
+                            self.user_id, order_id
+                        )
+                        if (
+                            detected_sell_order
+                            and str(getattr(detected_sell_order, "side", "")).lower() == "sell"
+                            and str(getattr(detected_sell_order, "orig_source", "") or "").lower()
+                            != "manual"
+                        ):
+                            is_system_managed_sell = True
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not resolve sell order ownership for {order_id}: {e}"
+                        )
+
+                default_exit_source = "system" if is_system_managed_sell else "manual"
+                default_exit_reason = "SYSTEM_EXIT" if is_system_managed_sell else "MANUAL"
+                resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                    self._resolve_close_reason_and_audit(
+                        full_symbol=full_symbol,
+                        broker_order_id=order_id,
+                        sell_order=detected_sell_order,
+                        default_exit_reason=default_exit_reason,
+                        default_exit_source=default_exit_source,
+                        entry_source_hint=position_entry_source,
+                        detection_path="manual_sell_detection_get_orders",
+                        persist_audit=True,
+                    )
+                )
+                detected_sell_label = resolved_exit_source
+                is_system_managed_sell = resolved_exit_source == "system"
+
                 # Track manual sell order in active_sell_orders to prevent duplicate placement
                 # This ensures system doesn't place another sell order for the same symbol
                 try:
@@ -1327,15 +1653,15 @@ class SellOrderManager:
                         target_price=sell_order_price,
                         qty=int(sell_order_qty),
                         ticker=None,  # Will be constructed if needed
-                        is_manual=True,  # Mark as manual sell order
+                        is_manual=not is_system_managed_sell,
                     )
                     logger.info(
-                        f"Tracked manual sell order {order_id} for {full_symbol}: "
+                        f"Tracked {detected_sell_label} sell order {order_id} for {full_symbol}: "
                         f"qty={sell_order_qty}, price=Rs {sell_order_price:.2f}"
                     )
                 except Exception as e:
                     logger.warning(
-                        f"Failed to track manual sell order {order_id} for {full_symbol}: {e}. "
+                        f"Failed to track {detected_sell_label} sell order {order_id} for {full_symbol}: {e}. "
                         f"Will still close position."
                     )
 
@@ -1343,7 +1669,7 @@ class SellOrderManager:
                 if executed_qty >= position_qty:
                     price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                     logger.warning(
-                        f"Manual full sell detected for {full_symbol} via get_orders(): "
+                        f"{detected_sell_label.capitalize()} full sell detected for {full_symbol} via get_orders(): "
                         f"Order ID {order_id}, executed {executed_qty} shares @ Rs {price_str}. "
                         f"Position had {position_qty} shares. Marking position as closed."
                     )
@@ -1394,31 +1720,13 @@ class SellOrderManager:
                         )
 
                         if closed_at_time:
-                            # Phase 0.2: Determine exit_reason dynamically from sell order metadata
-                            exit_reason = "MANUAL"  # Default: user manual sell
-
-                            # Try to find the sell order and extract exit_reason from metadata
-                            if order_id and self.orders_repo:
-                                try:
-                                    sell_order = self.orders_repo.get_by_broker_order_id(
-                                        self.user_id, order_id
-                                    )
-                                    if sell_order and sell_order.order_metadata:
-                                        exit_reason = sell_order.order_metadata.get(
-                                            "exit_reason", "MANUAL"
-                                        )
-                                except Exception as e:
-                                    logger.debug(
-                                        f"Could not retrieve exit_reason from order {order_id}: {e}. "
-                                        f"Using default 'MANUAL'"
-                                    )
-
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=full_symbol,
                                 closed_at=closed_at_time,
                                 exit_price=exit_price,
-                                exit_reason=exit_reason,
+                                exit_reason=resolved_exit_reason,
+                                sell_order_id=resolved_sell_order_db_id,
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -1432,7 +1740,7 @@ class SellOrderManager:
                         stats["closed"] += 1
                         price_str = f"{exit_price:.2f}" if exit_price is not None else "unknown"
                         logger.info(
-                            f"Position {full_symbol} marked as closed due to manual full sell "
+                            f"Position {full_symbol} marked as closed due to {detected_sell_label} full sell "
                             f"(detected via get_orders()): exit_price=Rs {price_str}, "
                             f"closed_at={closed_at_time}"
                         )
@@ -1870,10 +2178,13 @@ class SellOrderManager:
                         f"but broker has 0 shares. Marking position as closed."
                     )
                     try:
+                        resolved_exit_source = "manual"
                         if ist_now:
                             # Try to find exit price from executed sell orders for this symbol
                             exit_price = None
                             sell_order_id = None
+                            broker_order_id_for_close = None
+                            matched_sell_order = None
                             if self.orders_repo:
                                 try:
                                     # Search for executed sell orders around the time of closure
@@ -1916,6 +2227,10 @@ class SellOrderManager:
                                             if time_diff < 86400:  # Within 24 hours
                                                 exit_price = order.execution_price
                                                 sell_order_id = order.id
+                                                broker_order_id_for_close = str(
+                                                    getattr(order, "broker_order_id", "") or ""
+                                                )
+                                                matched_sell_order = order
                                                 logger.info(
                                                     f"Found executed sell order {order.id} for manual sell detection: "
                                                     f"exit_price={exit_price}, sell_order_id={sell_order_id}"
@@ -1925,6 +2240,10 @@ class SellOrderManager:
                                             # No timestamp available, but order is executed - use most recent one anyway
                                             exit_price = order.execution_price
                                             sell_order_id = order.id
+                                            broker_order_id_for_close = str(
+                                                getattr(order, "broker_order_id", "") or ""
+                                            )
+                                            matched_sell_order = order
                                             logger.info(
                                                 f"Found executed sell order {order.id} for manual sell detection (no timestamp): "
                                                 f"exit_price={exit_price}, sell_order_id={sell_order_id}"
@@ -1974,6 +2293,8 @@ class SellOrderManager:
                                                 db_order = self.orders_repo.get_by_broker_order_id(self.user_id, broker_ord_id)
                                                 if db_order:
                                                     sell_order_id = db_order.id
+                                                    matched_sell_order = db_order
+                                                    broker_order_id_for_close = str(broker_ord_id)
                                             except Exception:
                                                 pass
                                         logger.info(
@@ -1983,13 +2304,24 @@ class SellOrderManager:
                                 except Exception as e:
                                     logger.debug(f"Could not get exit price from broker orders for {symbol}: {e}")
 
+                            resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                                self._resolve_close_reason_and_audit(
+                                    full_symbol=symbol,
+                                    broker_order_id=broker_order_id_for_close,
+                                    sell_order=matched_sell_order,
+                                    default_exit_reason="MANUAL",
+                                    default_exit_source="manual",
+                                    detection_path="holdings_reconciliation_broker_zero",
+                                    persist_audit=True,
+                                )
+                            )
                             self.positions_repo.mark_closed(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 closed_at=ist_now(),
                                 exit_price=exit_price,  # Use found price or None
-                                exit_reason="MANUAL",  # Phase 0.2: Manual sell
-                                sell_order_id=sell_order_id,  # Link to sell order if found
+                                exit_reason=resolved_exit_reason,
+                                sell_order_id=resolved_sell_order_db_id or sell_order_id,
                             )
                             # Close corresponding ONGOING buy orders
                             try:
@@ -2001,7 +2333,10 @@ class SellOrderManager:
                                     f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
                                 )
                         stats["closed"] += 1
-                        logger.info(f"Position {symbol} marked as closed due to manual full sell")
+                        logger.info(
+                            f"Position {symbol} marked as closed due to "
+                            f"{resolved_exit_source} full sell"
+                        )
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
@@ -2392,11 +2727,22 @@ class SellOrderManager:
                     f"Marking position as closed."
                 )
                 if ist_now:
+                    resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                        self._resolve_close_reason_and_audit(
+                            full_symbol=symbol,
+                            default_exit_reason="MANUAL",
+                            default_exit_source="manual",
+                            detection_path="single_symbol_reconciliation_broker_zero",
+                            persist_audit=False,
+                        )
+                    )
                     self.positions_repo.mark_closed(
                         user_id=self.user_id,
                         symbol=symbol,
                         closed_at=ist_now(),
                         exit_price=None,
+                        exit_reason=resolved_exit_reason,
+                        sell_order_id=resolved_sell_order_db_id,
                     )
                     # Close corresponding ONGOING buy orders
                     try:
@@ -2407,6 +2753,9 @@ class SellOrderManager:
                         logger.warning(
                             f"Failed to close buy orders for {symbol} after marking position closed: {close_error}"
                         )
+                    logger.info(
+                        f"Position {symbol} marked as closed via {resolved_exit_source} reconciliation"
+                    )
                 return True
 
             # Manual partial sell detected
@@ -3764,18 +4113,120 @@ class SellOrderManager:
             or "no holding" in reason_lower
         )
 
+    def _resolve_entry_source_for_symbol(self, full_symbol: str) -> str:
+        """
+        Resolve entry source for a symbol from buy orders.
+        Returns 'system', 'manual', or 'unknown'.
+        """
+        if not self.orders_repo or not self.user_id:
+            return "unknown"
+        try:
+            all_orders, _ = self.orders_repo.list(self.user_id)
+            has_system = False
+            has_manual = False
+            for order in all_orders:
+                if str(getattr(order, "side", "")).lower() != "buy":
+                    continue
+                if str(getattr(order, "symbol", "")).upper() != str(full_symbol).upper():
+                    continue
+                source = str(getattr(order, "orig_source", "") or "").strip().lower()
+                if source == "manual":
+                    has_manual = True
+                else:
+                    has_system = True
+            if has_system:
+                return "system"
+            if has_manual:
+                return "manual"
+        except Exception as e:
+            logger.debug(f"Failed to resolve entry source for {full_symbol}: {e}")
+        return "unknown"
+
+    def _resolve_close_reason_and_audit(  # noqa: PLR0913
+        self,
+        *,
+        full_symbol: str,
+        broker_order_id: str | None = None,
+        sell_order=None,
+        default_exit_reason: str = "MANUAL",
+        default_exit_source: str = "manual",
+        entry_source_hint: str | None = None,
+        detection_path: str | None = None,
+        persist_audit: bool = False,
+    ) -> tuple[str, int | None, str]:
+        """
+        Single resolver for close reason/source across all close paths.
+
+        Returns:
+            (exit_reason, sell_order_db_id, exit_source)
+        """
+        resolved_sell_order = sell_order
+        if not resolved_sell_order and broker_order_id and self.orders_repo and self.user_id:
+            try:
+                resolved_sell_order = self.orders_repo.get_by_broker_order_id(
+                    self.user_id, str(broker_order_id)
+                )
+            except Exception as e:
+                logger.debug(f"Could not fetch sell order by broker id {broker_order_id}: {e}")
+
+        exit_reason = default_exit_reason
+        exit_source = default_exit_source
+        sell_order_db_id: int | None = None
+
+        if resolved_sell_order:
+            sell_order_db_id = getattr(resolved_sell_order, "id", None)
+            order_side = str(getattr(resolved_sell_order, "side", "")).lower()
+            order_source = str(getattr(resolved_sell_order, "orig_source", "") or "").lower()
+            if order_side == "sell":
+                exit_source = "manual" if order_source == "manual" else "system"
+
+            metadata = (
+                resolved_sell_order.order_metadata
+                if isinstance(getattr(resolved_sell_order, "order_metadata", None), dict)
+                else {}
+            )
+            if metadata:
+                metadata_reason = metadata.get("exit_reason") or metadata.get("exit_note")
+                if metadata_reason:
+                    exit_reason = metadata_reason
+
+            if persist_audit and self.orders_repo:
+                try:
+                    entry_source = entry_source_hint or self._resolve_entry_source_for_symbol(
+                        full_symbol
+                    )
+                    updated_metadata = dict(metadata)
+                    audit_sources = dict(updated_metadata.get("audit_sources") or {})
+                    if entry_source in ("system", "manual"):
+                        audit_sources["entry_source"] = entry_source
+                    audit_sources["exit_source"] = exit_source
+                    if detection_path:
+                        audit_sources["detection_path"] = detection_path
+                    updated_metadata["audit_sources"] = audit_sources
+                    resolved_sell_order.order_metadata = updated_metadata
+                    self.orders_repo.update(resolved_sell_order)
+                except Exception as e:
+                    logger.debug(
+                        f"Could not persist audit_sources metadata for {full_symbol} "
+                        f"(order_id={broker_order_id}): {e}"
+                    )
+
+        return exit_reason, sell_order_db_id, exit_source
+
     def _get_exit_details_from_executed_sell_orders(
         self, full_symbol: str
-    ) -> tuple[float | None, int | None]:
+    ) -> tuple[float | None, int | None, str | None, Any | None]:
         """
         Find exit price and sell_order_id from executed sell orders for this symbol.
-        Returns (exit_price, sell_order_id); either may be None.
+        Returns (exit_price, sell_order_id, broker_order_id, sell_order_obj); values may be None.
         Uses most recent executed sell within 24 hours when available.
         """
         exit_price: float | None = None
         sell_order_id: int | None = None
+        broker_order_id: str | None = None
+        sell_order_obj = None
         if not self.orders_repo or not ist_now:
-            return (exit_price, sell_order_id)
+            return (exit_price, sell_order_id, broker_order_id, sell_order_obj)
         try:
             all_orders, _ = self.orders_repo.list(self.user_id)
             matching_orders = [
@@ -3803,14 +4254,18 @@ class SellOrderManager:
                     if abs((order_time - now_time).total_seconds()) < 86400:  # 24h
                         exit_price = order.execution_price
                         sell_order_id = order.id
+                        broker_order_id = str(getattr(order, "broker_order_id", "") or "")
+                        sell_order_obj = order
                         break
                 else:
                     exit_price = order.execution_price
                     sell_order_id = order.id
+                    broker_order_id = str(getattr(order, "broker_order_id", "") or "")
+                    sell_order_obj = order
                     break
         except Exception as e:
             logger.debug(f"Could not get exit details from orders for {full_symbol}: {e}")
-        return (exit_price, sell_order_id)
+        return (exit_price, sell_order_id, broker_order_id, sell_order_obj)
 
     def _mark_position_closed_for_no_holdings_rejection(self, symbol: str) -> None:
         """
@@ -3835,19 +4290,31 @@ class SellOrderManager:
             ]
             for pos in open_positions:
                 try:
-                    exit_price, sell_order_id = self._get_exit_details_from_executed_sell_orders(
-                        pos.symbol
+                    exit_price, sell_order_id, broker_order_id, sell_order = (
+                        self._get_exit_details_from_executed_sell_orders(pos.symbol)
+                    )
+                    resolved_exit_reason, resolved_sell_order_db_id, resolved_exit_source = (
+                        self._resolve_close_reason_and_audit(
+                            full_symbol=pos.symbol,
+                            broker_order_id=broker_order_id,
+                            sell_order=sell_order,
+                            default_exit_reason="SYSTEM_EXIT",
+                            default_exit_source="system",
+                            detection_path="no_holdings_rejection",
+                            persist_audit=True,
+                        )
                     )
                     self.positions_repo.mark_closed(
                         user_id=self.user_id,
                         symbol=pos.symbol,
                         closed_at=ist_now(),
                         exit_price=exit_price,
-                        exit_reason="MANUAL",
-                        sell_order_id=sell_order_id,
+                        exit_reason=resolved_exit_reason,
+                        sell_order_id=resolved_sell_order_db_id or sell_order_id,
                     )
                     logger.info(
-                        f"Position {pos.symbol} marked as closed (sell rejected: No Holdings Present)"
+                        f"Position {pos.symbol} marked as closed via {resolved_exit_source} "
+                        "(sell rejected: No Holdings Present)"
                         + (f", exit_price=Rs {exit_price:.2f}" if exit_price is not None else "")
                         + "."
                     )
@@ -4445,6 +4912,24 @@ class SellOrderManager:
         try:
             existing_orders = {}
 
+            def _to_positive_float(value: Any) -> float | None:
+                """Parse positive numeric values from broker/db fields safely."""
+                try:
+                    if value is None:
+                        return None
+                    if isinstance(value, str):
+                        cleaned = value.replace(",", "").strip()
+                        if not cleaned:
+                            return None
+                        parsed = float(cleaned)
+                    else:
+                        parsed = float(value)
+                    if parsed > 0:
+                        return parsed
+                except (TypeError, ValueError):
+                    return None
+                return None
+
             # Get pending orders from broker
             pending = self.orders.get_pending_orders()
             if not pending:
@@ -4456,8 +4941,11 @@ class SellOrderManager:
                     if not OrderFieldExtractor.is_sell_order(order):
                         continue
 
-                    # Extract symbol (remove -EQ suffix)
-                    symbol = extract_base_symbol(OrderFieldExtractor.get_symbol(order))
+                    raw_symbol = OrderFieldExtractor.get_symbol(order)
+                    full_symbol = str(raw_symbol or "").strip().upper()
+                    if not full_symbol:
+                        continue
+                    base_symbol = extract_base_symbol(full_symbol)
 
                     # Extract order details
                     qty = OrderFieldExtractor.get_quantity(order)
@@ -4477,13 +4965,15 @@ class SellOrderManager:
                                 or order.get("triggerPrice")
                                 or order.get("trigger_price")
                                 or order.get("trgPrc")
-                                or 0.0
+                                or None
                             )
+                            parsed_limit_price = _to_positive_float(limit_price)
 
-                            if limit_price and limit_price > 0:
-                                price = float(limit_price)
+                            if parsed_limit_price is not None:
+                                price = parsed_limit_price
                                 logger.debug(
-                                    f"Using limit price from broker response for {symbol} order {order_id}: Rs {price:.2f}"
+                                    "Using limit price from broker response for "
+                                    f"{full_symbol} order {order_id}: Rs {price:.2f}"
                                 )
                                 # Sync this price to database if different
                                 try:
@@ -4497,7 +4987,8 @@ class SellOrderManager:
                                         db_order.price = price
                                         self.orders_repo.update(db_order)
                                         logger.debug(
-                                            f"Updated database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                            "Updated database price for "
+                                            f"{full_symbol} order {order_id}: Rs {price:.2f}"
                                         )
                                 except Exception as sync_error:
                                     # Don't fail the main flow if sync fails
@@ -4509,8 +5000,12 @@ class SellOrderManager:
                                 db_order = self.orders_repo.get_by_broker_order_id(
                                     self.user_id, order_id
                                 )
-                                if db_order and db_order.price is not None and db_order.price > 0:
-                                    db_price = float(db_order.price)
+                                db_price = (
+                                    _to_positive_float(getattr(db_order, "price", None))
+                                    if db_order
+                                    else None
+                                )
+                                if db_price is not None:
 
                                     # STALENESS DETECTION (read-only, no side effects)
                                     is_stale = False
@@ -4561,12 +5056,15 @@ class SellOrderManager:
                                             order.get("limitPrice")
                                             or order.get("limit_price")
                                             or order.get("lmtPrc")
-                                            or 0.0
+                                            or None
+                                        )
+                                        parsed_broker_limit_price = _to_positive_float(
+                                            broker_limit_price
                                         )
 
                                         # If we found a price in broker response, use it and update DB
-                                        if broker_limit_price and broker_limit_price > 0:
-                                            fresh_price = float(broker_limit_price)
+                                        if parsed_broker_limit_price is not None:
+                                            fresh_price = parsed_broker_limit_price
                                             try:
                                                 # Only update if price actually changed (avoid unnecessary writes)
                                                 if abs(float(db_order.price) - fresh_price) > 0.01:
@@ -4575,7 +5073,7 @@ class SellOrderManager:
                                                         db_order
                                                     )  # auto_commit=True by default
                                                     logger.info(
-                                                        f"Synced stale price for {symbol} order {order_id}: "
+                                                        f"Synced stale price for {full_symbol} order {order_id}: "
                                                         f"Rs {db_price:.2f} -> Rs {fresh_price:.2f} ({staleness_reason})"
                                                     )
                                                     price = fresh_price  # Use the synced price
@@ -4583,7 +5081,7 @@ class SellOrderManager:
                                                     # Price unchanged, just refresh timestamp to mark as checked
                                                     self.orders_repo.update(db_order)
                                                     logger.debug(
-                                                        f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                        f"Refreshed timestamp for stale {full_symbol} order {order_id} "
                                                         f"(price unchanged: Rs {db_price:.2f}, {staleness_reason})"
                                                     )
                                                     price = (
@@ -4600,7 +5098,7 @@ class SellOrderManager:
                                             try:
                                                 self.orders_repo.update(db_order)
                                                 logger.debug(
-                                                    f"Refreshed timestamp for stale {symbol} order {order_id} "
+                                                    f"Refreshed timestamp for stale {full_symbol} order {order_id} "
                                                     f"(no broker price available, {staleness_reason})"
                                                 )
                                             except Exception:
@@ -4610,7 +5108,7 @@ class SellOrderManager:
                                         # Fresh database price - use it
                                         price = db_price
                                         logger.debug(
-                                            f"Using database price for {symbol} order {order_id}: Rs {price:.2f}"
+                                            f"Using database price for {full_symbol} order {order_id}: Rs {price:.2f}"
                                         )
 
                         except (AttributeError, ValueError, TypeError) as e:
@@ -4624,13 +5122,20 @@ class SellOrderManager:
                                 f"Unexpected error fetching database price for order {order_id}: {e}"
                             )
 
-                    if symbol and qty > 0:
-                        existing_orders[symbol.upper()] = {
+                    if full_symbol and qty > 0:
+                        order_info = {
                             "order_id": order_id,
                             "qty": qty,
                             "price": price,
                         }
-                        logger.debug(f"Found existing sell order: {symbol} x{qty} @ Rs {price:.2f}")
+                        # Keep both full and base symbol keys for compatibility across callers.
+                        existing_orders[full_symbol] = order_info
+                        if base_symbol and base_symbol != full_symbol:
+                            existing_orders.setdefault(base_symbol, order_info)
+                        logger.debug(
+                            f"Found existing sell order: {full_symbol} (base={base_symbol}) "
+                            f"x{qty} @ Rs {price:.2f}"
+                        )
 
                 except Exception as e:
                     logger.debug(f"Error parsing order: {e}")
@@ -4723,14 +5228,38 @@ class SellOrderManager:
                     )
                 continue
 
-            # Check for existing order with same symbol (avoid duplicate or update if quantity changed)
-            # BUG FIX: existing_orders uses base symbols (e.g., "INDIAGLYCO") but symbol from positions
-            # is full symbol (e.g., "INDIAGLYCO-EQ"). Extract base symbol for lookup.
+            # Check for existing order with same symbol (avoid duplicate or update if quantity changed).
+            # Match full symbol first, then base symbol as a compatibility fallback.
             base_symbol = extract_base_symbol(symbol).upper()
-            if base_symbol in existing_orders:
-                existing = existing_orders[base_symbol]
+            existing = existing_orders.get(str(symbol).upper()) or existing_orders.get(base_symbol)
+            if existing:
                 existing_qty = existing["qty"]
                 existing_price = existing["price"]
+                tracked_price = existing_price
+                if tracked_price is None or float(tracked_price) <= 0:
+                    broker_sym = trade.get("placed_symbol") or symbol
+                    fallback_ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=broker_sym, symbol=symbol
+                    )
+                    if fallback_ema9:
+                        tracked_price = float(fallback_ema9)
+                        logger.info(
+                            f"{symbol}: Existing broker sell order has zero/missing price. "
+                            f"Using EMA9 baseline Rs {tracked_price:.2f} for monitoring."
+                        )
+                    else:
+                        tracked_price = 0.0
+
+                # Keep DB orders view aligned with broker existing sell orders discovered from
+                # system-managed open positions (no action for unrelated broker holdings).
+                self._persist_existing_broker_sell_order(
+                    symbol=symbol,
+                    ticker=ticker,
+                    order_id=str(existing.get("order_id") or ""),
+                    qty=existing_qty,
+                    price=tracked_price,
+                    source="sell_engine_run_at_market_open_existing_order",
+                )
 
                 if existing_qty == qty:
                     # Same quantity - just track the existing order
@@ -4742,12 +5271,13 @@ class SellOrderManager:
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing_price,
+                        target_price=tracked_price,
                         qty=qty,
                         ticker=ticker,  # From trade history (e.g., GLENMARK.NS)
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing_price
+                    if tracked_price > 0:
+                        self.lowest_ema9[symbol] = tracked_price
                     orders_placed += 1  # Count as placed (existing)
                     logger.debug(
                         f"Tracked {symbol}: ticker={ticker}, order_id={existing['order_id']}"
@@ -4797,22 +5327,23 @@ class SellOrderManager:
                         order_id=existing["order_id"],
                         symbol=symbol,
                         qty=int(qty),  # Ensure integer for order quantity
-                        new_price=existing_price,  # Keep same price
+                        new_price=tracked_price if tracked_price > 0 else existing_price,
                     ):
                         logger.info(
                             f"Successfully updated sell order for {symbol}: {existing_qty} -> {qty} shares "
-                            f"@ Rs {existing_price:.2f}"
+                            f"@ Rs {(tracked_price if tracked_price > 0 else existing_price):.2f}"
                         )
                         # Update tracking with new quantity
                         self._register_order(
                             symbol=symbol,
                             order_id=existing["order_id"],
-                            target_price=existing_price,
+                            target_price=tracked_price,
                             qty=qty,  # Updated quantity
                             ticker=ticker,
                             placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                         )
-                        self.lowest_ema9[symbol] = existing_price
+                        if tracked_price > 0:
+                            self.lowest_ema9[symbol] = tracked_price
                         orders_placed += 1  # Count as updated
                     else:
                         logger.warning(
@@ -4830,12 +5361,13 @@ class SellOrderManager:
                     self._register_order(
                         symbol=symbol,
                         order_id=existing["order_id"],
-                        target_price=existing_price,
+                        target_price=tracked_price,
                         qty=existing_qty,  # Keep existing quantity
                         ticker=ticker,
                         placed_symbol=trade.get("placed_symbol") or f"{symbol}-EQ",
                     )
-                    self.lowest_ema9[symbol] = existing_price
+                    if tracked_price > 0:
+                        self.lowest_ema9[symbol] = tracked_price
                     orders_placed += 1
                     continue
 
@@ -5148,6 +5680,19 @@ class SellOrderManager:
                     self.lowest_ema9[symbol] = rounded_ema9
 
             lowest_so_far = self.lowest_ema9.get(symbol, float("inf"))
+            # Heal invalid in-memory baseline from older runs (e.g., tracked as 0.0 when broker
+            # omitted pending order price). Use current EMA9 as first valid baseline.
+            invalid_lowest = False
+            if lowest_so_far is None or lowest_so_far == float("inf"):
+                invalid_lowest = True
+            else:
+                try:
+                    invalid_lowest = float(lowest_so_far) <= 0
+                except (TypeError, ValueError):
+                    invalid_lowest = True
+            if invalid_lowest:
+                lowest_so_far = rounded_ema9
+                self.lowest_ema9[symbol] = rounded_ema9
             current_target = order_info.get("target_price", 0)
 
             # If target_price is 0 or missing, use lowest_so_far as target
@@ -5642,25 +6187,19 @@ class SellOrderManager:
                                 # Full execution - mark position as closed
                                 # Wrap position and order updates in transaction for atomicity
                                 if transaction and ist_now:
-                                    # Phase 0.2: Get exit details from sell order
-                                    exit_reason = "EMA9_TARGET"  # Default
                                     exit_rsi = None
                                     sell_order_db_id = None
+                                    sell_order = None
 
-                                    # Try to get sell order from database to extract exit details
                                     if self.orders_repo and completed_order_id:
                                         try:
                                             sell_order = self.orders_repo.get_by_broker_order_id(
                                                 self.user_id, completed_order_id
                                             )
                                             if sell_order:
-                                                sell_order_db_id = sell_order.id
                                                 if sell_order.order_metadata and isinstance(
                                                     sell_order.order_metadata, dict
                                                 ):
-                                                    exit_reason = sell_order.order_metadata.get(
-                                                        "exit_note", "EMA9_TARGET"
-                                                    )
                                                     exit_rsi = sell_order.order_metadata.get(
                                                         "exit_rsi"
                                                     )
@@ -5668,6 +6207,19 @@ class SellOrderManager:
                                             logger.debug(
                                                 f"Could not get sell order for exit details: {e}"
                                             )
+
+                                    exit_reason, resolved_sell_order_db_id, _ = (
+                                        self._resolve_close_reason_and_audit(
+                                            full_symbol=full_symbol,
+                                            broker_order_id=completed_order_id,
+                                            sell_order=sell_order,
+                                            default_exit_reason="EMA9_TARGET",
+                                            default_exit_source="system",
+                                            detection_path="tracked_sell_full_execution",
+                                            persist_audit=True,
+                                        )
+                                    )
+                                    sell_order_db_id = resolved_sell_order_db_id or sell_order_db_id
 
                                     with transaction(self.positions_repo.db):
                                         self.positions_repo.mark_closed(
@@ -5760,10 +6312,9 @@ class SellOrderManager:
                         # Assume full execution if we don't have filled_qty info
                         # Wrap position and order updates in transaction for atomicity
                         if transaction and ist_now:
-                            # Phase 0.2: Get exit details from sell order
-                            exit_reason = "EMA9_TARGET"  # Default
                             exit_rsi = None
                             sell_order_db_id = None
+                            sell_order = None
 
                             # Try to get sell order from database to extract exit details
                             if self.orders_repo and order_id:
@@ -5772,16 +6323,25 @@ class SellOrderManager:
                                         self.user_id, order_id
                                     )
                                     if sell_order:
-                                        sell_order_db_id = sell_order.id
                                         if sell_order.order_metadata and isinstance(
                                             sell_order.order_metadata, dict
                                         ):
-                                            exit_reason = sell_order.order_metadata.get(
-                                                "exit_note", "EMA9_TARGET"
-                                            )
                                             exit_rsi = sell_order.order_metadata.get("exit_rsi")
                                 except Exception as e:
                                     logger.debug(f"Could not get sell order for exit details: {e}")
+
+                            exit_reason, resolved_sell_order_db_id, _ = (
+                                self._resolve_close_reason_and_audit(
+                                    full_symbol=full_symbol,
+                                    broker_order_id=order_id,
+                                    sell_order=sell_order,
+                                    default_exit_reason="EMA9_TARGET",
+                                    default_exit_source="system",
+                                    detection_path="executed_ids_full_execution",
+                                    persist_audit=True,
+                                )
+                            )
+                            sell_order_db_id = resolved_sell_order_db_id or sell_order_db_id
 
                             with transaction(self.positions_repo.db):
                                 self.positions_repo.mark_closed(
