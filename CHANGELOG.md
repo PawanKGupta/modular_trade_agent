@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [26.2] - 2026-04-14
 
+### Added
+- **Web branding and version**: Shared `BrandMark` (Rebound logo, product name, `v{version}` from `web/package.json`) on the app shell sidebar, login page, and sign-up page.
+
 ### Changed
 - Upgraded Python and web dependencies; updated Tailwind v4 PostCSS integration.
 - Updated frontend auth guard store selectors to avoid infinite render loops under React 19.

@@ -4,6 +4,7 @@ import { SignupPage } from '../SignupPage';
 import { server } from '@/mocks/server';
 import { http, HttpResponse } from 'msw';
 import { withProviders } from '@/test/utils';
+import { APP_VERSION } from '@/appVersion';
 
 function renderWithRouter(ui: React.ReactElement) {
 	return render(
@@ -19,6 +20,13 @@ function renderWithRouter(ui: React.ReactElement) {
 }
 
 describe('SignupPage', () => {
+	it('shows product branding and version', () => {
+		renderWithRouter(<SignupPage />);
+		expect(screen.getByText('Rebound')).toBeInTheDocument();
+		expect(screen.getByText('Modular Trade Agent')).toBeInTheDocument();
+		expect(screen.getByText(`v${APP_VERSION}`)).toBeInTheDocument();
+	});
+
 	it('signs up successfully and navigates to dashboard', async () => {
 		renderWithRouter(<SignupPage />);
 		const email = document.querySelector('input[type="email"]') as HTMLInputElement;

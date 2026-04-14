@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { APP_VERSION } from '@/appVersion';
 import { AppShell } from '../AppShell';
 import { server } from '@/mocks/server';
 import { http, HttpResponse } from 'msw';
@@ -61,6 +62,7 @@ describe('AppShell', () => {
 		await waitFor(() => {
 			expect(screen.getByText('Rebound')).toBeInTheDocument();
 			expect(screen.getByText('Modular Trade Agent')).toBeInTheDocument();
+			expect(screen.getByText(`v${APP_VERSION}`)).toBeInTheDocument();
 		});
 	});
 
