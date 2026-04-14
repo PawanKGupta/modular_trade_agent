@@ -6,7 +6,7 @@ import base64
 import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from jose import jwt
 from sqlalchemy import text
@@ -19,8 +19,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 from server.app.main import app  # noqa: E402
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus  # noqa: E402
 from src.infrastructure.db.session import SessionLocal  # noqa: E402
-from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
+from src.infrastructure.db.timezone_utils import IST  # noqa: E402
 from src.infrastructure.persistence.signals_repository import SignalsRepository  # noqa: E402
+
+# Fixed IST timestamp so mark_time_expired_signals() never treats test rows as past market expiry
+# (CI clocks / timezones must not shrink the buying-zone active list or reject flow).
+_STABLE_SIGNAL_TS = datetime(2030, 6, 15, 10, 30, tzinfo=IST)
 
 
 def _create_authenticated_client():
@@ -61,7 +65,7 @@ def _create_sample_signals():
         db.execute(text("DELETE FROM signals"))
         db.commit()
 
-        now = ist_now()
+        now = _STABLE_SIGNAL_TS
 
         signals = [
             Signals(symbol="ACTIVE1", status=SignalStatus.ACTIVE, ts=now, rsi10=25.0),
@@ -267,7 +271,7 @@ class TestSignalStatusInBuyingZoneWorkflow:
             db.commit()
 
             signal = Signals(
-                symbol="WORKFLOW1", status=SignalStatus.ACTIVE, ts=ist_now(), rsi10=25.0
+                symbol="WORKFLOW1", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
             )
             db.add(signal)
             db.commit()
@@ -312,7 +316,7 @@ class TestSignalStatusInBuyingZoneWorkflow:
             db.commit()
 
             signal = Signals(
-                symbol="WORKFLOW2", status=SignalStatus.ACTIVE, ts=ist_now(), rsi10=25.0
+                symbol="WORKFLOW2", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
             )
             db.add(signal)
             db.commit()

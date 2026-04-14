@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSessionStore } from '@/state/sessionStore';
 import { getNotificationCount } from '@/api/notifications';
 import { clsx } from 'clsx';
-import { ReboundLogo } from '@/components/ReboundLogo';
+import { BrandMark } from '@/components/BrandMark';
 import { useSettings } from '@/hooks/useSettings';
 
 interface NavItem {
@@ -206,15 +206,7 @@ export function AppShell() {
 			>
 				{/* Logo/Brand Section */}
 				<div className="p-4 sm:p-6 border-b border-[#1e293b]/50">
-					<div className="flex items-center gap-3">
-						<div className="w-9 h-9 rounded-lg bg-gradient-to-br from-[var(--accent)]/10 to-blue-600/10 flex items-center justify-center p-1.5 border border-[var(--accent)]/20 hover:border-[var(--accent)]/40 transition-colors">
-							<ReboundLogo size={28} variant="full" />
-						</div>
-						<div>
-							<div className="font-semibold text-sm sm:text-base text-[var(--text)] leading-tight">Rebound</div>
-							<div className="text-xs text-[var(--muted)]">Modular Trade Agent</div>
-						</div>
-					</div>
+					<BrandMark />
 				</div>
 
 				{/* Navigation */}

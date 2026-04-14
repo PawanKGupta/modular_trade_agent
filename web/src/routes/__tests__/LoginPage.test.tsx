@@ -4,6 +4,7 @@ import { LoginPage } from '../LoginPage';
 import { server } from '@/mocks/server';
 import { http, HttpResponse } from 'msw';
 import { withProviders } from '@/test/utils';
+import { APP_VERSION } from '@/appVersion';
 
 function renderWithRouter(ui: React.ReactElement) {
 	return render(
@@ -19,6 +20,13 @@ function renderWithRouter(ui: React.ReactElement) {
 }
 
 describe('LoginPage', () => {
+	it('shows product branding and version', () => {
+		renderWithRouter(<LoginPage />);
+		expect(screen.getByText('Rebound')).toBeInTheDocument();
+		expect(screen.getByText('Modular Trade Agent')).toBeInTheDocument();
+		expect(screen.getByText(`v${APP_VERSION}`)).toBeInTheDocument();
+	});
+
 	it('logs in successfully and navigates to dashboard', async () => {
 		// default MSW handlers return 200 and token + me
 		renderWithRouter(<LoginPage />);

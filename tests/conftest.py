@@ -28,6 +28,10 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
                 "Forced to in-memory for tests to prevent data loss.",
                 file=sys.stderr,
             )
+        else:
+            # Any other on-disk sqlite URL (e.g. CI sets sqlite:///tmp/...) breaks pytest-xdist:
+            # workers share one file and see torn commits / missing rows (auth tests flake).
+            os.environ["DB_URL"] = "sqlite:///:memory:"
     else:
         # Set to in-memory if not already set or not in-memory
         os.environ["DB_URL"] = "sqlite:///:memory:"
