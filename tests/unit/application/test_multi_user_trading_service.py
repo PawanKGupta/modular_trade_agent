@@ -80,6 +80,15 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
         fake_threading,
     )
 
+    # Clear module-level shared state (locks/services) between tests
+    from src.application.services import multi_user_trading_service as _mus  # noqa: PLC0415
+
+    _mus._shared_services.clear()
+    _mus._shared_service_threads.clear()
+    _mus._shared_locks.clear()
+    _mus._shared_start_locks.clear()
+    _mus._shared_lock_keys.clear()
+
     yield
 
     # Best-effort cleanup (keep DB clean for other modules too)
@@ -89,6 +98,13 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
         db_session.commit()
     except Exception:
         db_session.rollback()
+
+    # Clear module-level shared state again (defensive)
+    _mus._shared_services.clear()
+    _mus._shared_service_threads.clear()
+    _mus._shared_locks.clear()
+    _mus._shared_start_locks.clear()
+    _mus._shared_lock_keys.clear()
 
 
 @pytest.fixture
