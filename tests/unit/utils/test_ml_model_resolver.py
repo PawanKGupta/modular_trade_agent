@@ -176,6 +176,12 @@ class TestMLModelResolver:
 
     def test_get_model_path_from_version_file_not_exists(self, db_session, sample_ml_model):
         """Test getting model path when file doesn't exist"""
+        # Ensure no residue model file from other tests / CI artifacts.
+        # This test asserts behavior when the DB row exists but the on-disk file does not.
+        model_path = Path("models/verdict_model_v1.0.pkl")
+        if model_path.exists():
+            model_path.unlink()
+
         result = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
 
         # Should return None when file doesn't exist

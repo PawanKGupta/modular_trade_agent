@@ -15,6 +15,8 @@ Target: >90% code coverage
 
 import os
 import sys
+import types
+import importlib
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -54,6 +56,17 @@ def _isolate_yfinance_for_unit_tests(monkeypatch):
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# Some CLI tests stub `sys.modules["integrated_backtest"]` with a SimpleNamespace.
+# If that stub leaks (ordering/xdist), importing from it breaks patching in this module.
+_maybe_stub = sys.modules.get("integrated_backtest")
+if _maybe_stub is not None and (
+    not isinstance(_maybe_stub, types.ModuleType)
+    or not hasattr(_maybe_stub, "fetch_ohlcv_yf")
+    or not hasattr(_maybe_stub, "os")
+):
+    del sys.modules["integrated_backtest"]
+    importlib.invalidate_caches()
 
 from integrated_backtest import (
     Position,

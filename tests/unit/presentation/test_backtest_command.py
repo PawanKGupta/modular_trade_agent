@@ -19,7 +19,10 @@ def test_backtest_command_with_explicit_tickers(monkeypatch):
         'executed_trades': 5,
     })
     import sys
-    sys.modules['integrated_backtest'] = fake_module
+
+    # Must restore real module after test; leaving a SimpleNamespace in sys.modules breaks
+    # other tests that patch integrated_backtest.fetch_ohlcv_yf (AttributeError).
+    monkeypatch.setitem(sys.modules, "integrated_backtest", fake_module)
 
     class FakeScraper:
         def get_stocks_with_suffix(self, suffix):
@@ -37,7 +40,8 @@ def test_backtest_command_uses_scraper_when_no_tickers(monkeypatch):
         'executed_trades': 1,
     })
     import sys
-    sys.modules['integrated_backtest'] = fake_module
+
+    monkeypatch.setitem(sys.modules, "integrated_backtest", fake_module)
 
     class FakeScraper:
         def get_stocks_with_suffix(self, suffix):
