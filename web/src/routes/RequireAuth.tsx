@@ -3,11 +3,9 @@ import { Navigate } from 'react-router-dom';
 import { useSessionStore } from '@/state/sessionStore';
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-	const { isAuthenticated, hasHydrated, initialize } = useSessionStore((s) => ({
-		isAuthenticated: s.isAuthenticated,
-		hasHydrated: s.hasHydrated,
-		initialize: s.initialize,
-	}));
+	const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
+	const hasHydrated = useSessionStore((s) => s.hasHydrated);
+	const initialize = useSessionStore((s) => s.initialize);
 
 	useEffect(() => {
 		if (!hasHydrated) {

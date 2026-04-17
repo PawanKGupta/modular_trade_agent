@@ -1,3 +1,4 @@
+# ruff: noqa: E402, PLC0415
 """
 Tests for Phase 9: Notification triggers in TelegramNotifier
 
@@ -306,6 +307,34 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertEqual(len(self.notifier._notification_timestamps), 0)
+
+    @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
+    def test_send_message_fallback_to_plain_text_on_parse_entities_error(self, mock_post):
+        """Retry without parse_mode when Telegram returns entity parse error."""
+        parse_error_response = Mock()
+        parse_error_response.status_code = 400
+        parse_error_response.text = (
+            '{"ok":false,"error_code":400,"description":"Bad Request: can\'t parse entities"}'
+        )
+
+        success_response = Mock()
+        success_response.status_code = 200
+        success_response.text = '{"ok":true}'
+
+        mock_post.side_effect = [parse_error_response, success_response]
+
+        result = self.notifier.send_message(
+            "SYSTEM ALERT: BALANCE_SHORTFALL\nreason: insufficient_balance",
+            parse_mode="Markdown",
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+        first_payload = mock_post.call_args_list[0][1]["json"]
+        second_payload = mock_post.call_args_list[1][1]["json"]
+        self.assertEqual(first_payload.get("parse_mode"), "Markdown")
+        self.assertNotIn("parse_mode", second_payload)
+        self.assertEqual(len(self.notifier._notification_timestamps), 1)
 
     @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
     def test_notify_on_exception(self, mock_post):

@@ -10,7 +10,8 @@ from src.infrastructure.indicators.pandas_ta_calculator import PandasTACalculato
 def test_pandas_ta_calculator_rsi_ema_speed():
     # Generate synthetic OHLCV data
     n = 20000
-    idx = pd.date_range("2024-01-01", periods=n, freq="T")
+    # pandas 3.x: use explicit "min" instead of legacy alias "T"
+    idx = pd.date_range("2024-01-01", periods=n, freq="min")
     close = np.cumsum(np.random.randn(n)).astype(float)
     # Shift the series so prices are strictly positive and realistic
     close = close - close.min() + 100.0

@@ -238,14 +238,14 @@ def test_test_broker_connection_basic():
     headers = {"Authorization": f"Bearer {token}"}
 
     # Test connection with basic credentials
-    # Note: This will fail if neo_api_client is not installed, but that's expected
+    # Note: behavior depends on runtime Kotak credentials/network availability
     test_resp = client.post(
         "/api/v1/user/broker/test",
         headers=headers,
         json={"broker": "kotak-neo", "api_key": "test-key-123", "api_secret": "test-secret-456"},
     )
-    # Should either succeed (if SDK available) or fail with clear message
-    assert test_resp.status_code in [200, 500]  # 500 if SDK not available
+    # Should either succeed or fail with a clear REST-auth/broker connectivity message
+    assert test_resp.status_code in [200, 500]
     if test_resp.status_code == 200:
         data = test_resp.json()
         assert "ok" in data

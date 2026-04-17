@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { login } from '@/api/auth';
+import { BrandMark } from '@/components/BrandMark';
 import { useSessionStore } from '@/state/sessionStore';
 
 export function LoginPage() {
@@ -31,6 +32,9 @@ export function LoginPage() {
 	return (
 		<div className="min-h-screen flex items-center justify-center p-2 sm:p-4">
 			<form onSubmit={onSubmit} className="w-full max-w-sm bg-[var(--panel)] p-4 sm:p-6 rounded-md shadow">
+				<header className="mb-4 sm:mb-5 pb-4 sm:pb-5 border-b border-[#1e293b]/50">
+					<BrandMark />
+				</header>
 				<h1 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Login</h1>
 				<label className="block text-xs sm:text-sm mb-1" htmlFor="email">Email</label>
 				<input id="email" name="email" className="w-full mb-3 px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0" value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />

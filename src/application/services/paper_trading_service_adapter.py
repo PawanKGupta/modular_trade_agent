@@ -1136,9 +1136,15 @@ class PaperTradingServiceAdapter:
         # First, check and execute any pending limit orders
         try:
             execution_summary = self.broker.check_and_execute_pending_orders()
-            if execution_summary["executed"] > 0:
+            executed = 0
+            if isinstance(execution_summary, dict):
+                try:
+                    executed = int(execution_summary.get("executed") or 0)
+                except Exception:
+                    executed = 0
+            if executed > 0:
                 self.logger.info(
-                    f"Executed {execution_summary['executed']} pending sell orders",
+                    f"Executed {executed} pending sell orders",
                     action="_monitor_sell_orders",
                 )
         except Exception as e:
@@ -1170,20 +1176,23 @@ class PaperTradingServiceAdapter:
                 # Get latest daily candle and ensure it belongs to today's session (IST)
                 latest = data.iloc[-1]
                 latest_ts = latest.name
+                latest_date_ist = None
                 try:
-                    latest_ts = pd.to_datetime(latest_ts)
+                    # Only apply the "guard by date" when we have a real datetime-like index.
+                    # Unit tests often build DataFrames with RangeIndex/int indices.
+                    if isinstance(latest_ts, (pd.Timestamp, datetime)):
+                        ts = pd.to_datetime(latest_ts)
+                        if getattr(ts, "tzinfo", None) is None:
+                            ts = ts.tz_localize("UTC")
+                        latest_date_ist = ts.tz_convert("Asia/Kolkata").date()
                 except Exception:
-                    pass
+                    latest_date_ist = None
 
-                if getattr(latest_ts, "tzinfo", None) is None:
-                    latest_ts = latest_ts.tz_localize("UTC")
-
-                latest_date_ist = latest_ts.tz_convert("Asia/Kolkata").date()
-                today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-
-                # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
-                if latest_date_ist != today_ist:
-                    continue
+                if latest_date_ist is not None:
+                    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                    # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
+                    if latest_date_ist != today_ist:
+                        continue
 
                 high = latest["high"]
                 close = latest["close"]

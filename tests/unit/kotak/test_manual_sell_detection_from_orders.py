@@ -140,6 +140,59 @@ class TestDetectManualSellsFromOrders:
         assert tracked_order["target_price"] == 2500.0
         assert tracked_order["qty"] == 100
 
+    def test_persists_audit_sources_for_system_entry_manual_exit(
+        self, sell_manager, mock_positions_repo, mock_orders_repo
+    ):
+        """Persist audit tags when system-entry position exits via manual sell."""
+        position = Mock(spec=Positions)
+        position.symbol = "RELIANCE-EQ"
+        position.quantity = 100.0
+        position.closed_at = None
+        position.opened_at = ist_now() - timedelta(hours=2)
+        mock_positions_repo.list.return_value = [position]
+        mock_positions_repo.get_by_symbol.return_value = position
+        sell_manager.get_open_positions = Mock(return_value=[{"symbol": "RELIANCE-EQ", "qty": 100}])
+
+        # System buy order identifies entry_source=system
+        system_buy_order = Mock(spec=Orders)
+        system_buy_order.side = "buy"
+        system_buy_order.symbol = "RELIANCE-EQ"
+        system_buy_order.orig_source = "signal"
+        system_buy_order.execution_time = position.opened_at
+        mock_orders_repo.list.return_value = ([system_buy_order], 1)
+
+        # Sell order exists in DB and is manual
+        manual_sell_order = Mock(spec=Orders)
+        manual_sell_order.side = "sell"
+        manual_sell_order.orig_source = "manual"
+        manual_sell_order.order_metadata = {"note": "existing"}
+        mock_orders_repo.get_by_broker_order_id.return_value = manual_sell_order
+
+        all_orders_response = {
+            "data": [
+                {
+                    "orderId": "MANUAL123",
+                    "trdSym": "RELIANCE-EQ",
+                    "transactionType": "SELL",
+                    "orderStatus": "executed",
+                    "filledQty": 100,
+                    "avgPrc": 2500.0,
+                    "executionTime": "2025-12-16T10:30:00+05:30",
+                }
+            ]
+        }
+
+        stats = sell_manager._detect_manual_sells_from_orders(all_orders_response)
+        assert stats["closed"] == 1
+
+        # Verify metadata was enriched and persisted
+        assert mock_orders_repo.update.call_count >= 1
+        updated_order = mock_orders_repo.update.call_args[0][0]
+        audit = updated_order.order_metadata.get("audit_sources", {})
+        assert audit.get("entry_source") == "system"
+        assert audit.get("exit_source") == "manual"
+        assert audit.get("detection_path") == "manual_sell_detection_get_orders"
+
     def test_skips_tracked_sell_orders(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders
     ):

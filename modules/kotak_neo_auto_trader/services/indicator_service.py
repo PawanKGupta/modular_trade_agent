@@ -12,6 +12,7 @@ Features:
 - Caching layer to reduce redundant calculations
 """
 
+import hashlib
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -103,6 +104,34 @@ class IndicatorService:
 
         logger.debug(f"IndicatorService initialized (caching: {enable_caching}, ttl: {cache_ttl}s)")
 
+    @staticmethod
+    def _build_df_cache_signature(df: pd.DataFrame, tail_rows: int = 20) -> str:
+        """
+        Build a stable cache signature from dataframe shape + recent OHLCV content.
+
+        This prevents cache collisions across different symbols that share the same
+        date index window.
+        """
+        try:
+            if df is None or df.empty:
+                return "empty"
+
+            columns_to_use = [c for c in ("close", "volume", "open", "high", "low") if c in df.columns]
+            sample = df[columns_to_use].tail(tail_rows).copy() if columns_to_use else df.tail(tail_rows).copy()
+
+            for col in columns_to_use:
+                sample[col] = pd.to_numeric(sample[col], errors="coerce").round(6)
+
+            index_tail = str(sample.index[-1]) if len(sample.index) > 0 else "none"
+            payload = (
+                f"rows={len(df)}|cols={','.join(df.columns.astype(str))}|last_idx={index_tail}|"
+                f"sample={sample.to_json(orient='split', date_format='iso')}"
+            )
+            return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:20]
+        except Exception:
+            # Defensive fallback: keep cache operational even if signature building fails.
+            return f"fallback_{len(df)}_{hash(str(df.index[-5:]))}"
+
     def calculate_rsi(
         self, df: pd.DataFrame, period: int = 10, config: StrategyConfig | None = None
     ) -> pd.Series | None:
@@ -128,7 +157,7 @@ class IndicatorService:
             return None
 
         # Create cache key
-        cache_key = f"rsi_{hash(str(df.index[-5:]))}_{period}"
+        cache_key = f"rsi_{period}_{self._build_df_cache_signature(df)}"
 
         # Phase 4.2: Use adaptive TTL if caching enabled
         if self.enable_caching:
@@ -196,7 +225,7 @@ class IndicatorService:
             return None
 
         # Create cache key
-        cache_key = f"ema_{hash(str(df.index[-5:]))}_{period}_{adjust}"
+        cache_key = f"ema_{period}_{adjust}_{self._build_df_cache_signature(df)}"
 
         # Phase 4.2: Use adaptive TTL if caching enabled
         if self.enable_caching:
@@ -347,7 +376,10 @@ class IndicatorService:
             return None
 
         # Create cache key
-        cache_key = f"all_indicators_{hash(str(df.index[-10:]))}_rsi{rsi_period}_ema{ema_period}"
+        cache_key = (
+            f"all_indicators_rsi{rsi_period}_ema{ema_period}_"
+            f"{self._build_df_cache_signature(df)}"
+        )
 
         # Phase 4.2: Use adaptive TTL if caching enabled
         if self.enable_caching:
@@ -383,6 +415,7 @@ class IndicatorService:
         ticker: str,
         rsi_period: int | None = None,
         config: StrategyConfig | None = None,
+        add_current_day: bool = False,
     ) -> dict[str, Any] | None:
         """
         Get daily indicators as a dictionary (matches get_daily_indicators() return format).
@@ -394,6 +427,8 @@ class IndicatorService:
             ticker: Stock ticker (e.g., 'RELIANCE.NS')
             rsi_period: RSI calculation period (uses config if None)
             config: Optional StrategyConfig (uses default if None)
+            add_current_day: Include current-day candle in daily OHLCV before
+                indicator calculation. Defaults to False for backward compatibility.
 
         Returns:
             Dict with keys: close, rsi10, ema9, ema200, avg_volume
@@ -408,11 +443,13 @@ class IndicatorService:
             # Get price data
             if self.price_service:
                 df = self.price_service.get_price(
-                    ticker, days=800, interval="1d", add_current_day=False
+                    ticker, days=800, interval="1d", add_current_day=add_current_day
                 )
             else:
                 # Fallback to direct fetch
-                df = fetch_ohlcv_yf(ticker, days=800, interval="1d", add_current_day=False)
+                df = fetch_ohlcv_yf(
+                    ticker, days=800, interval="1d", add_current_day=add_current_day
+                )
 
             if df is None or df.empty:
                 return None

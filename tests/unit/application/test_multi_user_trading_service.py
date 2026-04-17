@@ -80,6 +80,15 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
         fake_threading,
     )
 
+    # Clear module-level shared state (locks/services) between tests
+    from src.application.services import multi_user_trading_service as _mus  # noqa: PLC0415
+
+    _mus._shared_services.clear()
+    _mus._shared_service_threads.clear()
+    _mus._shared_locks.clear()
+    _mus._shared_start_locks.clear()
+    _mus._shared_lock_keys.clear()
+
     yield
 
     # Best-effort cleanup (keep DB clean for other modules too)
@@ -89,6 +98,13 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
         db_session.commit()
     except Exception:
         db_session.rollback()
+
+    # Clear module-level shared state again (defensive)
+    _mus._shared_services.clear()
+    _mus._shared_service_threads.clear()
+    _mus._shared_locks.clear()
+    _mus._shared_start_locks.clear()
+    _mus._shared_lock_keys.clear()
 
 
 @pytest.fixture
@@ -706,10 +722,13 @@ class TestMultiUserTradingService:
         # Error logs may not be immediate, so this is optional check
         if len(error_logs) > 0:
             # Check for either the specific error message or the generic failure message
-            # The service logs both "User settings not found" and "Failed to start trading service"
+            # The service logs "User settings not found" and "Failed to start trading service".
+            # In shared test environments, recent user error logs can also include
+            # PaperTradingService initialization failures for the same user id.
             has_error = any(
                 "User settings not found" in log["message"]
                 or "Failed to start trading service" in log["message"]
+                or "Service initialization failed" in log["message"]
                 for log in error_logs
             )
             assert (

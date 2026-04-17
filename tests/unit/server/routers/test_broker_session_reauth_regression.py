@@ -589,3 +589,54 @@ class TestBrokerSessionReauthRegression:
             assert "re-authentication failed" in exc.value.detail.lower() or (
                 "session expired" in exc.value.detail.lower()
             )
+
+    def test_broker_orders_maps_executed_to_closed(self, monkeypatch):
+        """Broker EXECUTED status should be normalized to closed for UI."""
+        user = DummyUser(id=7)
+
+        repo = DummySettingsRepo(object())
+        monkeypatch.setattr(broker, "SettingsRepository", lambda db: repo)
+        monkeypatch.setattr(
+            broker,
+            "decrypt_broker_credentials",
+            lambda creds: {"api_key": "key", "api_secret": "secret"},
+        )
+        monkeypatch.setattr(broker, "create_temp_env_file", lambda creds: "/tmp/test.env")
+
+        auth = MagicMock()
+        auth.is_authenticated.return_value = True
+        auth.get_client.return_value = MagicMock()
+        auth.is_session_valid.return_value = True
+
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_or_create_session.return_value = auth
+
+        mock_order = MagicMock()
+        mock_order.order_id = "ORDER_EXEC_1"
+        mock_order.symbol = "AXISBANK-EQ"
+        mock_order.transaction_type.value = "BUY"
+        mock_order.quantity = 7
+        mock_order.price = Money(Decimal("1295.20"))
+        mock_order.status = "EXECUTED"
+        mock_order.executed_price = Money(Decimal("1295.20"))
+        mock_order.executed_quantity = 7
+        mock_order.created_at = datetime.now()
+
+        mock_broker = MagicMock()
+        mock_broker.get_all_orders.return_value = [mock_order]
+        mock_broker._connected = True
+
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.shared_session_manager.get_shared_session_manager",
+                return_value=mock_session_manager,
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.infrastructure.broker_factory.BrokerFactory.create_broker",
+                return_value=mock_broker,
+            ),
+        ):
+            result = broker.get_broker_orders(db=MagicMock(), current=user)
+
+        assert len(result) == 1
+        assert result[0]["status"] == "closed"

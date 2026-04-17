@@ -92,6 +92,8 @@ def auto_trade_engine(mock_auth, strategy_config):
                 "avg_volume": 1000000,
             }
         )
+        # Default margin check for retry tests (REST check-margin path).
+        engine._check_order_margin = Mock(return_value=(True, 50000.0, 24500.0, 0.0, True))
 
         return engine
 
@@ -195,9 +197,10 @@ class TestRetryPendingOrdersFromDB:
             }
         )
 
-        # Mock insufficient balance
-        auto_trade_engine.get_affordable_qty = Mock(return_value=5)  # Less than required
-        auto_trade_engine.get_available_cash = Mock(return_value=10000.0)
+        # Mock insufficient balance via check-margin API path
+        auto_trade_engine._check_order_margin = Mock(
+            return_value=(False, 10000.0, 24500.0, 14500.0, True)
+        )
         auto_trade_engine.check_position_volume_ratio = Mock(return_value=True)
         auto_trade_engine._calculate_execution_capital = Mock(return_value=30000.0)
 

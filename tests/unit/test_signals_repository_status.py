@@ -11,20 +11,34 @@ from freezegun import freeze_time
 os.environ["DB_URL"] = "sqlite:///:memory:"
 
 from src.infrastructure.db.models import Signals, SignalStatus  # noqa: E402
-from src.infrastructure.db.session import SessionLocal  # noqa: E402
 from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 from src.infrastructure.persistence.signals_repository import SignalsRepository  # noqa: E402
 
 
 @pytest.fixture
-def db_session():
+def db_session(clean_db_after_test):  # noqa: ARG001
     """Create a fresh database session for each test"""
+    # Use a per-test in-memory engine instead of the global `src.infrastructure.db.session.engine`.
+    # The global engine is shared across the whole test process and can be impacted by:
+    # - other tests mocking `engine` / `SessionLocal`
+    # - import-order differences that create multiple in-memory engines
+    # This fixture is unit-scoped; isolation is more important than sharing.
+    import src.infrastructure.db.models  # noqa: F401, PLC0415
+
+    from sqlalchemy import create_engine  # noqa: PLC0415
+    from sqlalchemy.orm import sessionmaker  # noqa: PLC0415
+    from sqlalchemy.pool import StaticPool  # noqa: PLC0415
+
     from src.infrastructure.db.base import Base  # noqa: PLC0415
-    from src.infrastructure.db.session import engine  # noqa: PLC0415
 
-    # Create all tables
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(bind=engine)
-
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     db = SessionLocal()
 
     # Clear signals table before each test

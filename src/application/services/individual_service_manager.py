@@ -879,32 +879,46 @@ class IndividualServiceManager:
         # Execute specific task
         logger.info(f"Executing task: {task_name}", action="execute_task")
         task_start = time.time()
-        if task_name == "premarket_retry":
-            service.run_premarket_retry()
-            return {"task": "premarket_retry", "status": "completed"}
-        elif task_name == "sell_monitor":
-            service.run_sell_monitor()
-            return {"task": "sell_monitor", "status": "completed"}
-        elif task_name == "buy_orders":
-            logger.info(
-                "About to call service.run_buy_orders()", action="execute_task", task_name=task_name
-            )
-            summary = service.run_buy_orders()
-            task_duration = time.time() - task_start
-            logger.info(
-                f"service.run_buy_orders() completed in {task_duration:.2f}s",
-                action="execute_task",
-                task_name=task_name,
-            )
-            result = {"task": "buy_orders", "status": "completed"}
-            if summary:
-                result["summary"] = summary
-            return result
-        elif task_name == "eod_cleanup":
-            service.run_eod_cleanup()
-            return {"task": "eod_cleanup", "status": "completed"}
-        else:
-            raise ValueError(f"Unknown task name: {task_name}")
+
+        # Individual run-once path does not go through TradingService.run(),
+        # so set lifecycle flags explicitly for task methods that guard on them.
+        if hasattr(service, "running"):
+            service.running = True
+        if hasattr(service, "shutdown_requested"):
+            service.shutdown_requested = False
+
+        try:
+            if task_name == "premarket_retry":
+                service.run_premarket_retry()
+                return {"task": "premarket_retry", "status": "completed"}
+            elif task_name == "sell_monitor":
+                service.run_sell_monitor()
+                return {"task": "sell_monitor", "status": "completed"}
+            elif task_name == "buy_orders":
+                logger.info(
+                    "About to call service.run_buy_orders()",
+                    action="execute_task",
+                    task_name=task_name,
+                )
+                summary = service.run_buy_orders()
+                task_duration = time.time() - task_start
+                logger.info(
+                    f"service.run_buy_orders() completed in {task_duration:.2f}s",
+                    action="execute_task",
+                    task_name=task_name,
+                )
+                result = {"task": "buy_orders", "status": "completed"}
+                if summary:
+                    result["summary"] = summary
+                return result
+            elif task_name == "eod_cleanup":
+                service.run_eod_cleanup()
+                return {"task": "eod_cleanup", "status": "completed"}
+            else:
+                raise ValueError(f"Unknown task name: {task_name}")
+        finally:
+            if hasattr(service, "running"):
+                service.running = False
 
     def _run_analysis_task(self, user_id: int) -> dict:
         """Execute the analysis task without requiring broker credentials"""

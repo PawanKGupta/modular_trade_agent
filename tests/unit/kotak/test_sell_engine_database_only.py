@@ -177,6 +177,165 @@ class TestSellOrderManagerGetOpenPositionsDatabaseOnly:
 
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_accepts_holdings_key_payload(self, mock_scrip_master, mock_auth):
+        """Accept holdings payloads shaped as {'holdings': [...]}."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_position = Mock()
+        mock_position.symbol = "AXISBANK-EQ"
+        mock_position.quantity = 3.0
+        mock_position.avg_price = 1000.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+        )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {
+            "stat": "Ok",
+            "holdings": [{"tradingSymbol": "AXISBANK-EQ", "quantity": 3}],
+        }
+
+        result = manager.get_open_positions()
+
+        assert len(result) == 1
+        assert result[0]["symbol"] == "AXISBANK-EQ"
+        assert result[0]["qty"] == 3.0
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_uses_positions_when_holdings_empty(
+        self, mock_scrip_master, mock_auth
+    ):
+        """Use positions qty when holdings do not yet contain same-day executed buy."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_position = Mock()
+        mock_position.symbol = "SJS-EQ"
+        mock_position.quantity = 2.0
+        mock_position.avg_price = 900.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+        )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {"data": []}
+        manager.portfolio.get_positions.return_value = {
+            "stat": "Ok",
+            "stCode": 200,
+            "data": [{"trdSym": "SJS-EQ", "qty": "2", "flBuyQty": "2", "flSellQty": "0"}],
+        }
+
+        result = manager.get_open_positions()
+
+        assert len(result) == 1
+        assert result[0]["symbol"] == "SJS-EQ"
+        assert result[0]["qty"] == 2.0
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_aggregates_active_base_qty_across_holdings_and_positions(
+        self, mock_scrip_master, mock_auth
+    ):
+        """Use aggregated active base quantity when holdings/positions are split by symbol variant."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_position = Mock()
+        mock_position.symbol = "AXISBANK-EQ"
+        mock_position.quantity = 10.0
+        mock_position.avg_price = 1200.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+        )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "AXISBANK", "sellableQuantity": 7}]
+        }
+        manager.portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "AXISBANK-EQ", "qty": "5"}]
+        }
+
+        result = manager.get_open_positions()
+
+        assert len(result) == 1
+        # full symbol qty=5, aggregated base qty=12, db qty=10 => min(10, 12)=10
+        assert result[0]["symbol"] == "AXISBANK-EQ"
+        assert result[0]["qty"] == 10.0
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
+    def test_get_open_positions_skips_manual_only_positions(self, mock_scrip_master, mock_auth):
+        """Do not place bot sell orders for manual-only buy positions."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.client = None
+        mock_auth.return_value = mock_auth_instance
+
+        mock_position = Mock()
+        mock_position.symbol = "ORIENTCEM-EQ"
+        mock_position.quantity = 5.0
+        mock_position.avg_price = 300.0
+        mock_position.opened_at = ist_now()
+        mock_position.closed_at = None
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+
+        # Manual BUY only (no system BUY for this symbol)
+        manual_buy = Mock()
+        manual_buy.status = DbOrderStatus.CLOSED
+        manual_buy.side = "buy"
+        manual_buy.symbol = "ORIENTCEM-EQ"
+        manual_buy.orig_source = "manual"
+        manual_buy.order_metadata = {"ticker": "ORIENTCEM.NS"}
+
+        mock_orders_repo = Mock()
+        mock_orders_repo.list.return_value = ([manual_buy], 1)
+
+        manager = SellOrderManager(
+            auth=mock_auth_instance,
+            positions_repo=mock_positions_repo,
+            user_id=2,
+            orders_repo=mock_orders_repo,
+        )
+        manager.portfolio = Mock()
+        manager.portfolio.get_holdings.return_value = {
+            "data": [{"tradingSymbol": "ORIENTCEM-EQ", "sellableQuantity": 5}]
+        }
+        manager.portfolio.get_positions.return_value = {"data": []}
+
+        result = manager.get_open_positions()
+
+        assert result == []
+
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster")
     def test_get_open_positions_with_orders_repo_metadata_enrichment(
         self, mock_scrip_master, mock_auth
     ):

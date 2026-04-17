@@ -8,6 +8,8 @@ symbols, and other metadata required for accurate order placement and quotes.
 
 import json
 import sys
+import csv
+from io import StringIO
 from datetime import datetime
 from pathlib import Path
 
@@ -30,12 +32,13 @@ class KotakNeoScripMaster:
     Manages Kotak Neo scrip master data for instrument lookups
     """
 
-    # Kotak Neo scrip master URLs
-    SCRIP_MASTER_URLS = {
-        "NSE": "https://preferred.kotaksecurities.com/security/production/TradeApiInstruments_Cash_NSE_09_11_2023.txt",
-        "BSE": "https://preferred.kotaksecurities.com/security/production/TradeApiInstruments_Cash_BSE_09_11_2023.txt",
-        "NFO": "https://preferred.kotaksecurities.com/security/production/TradeApiInstruments_FNO_14_11_2023.txt",
-        "CDS": "https://preferred.kotaksecurities.com/security/production/TradeApiInstruments_Currency_14_11_2023.txt",
+    EXCHANGE_SEGMENT_MAP = {
+        "NSE": "nse_cm",
+        "BSE": "bse_cm",
+        "NFO": "nse_fo",
+        "BFO": "bse_fo",
+        "CDS": "cde_fo",
+        "MCX": "mcx_fo",
     }
 
     def __init__(
@@ -156,71 +159,46 @@ class KotakNeoScripMaster:
         """
         try:
             logger.info(f"Downloading scrip master for {exchange} via Kotak Neo API...")
+            client = auth_client or self.auth_client
+            if client is None or not hasattr(client, "get_scripmaster_file_paths"):
+                logger.error(f"Cannot download scrip master for {exchange}: auth client required")
+                logger.error(
+                    "Scrip Master must be loaded from "
+                    "/script-details/1.0/masterscrip/file-paths using authenticated REST client."
+                )
+                return None
 
-            # Use auth client if provided (preferred method)
-            if auth_client and hasattr(auth_client, "scrip_master"):
-                try:
-                    logger.info(f"Using authenticated API call for {exchange}")
-                    result = auth_client.scrip_master(exchange_segment=exchange)
+            file_paths_resp = client.get_scripmaster_file_paths()
+            file_url = self._resolve_csv_url_for_exchange(exchange, file_paths_resp)
+            if not file_url:
+                logger.error(f"No matching scrip master file URL found for exchange: {exchange}")
+                return None
 
-                    # The API returns a URL string, not direct data
-                    if result and isinstance(result, str) and result.strip().startswith("http"):
-                        csv_url = result.strip()
-                        logger.info(f"Got CSV URL: {csv_url}")
+            logger.info(f"Fetching scrip master for {exchange} from: {file_url}")
+            resp = requests.get(file_url, timeout=30)
+            resp.raise_for_status()
+            text = resp.text
 
-                        # Download CSV from URL
-                        csv_response = requests.get(csv_url, timeout=30)
-                        csv_response.raise_for_status()
+            if not text.strip():
+                logger.error(f"Empty scrip master content for {exchange}")
+                return None
 
-                        # Parse CSV format
-                        lines = csv_response.text.strip().split("\n")
-                        if len(lines) < 2:
-                            logger.error(f"Invalid CSV format for {exchange}")
-                            return None
+            sample = "\n".join(text.splitlines()[:20])
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",|;\t")
+                delimiter = dialect.delimiter
+            except Exception:
+                delimiter = ","
 
-                        # First line is header
-                        headers = [h.strip() for h in lines[0].split(",")]
-                        logger.debug(f"CSV headers: {headers[:10]}...")  # Show first 10
+            reader = csv.DictReader(StringIO(text), delimiter=delimiter)
+            instruments = [{k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()} for row in reader]
 
-                        instruments = []
-                        for line in lines[1:]:
-                            if not line.strip():
-                                continue
+            if not instruments:
+                logger.error(f"No instruments parsed from scrip master for {exchange}")
+                return None
 
-                            # CSV may have quotes and commas in values, use proper CSV parsing
-                            fields = [f.strip() for f in line.split(",")]
-                            if len(fields) < len(headers):
-                                continue
-
-                            # Take only the number of fields that match headers
-                            instrument = dict(zip(headers, fields[: len(headers)]))
-                            instruments.append(instrument)
-
-                        logger.info(
-                            f"Downloaded {len(instruments)} instruments for {exchange} via CSV"
-                        )
-                        return instruments
-
-                    elif result and isinstance(result, dict):
-                        # Fallback: handle if API returns dict directly
-                        instruments = result.get("data", [])
-                        if instruments:
-                            logger.info(
-                                f"Downloaded {len(instruments)} instruments for {exchange} via API"
-                            )
-                            return instruments
-                        else:
-                            logger.warning(f"API returned no instruments for {exchange}")
-                    else:
-                        logger.warning(f"Unexpected API response type: {type(result)}")
-
-                except Exception as e:
-                    logger.error(f"API scrip master failed: {e}")
-
-            # If no auth client or API failed, log error
-            logger.error(f"Cannot download scrip master for {exchange}: auth client required")
-            logger.error("Please authenticate using KotakNeoAuth before loading scrip master.")
-            return None
+            logger.info(f"Downloaded {len(instruments)} instruments for {exchange}")
+            return instruments
 
         except requests.RequestException as e:
             logger.error(f"Failed to download scrip master for {exchange}: {e}")
@@ -228,6 +206,38 @@ class KotakNeoScripMaster:
         except Exception as e:
             logger.error(f"Error parsing scrip master for {exchange}: {e}")
             return None
+
+    def _resolve_csv_url_for_exchange(self, exchange: str, payload: dict | list | None) -> str | None:
+        """Resolve exchange-specific CSV URL from /masterscrip/file-paths response."""
+        seg = self.EXCHANGE_SEGMENT_MAP.get(str(exchange).upper())
+        if not seg:
+            return None
+
+        files_paths: list[str] = []
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, dict):
+                fp = data.get("filesPaths")
+                if isinstance(fp, list):
+                    files_paths = [str(x) for x in fp if isinstance(x, str)]
+            # support alternate/top-level shapes defensively
+            if not files_paths:
+                fp = payload.get("filesPaths")
+                if isinstance(fp, list):
+                    files_paths = [str(x) for x in fp if isinstance(x, str)]
+        elif isinstance(payload, list):
+            files_paths = [str(x) for x in payload if isinstance(x, str)]
+
+        if not files_paths:
+            return None
+
+        # Prefer exact segment tokens in path; supports both *-v1.csv and .csv variants.
+        seg_tokens = [f"/{seg}.csv", f"/{seg}-v1.csv", f"{seg}.csv", f"{seg}-v1.csv"]
+        for url in files_paths:
+            low = url.lower()
+            if any(tok in low for tok in seg_tokens):
+                return url
+        return None
 
     def _save_to_cache(self, exchange: str, instruments: list[dict]) -> bool:
         """Save scrip master data to cache"""

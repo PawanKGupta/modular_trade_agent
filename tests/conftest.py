@@ -28,6 +28,10 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
                 "Forced to in-memory for tests to prevent data loss.",
                 file=sys.stderr,
             )
+        else:
+            # Any other on-disk sqlite URL (e.g. CI sets sqlite:///tmp/...) breaks pytest-xdist:
+            # workers share one file and see torn commits / missing rows (auth tests flake).
+            os.environ["DB_URL"] = "sqlite:///:memory:"
     else:
         # Set to in-memory if not already set or not in-memory
         os.environ["DB_URL"] = "sqlite:///:memory:"
@@ -45,14 +49,16 @@ import src.infrastructure.db.models  # noqa: F401
 def clean_db_after_test():
     """
     Ensure each test runs with an isolated in-memory DB schema and cleans up afterward.
-    Drops all tables after each test to avoid cross-test contamination.
+    Drops and recreates all tables on the shared session engine so FastAPI TestClient and
+    SessionLocal see the same empty schema (pytest already pins DB_URL to :memory:).
 
-    CRITICAL: This fixture MUST use a separate test engine, NOT the shared engine from
-    session.py, to prevent accidentally dropping tables from the production database.
+    CRITICAL: Only run drop_all/create_all when DB_URL is in-memory (enforced above and
+    in session.py guards) so production file databases are never touched.
     """
-    # CRITICAL: Force in-memory database BEFORE any imports that might use DB_URL
-    # This prevents the shared session.py engine from connecting to the real database
-    original_db_url = os.environ.get("DB_URL")
+    # CRITICAL (Fix A): Keep DB_URL pinned to in-memory for the *entire* test run.
+    # Restoring DB_URL per-test can cause CI-only import-order issues where some modules
+    # import `src.infrastructure.db.session` after a previous test restored DB_URL to a
+    # non-memory URL, resulting in multiple engines / inconsistent DB state.
     os.environ["DB_URL"] = "sqlite:///:memory:"
 
     # Safety guard: prevent tests from using the real app DB path
@@ -78,41 +84,47 @@ def clean_db_after_test():
     if root not in sys.path:
         sys.path.append(root)
 
-    # Create a SEPARATE test engine - do NOT use the shared engine from session.py
-    from sqlalchemy import create_engine
-    from sqlalchemy.pool import StaticPool
-
+    # Reset the *application* engine schema each test so FastAPI + SessionLocal share
+    # the same in-memory DB. A separate orphan engine left the real session engine
+    # dirty (e.g. INFY/TCS from other tests) while drop_all ran only on that orphan.
     from src.infrastructure.db.base import Base
+    from src.infrastructure.db.session import engine
 
-    test_engine = create_engine(
-        "sqlite:///:memory:",
-        echo=False,
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    # Ensure models are registered on Base.metadata for create_all().
+    # Some tests manipulate import caches; re-importing is idempotent and prevents
+    # CI-only flakes like "no such table: users".
+    try:
+        import src.infrastructure.db.models  # noqa: F401
+    except Exception:
+        pass
+
+    # Reset service singletons so tests never share cross-test state.
+    # This avoids CI-only flakes where a previous test configures a singleton with mocks
+    # (e.g. PriceService.live_price_manager) and later tests unexpectedly inherit it.
+    try:
+        from modules.kotak_neo_auto_trader.services import indicator_service, position_loader, price_service
+
+        price_service._price_service_instance = None  # noqa: SLF001
+        indicator_service._indicator_service_instance = None  # noqa: SLF001
+        position_loader._position_loader_instance = None  # noqa: SLF001
+    except Exception:
+        # Best-effort: not all test subsets import kotak services
+        pass
 
     try:
-        # Create fresh schema for each test using the test engine
         try:
-            Base.metadata.drop_all(bind=test_engine)
+            Base.metadata.drop_all(bind=engine)
         except Exception:
             pass
-        Base.metadata.create_all(bind=test_engine)
+        Base.metadata.create_all(bind=engine)
         yield
     finally:
-        # Teardown: drop schema from test engine only
         try:
-            Base.metadata.drop_all(bind=test_engine)
+            Base.metadata.drop_all(bind=engine)
         except Exception:
             pass
-        test_engine.dispose()
 
-        # Restore original DB_URL if it was set
-        if original_db_url is not None:
-            os.environ["DB_URL"] = original_db_url
-        elif "DB_URL" in os.environ:
-            del os.environ["DB_URL"]
+        # NOTE: Do not restore DB_URL here; keep it pinned for the entire pytest run.
         # If a file-based SQLite URL was used in a test (e.g., overridden to a tmp file),
         # remove the file to avoid residue. We only remove if path exists and is within a temp directory.
         db_url = os.environ.get("DB_URL", "")

@@ -15,13 +15,58 @@ Target: >90% code coverage
 
 import os
 import sys
+import types
+import importlib
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 
+# Ensure unit tests never hit yfinance/network or inherit OPEN circuit breaker state
+@pytest.fixture(autouse=True)
+def _isolate_yfinance_for_unit_tests(monkeypatch):
+    from core import data_fetcher  # noqa: PLC0415
+
+    # Always start CLOSED for each test
+    try:
+        data_fetcher.yfinance_circuit_breaker.reset()
+    except Exception:
+        pass
+
+    # Speed: disable rate limiting sleeps in unit tests
+    monkeypatch.setattr(data_fetcher, "_enforce_rate_limit", lambda *a, **k: None)
+
+    # Provide deterministic OHLCV so unit tests are offline-safe
+    def _fake_download(*_args, **_kwargs):
+        idx = pd.date_range("2024-01-01", periods=260, freq="D")
+        return pd.DataFrame(
+            {
+                "Open": 100.0,
+                "High": 105.0,
+                "Low": 95.0,
+                "Close": 102.0,
+                "Volume": 1_000_000,
+            },
+            index=idx,
+        )
+
+    monkeypatch.setattr(data_fetcher.yf, "download", _fake_download)
+
+    yield
+
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# Some CLI tests stub `sys.modules["integrated_backtest"]` with a SimpleNamespace.
+# If that stub leaks (ordering/xdist), importing from it breaks patching in this module.
+_maybe_stub = sys.modules.get("integrated_backtest")
+if _maybe_stub is not None and (
+    not isinstance(_maybe_stub, types.ModuleType)
+    or not hasattr(_maybe_stub, "fetch_ohlcv_yf")
+    or not hasattr(_maybe_stub, "os")
+):
+    del sys.modules["integrated_backtest"]
+    importlib.invalidate_caches()
 
 from integrated_backtest import (
     Position,

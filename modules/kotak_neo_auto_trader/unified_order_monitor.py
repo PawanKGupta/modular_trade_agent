@@ -7,7 +7,7 @@ Phase 2: Unified order monitoring implementation.
 Extends SellOrderManager to handle buy order monitoring alongside sell orders.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from utils.logger import logger
@@ -80,6 +80,8 @@ class UnifiedOrderMonitor:
 
         # Track active buy orders {order_id: {'symbol': str, 'quantity': float, ...}}
         self.active_buy_orders: dict[str, dict[str, Any]] = {}
+        # Deduplicate buy execution handling/notifications within service runtime.
+        self._processed_buy_execution_ids: set[str] = set()
 
         # Issue #1 Fix: Metrics tracking for position creation
         self._position_creation_metrics = {
@@ -174,6 +176,70 @@ class UnifiedOrderMonitor:
             "failed_missing_symbol": 0,
             "failed_exception": 0,
         }
+
+    def _build_execution_sync_key(self, order_obj: Any, execution_qty: float | int | None) -> str:
+        """Build stable key for a buy execution (broker_order_id + execution_qty)."""
+        order_identity = str(
+            getattr(order_obj, "broker_order_id", None)
+            or getattr(order_obj, "order_id", None)
+            or getattr(order_obj, "id", "")
+            or ""
+        ).strip()
+        try:
+            normalized_qty = int(float(execution_qty or 0))
+        except (TypeError, ValueError):
+            normalized_qty = 0
+        return f"{order_identity}:{normalized_qty}"
+
+    def _is_execution_position_sync_applied(
+        self, order_obj: Any, execution_qty: float | int | None
+    ) -> bool:
+        """Return True when this execution key was already applied to positions."""
+        if not order_obj:
+            return False
+        metadata = getattr(order_obj, "order_metadata", None)
+        if not isinstance(metadata, dict):
+            return False
+        sync_meta = metadata.get("position_sync")
+        if not isinstance(sync_meta, dict):
+            return False
+        if not bool(sync_meta.get("applied")):
+            return False
+        expected_key = self._build_execution_sync_key(order_obj, execution_qty)
+        synced_key = str(sync_meta.get("execution_key") or "").strip()
+        # Backward compatibility: treat as applied when legacy marker exists without key.
+        return synced_key == expected_key or synced_key == ""
+
+    def _mark_execution_position_sync_applied(
+        self,
+        order_obj: Any,
+        execution_qty: float | int | None,
+        *,
+        symbol: str | None = None,
+        auto_commit: bool | None = None,
+    ) -> None:
+        """Persist idempotent marker that this buy execution has updated positions."""
+        if not self.orders_repo or not order_obj:
+            return
+        metadata = getattr(order_obj, "order_metadata", None)
+        order_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        sync_meta = order_metadata.get("position_sync")
+        if not isinstance(sync_meta, dict):
+            sync_meta = {}
+        sync_meta["applied"] = True
+        sync_meta["execution_key"] = self._build_execution_sync_key(order_obj, execution_qty)
+        sync_meta["symbol"] = str(symbol or getattr(order_obj, "symbol", "") or "")
+        if ist_now:
+            sync_meta["applied_at"] = ist_now().isoformat()
+        order_metadata["position_sync"] = sync_meta
+        if auto_commit is None:
+            try:
+                auto_commit = not bool(self.orders_repo.db.in_transaction())
+            except Exception:
+                auto_commit = True
+        self.orders_repo.update(
+            order_obj, auto_commit=bool(auto_commit), order_metadata=order_metadata
+        )
 
     def load_pending_buy_orders(self) -> int:
         """
@@ -386,14 +452,58 @@ class UnifiedOrderMonitor:
             try:
                 # Get executed buy orders (ONGOING legacy or CLOSED = filled) for sync
                 all_orders, _ = self.orders_repo.list(self.user_id)
-                executed_buy_orders = [
-                    o
-                    for o in all_orders
-                    if o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)
-                    and o.side
-                    and o.side.lower() == "buy"
-                ]
+                local_ist_now = ist_now
+                if local_ist_now is None:
+                    from src.infrastructure.db.timezone_utils import (
+                        ist_now as local_ist_now,  # noqa: PLC0415
+                    )
+                today_start = datetime.combine(local_ist_now().date(), datetime.min.time()).replace(
+                    tzinfo=local_ist_now().tzinfo
+                )
+
+                def _normalize_to_ist(dt: datetime | None) -> datetime | None:
+                    if dt is None:
+                        return None
+                    if dt.tzinfo is None:
+                        return dt.replace(tzinfo=IST)
+                    return dt.astimezone(IST) if dt.tzinfo != IST else dt
+
+                executed_buy_orders = []
+                for o in all_orders:
+                    if not (o.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED)):
+                        continue
+                    if not (o.side and o.side.lower() == "buy"):
+                        continue
+
+                    # Avoid replaying historical CLOSED buys forever.
+                    # ONGOING buys are still tracked for backward compatibility.
+                    if o.status == DbOrderStatus.CLOSED:
+                        executed_at = _normalize_to_ist(
+                            getattr(o, "execution_time", None) or getattr(o, "filled_at", None)
+                        )
+                        if not executed_at or executed_at < today_start:
+                            continue
+
+                    # This sync path is for missing execution data / missing open position only.
+                    # Skip already-synced orders to avoid repeatedly adding same qty every cycle.
+                    has_execution = bool(
+                        getattr(o, "execution_price", None) and getattr(o, "execution_qty", None)
+                    )
+                    has_open_position = False
+                    if self.positions_repo and getattr(o, "symbol", None):
+                        try:
+                            pos = self.positions_repo.get_by_symbol(self.user_id, str(o.symbol).upper())
+                            has_open_position = bool(pos and pos.closed_at is None)
+                        except Exception:
+                            has_open_position = False
+                    if has_execution and has_open_position:
+                        continue
+
+                    executed_buy_orders.append(o)
                 for order in executed_buy_orders:
+                    order_id = str(order.broker_order_id or order.order_id or "")
+                    if order_id and order_id in self._processed_buy_execution_ids:
+                        continue
                     # BUG FIX: Include orders WITH execution_price to check for missing positions
                     # Previously only orders WITHOUT execution_price were checked, causing
                     # positions to never be created for executed orders that already had
@@ -853,6 +963,18 @@ class UnifiedOrderMonitor:
 
             # Map broker status to our status
             if status in ["executed", "filled", "complete"]:
+                # Prevent duplicate execution aggregation loops:
+                # mark_executed() aggregates via fills table, so calling it again for the
+                # same already-executed order inflates execution_qty (6->12->18...).
+                if (
+                    getattr(db_order, "status", None) == DbOrderStatus.CLOSED
+                    and getattr(db_order, "execution_qty", None)
+                    and float(getattr(db_order, "execution_qty", 0) or 0) > 0
+                    and getattr(db_order, "execution_price", None)
+                    and float(getattr(db_order, "execution_price", 0) or 0) > 0
+                ):
+                    return
+
                 execution_price = OrderFieldExtractor.get_price(broker_order)
                 # Edge Case #2: Use fldQty (filled quantity) if available,
                 # otherwise use order quantity
@@ -896,6 +1018,9 @@ class UnifiedOrderMonitor:
             broker_order: Broker order dict
         """
         symbol = order_info.get("symbol", "")
+        if order_id in self._processed_buy_execution_ids:
+            logger.debug(f"Skipping duplicate buy execution handling for order_id={order_id}")
+            return
         execution_price = OrderFieldExtractor.get_price(broker_order)
 
         # Edge Case #2: Use fldQty (filled quantity) if available, otherwise use order quantity
@@ -952,6 +1077,7 @@ class UnifiedOrderMonitor:
         self._create_position_from_executed_order(
             order_id, order_info, execution_price, execution_qty
         )
+        self._processed_buy_execution_ids.add(order_id)
 
     def _validate_reentry_data(self, reentry_data: dict[str, Any]) -> bool:
         """
@@ -1162,6 +1288,7 @@ class UnifiedOrderMonitor:
 
             # Use full symbol (already has suffix from broker/order)
             full_symbol = symbol.upper()
+            base_symbol = full_symbol
 
             # Extract entry RSI from order metadata
             entry_rsi = None
@@ -1187,6 +1314,14 @@ class UnifiedOrderMonitor:
             # Check if position already exists
             # Use FOR UPDATE lock to prevent race conditions with concurrent reentry executions
             existing_pos = self.positions_repo.get_by_symbol_for_update(self.user_id, full_symbol)
+
+            # Durable idempotency: if this execution already synced, skip safely.
+            if db_order and self._is_execution_position_sync_applied(db_order, execution_qty):
+                logger.info(
+                    f"Execution already position-synced for {full_symbol} (order_id={order_id}). "
+                    "Skipping duplicate position update."
+                )
+                return
 
             # Improvement: Check if position is closed - don't add reentry to closed positions
             if existing_pos and existing_pos.closed_at is not None:
@@ -1269,6 +1404,10 @@ class UnifiedOrderMonitor:
                             )
 
                 if order_already_processed:
+                    if db_order:
+                        self._mark_execution_position_sync_applied(
+                            db_order, execution_qty, symbol=full_symbol
+                        )
                     logger.info(
                         f"Order {order_id} for {full_symbol} already processed (found in reentries). "
                         f"Skipping duplicate position update."
@@ -1522,6 +1661,13 @@ class UnifiedOrderMonitor:
                             )
 
                         if duplicate_found:
+                            if db_order:
+                                self._mark_execution_position_sync_applied(
+                                    db_order,
+                                    execution_qty,
+                                    symbol=full_symbol,
+                                    auto_commit=False,
+                                )
                             logger.warning(
                                 f"Duplicate reentry detected for {full_symbol} "
                                 f"(order_id: {order_id}) during final check. "
@@ -1672,6 +1818,10 @@ class UnifiedOrderMonitor:
                     f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}"
                     + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
+                if db_order:
+                    self._mark_execution_position_sync_applied(
+                        db_order, execution_qty, symbol=full_symbol
+                    )
             else:
                 # Create new position (wrapped in transaction for consistency)
                 # If already in a transaction, SQLAlchemy will use savepoints automatically
@@ -1686,9 +1836,13 @@ class UnifiedOrderMonitor:
                         auto_commit=False,  # Transaction handles commit
                     )
                 logger.info(
-                    f"Created position for {base_symbol}: qty={execution_qty}, "
+                    f"Created position for {full_symbol}: qty={execution_qty}, "
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
+                if db_order:
+                    self._mark_execution_position_sync_applied(
+                        db_order, execution_qty, symbol=full_symbol
+                    )
 
             # Note: Order status is already correct (ONGOING legacy or CLOSED = executed order)
             # According to design: PENDING → CLOSED (when executed); position ongoing is in Positions.
@@ -1940,11 +2094,12 @@ class UnifiedOrderMonitor:
         self,
     ) -> int:
         """
-        Check for newly executed buy orders (ONGOING status) that were executed today
-        and place sell orders for them if they don't already have sell orders.
+        Check for recently executed buy orders (ONGOING/CLOSED) and place sell
+        orders for them if they don't already have sell orders.
 
         This allows the sell monitor to track holdings that were executed during the day,
-        not just at market open.
+        not just at market open. It also backfills recently missed executions
+        (e.g., service restart/polling gap) using an idempotent dedupe path.
 
         Returns:
             Number of sell orders placed for new holdings
@@ -1956,6 +2111,9 @@ class UnifiedOrderMonitor:
             return 0
 
         try:
+            # Recent execution backfill window to recover missed same-day/previous-day sync.
+            execution_backfill_days = 3
+
             # Get today's date
             local_ist_now = ist_now
             if local_ist_now is None:
@@ -1966,6 +2124,7 @@ class UnifiedOrderMonitor:
             today_start = datetime.combine(today, datetime.min.time()).replace(
                 tzinfo=ist_now().tzinfo
             )
+            lookback_start = today_start - timedelta(days=execution_backfill_days)
 
             # Helper function to normalize datetime to IST timezone-aware
             def normalize_to_ist(dt: datetime | None) -> datetime | None:
@@ -1996,24 +2155,72 @@ class UnifiedOrderMonitor:
                     skipped_orders.append(f"{order.symbol}: manual order (not tracked)")
                     continue
 
-                # Check if order was executed today
+                # Check if order was executed within bounded lookback window.
                 # Use execution_time if available, otherwise use filled_at
                 execution_time = getattr(order, "execution_time", None) or order.filled_at
                 execution_time = normalize_to_ist(execution_time)
+                execution_qty_for_key = getattr(order, "execution_qty", None) or getattr(
+                    order, "quantity", None
+                )
+
+                # Durable idempotency: skip executions already synced to positions.
+                if self._is_execution_position_sync_applied(order, execution_qty_for_key):
+                    skipped_orders.append(f"{order.symbol}: position sync already applied")
+                    continue
 
                 if execution_time:
-                    if execution_time >= today_start:
+                    if execution_time >= lookback_start:
                         newly_executed_orders.append(order)
                     else:
                         skipped_orders.append(
-                            f"{order.symbol}: executed {execution_time} (before today)"
+                            f"{order.symbol}: executed {execution_time} (before backfill window)"
                         )
                 else:
                     skipped_orders.append(f"{order.symbol}: no execution_time or filled_at")
 
+            # Guard against duplicate DB rows for the same broker execution.
+            # Keep a single order per (broker_order_id, execution_qty) so downstream
+            # position creation / sell-placement logic does not run twice in one cycle.
+            deduped_orders: dict[str, Any] = {}
+            duplicate_count = 0
+            for order in newly_executed_orders:
+                execution_qty = getattr(order, "execution_qty", None) or 0
+                try:
+                    normalized_exec_qty = int(float(execution_qty))
+                except (TypeError, ValueError):
+                    normalized_exec_qty = 0
+                order_identity = str(
+                    getattr(order, "broker_order_id", None) or getattr(order, "order_id", None) or ""
+                ).strip()
+                if not order_identity:
+                    # Fallback identity for legacy rows without broker ids.
+                    order_identity = f"db:{getattr(order, 'id', '')}"
+                dedup_key = f"{order_identity}:{normalized_exec_qty}"
+
+                if dedup_key in deduped_orders:
+                    duplicate_count += 1
+                    existing = deduped_orders[dedup_key]
+                    existing_updated = getattr(existing, "updated_at", None) or getattr(
+                        existing, "execution_time", None
+                    )
+                    current_updated = getattr(order, "updated_at", None) or getattr(
+                        order, "execution_time", None
+                    )
+                    if current_updated and (not existing_updated or current_updated > existing_updated):
+                        deduped_orders[dedup_key] = order
+                else:
+                    deduped_orders[dedup_key] = order
+
+            if duplicate_count > 0:
+                logger.info(
+                    f"Deduplicated {duplicate_count} duplicate executed buy order row(s) "
+                    "by broker_order_id+execution_qty."
+                )
+            newly_executed_orders = list(deduped_orders.values())
+
             if skipped_orders:
                 logger.debug(
-                    f"Skipped {len(skipped_orders)} ONGOING orders (not executed today): "
+                    f"Skipped {len(skipped_orders)} ONGOING orders (outside backfill window): "
                     f"{', '.join(skipped_orders[:5])}"
                 )
 
@@ -2027,12 +2234,14 @@ class UnifiedOrderMonitor:
             existing_symbols = {
                 symbol.upper() for symbol in existing_sell_orders.keys()  # Already full symbols
             }
+            existing_base_symbols = {s.split("-")[0] for s in existing_symbols if s}
 
             # Get currently tracked sell orders
             active_sell_symbols = {
                 symbol.upper()
                 for symbol in self.sell_manager.active_sell_orders.keys()  # Already full symbols
             }
+            active_base_symbols = {s.split("-")[0] for s in active_sell_symbols if s}
 
             # Optimization: Fetch orders once and reuse for has_completed_sell_order checks
             all_orders_response = None
@@ -2041,16 +2250,201 @@ class UnifiedOrderMonitor:
             except Exception as e:
                 logger.debug(f"Failed to fetch orders for place_sell_orders_for_new_positions: {e}")
 
+            # Build current sellable quantity map. Prefer holdings sellable fields,
+            # then use positions as a fallback for symbols missing in holdings.
+            # Some broker payloads lag/omit sellable fields even when manual app allows sell.
+            sellable_qty_map: dict[str, int] = {}
+            holdings_qty_map: dict[str, int] = {}
+            positions_qty_map: dict[str, int] = {}
+            base_active_qty_map: dict[str, int] = {}
+            try:
+                def _to_int(value: Any) -> int:
+                    try:
+                        if value is None:
+                            return 0
+                        if isinstance(value, str):
+                            cleaned = value.replace(",", "").strip()
+                            if cleaned == "":
+                                return 0
+                            return int(float(cleaned))
+                        return int(float(value))
+                    except (TypeError, ValueError):
+                        return 0
+
+                holdings_response = (
+                    self.sell_manager.portfolio.get_holdings()
+                    if self.sell_manager and hasattr(self.sell_manager, "portfolio")
+                    else None
+                )
+                holdings_rows = []
+                if isinstance(holdings_response, dict):
+                    if isinstance(holdings_response.get("data"), list):
+                        holdings_rows = holdings_response.get("data", [])
+                    elif isinstance(holdings_response.get("holdings"), list):
+                        holdings_rows = holdings_response.get("holdings", [])
+                elif isinstance(holdings_response, list):
+                    holdings_rows = holdings_response
+
+                for h in holdings_rows:
+                    if not isinstance(h, dict):
+                        continue
+                    symbol = (
+                        h.get("tradingSymbol")
+                        or h.get("symbol")
+                        or h.get("trdSym")
+                        or h.get("securitySymbol")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+                    full_symbol = str(symbol).upper()
+                    base_symbol = full_symbol.split("-")[0]
+                    # Prefer explicit sellable quantity fields from holdings.
+                    has_sellable_field = any(
+                        k in h
+                        for k in (
+                            "sellableQuantity",
+                            "sellQty",
+                            "sellableQty",
+                            "sellable_quantity",
+                        )
+                    )
+                    if has_sellable_field:
+                        raw_qty = (
+                            h.get("sellableQuantity")
+                            or h.get("sellQty")
+                            or h.get("sellableQty")
+                            or h.get("sellable_quantity")
+                            or 0
+                        )
+                    else:
+                        raw_qty = h.get("quantity") or h.get("qty") or 0
+                    qty = _to_int(raw_qty)
+                    qty = max(qty, 0)
+                    holdings_qty_map[full_symbol] = qty
+                    sellable_qty_map[full_symbol] = qty
+                    sellable_qty_map[base_symbol] = qty
+                    if qty > 0:
+                        base_active_qty_map[base_symbol] = base_active_qty_map.get(base_symbol, 0) + qty
+
+                # Fallback: positions can show same-day buy qty earlier than holdings.
+                # Do not override holdings entries; only fill missing keys.
+                positions_response = (
+                    self.sell_manager.portfolio.get_positions()
+                    if self.sell_manager
+                    and hasattr(self.sell_manager, "portfolio")
+                    and hasattr(self.sell_manager.portfolio, "get_positions")
+                    else None
+                )
+                positions_rows = []
+                if isinstance(positions_response, dict):
+                    if isinstance(positions_response.get("data"), list):
+                        positions_rows = positions_response.get("data", [])
+                    elif isinstance(positions_response.get("positions"), list):
+                        positions_rows = positions_response.get("positions", [])
+                elif isinstance(positions_response, list):
+                    positions_rows = positions_response
+
+                for p in positions_rows:
+                    if not isinstance(p, dict):
+                        continue
+                    symbol = (
+                        p.get("trdSym")
+                        or p.get("tradingSymbol")
+                        or p.get("symbol")
+                        or p.get("sym")
+                        or ""
+                    )
+                    if not symbol:
+                        continue
+                    full_symbol = str(symbol).upper()
+                    base_symbol = full_symbol.split("-")[0]
+                    qty = _to_int(
+                        p.get("qty")
+                        or p.get("netQty")
+                        or p.get("netQuantity")
+                        or p.get("flBuyQty")
+                        or 0
+                    )
+                    # Safeguard: only active long positions are considered sellable.
+                    if qty <= 0:
+                        continue
+                    positions_qty_map[full_symbol] = qty
+                    base_active_qty_map[base_symbol] = base_active_qty_map.get(base_symbol, 0) + qty
+                    if full_symbol not in sellable_qty_map:
+                        sellable_qty_map[full_symbol] = qty
+                    if base_symbol not in sellable_qty_map:
+                        sellable_qty_map[base_symbol] = qty
+            except Exception as e:
+                logger.debug(f"Failed to build sellable quantity map for new holdings: {e}")
+            has_sellable_data = len(sellable_qty_map) > 0
+
+            # Build DB open quantity maps to handle symbol-split rows
+            # (e.g. SBILIFE + SBILIFE-EQ both open for same base symbol).
+            db_full_open_qty_map: dict[str, float] = {}
+            db_base_open_qty_map: dict[str, float] = {}
+            if self.positions_repo:
+                try:
+                    db_positions = self.positions_repo.list(self.user_id)
+                    for pos in db_positions:
+                        if getattr(pos, "closed_at", None) is not None:
+                            continue
+                        full_sym = str(getattr(pos, "symbol", "") or "").upper()
+                        if not full_sym:
+                            continue
+                        qty = float(getattr(pos, "quantity", 0) or 0)
+                        if qty <= 0:
+                            continue
+                        db_full_open_qty_map[full_sym] = (
+                            db_full_open_qty_map.get(full_sym, 0.0) + qty
+                        )
+                        base_sym = full_sym.split("-")[0]
+                        db_base_open_qty_map[base_sym] = (
+                            db_base_open_qty_map.get(base_sym, 0.0) + qty
+                        )
+                except Exception as db_qty_err:
+                    logger.debug(
+                        f"Failed to build DB open qty maps for new holdings: {db_qty_err}"
+                    )
+
+            # Diagnostic: symbol-wise source quantities used to decide sell eligibility.
+            debug_symbols = sorted(
+                {
+                    s
+                    for s in (
+                        list(holdings_qty_map.keys())
+                        + list(positions_qty_map.keys())
+                        + [str(getattr(o, "symbol", "")).upper() for o in newly_executed_orders]
+                    )
+                    if s
+                }
+            )
+            if debug_symbols:
+                debug_rows = []
+                for sym in debug_symbols:
+                    base_sym = sym.split("-")[0]
+                    h_qty = holdings_qty_map.get(sym)
+                    p_qty = positions_qty_map.get(sym)
+                    s_qty = sellable_qty_map.get(sym)
+                    if s_qty is None:
+                        s_qty = sellable_qty_map.get(base_sym)
+                    b_qty = base_active_qty_map.get(base_sym)
+                    debug_rows.append(
+                        f"{sym}:H={h_qty if h_qty is not None else '-'}|"
+                        f"P={p_qty if p_qty is not None else '-'}|"
+                        f"B={b_qty if b_qty is not None else '-'}|"
+                        f"S={s_qty if s_qty is not None else '-'}"
+                    )
+                logger.info(
+                    "Sell monitor qty sources (new executions): " + ", ".join(debug_rows)
+                )
+
             orders_placed = 0
 
             for db_order in newly_executed_orders:
                 try:
                     full_symbol = db_order.symbol.upper()  # Already full symbol from orders table
-
-                    # Skip if already has sell order
-                    if full_symbol in existing_symbols or full_symbol in active_sell_symbols:
-                        logger.info(f"Skipping {full_symbol}: Already has sell order")
-                        continue
+                    base_symbol = full_symbol.split("-")[0]
 
                     # Check if position already has a completed sell order
                     # Reuse orders data to avoid duplicate API calls
@@ -2081,11 +2475,32 @@ class UnifiedOrderMonitor:
                         or db_order.avg_price
                         or db_order.price
                     )
-                    execution_qty = getattr(db_order, "execution_qty", None) or db_order.quantity
+                    execution_qty = getattr(db_order, "execution_qty", None)
 
-                    if not execution_price or execution_qty <= 0:
+                    if not execution_price or not execution_qty or execution_qty <= 0:
                         logger.warning(
-                            f"Skipping {full_symbol}: Invalid execution price or quantity"
+                            f"Skipping {full_symbol}: Invalid execution price or quantity "
+                            "(execution_qty missing from execution sync)"
+                        )
+                        continue
+
+                    # Do not place sells when holdings are not sellable at broker side.
+                    # This avoids repeated RMS rejections and quantity amplification loops.
+                    full_sellable_qty = sellable_qty_map.get(full_symbol)
+                    base_sellable_qty = base_active_qty_map.get(base_symbol)
+                    if full_sellable_qty is None and base_sellable_qty is None:
+                        sellable_qty = None
+                    elif full_sellable_qty is None:
+                        sellable_qty = base_sellable_qty
+                    elif base_sellable_qty is None:
+                        sellable_qty = full_sellable_qty
+                    else:
+                        # Use base-level aggregate when it is higher (e.g. AXISBANK + AXISBANK-EQ).
+                        sellable_qty = max(full_sellable_qty, base_sellable_qty)
+                    if has_sellable_data and (sellable_qty is None or sellable_qty <= 0):
+                        logger.info(
+                            f"Skipping {full_symbol}: holdings sellableQuantity is 0/unknown "
+                            "(likely T1/not yet sellable)."
                         )
                         continue
 
@@ -2144,6 +2559,63 @@ class UnifiedOrderMonitor:
                                 exc_info=True,
                             )
                             continue
+                    else:
+                        # Backfill/idempotent sync: even when an open position exists,
+                        # apply this executed buy leg once so missed re-entry executions
+                        # can still update quantity/reentries after restart/polling gaps.
+                        try:
+                            order_info = {
+                                "symbol": full_symbol,
+                                "db_order_id": db_order.id,
+                            }
+                            self._create_position_from_executed_order(
+                                str(db_order.broker_order_id or db_order.order_id),
+                                order_info,
+                                execution_price,
+                                execution_qty,
+                            )
+                        except Exception as pos_sync_err:
+                            logger.error(
+                                f"Failed to sync executed position for {full_symbol}: {pos_sync_err}. "
+                                f"Skipping sell order placement for this execution.",
+                                exc_info=True,
+                            )
+                            continue
+
+                    # Uniform sell quantity rule: qty = min(db_open_position_qty, broker_sellable_qty)
+                    current_open_position = None
+                    db_open_qty = 0.0
+                    if self.positions_repo:
+                        try:
+                            current_open_position = self.positions_repo.get_by_symbol(
+                                self.user_id, full_symbol
+                            )
+                            if current_open_position and current_open_position.closed_at is None:
+                                db_open_qty = float(current_open_position.quantity or 0)
+                        except Exception as pos_qty_err:
+                            logger.warning(
+                                f"Error fetching open position qty for {full_symbol}: {pos_qty_err}"
+                            )
+
+                    # Use base-aggregated DB qty when available so split symbol rows
+                    # (BASE + BASE-EQ) can correctly update existing sell orders.
+                    db_full_qty = float(db_full_open_qty_map.get(full_symbol, 0.0))
+                    db_base_qty = float(db_base_open_qty_map.get(base_symbol, 0.0))
+                    aggregated_db_qty = max(float(db_open_qty), db_full_qty, db_base_qty)
+                    base_qty = aggregated_db_qty if aggregated_db_qty > 0 else float(execution_qty)
+                    if has_sellable_data and sellable_qty is not None:
+                        place_qty = min(base_qty, float(sellable_qty))
+                    else:
+                        # Fallback when holdings payload is unavailable in this cycle.
+                        # Keep execution-based sizing to avoid total failure due temporary DB read issues.
+                        place_qty = base_qty
+                    if place_qty <= 0:
+                        logger.info(
+                            f"Skipping {full_symbol}: computed sell qty is 0 "
+                            f"(db_open_qty={db_open_qty}, execution_qty={execution_qty}, "
+                            f"sellable_qty={sellable_qty})."
+                        )
+                        continue
 
                     # Get execution time for this order (normalize to IST)
                     order_execution_time = (
@@ -2157,7 +2629,7 @@ class UnifiedOrderMonitor:
                     trade = {
                         "symbol": full_symbol,  # ✅ Full symbol for matching
                         "ticker": ticker,
-                        "qty": int(execution_qty),
+                        "qty": int(place_qty),
                         "entry_price": execution_price,
                         "placed_symbol": db_order.symbol,  # Keep original broker symbol (full)
                         "entry_time": (
@@ -2183,10 +2655,108 @@ class UnifiedOrderMonitor:
                     # This enables RSI 50 exit mechanism to work for all positions
                     # Note: Positions may be sold at loss if EMA9 is below entry price
 
+                    # If a base/full sell order already exists, either skip or replace if qty is lower.
+                    existing_info = (
+                        self.sell_manager.active_sell_orders.get(full_symbol)
+                        or existing_sell_orders.get(full_symbol)
+                        or self.sell_manager.active_sell_orders.get(base_symbol)
+                        or existing_sell_orders.get(base_symbol)
+                    )
+                    if existing_info:
+                        existing_qty_raw = (
+                            existing_info.get("qty")
+                            or existing_info.get("order_qty")
+                            or existing_info.get("quantity")
+                            or 0
+                        )
+                        try:
+                            existing_qty = int(float(existing_qty_raw))
+                        except (TypeError, ValueError):
+                            existing_qty = 0
+                        target_qty = int(place_qty)
+                        existing_order_id = str(existing_info.get("order_id") or "").strip()
+                        existing_price_raw = (
+                            existing_info.get("price")
+                            or existing_info.get("target_price")
+                            or 0
+                        )
+                        try:
+                            existing_price = float(existing_price_raw)
+                        except (TypeError, ValueError):
+                            existing_price = 0.0
+
+                        # Keep DB orders list in sync for system-tracked positions when we detect
+                        # an existing broker sell order and skip fresh placement.
+                        sync_existing_sell = getattr(
+                            self.sell_manager, "_persist_existing_broker_sell_order", None
+                        )
+                        if callable(sync_existing_sell):
+                            sync_existing_sell(
+                                symbol=full_symbol,
+                                ticker=ticker,
+                                order_id=existing_order_id,
+                                qty=max(existing_qty, target_qty),
+                                price=existing_price if existing_price > 0 else ema9,
+                                source="unified_monitor_existing_order_sync",
+                            )
+
+                        if existing_qty >= target_qty:
+                            logger.info(
+                                f"Skipping {full_symbol}: Already has sell order "
+                                f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty})"
+                            )
+                            continue
+
+                        if existing_order_id:
+                            logger.info(
+                                f"Existing sell qty lower for {full_symbol} "
+                                f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty}). "
+                                "Attempting replace/update."
+                            )
+                            replaced = self.sell_manager.update_sell_order(
+                                order_id=existing_order_id,
+                                symbol=full_symbol,
+                                qty=target_qty,
+                                new_price=ema9,
+                            )
+                            if replaced:
+                                if not isinstance(
+                                    getattr(self.sell_manager, "lowest_ema9", None), dict
+                                ):
+                                    self.sell_manager.lowest_ema9 = {}
+                                self.sell_manager._register_order(
+                                    symbol=full_symbol,
+                                    order_id=existing_order_id,
+                                    target_price=ema9,
+                                    qty=target_qty,
+                                    ticker=ticker,
+                                    placed_symbol=broker_sym,
+                                )
+                                self.sell_manager.lowest_ema9[full_symbol] = ema9
+                                active_sell_symbols.add(full_symbol)
+                                active_base_symbols.add(base_symbol)
+                                logger.info(
+                                    f"Updated existing sell order for {full_symbol}: "
+                                    f"order_id={existing_order_id}, qty={target_qty}, target=Rs {ema9:.2f}"
+                                )
+                                continue
+                            logger.warning(
+                                f"Failed to replace existing sell order for {full_symbol} "
+                                f"(order_id={existing_order_id}). Keeping current active order."
+                            )
+                            continue
+
+                        logger.info(
+                            f"Skipping {full_symbol}: Existing sell order without order_id "
+                            f"(base={base_symbol}, existing_qty={existing_qty}, target_qty={target_qty})"
+                        )
+                        continue
+
                     # Place sell order
                     logger.info(
-                        f"Placing sell order for {full_symbol}: qty={int(execution_qty)}, "
-                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}"
+                        f"Placing sell order for {full_symbol}: qty={int(place_qty)}, "
+                        f"entry_price={execution_price:.2f}, ema9={ema9:.2f}, "
+                        f"db_open_qty={db_open_qty}, sellable_qty={sellable_qty}"
                     )
                     order_id = self.sell_manager.place_sell_order(trade, ema9)
 
@@ -2197,7 +2767,7 @@ class UnifiedOrderMonitor:
                             symbol=full_symbol,
                             order_id=order_id,
                             target_price=ema9,
-                            qty=int(execution_qty),
+                            qty=int(place_qty),
                             ticker=ticker,
                             placed_symbol=broker_sym,
                         )

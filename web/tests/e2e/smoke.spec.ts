@@ -68,3 +68,38 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
     await authenticatedPage.waitForTimeout(200);
   }
 });
+
+test('auth -> dashboard -> pnl page basics', async ({ authenticatedPage }) => {
+  await authenticatedPage.goto('/dashboard');
+  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+
+  // Scope queries to sidebar navigation
+  const sidebar = authenticatedPage.locator('aside nav, aside');
+
+  // Navigate to PnL (expand Trading category first)
+  const tradingButton = sidebar.getByRole('button', { name: /Trading/i });
+  if (await tradingButton.isVisible().catch(() => false)) {
+    await tradingButton.click();
+    await authenticatedPage.waitForTimeout(300);
+  }
+
+  // Sidebar label can include icon text (e.g. "💰 PnL"), so keep name matching flexible.
+  const pnlNavLink = sidebar.getByRole('link', { name: /P(?:&|n)L|Profit\s*&\s*Loss/i });
+  if (await pnlNavLink.first().isVisible().catch(() => false)) {
+    await pnlNavLink.first().click();
+  } else {
+    // Fallback: dashboard quick action link
+    await authenticatedPage.getByRole('link', { name: /View P&L/i }).click();
+  }
+  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+
+  await expect(authenticatedPage.getByRole('heading', { name: /Profit & Loss/i })).toBeVisible();
+  await expect(authenticatedPage.getByText('Summary', { exact: true }).first()).toBeVisible();
+  await expect(authenticatedPage.getByText('Daily P&L', { exact: true }).first()).toBeVisible();
+  await expect(authenticatedPage.getByText('Closed Positions', { exact: true }).first()).toBeVisible();
+
+  // Export panel should open
+  const exportButton = authenticatedPage.getByRole('button', { name: /Export Options/i });
+  await exportButton.click();
+  await expect(authenticatedPage.getByText(/Export P&L Data/i)).toBeVisible();
+});

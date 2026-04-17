@@ -1,3 +1,5 @@
+# ruff: noqa: PLC0415, E501, S110, PLR2004, PLR0912, PLR0915
+# fmt: off
 """
 Multi-User Trading Service Wrapper
 
@@ -316,6 +318,39 @@ class MultiUserTradingService:
         # Create user logger early so it can be used throughout the function
         user_logger = get_user_logger(user_id=user_id, db=thread_db, module="PaperTradingScheduler")
 
+        # CRITICAL: bind all paper-trading components to this thread-local DB session.
+        # Using a request-scoped/main-thread Session inside this background scheduler can
+        # cause SQLAlchemy transaction state errors (prepared/illegal state changes).
+        try:
+            service.db = thread_db
+            if getattr(service, "logger", None) is not None and hasattr(service.logger, "db"):
+                service.logger.db = thread_db
+
+            broker = getattr(service, "broker", None)
+            if broker is not None and hasattr(broker, "db_session"):
+                broker.db_session = thread_db
+
+            engine = getattr(service, "engine", None)
+            if engine is not None:
+                if hasattr(engine, "db"):
+                    engine.db = thread_db
+                if hasattr(engine, "logger") and getattr(engine, "logger", None) is not None:
+                    if hasattr(engine.logger, "db"):
+                        engine.logger.db = thread_db
+                engine_broker = getattr(engine, "broker", None)
+                if engine_broker is not None and hasattr(engine_broker, "db_session"):
+                    engine_broker.db_session = thread_db
+
+            user_logger.info(
+                "Rebound paper trading service components to thread-local DB session",
+                action="scheduler",
+            )
+        except Exception as rebind_err:
+            user_logger.warning(
+                f"Failed to fully rebind service DB session (continuing): {rebind_err}",
+                action="scheduler",
+            )
+
         lock_id: str | None = None
         try:
             # Try to acquire lock with retries to handle stale locks from dead threads
@@ -543,9 +578,9 @@ class MultiUserTradingService:
                     if premarket_schedule and premarket_schedule.enabled:
                         premarket_time = premarket_schedule.schedule_time
                         # Use 2-minute window (consistent with should_run_task)
-                        premarket_diff = (
-                            current_time.hour * 60 + current_time.minute
-                        ) - (premarket_time.hour * 60 + premarket_time.minute)
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        premarket_minutes = premarket_time.hour * 60 + premarket_time.minute
+                        premarket_diff = current_minutes - premarket_minutes
                         if 0 <= premarket_diff < 2:
                             if not service.tasks_completed.get("premarket_retry"):
                                 try:
@@ -632,9 +667,9 @@ class MultiUserTradingService:
                         analysis_hour = analysis_time.hour
                         analysis_minute = analysis_time.minute
                         # Use 2-minute window (consistent with should_run_task)
-                        analysis_diff = (
-                            current_time.hour * 60 + current_time.minute
-                        ) - (analysis_hour * 60 + analysis_minute)
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        analysis_minutes = analysis_hour * 60 + analysis_minute
+                        analysis_diff = current_minutes - analysis_minutes
                         if 0 <= analysis_diff < 2:
                             if not service.tasks_completed.get("analysis"):
                                 try:
@@ -691,9 +726,9 @@ class MultiUserTradingService:
                     if buy_schedule and buy_schedule.enabled:
                         buy_time = buy_schedule.schedule_time
                         # Use 2-minute window (consistent with should_run_task)
-                        buy_diff = (current_time.hour * 60 + current_time.minute) - (
-                            buy_time.hour * 60 + buy_time.minute
-                        )
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        buy_minutes = buy_time.hour * 60 + buy_time.minute
+                        buy_diff = current_minutes - buy_minutes
                         if 0 <= buy_diff < 2:
                             if not service.tasks_completed.get("buy_orders"):
                                 try:
@@ -710,9 +745,9 @@ class MultiUserTradingService:
                     if eod_schedule and eod_schedule.enabled:
                         eod_time = eod_schedule.schedule_time
                         # Use 2-minute window (consistent with should_run_task)
-                        eod_diff = (current_time.hour * 60 + current_time.minute) - (
-                            eod_time.hour * 60 + eod_time.minute
-                        )
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        eod_minutes = eod_time.hour * 60 + eod_time.minute
+                        eod_diff = current_minutes - eod_minutes
                         if 0 <= eod_diff < 2:
                             if not service.tasks_completed.get("eod_cleanup"):
                                 try:
