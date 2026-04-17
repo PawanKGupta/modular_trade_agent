@@ -103,7 +103,9 @@ class KotakNeoAuth:
 
     def _load_credentials(self):
         """Load credentials from environment file"""
-        load_dotenv(self.config_file)
+        # File must win over process env so empty CI placeholders (e.g. KOTAK_*="")
+        # cannot block values from an explicit on-disk env file used in tests/services.
+        load_dotenv(self.config_file, override=True)
 
         # Ensure all credentials are strings (not None)
         # For REST APIs we map:
