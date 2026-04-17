@@ -49,10 +49,11 @@ import src.infrastructure.db.models  # noqa: F401
 def clean_db_after_test():
     """
     Ensure each test runs with an isolated in-memory DB schema and cleans up afterward.
-    Drops all tables after each test to avoid cross-test contamination.
+    Drops and recreates all tables on the shared session engine so FastAPI TestClient and
+    SessionLocal see the same empty schema (pytest already pins DB_URL to :memory:).
 
-    CRITICAL: This fixture MUST use a separate test engine, NOT the shared engine from
-    session.py, to prevent accidentally dropping tables from the production database.
+    CRITICAL: Only run drop_all/create_all when DB_URL is in-memory (enforced above and
+    in session.py guards) so production file databases are never touched.
     """
     # CRITICAL (Fix A): Keep DB_URL pinned to in-memory for the *entire* test run.
     # Restoring DB_URL per-test can cause CI-only import-order issues where some modules
@@ -83,35 +84,24 @@ def clean_db_after_test():
     if root not in sys.path:
         sys.path.append(root)
 
-    # Create a SEPARATE test engine - do NOT use the shared engine from session.py
-    from sqlalchemy import create_engine
-    from sqlalchemy.pool import StaticPool
-
+    # Reset the *application* engine schema each test so FastAPI + SessionLocal share
+    # the same in-memory DB. A separate orphan engine left the real session engine
+    # dirty (e.g. INFY/TCS from other tests) while drop_all ran only on that orphan.
     from src.infrastructure.db.base import Base
-
-    test_engine = create_engine(
-        "sqlite:///:memory:",
-        echo=False,
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    from src.infrastructure.db.session import engine
 
     try:
-        # Create fresh schema for each test using the test engine
         try:
-            Base.metadata.drop_all(bind=test_engine)
+            Base.metadata.drop_all(bind=engine)
         except Exception:
             pass
-        Base.metadata.create_all(bind=test_engine)
+        Base.metadata.create_all(bind=engine)
         yield
     finally:
-        # Teardown: drop schema from test engine only
         try:
-            Base.metadata.drop_all(bind=test_engine)
+            Base.metadata.drop_all(bind=engine)
         except Exception:
             pass
-        test_engine.dispose()
 
         # NOTE: Do not restore DB_URL here; keep it pinned for the entire pytest run.
         # If a file-based SQLite URL was used in a test (e.g., overridden to a tmp file),
