@@ -90,6 +90,19 @@ def clean_db_after_test():
     from src.infrastructure.db.base import Base
     from src.infrastructure.db.session import engine
 
+    # Reset service singletons so tests never share cross-test state.
+    # This avoids CI-only flakes where a previous test configures a singleton with mocks
+    # (e.g. PriceService.live_price_manager) and later tests unexpectedly inherit it.
+    try:
+        from modules.kotak_neo_auto_trader.services import indicator_service, position_loader, price_service
+
+        price_service._price_service_instance = None  # noqa: SLF001
+        indicator_service._indicator_service_instance = None  # noqa: SLF001
+        position_loader._position_loader_instance = None  # noqa: SLF001
+    except Exception:
+        # Best-effort: not all test subsets import kotak services
+        pass
+
     try:
         try:
             Base.metadata.drop_all(bind=engine)
