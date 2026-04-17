@@ -17,12 +17,17 @@ from src.infrastructure.persistence.signals_repository import SignalsRepository 
 
 
 @pytest.fixture
-def db_session():
+def db_session(clean_db_after_test):  # noqa: ARG001
     """Create a fresh database session for each test"""
+    # Defensive: ensure all models are registered on Base.metadata before create_all.
+    # In CI, import ordering + module caching can otherwise yield a Base without `signals`
+    # table registered, causing intermittent "no such table: signals" on DELETE.
+    import src.infrastructure.db.models  # noqa: F401, PLC0415
+
     from src.infrastructure.db.base import Base  # noqa: PLC0415
     from src.infrastructure.db.session import engine  # noqa: PLC0415
 
-    # Create all tables
+    # Create all tables (redundant if conftest just ran create_all; safe if ordering varies)
     Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()
