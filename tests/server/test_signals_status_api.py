@@ -8,6 +8,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 
+import pytest
 from jose import jwt
 from sqlalchemy import text
 
@@ -16,6 +17,7 @@ os.environ["DB_URL"] = "sqlite:///:memory:"
 from fastapi import status  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from server.app.core.deps import get_db  # noqa: E402
 from server.app.main import app  # noqa: E402
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus  # noqa: E402
 from src.infrastructure.db.session import SessionLocal  # noqa: E402
@@ -25,6 +27,18 @@ from src.infrastructure.persistence.signals_repository import SignalsRepository 
 # Fixed IST timestamp so mark_time_expired_signals() never treats test rows as past market expiry
 # (CI clocks / timezones must not shrink the buying-zone active list or reject flow).
 _STABLE_SIGNAL_TS = datetime(2030, 6, 15, 10, 30, tzinfo=IST)
+
+
+@pytest.fixture(autouse=True)
+def _signals_status_api_uses_shared_engine():
+    """
+    Other server tests override get_db with a different SQLAlchemy session/engine.
+    This module writes signals via SessionLocal() (shared session.engine); the app
+    must not keep a stale override or buying-zone reads an empty DB (flaky CI).
+    """
+    app.dependency_overrides.pop(get_db, None)
+    yield
+    app.dependency_overrides.pop(get_db, None)
 
 
 def _create_authenticated_client():
