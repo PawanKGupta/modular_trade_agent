@@ -90,6 +90,14 @@ def clean_db_after_test():
     from src.infrastructure.db.base import Base
     from src.infrastructure.db.session import engine
 
+    # Ensure models are registered on Base.metadata for create_all().
+    # Some tests manipulate import caches; re-importing is idempotent and prevents
+    # CI-only flakes like "no such table: users".
+    try:
+        import src.infrastructure.db.models  # noqa: F401
+    except Exception:
+        pass
+
     # Reset service singletons so tests never share cross-test state.
     # This avoids CI-only flakes where a previous test configures a singleton with mocks
     # (e.g. PriceService.live_price_manager) and later tests unexpectedly inherit it.
