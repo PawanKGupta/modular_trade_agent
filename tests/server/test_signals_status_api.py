@@ -17,10 +17,8 @@ os.environ["DB_URL"] = "sqlite:///:memory:"
 from fastapi import status  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from server.app.core.deps import get_db  # noqa: E402
 from server.app.main import app  # noqa: E402
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus  # noqa: E402
-from src.infrastructure.db.session import SessionLocal  # noqa: E402
 from src.infrastructure.db.timezone_utils import IST  # noqa: E402
 from src.infrastructure.persistence.signals_repository import SignalsRepository  # noqa: E402
 
@@ -32,19 +30,14 @@ _STABLE_SIGNAL_TS = datetime(2030, 6, 15, 10, 30, tzinfo=IST)
 @pytest.fixture(autouse=True)
 def _signals_status_api_uses_shared_engine():
     """
-    Other server tests override get_db with a different SQLAlchemy session/engine.
-    This module writes signals via SessionLocal() (shared session.engine); the app
-    must not keep a stale override or buying-zone reads an empty DB (flaky CI).
+    This module relies on the `client`/`db_session` fixtures from tests/conftest.py
+    so API requests and direct DB seeding use the same SQLAlchemy session/engine.
     """
-    app.dependency_overrides.pop(get_db, None)
     yield
-    app.dependency_overrides.pop(get_db, None)
 
 
-def _create_authenticated_client():
+def _create_authenticated_client(client: TestClient):
     """Helper to create authenticated test client"""
-    client = TestClient(app)
-
     # Signup with unique email
     unique_email = f"test-{uuid.uuid4().hex[:8]}@example.com"
     response = client.post(
@@ -72,48 +65,47 @@ def _create_authenticated_client():
     return client, headers, user_id
 
 
-def _create_sample_signals():
+def _create_sample_signals(db_session):
     """Create sample signals with different statuses"""
-    with SessionLocal() as db:
-        # Clear ALL signals from the database (not just delete from ORM)
-        db.execute(text("DELETE FROM signals"))
-        db.commit()
+    # Clear per-user overrides first, then base signals.
+    db_session.execute(text("DELETE FROM user_signal_status"))
+    db_session.execute(text("DELETE FROM signals"))
+    db_session.commit()
 
-        now = _STABLE_SIGNAL_TS
+    now = _STABLE_SIGNAL_TS
 
-        signals = [
-            Signals(symbol="ACTIVE1", status=SignalStatus.ACTIVE, ts=now, rsi10=25.0),
-            Signals(symbol="ACTIVE2", status=SignalStatus.ACTIVE, ts=now, rsi10=28.0),
-            Signals(
-                symbol="EXPIRED1",
-                status=SignalStatus.EXPIRED,
-                ts=now - timedelta(days=1),
-                rsi10=30.0,
-            ),
-            Signals(
-                symbol="TRADED1",
-                status=SignalStatus.TRADED,
-                ts=now - timedelta(hours=2),
-                rsi10=27.0,
-            ),
-            Signals(symbol="REJECTED1", status=SignalStatus.REJECTED, ts=now, rsi10=32.0),
-        ]
+    signals = [
+        Signals(symbol="ACTIVE1", status=SignalStatus.ACTIVE, ts=now, rsi10=25.0),
+        Signals(symbol="ACTIVE2", status=SignalStatus.ACTIVE, ts=now, rsi10=28.0),
+        Signals(
+            symbol="EXPIRED1",
+            status=SignalStatus.EXPIRED,
+            ts=now - timedelta(days=1),
+            rsi10=30.0,
+        ),
+        Signals(
+            symbol="TRADED1",
+            status=SignalStatus.TRADED,
+            ts=now - timedelta(hours=2),
+            rsi10=27.0,
+        ),
+        Signals(symbol="REJECTED1", status=SignalStatus.REJECTED, ts=now, rsi10=32.0),
+    ]
 
-        db.add_all(signals)
-        db.commit()
+    db_session.add_all(signals)
+    db_session.commit()
 
-        # Verify they were added
-        count = db.query(Signals).count()
-        assert count == 5, f"Expected 5 signals but got {count}"
+    count = db_session.query(Signals).count()
+    assert count == 5, f"Expected 5 signals but got {count}"
 
-        return [s.symbol for s in signals]
+    return [s.symbol for s in signals]
 
 
 class TestBuyingZoneStatusFilter:
-    def test_default_returns_only_active_signals(self):
+    def test_default_returns_only_active_signals(self, client, db_session):
         """Default behavior: return only ACTIVE signals"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get("/api/v1/signals/buying-zone", headers=headers)
 
@@ -129,10 +121,10 @@ class TestBuyingZoneStatusFilter:
         assert "TRADED1" not in symbols
         assert "REJECTED1" not in symbols
 
-    def test_filter_by_expired_status(self):
+    def test_filter_by_expired_status(self, client, db_session):
         """Should return only EXPIRED signals when status_filter='expired'"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get(
             "/api/v1/signals/buying-zone", headers=headers, params={"status_filter": "expired"}
@@ -145,10 +137,10 @@ class TestBuyingZoneStatusFilter:
         assert data[0]["symbol"] == "EXPIRED1"
         assert data[0]["status"] == "expired"
 
-    def test_filter_by_traded_status(self):
+    def test_filter_by_traded_status(self, client, db_session):
         """Should return only TRADED signals when status_filter='traded'"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get(
             "/api/v1/signals/buying-zone", headers=headers, params={"status_filter": "traded"}
@@ -161,10 +153,10 @@ class TestBuyingZoneStatusFilter:
         assert data[0]["symbol"] == "TRADED1"
         assert data[0]["status"] == "traded"
 
-    def test_filter_by_rejected_status(self):
+    def test_filter_by_rejected_status(self, client, db_session):
         """Should return only REJECTED signals when status_filter='rejected'"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get(
             "/api/v1/signals/buying-zone", headers=headers, params={"status_filter": "rejected"}
@@ -177,10 +169,10 @@ class TestBuyingZoneStatusFilter:
         assert data[0]["symbol"] == "REJECTED1"
         assert data[0]["status"] == "rejected"
 
-    def test_filter_all_returns_all_signals(self):
+    def test_filter_all_returns_all_signals(self, client, db_session):
         """Should return all signals when status_filter='all'"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get(
             "/api/v1/signals/buying-zone", headers=headers, params={"status_filter": "all"}
@@ -196,10 +188,10 @@ class TestBuyingZoneStatusFilter:
         assert "TRADED1" in symbols
         assert "REJECTED1" in symbols
 
-    def test_status_field_included_in_response(self):
+    def test_status_field_included_in_response(self, client, db_session):
         """Response should include status field"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.get("/api/v1/signals/buying-zone", headers=headers)
 
@@ -212,10 +204,10 @@ class TestBuyingZoneStatusFilter:
 
 
 class TestRejectSignalEndpoint:
-    def test_reject_active_signal(self):
+    def test_reject_active_signal(self, client, db_session):
         """Should successfully reject an active signal (per-user)"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.patch("/api/v1/signals/signals/ACTIVE1/reject", headers=headers)
 
@@ -225,26 +217,24 @@ class TestRejectSignalEndpoint:
         assert data["status"] == "rejected"
 
         # Verify in database - base signal should still be ACTIVE (per-user status)
-        with SessionLocal() as db:
-            signal = db.query(Signals).filter(Signals.symbol == "ACTIVE1").first()
-            # Base signal remains ACTIVE (per-user status is in UserSignalStatus table)
-            assert signal.status == SignalStatus.ACTIVE
+        signal = db_session.query(Signals).filter(Signals.symbol == "ACTIVE1").first()
+        assert signal is not None
+        # Base signal remains ACTIVE (per-user status is in UserSignalStatus table)
+        assert signal.status == SignalStatus.ACTIVE
 
-            # Verify user-specific status was created
-            user_status = (
-                db.query(UserSignalStatus)
-                .filter(
-                    UserSignalStatus.signal_id == signal.id, UserSignalStatus.user_id == user_id
-                )
-                .first()
-            )
-            assert user_status is not None
-            assert user_status.status == SignalStatus.REJECTED
+        # Verify user-specific status was created
+        user_status = (
+            db_session.query(UserSignalStatus)
+            .filter(UserSignalStatus.signal_id == signal.id, UserSignalStatus.user_id == user_id)
+            .first()
+        )
+        assert user_status is not None
+        assert user_status.status == SignalStatus.REJECTED
 
-    def test_can_reject_expired_signal(self):
+    def test_can_reject_expired_signal(self, client, db_session):
         """Should allow rejecting expired signal (creates per-user status)"""
-        client, headers, user_id = _create_authenticated_client()
-        _create_sample_signals()
+        client, headers, user_id = _create_authenticated_client(client)
+        _create_sample_signals(db_session)
 
         response = client.patch("/api/v1/signals/signals/EXPIRED1/reject", headers=headers)
 
@@ -254,9 +244,9 @@ class TestRejectSignalEndpoint:
         assert data["symbol"] == "EXPIRED1"
         assert data["status"] == "rejected"
 
-    def test_cannot_reject_nonexistent_signal(self):
+    def test_cannot_reject_nonexistent_signal(self, client):
         """Should return 404 for nonexistent symbol"""
-        client, headers, user_id = _create_authenticated_client()
+        client, headers, user_id = _create_authenticated_client(client)
 
         response = client.patch("/api/v1/signals/signals/NONEXISTENT/reject", headers=headers)
 
@@ -274,21 +264,20 @@ class TestRejectSignalEndpoint:
 class TestSignalStatusInBuyingZoneWorkflow:
     """Integration tests for complete signal status workflow"""
 
-    def test_complete_workflow_active_to_traded(self):
+    def test_complete_workflow_active_to_traded(self, client, db_session):
         """Test: Signal created as active, gets traded, shows in traded filter"""
-        client, headers, user_id = _create_authenticated_client()
+        client, headers, user_id = _create_authenticated_client(client)
 
         # Create active signal
-        with SessionLocal() as db:
-            # Clear existing signals
-            db.query(Signals).delete()
-            db.commit()
+        db_session.execute(text("DELETE FROM user_signal_status"))
+        db_session.execute(text("DELETE FROM signals"))
+        db_session.commit()
 
-            signal = Signals(
-                symbol="WORKFLOW1", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
-            )
-            db.add(signal)
-            db.commit()
+        signal = Signals(
+            symbol="WORKFLOW1", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
+        )
+        db_session.add(signal)
+        db_session.commit()
 
         # 1. Verify shows in active filter
         response = client.get(
@@ -299,9 +288,8 @@ class TestSignalStatusInBuyingZoneWorkflow:
         assert response.json()[0]["symbol"] == "WORKFLOW1"
 
         # 2. Mark as traded (simulating order placement)
-        with SessionLocal() as db:
-            repo = SignalsRepository(db, user_id=user_id)
-            repo.mark_as_traded("WORKFLOW1", user_id=user_id)
+        repo = SignalsRepository(db_session, user_id=user_id)
+        repo.mark_as_traded("WORKFLOW1", user_id=user_id)
 
         # 3. Verify no longer shows in active filter
         response = client.get(
@@ -319,21 +307,20 @@ class TestSignalStatusInBuyingZoneWorkflow:
         assert response.json()[0]["symbol"] == "WORKFLOW1"
         assert response.json()[0]["status"] == "traded"
 
-    def test_complete_workflow_active_to_rejected(self):
+    def test_complete_workflow_active_to_rejected(self, client, db_session):
         """Test: Signal created as active, user rejects it, shows in rejected filter"""
-        client, headers, user_id = _create_authenticated_client()
+        client, headers, user_id = _create_authenticated_client(client)
 
         # Create active signal
-        with SessionLocal() as db:
-            # Clear existing signals
-            db.query(Signals).delete()
-            db.commit()
+        db_session.execute(text("DELETE FROM user_signal_status"))
+        db_session.execute(text("DELETE FROM signals"))
+        db_session.commit()
 
-            signal = Signals(
-                symbol="WORKFLOW2", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
-            )
-            db.add(signal)
-            db.commit()
+        signal = Signals(
+            symbol="WORKFLOW2", status=SignalStatus.ACTIVE, ts=_STABLE_SIGNAL_TS, rsi10=25.0
+        )
+        db_session.add(signal)
+        db_session.commit()
 
         # 1. User rejects signal via API
         response = client.patch("/api/v1/signals/signals/WORKFLOW2/reject", headers=headers)
