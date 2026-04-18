@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from server.app.core.config import settings
+from src.application.services.razorpay_credentials import get_razorpay_gateway
 from src.application.services.subscription_entitlement_service import default_features_for_tier
 from src.infrastructure.db.models import (
     BillingProvider,
@@ -34,7 +34,10 @@ class BillingCheckoutService:
     def __init__(self, db: Session):
         self.db = db
         self.repo = BillingRepository(db)
-        self.rzp = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+
+    @property
+    def rzp(self) -> RazorpayGateway:
+        return get_razorpay_gateway(self.db)
 
     def _validate_coupon(self, coupon: Coupon | None, user_id: int, plan_id: int) -> None:
         if not coupon:

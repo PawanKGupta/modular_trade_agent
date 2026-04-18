@@ -2,14 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from server.app.core.config import settings
 from src.application.services.billing_checkout_service import (
     BillingCheckoutError,
     BillingCheckoutService,
 )
+from src.application.services.razorpay_credentials import get_razorpay_gateway
 from src.application.services.subscription_entitlement_service import SubscriptionEntitlementService
 from src.infrastructure.db.models import BillingProvider, Users
-from src.infrastructure.payments.razorpay_gateway import RazorpayGateway
 from src.infrastructure.persistence.billing_repository import BillingRepository
 
 from ..core.deps import get_current_user, get_db
@@ -75,7 +74,7 @@ def get_subscription_pay_link(
     s = subs[0]
     if s.billing_provider != BillingProvider.RAZORPAY or not s.razorpay_subscription_id:
         return SubscriptionPayLinkOut(detail="No Razorpay subscription to pay online.")
-    gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+    gw = get_razorpay_gateway(db)
     if not gw.is_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

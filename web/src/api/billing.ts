@@ -128,6 +128,12 @@ export async function patchAdminBillingSettings(
 	return res.data;
 }
 
+/** PATCH /admin/billing/razorpay-credentials — partial update; null clears stored DB value. */
+export async function patchAdminRazorpayCredentials(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const res = await api.patch('/admin/billing/razorpay-credentials', body);
+	return res.data;
+}
+
 export async function getAdminBillingPlans(): Promise<BillingPlan[]> {
 	const res = await api.get<BillingPlan[]>('/admin/billing/plans');
 	return res.data;

@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Time,
     UniqueConstraint,
@@ -1158,7 +1159,7 @@ class SubscriptionPlan(Base):
 
 
 class PlanPriceSchedule(Base):
-    """Scheduled price change; effective from given instant (IST-naive per project DB convention)."""
+    """Scheduled price change; effective-from instant (IST-naive DB convention)."""
 
     __tablename__ = "plan_price_schedules"
 
@@ -1333,6 +1334,12 @@ class BillingAdminSettings(Base):
     dunning_retry_interval_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+    # Razorpay key id plain; API + webhook secrets encrypted (razorpay_credentials).
+    razorpay_key_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    razorpay_key_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    razorpay_webhook_secret_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
     )
 
 

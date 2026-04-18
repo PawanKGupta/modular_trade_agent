@@ -40,13 +40,25 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ.setdefault("PYTHONUTF8", "1")
 
+# Fernet material for encrypting broker / billing secrets in API tests (skipped if already set).
+if (
+    not (os.environ.get("APP_DATA_ENCRYPTION_KEY") or "").strip()
+    and not (os.environ.get("BROKER_SECRET_KEY") or "").strip()
+):
+    try:
+        from cryptography.fernet import Fernet  # noqa: PLC0415
+
+        os.environ["BROKER_SECRET_KEY"] = Fernet.generate_key().decode()
+    except Exception:
+        pass
+
 # Import models ONCE at module level to ensure they're registered before any fixtures
 # This prevents SQLAlchemy registry conflicts when models are imported multiple times
 import src.infrastructure.db.models  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
-def clean_db_after_test():
+def clean_db_after_test():  # noqa: PLR0915
     """
     Ensure each test runs with an isolated in-memory DB schema and cleans up afterward.
     Drops and recreates all tables on the shared session engine so FastAPI TestClient and
@@ -102,7 +114,11 @@ def clean_db_after_test():
     # This avoids CI-only flakes where a previous test configures a singleton with mocks
     # (e.g. PriceService.live_price_manager) and later tests unexpectedly inherit it.
     try:
-        from modules.kotak_neo_auto_trader.services import indicator_service, position_loader, price_service
+        from modules.kotak_neo_auto_trader.services import (
+            indicator_service,
+            position_loader,
+            price_service,
+        )
 
         price_service._price_service_instance = None  # noqa: SLF001
         indicator_service._indicator_service_instance = None  # noqa: SLF001

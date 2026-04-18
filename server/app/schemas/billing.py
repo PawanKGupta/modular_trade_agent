@@ -122,6 +122,14 @@ class AdminBillingSettingsUpdate(BaseModel):
     dunning_retry_interval_hours: int | None = Field(default=None, ge=1, le=168)
 
 
+class AdminRazorpayCredentialsPatch(BaseModel):
+    """Partial update. Omitted fields are unchanged. Null clears stored DB value for that field."""
+
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
+
+
 class AdminManualSubscription(BaseModel):
     user_id: int
     plan_id: int

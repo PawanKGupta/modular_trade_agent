@@ -4,8 +4,13 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from server.app.core.config import settings
+from server.app.core.crypto import (
+    MissingDedicatedEncryptionKeyError,
+    assert_db_secret_encryption_allowed,
+    encrypt_blob,
+)
 from src.application.services.billing_reconciliation_service import BillingReconciliationService
+from src.application.services.razorpay_credentials import get_razorpay_gateway, razorpay_admin_meta
 from src.application.services.subscription_entitlement_service import default_features_for_tier
 from src.infrastructure.db.models import (
     BillingInterval,
@@ -33,6 +38,7 @@ from ..schemas.billing import (
     AdminPlanCreate,
     AdminPlanUpdate,
     AdminPriceScheduleCreate,
+    AdminRazorpayCredentialsPatch,
     AdminRefundRequest,
     BillingReportsOut,
     PlanOut,
@@ -64,6 +70,7 @@ def _plan_out(repo: BillingRepository, p: SubscriptionPlan) -> PlanOut:
 @router.get("/billing/settings")
 def get_billing_settings(db: Session = Depends(get_db)):
     s = BillingRepository(db).get_admin_settings()
+    rz = razorpay_admin_meta(s)
     return {
         "payment_card_enabled": s.payment_card_enabled,
         "payment_upi_enabled": s.payment_upi_enabled,
@@ -71,6 +78,7 @@ def get_billing_settings(db: Session = Depends(get_db)):
         "grace_period_days": s.grace_period_days,
         "renewal_reminder_days_before": s.renewal_reminder_days_before,
         "dunning_retry_interval_hours": s.dunning_retry_interval_hours,
+        **rz,
     }
 
 
@@ -88,7 +96,44 @@ def patch_billing_settings(
         "grace_period_days": s.grace_period_days,
         "renewal_reminder_days_before": s.renewal_reminder_days_before,
         "dunning_retry_interval_hours": s.dunning_retry_interval_hours,
+        **razorpay_admin_meta(s),
     }
+
+
+@router.patch("/billing/razorpay-credentials")
+def patch_razorpay_credentials(
+    payload: AdminRazorpayCredentialsPatch,
+    db: Session = Depends(get_db),
+):
+    """Store Razorpay key id (plain) and encrypt API + webhook secrets (needs Fernet env key)."""
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    repo = BillingRepository(db)
+    s = repo.get_admin_settings()
+    try:
+        if "razorpay_key_id" in data:
+            rid = data["razorpay_key_id"]
+            s.razorpay_key_id = (rid or "").strip() or None
+        if "razorpay_key_secret" in data:
+            val = data["razorpay_key_secret"]
+            if val is None or val == "":
+                s.razorpay_key_secret_encrypted = None
+            else:
+                assert_db_secret_encryption_allowed()
+                s.razorpay_key_secret_encrypted = encrypt_blob(str(val).encode("utf-8"))
+        if "razorpay_webhook_secret" in data:
+            val = data["razorpay_webhook_secret"]
+            if val is None or val == "":
+                s.razorpay_webhook_secret_encrypted = None
+            else:
+                assert_db_secret_encryption_allowed()
+                s.razorpay_webhook_secret_encrypted = encrypt_blob(str(val).encode("utf-8"))
+    except MissingDedicatedEncryptionKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    db.commit()
+    db.refresh(s)
+    return {"ok": True, **razorpay_admin_meta(s)}
 
 
 @router.get("/billing/plans", response_model=list[PlanOut])
@@ -109,7 +154,7 @@ def admin_create_plan(
     # Otherwise a 400 after commit leaves the slug in the DB and the next submit returns 409.
     gw: RazorpayGateway | None = None
     if payload.sync_razorpay_plan:
-        gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+        gw = get_razorpay_gateway(db)
         if not gw.is_configured:
             raise HTTPException(status_code=400, detail="Razorpay not configured")
     tier = PlanTier(payload.plan_tier)
@@ -356,7 +401,7 @@ def admin_refund(
     tx = db.get(BillingTransaction, payload.billing_transaction_id)
     if not tx or not tx.razorpay_payment_id:
         raise HTTPException(status_code=404, detail="Transaction not refundable")
-    gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+    gw = get_razorpay_gateway(db)
     if not gw.is_configured:
         raise HTTPException(status_code=400, detail="Razorpay not configured")
     try:

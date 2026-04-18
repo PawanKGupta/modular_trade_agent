@@ -7,6 +7,7 @@ import {
 	getAdminTransactions,
 	getBillingReports,
 	patchAdminBillingSettings,
+	patchAdminRazorpayCredentials,
 	postAdminActivateSubscription,
 	postAdminCreatePlan,
 	postAdminDeactivatePlan,
@@ -113,6 +114,13 @@ export function AdminBillingPage() {
 	const [reminderDays, setReminderDays] = useState('');
 	const [dunningHrs, setDunningHrs] = useState('');
 
+	const [rzKeyId, setRzKeyId] = useState('');
+	const [rzKeySecret, setRzKeySecret] = useState('');
+	const [rzWebhookSecret, setRzWebhookSecret] = useState('');
+	const [rzClearKeyId, setRzClearKeyId] = useState(false);
+	const [rzClearKeySecret, setRzClearKeySecret] = useState(false);
+	const [rzClearWebhook, setRzClearWebhook] = useState(false);
+
 	const [newSlug, setNewSlug] = useState('');
 	const [newName, setNewName] = useState('');
 	const [newTier, setNewTier] = useState<'paper_basic' | 'auto_advanced'>('paper_basic');
@@ -150,6 +158,23 @@ export function AdminBillingPage() {
 		onError: (e: unknown) => {
 			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
 			setAdminMsg(d ?? 'Save failed');
+		},
+	});
+
+	const rzpCredsM = useMutation({
+		mutationFn: patchAdminRazorpayCredentials,
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingSettings'] });
+			setRzKeySecret('');
+			setRzWebhookSecret('');
+			setRzClearKeyId(false);
+			setRzClearKeySecret(false);
+			setRzClearWebhook(false);
+			setAdminMsg('Razorpay credentials updated.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(typeof d === 'string' ? d : 'Razorpay save failed');
 		},
 	});
 
@@ -239,6 +264,21 @@ export function AdminBillingPage() {
 		patchM.mutate(body);
 	};
 
+	const applyRazorpayCredentials = () => {
+		const body: Record<string, unknown> = {};
+		if (rzClearKeyId) body.razorpay_key_id = null;
+		else if (rzKeyId.trim()) body.razorpay_key_id = rzKeyId.trim();
+		if (rzClearKeySecret) body.razorpay_key_secret = null;
+		else if (rzKeySecret.length) body.razorpay_key_secret = rzKeySecret;
+		if (rzClearWebhook) body.razorpay_webhook_secret = null;
+		else if (rzWebhookSecret.length) body.razorpay_webhook_secret = rzWebhookSecret;
+		if (!Object.keys(body).length) {
+			setAdminMsg('Change a Razorpay field or tick a clear option, then save.');
+			return;
+		}
+		rzpCredsM.mutate(body);
+	};
+
 	return (
 		<div className="p-4 sm:p-6 max-w-5xl space-y-8 text-[var(--text)]">
 			<h1 className="text-xl font-semibold">Admin — Billing</h1>
@@ -268,6 +308,112 @@ export function AdminBillingPage() {
 						</label>
 					</div>
 				)}
+			</section>
+
+			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
+				<h2 className="font-medium">Razorpay credentials</h2>
+				<p className="text-xs text-[var(--muted)] leading-relaxed">
+					API key secret and webhook secret are encrypted at rest (Fernet: set{' '}
+					<code className="text-[11px]">APP_DATA_ENCRYPTION_KEY</code> preferred, or{' '}
+					<code className="text-[11px]">BROKER_SECRET_KEY</code>). Environment variables{' '}
+					<code className="text-[11px]">RAZORPAY_KEY_SECRET</code> /{' '}
+					<code className="text-[11px]">RAZORPAY_WEBHOOK_SECRET</code> override stored values when set. Values
+					are never shown again after save.
+				</p>
+				{settingsQ.isLoading ? (
+					<p className="text-sm text-[var(--muted)]">Loading…</p>
+				) : (
+					<div className="space-y-2 text-xs text-[var(--muted)]">
+						<p>
+							Key id preview:{' '}
+							<span className="text-[var(--text)]">
+								{String((s as Record<string, unknown>)?.razorpay_key_id_preview ?? '—')}
+							</span>
+						</p>
+						<p>
+							API ready:{' '}
+							<span className="text-[var(--text)]">
+								{String((s as Record<string, unknown>)?.razorpay_api_configured ?? false)}
+							</span>
+							{' · '}
+							Webhook ready:{' '}
+							<span className="text-[var(--text)]">
+								{String((s as Record<string, unknown>)?.razorpay_webhook_configured ?? false)}
+							</span>
+						</p>
+						<p>
+							Secrets from env: key_secret{' '}
+							{String((s as Record<string, unknown>)?.razorpay_key_secret_from_env ?? false)}, webhook{' '}
+							{String((s as Record<string, unknown>)?.razorpay_webhook_secret_from_env ?? false)}
+						</p>
+						<p>
+							Stored in DB: key_secret{' '}
+							{String((s as Record<string, unknown>)?.razorpay_key_secret_stored_in_db ?? false)}, webhook{' '}
+							{String((s as Record<string, unknown>)?.razorpay_webhook_secret_stored_in_db ?? false)}
+						</p>
+					</div>
+				)}
+				<div className="flex flex-col gap-2 max-w-md">
+					<label className="flex flex-col gap-1">
+						<span className="text-xs text-[var(--muted)]">Key ID (optional, stored if env empty)</span>
+						<input
+							type="text"
+							autoComplete="off"
+							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							value={rzKeyId}
+							onChange={(e) => setRzKeyId(e.target.value)}
+							placeholder="rzp_…"
+						/>
+					</label>
+					<label className="flex flex-col gap-1">
+						<span className="text-xs text-[var(--muted)]">Key secret (password)</span>
+						<input
+							type="password"
+							autoComplete="new-password"
+							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							value={rzKeySecret}
+							onChange={(e) => setRzKeySecret(e.target.value)}
+							placeholder="Leave blank to keep stored value"
+						/>
+					</label>
+					<label className="flex flex-col gap-1">
+						<span className="text-xs text-[var(--muted)]">Webhook secret</span>
+						<input
+							type="password"
+							autoComplete="new-password"
+							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							value={rzWebhookSecret}
+							onChange={(e) => setRzWebhookSecret(e.target.value)}
+							placeholder="Leave blank to keep stored value"
+						/>
+					</label>
+					<div className="flex flex-col gap-1 text-xs">
+						<label className="flex items-center gap-2">
+							<input type="checkbox" checked={rzClearKeyId} onChange={(e) => setRzClearKeyId(e.target.checked)} />
+							Clear stored Key ID (use env only)
+						</label>
+						<label className="flex items-center gap-2">
+							<input
+								type="checkbox"
+								checked={rzClearKeySecret}
+								onChange={(e) => setRzClearKeySecret(e.target.checked)}
+							/>
+							Clear stored API secret
+						</label>
+						<label className="flex items-center gap-2">
+							<input type="checkbox" checked={rzClearWebhook} onChange={(e) => setRzClearWebhook(e.target.checked)} />
+							Clear stored webhook secret
+						</label>
+					</div>
+					<button
+						type="button"
+						className="text-sm px-3 py-1.5 rounded bg-indigo-700 text-white w-fit"
+						disabled={rzpCredsM.isPending}
+						onClick={() => applyRazorpayCredentials()}
+					>
+						Save Razorpay credentials
+					</button>
+				</div>
 			</section>
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
