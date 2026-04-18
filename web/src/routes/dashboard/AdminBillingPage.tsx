@@ -7,6 +7,7 @@ import {
 	getAdminTransactions,
 	getBillingReports,
 	patchAdminBillingSettings,
+	patchAdminPlan,
 	patchAdminRazorpayCredentials,
 	postAdminActivateSubscription,
 	postAdminCreatePlan,
@@ -136,6 +137,13 @@ export function AdminBillingPage() {
 	const [refundAmount, setRefundAmount] = useState('');
 	const [refundReason, setRefundReason] = useState('');
 
+	const [editPlanId, setEditPlanId] = useState<number | null>(null);
+	const [editPlanName, setEditPlanName] = useState('');
+	const [editPlanDesc, setEditPlanDesc] = useState('');
+	const [editPlanPriceInr, setEditPlanPriceInr] = useState('');
+	const [editPlanRzpId, setEditPlanRzpId] = useState('');
+	const [editPlanActive, setEditPlanActive] = useState(true);
+
 	const settingsQ = useQuery({ queryKey: ['adminBillingSettings'], queryFn: getAdminBillingSettings });
 	const plansQ = useQuery({ queryKey: ['adminBillingPlans'], queryFn: getAdminBillingPlans });
 	const subsQ = useQuery({ queryKey: ['adminSubs'], queryFn: () => getAdminSubscriptions(100) });
@@ -207,6 +215,40 @@ export function AdminBillingPage() {
 			setAdminMsg('Plan deactivated.');
 		},
 	});
+
+	const patchPlanM = useMutation({
+		mutationFn: ({
+			id,
+			body,
+		}: {
+			id: number;
+			body: {
+				name: string;
+				description: string | null;
+				base_amount_paise: number;
+				is_active: boolean;
+				razorpay_plan_id: string | null;
+			};
+		}) => patchAdminPlan(id, body),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
+			setEditPlanId(null);
+			setAdminMsg('Plan updated.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(d ?? 'Update plan failed');
+		},
+	});
+
+	function openPlanEditor(p: BillingPlan) {
+		setEditPlanId(p.id);
+		setEditPlanName(p.name);
+		setEditPlanDesc(p.description ?? '');
+		setEditPlanPriceInr(String((p.base_amount_paise / 100).toFixed(2)));
+		setEditPlanRzpId(p.razorpay_plan_id ?? '');
+		setEditPlanActive(p.is_active);
+	}
 
 	const manualSubM = useMutation({
 		mutationFn: postAdminManualSubscription,
@@ -689,25 +731,120 @@ export function AdminBillingPage() {
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-2">
 				<h2 className="font-medium">Plans (catalog)</h2>
-				<ul className="text-sm space-y-2 max-h-48 overflow-auto">
+				<p className="text-xs text-[var(--muted)]">
+					Slug and billing interval are fixed after create. Edit name, description, base price (INR), Razorpay
+					plan id, and catalog visibility.
+				</p>
+				<ul className="text-sm space-y-2 max-h-[28rem] overflow-auto">
 					{(plansQ.data ?? []).map((p: BillingPlan) => (
 						<li
 							key={p.id}
-							className="flex flex-wrap items-center justify-between gap-2 border border-[#1e293b]/60 rounded p-2 bg-[#0f1720]"
+							className="border border-[#1e293b]/60 rounded p-2 bg-[#0f1720] space-y-2"
 						>
-							<span>
-								{p.slug} — {p.name} · {formatInrPaise(p.effective_amount_paise)} / {p.billing_interval} (
-								{p.is_active ? 'active' : 'inactive'})
-							</span>
-							{p.is_active ? (
-								<button
-									type="button"
-									className="text-xs px-2 py-1 rounded bg-rose-900 text-white"
-									disabled={deactivatePlanM.isPending}
-									onClick={() => deactivatePlanM.mutate(p.id)}
-								>
-									Deactivate
-								</button>
+							<div className="flex flex-wrap items-center justify-between gap-2">
+								<span>
+									{p.slug} — {p.name} · {formatInrPaise(p.effective_amount_paise)} / {p.billing_interval}{' '}
+									({p.is_active ? 'active' : 'inactive'})
+								</span>
+								<div className="flex flex-wrap gap-1">
+									<button
+										type="button"
+										className="text-xs px-2 py-1 rounded bg-slate-600 text-white"
+										onClick={() => (editPlanId === p.id ? setEditPlanId(null) : openPlanEditor(p))}
+									>
+										{editPlanId === p.id ? 'Close' : 'Edit'}
+									</button>
+									{p.is_active ? (
+										<button
+											type="button"
+											className="text-xs px-2 py-1 rounded bg-rose-900 text-white"
+											disabled={deactivatePlanM.isPending}
+											onClick={() => deactivatePlanM.mutate(p.id)}
+										>
+											Deactivate
+										</button>
+									) : null}
+								</div>
+							</div>
+							{editPlanId === p.id ? (
+								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1 border-t border-[#1e293b]/50">
+									<label className="flex flex-col gap-1 sm:col-span-2">
+										<span className="text-[var(--muted)]">Slug (read-only)</span>
+										<input readOnly className="px-2 py-1 rounded bg-[#0a1018] border border-[#1e293b] opacity-80" value={p.slug} />
+									</label>
+									<label className="flex flex-col gap-1">
+										<span className="text-[var(--muted)]">Display name</span>
+										<input
+											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+											value={editPlanName}
+											onChange={(e) => setEditPlanName(e.target.value)}
+										/>
+									</label>
+									<label className="flex flex-col gap-1">
+										<span className="text-[var(--muted)]">Base price (INR)</span>
+										<input
+											type="number"
+											min={0}
+											step={0.01}
+											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+											value={editPlanPriceInr}
+											onChange={(e) => setEditPlanPriceInr(e.target.value)}
+										/>
+									</label>
+									<label className="flex flex-col gap-1 sm:col-span-2">
+										<span className="text-[var(--muted)]">Description</span>
+										<input
+											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+											value={editPlanDesc}
+											onChange={(e) => setEditPlanDesc(e.target.value)}
+										/>
+									</label>
+									<label className="flex flex-col gap-1 sm:col-span-2">
+										<span className="text-[var(--muted)]">Razorpay plan id (optional)</span>
+										<input
+											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] font-mono text-[11px]"
+											value={editPlanRzpId}
+											onChange={(e) => setEditPlanRzpId(e.target.value)}
+											placeholder="plan_…"
+										/>
+									</label>
+									<label className="flex items-center gap-2 sm:col-span-2">
+										<input
+											type="checkbox"
+											checked={editPlanActive}
+											onChange={(e) => setEditPlanActive(e.target.checked)}
+										/>
+										<span>Plan visible in catalog (active)</span>
+									</label>
+									<div className="flex flex-wrap gap-2 sm:col-span-2">
+										<button
+											type="button"
+											className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white"
+											disabled={patchPlanM.isPending || !editPlanName.trim()}
+											onClick={() =>
+												patchPlanM.mutate({
+													id: p.id,
+													body: {
+														name: editPlanName.trim(),
+														description: editPlanDesc.trim() ? editPlanDesc.trim() : null,
+														base_amount_paise: Math.max(0, Math.round((Number(editPlanPriceInr) || 0) * 100)),
+														is_active: editPlanActive,
+														razorpay_plan_id: editPlanRzpId.trim() || null,
+													},
+												})
+											}
+										>
+											Save changes
+										</button>
+										<button
+											type="button"
+											className="text-xs px-3 py-1.5 rounded bg-[#334155] text-white"
+											onClick={() => setEditPlanId(null)}
+										>
+											Cancel
+										</button>
+									</div>
+								</div>
 							) : null}
 						</li>
 					))}
