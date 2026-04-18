@@ -259,6 +259,40 @@ def admin_activate_plan(plan_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.delete("/billing/plans/{plan_id}")
+def admin_delete_plan(plan_id: int, db: Session = Depends(get_db)):
+    """Hard-delete a deactivated plan when nothing live or historical references it."""
+    repo = BillingRepository(db)
+    plan = repo.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Not found")
+    if plan.is_active:
+        raise HTTPException(status_code=400, detail="Deactivate the plan before deleting it.")
+    if repo.count_live_subscriptions_on_plan(plan_id) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot delete plan while it has active, trialing, grace, past due, "
+                "or pending subscriptions."
+            ),
+        )
+    if repo.count_subscriptions_referencing_plan(plan_id) > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot delete plan while subscription rows still reference it "
+                "(including ended subscriptions). Remove or migrate those rows first."
+            ),
+        )
+    if repo.coupon_allowed_list_references_plan(plan_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete plan: a coupon still lists this plan in allowed_plan_ids.",
+        )
+    repo.delete_plan_and_schedules(plan_id)
+    return {"ok": True}
+
+
 @router.post("/billing/plans/{plan_id}/price-schedules", response_model=dict)
 def admin_add_price_schedule(
     plan_id: int,

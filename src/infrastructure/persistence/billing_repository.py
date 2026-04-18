@@ -70,6 +70,64 @@ class BillingRepository:
     def get_plan_by_slug(self, slug: str) -> SubscriptionPlan | None:
         return self.db.query(SubscriptionPlan).filter(SubscriptionPlan.slug == slug).first()
 
+    _LIVE_SUBSCRIPTION_STATUSES: tuple[UserSubscriptionStatus, ...] = (
+        UserSubscriptionStatus.ACTIVE,
+        UserSubscriptionStatus.TRIALING,
+        UserSubscriptionStatus.GRACE,
+        UserSubscriptionStatus.PAST_DUE,
+        UserSubscriptionStatus.PENDING,
+    )
+
+    def count_subscriptions_referencing_plan(self, plan_id: int) -> int:
+        return int(
+            self.db.query(func.count(UserSubscription.id))
+            .filter(
+                or_(
+                    UserSubscription.plan_id == plan_id,
+                    UserSubscription.pending_plan_id == plan_id,
+                )
+            )
+            .scalar()
+            or 0
+        )
+
+    def count_live_subscriptions_on_plan(self, plan_id: int) -> int:
+        """Active / trial / grace / past_due / pending — blocks catalog delete per product rules."""
+        return int(
+            self.db.query(func.count(UserSubscription.id))
+            .filter(
+                or_(
+                    UserSubscription.plan_id == plan_id,
+                    UserSubscription.pending_plan_id == plan_id,
+                ),
+                UserSubscription.status.in_(self._LIVE_SUBSCRIPTION_STATUSES),
+            )
+            .scalar()
+            or 0
+        )
+
+    def coupon_allowed_list_references_plan(self, plan_id: int) -> bool:
+        rows = self.db.query(Coupon).filter(Coupon.allowed_plan_ids.isnot(None)).all()
+        for c in rows:
+            ids = c.allowed_plan_ids
+            if isinstance(ids, list) and plan_id in ids:
+                return True
+        return False
+
+    def delete_plan_and_schedules(self, plan_id: int) -> None:
+        """Remove price schedules then the plan row. Caller must enforce preconditions."""
+        try:
+            self.db.query(PlanPriceSchedule).filter(PlanPriceSchedule.plan_id == plan_id).delete(
+                synchronize_session=False
+            )
+            p = self.db.get(SubscriptionPlan, plan_id)
+            if p is not None:
+                self.db.delete(p)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     # --- Effective price (base + latest applicable schedule) ---
     def effective_amount_paise(self, plan: SubscriptionPlan, at: datetime | None = None) -> int:
         """Pick scheduled price with max effective_from <= at (or now), else base_amount_paise."""

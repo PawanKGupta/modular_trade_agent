@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
+	deleteAdminPlan,
 	getAdminBillingPlans,
 	getAdminBillingSettings,
 	getAdminSubscriptions,
@@ -228,6 +229,19 @@ export function AdminBillingPage() {
 		onError: (e: unknown) => {
 			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
 			setAdminMsg(d ?? 'Activate plan failed');
+		},
+	});
+
+	const deletePlanM = useMutation({
+		mutationFn: deleteAdminPlan,
+		onSuccess: (_, planId) => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
+			if (editPlanId === planId) setEditPlanId(null);
+			setAdminMsg('Plan deleted.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(typeof d === 'string' ? d : 'Delete plan failed');
 		},
 	});
 
@@ -773,7 +787,8 @@ export function AdminBillingPage() {
 				<h2 className="font-medium">Plans (catalog)</h2>
 				<p className="text-xs text-[var(--muted)]">
 					Slug and billing interval are fixed after create. Edit name, description, base price (INR), Razorpay
-					plan id, and catalog visibility.
+					plan id, and catalog visibility. Delete (inactive plans only) requires no live subscribers and no
+					subscription rows referencing the plan.
 				</p>
 				<ul className="text-sm space-y-2 max-h-[28rem] overflow-auto">
 					{(plansQ.data ?? []).map((p: BillingPlan) => (
@@ -798,20 +813,49 @@ export function AdminBillingPage() {
 										<button
 											type="button"
 											className="text-xs px-2 py-1 rounded bg-rose-900 text-white"
-											disabled={deactivatePlanM.isPending || activatePlanM.isPending}
+											disabled={
+												deactivatePlanM.isPending ||
+												activatePlanM.isPending ||
+												deletePlanM.isPending
+											}
 											onClick={() => deactivatePlanM.mutate(p.id)}
 										>
 											Deactivate
 										</button>
 									) : (
-										<button
-											type="button"
-											className="text-xs px-2 py-1 rounded bg-emerald-800 text-white"
-											disabled={activatePlanM.isPending || deactivatePlanM.isPending}
-											onClick={() => activatePlanM.mutate(p.id)}
-										>
-											Activate
-										</button>
+										<>
+											<button
+												type="button"
+												className="text-xs px-2 py-1 rounded bg-emerald-800 text-white"
+												disabled={
+													activatePlanM.isPending ||
+													deactivatePlanM.isPending ||
+													deletePlanM.isPending
+												}
+												onClick={() => activatePlanM.mutate(p.id)}
+											>
+												Activate
+											</button>
+											<button
+												type="button"
+												className="text-xs px-2 py-1 rounded bg-[#7f1d1d] text-white border border-red-900/60"
+												disabled={
+													deletePlanM.isPending ||
+													activatePlanM.isPending ||
+													deactivatePlanM.isPending
+												}
+												onClick={() => {
+													const ok = window.confirm(
+														`Permanently delete plan "${p.name}" (${p.slug}, #${p.id})?\n\n` +
+															'Allowed only if the plan is inactive, has no live subscriptions, ' +
+															'no subscription rows reference this plan, and no coupon targets it.'
+													);
+													if (ok) deletePlanM.mutate(p.id);
+												}}
+											>
+												Delete
+											</button>
+										</>
 									)}
 								</div>
 							</div>
