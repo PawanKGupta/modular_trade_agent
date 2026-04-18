@@ -206,6 +206,11 @@ export async function postAdminDeactivatePlan(planId: number): Promise<{ ok: boo
 	return res.data;
 }
 
+export async function postAdminActivatePlan(planId: number): Promise<{ ok: boolean }> {
+	const res = await api.post<{ ok: boolean }>(`/admin/billing/plans/${planId}/activate`);
+	return res.data;
+}
+
 export async function postAdminManualSubscription(body: {
 	user_id: number;
 	plan_id: number;

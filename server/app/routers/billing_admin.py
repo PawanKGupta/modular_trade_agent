@@ -248,6 +248,17 @@ def admin_deactivate_plan(plan_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/billing/plans/{plan_id}/activate")
+def admin_activate_plan(plan_id: int, db: Session = Depends(get_db)):
+    repo = BillingRepository(db)
+    plan = repo.get_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Not found")
+    plan.is_active = True
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/billing/plans/{plan_id}/price-schedules", response_model=dict)
 def admin_add_price_schedule(
     plan_id: int,

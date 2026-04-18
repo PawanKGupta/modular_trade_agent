@@ -9,6 +9,7 @@ import {
 	patchAdminBillingSettings,
 	patchAdminPlan,
 	patchAdminRazorpayCredentials,
+	postAdminActivatePlan,
 	postAdminActivateSubscription,
 	postAdminCreatePlan,
 	postAdminDeactivatePlan,
@@ -215,6 +216,18 @@ export function AdminBillingPage() {
 		onSuccess: () => {
 			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
 			setAdminMsg('Plan deactivated.');
+		},
+	});
+
+	const activatePlanM = useMutation({
+		mutationFn: postAdminActivatePlan,
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
+			setAdminMsg('Plan activated.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(d ?? 'Activate plan failed');
 		},
 	});
 
@@ -639,14 +652,14 @@ export function AdminBillingPage() {
 					<label className="flex flex-col gap-1">
 						<span className="text-xs text-[var(--muted)]">Plan</span>
 						<select
-							className="min-w-[10rem] px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							className="min-w-[14rem] max-w-[28rem] px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
 							value={manualPlanId}
 							onChange={(e) => setManualPlanId(e.target.value)}
 						>
 							<option value="">—</option>
 							{(plansQ.data ?? []).map((p: BillingPlan) => (
 								<option key={p.id} value={p.id}>
-									{p.slug} (#{p.id})
+									{p.name} · {p.slug} (#{p.id})
 								</option>
 							))}
 						</select>
@@ -785,12 +798,21 @@ export function AdminBillingPage() {
 										<button
 											type="button"
 											className="text-xs px-2 py-1 rounded bg-rose-900 text-white"
-											disabled={deactivatePlanM.isPending}
+											disabled={deactivatePlanM.isPending || activatePlanM.isPending}
 											onClick={() => deactivatePlanM.mutate(p.id)}
 										>
 											Deactivate
 										</button>
-									) : null}
+									) : (
+										<button
+											type="button"
+											className="text-xs px-2 py-1 rounded bg-emerald-800 text-white"
+											disabled={activatePlanM.isPending || deactivatePlanM.isPending}
+											onClick={() => activatePlanM.mutate(p.id)}
+										>
+											Activate
+										</button>
+									)}
 								</div>
 							</div>
 							{editPlanId === p.id ? (
