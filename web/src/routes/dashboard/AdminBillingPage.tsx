@@ -540,14 +540,21 @@ export function AdminBillingPage() {
 						<option value="month">month</option>
 						<option value="year">year</option>
 					</select>
-					<input
-						type="number"
-						min={0}
-						className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-						placeholder="Amount (paise)"
-						value={newAmount}
-						onChange={(e) => setNewAmount(e.target.value)}
-					/>
+					<label className="flex flex-col gap-1 sm:col-span-2">
+						<span className="text-xs text-[var(--muted)]">Price (INR per billing interval)</span>
+						<input
+							type="number"
+							min={0}
+							step={0.01}
+							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							placeholder="e.g. 100 for ₹100"
+							value={newAmount}
+							onChange={(e) => setNewAmount(e.target.value)}
+						/>
+						<span className="text-[10px] text-[var(--muted)]">
+							Enter rupees; the app stores paise (100 → ₹100.00). Razorpay sync uses the same amount.
+						</span>
+					</label>
 					<label className="flex items-center gap-2">
 						<input type="checkbox" checked={syncRzp} onChange={(e) => setSyncRzp(e.target.checked)} />
 						Sync plan to Razorpay
@@ -563,7 +570,7 @@ export function AdminBillingPage() {
 							name: newName.trim(),
 							plan_tier: newTier,
 							billing_interval: newInterval,
-							base_amount_paise: Math.max(0, Number(newAmount) || 0),
+							base_amount_paise: Math.max(0, Math.round((Number(newAmount) || 0) * 100)),
 							sync_razorpay_plan: syncRzp,
 						})
 					}
@@ -689,7 +696,8 @@ export function AdminBillingPage() {
 							className="flex flex-wrap items-center justify-between gap-2 border border-[#1e293b]/60 rounded p-2 bg-[#0f1720]"
 						>
 							<span>
-								{p.slug} — {p.name} ({p.is_active ? 'active' : 'inactive'})
+								{p.slug} — {p.name} · {formatInrPaise(p.effective_amount_paise)} / {p.billing_interval} (
+								{p.is_active ? 'active' : 'inactive'})
 							</span>
 							{p.is_active ? (
 								<button
