@@ -137,6 +137,8 @@ export function BillingPage() {
 				} catch (e) {
 					setMsg(e instanceof Error ? e.message : 'Checkout failed to open');
 				}
+			} else if (data.amount_quoted_paise <= 0) {
+				setMsg('Subscription is active — no payment required for this plan.');
 			} else {
 				setMsg(
 					`Subscription row created (#${data.user_subscription_id}) but Razorpay is not configured — complete payment in the Razorpay dashboard.`

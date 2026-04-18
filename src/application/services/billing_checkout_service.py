@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from src.application.services.razorpay_credentials import get_razorpay_gateway
 from src.application.services.subscription_entitlement_service import default_features_for_tier
 from src.infrastructure.db.models import (
+    BillingInterval,
     BillingProvider,
     Coupon,
     SubscriptionPlan,
@@ -58,6 +59,41 @@ class BillingCheckoutService:
             if plan_id not in [int(x) for x in coupon.allowed_plan_ids]:
                 raise BillingCheckoutError("Coupon not valid for this plan")
 
+    @staticmethod
+    def _period_end_for_plan(plan: SubscriptionPlan) -> datetime:
+        start = datetime.utcnow()
+        if plan.billing_interval == BillingInterval.YEAR:
+            return start + timedelta(days=365)  # noqa: PLR2004
+        return start + timedelta(days=30)
+
+    def _create_zero_amount_subscription(
+        self, user: Users, plan: SubscriptionPlan, coupon: Coupon | None
+    ) -> dict:
+        """Activate locally when quoted price is 0 (no Razorpay / payment)."""
+        sub_row = UserSubscription(
+            user_id=user.id,
+            plan_id=plan.id,
+            plan_tier_snapshot=plan.plan_tier,
+            features_snapshot=plan.features_json or default_features_for_tier(plan.plan_tier),
+            status=UserSubscriptionStatus.ACTIVE,
+            billing_provider=BillingProvider.MANUAL,
+            started_at=datetime.utcnow(),
+            current_period_end=self._period_end_for_plan(plan),
+            auto_renew=False,
+        )
+        self.db.add(sub_row)
+        self.db.commit()
+        self.db.refresh(sub_row)
+        if coupon:
+            self.repo.redeem_coupon(coupon.id, user.id, sub_row.id)
+        return {
+            "razorpay_key_id": None,
+            "razorpay_subscription_id": None,
+            "user_subscription_id": sub_row.id,
+            "amount_quoted_paise": 0,
+            "trial_days_applied": 0,
+        }
+
     def create_checkout(
         self,
         user: Users,
@@ -68,10 +104,18 @@ class BillingCheckoutService:
     ) -> dict:
         if not plan.is_active:
             raise BillingCheckoutError("Plan is not available")
-        if not self.rzp.is_configured:
-            raise BillingCheckoutError("Payments are not configured (missing Razorpay keys)")
 
         self._validate_coupon(coupon, user.id, plan.id)
+
+        amount = self.repo.effective_amount_paise(plan)
+        if coupon:
+            amount = apply_coupon_discount(amount, coupon)
+
+        if amount <= 0:
+            return self._create_zero_amount_subscription(user, plan, coupon)
+
+        if not self.rzp.is_configured:
+            raise BillingCheckoutError("Payments are not configured (missing Razorpay keys)")
 
         if not plan.razorpay_plan_id:
             raise BillingCheckoutError(
@@ -92,10 +136,6 @@ class BillingCheckoutService:
         td = trial_days if trial_days is not None else int(admin.default_trial_days or 0)
         if td > 0 and self.repo.trial_used(user.id, "global_v1"):
             td = 0
-
-        amount = self.repo.effective_amount_paise(plan)
-        if coupon:
-            amount = apply_coupon_discount(amount, coupon)
 
         sub_row = UserSubscription(
             user_id=user.id,
