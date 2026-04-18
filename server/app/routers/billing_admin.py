@@ -49,6 +49,30 @@ from ..schemas.billing import (
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
+def _user_subscription_out(
+    s: UserSubscription,
+    *,
+    user: Users | None = None,
+    plan: SubscriptionPlan | None = None,
+) -> UserSubscriptionOut:
+    return UserSubscriptionOut(
+        id=s.id,
+        plan_id=s.plan_id,
+        status=s.status.value,
+        billing_provider=s.billing_provider.value,
+        started_at=s.started_at,
+        current_period_end=s.current_period_end,
+        cancel_at_period_end=s.cancel_at_period_end,
+        trial_end=s.trial_end,
+        pending_plan_id=s.pending_plan_id,
+        user_id=user.id if user else s.user_id,
+        user_email=user.email if user else None,
+        user_name=user.name if user else None,
+        plan_slug=plan.slug if plan else None,
+        plan_name=plan.name if plan else None,
+    )
+
+
 def _plan_out(repo: BillingRepository, p: SubscriptionPlan) -> PlanOut:
     eff = repo.effective_amount_paise(p)
     return PlanOut(
@@ -281,21 +305,8 @@ def admin_list_subscriptions(
     limit: int = Query(200, le=1000),
     offset: int = 0,
 ):
-    rows = BillingRepository(db).list_all_subscriptions(limit=limit, offset=offset)
-    return [
-        UserSubscriptionOut(
-            id=s.id,
-            plan_id=s.plan_id,
-            status=s.status.value,
-            billing_provider=s.billing_provider.value,
-            started_at=s.started_at,
-            current_period_end=s.current_period_end,
-            cancel_at_period_end=s.cancel_at_period_end,
-            trial_end=s.trial_end,
-            pending_plan_id=s.pending_plan_id,
-        )
-        for s in rows
-    ]
+    rows = BillingRepository(db).list_all_subscriptions_with_user_plan(limit=limit, offset=offset)
+    return [_user_subscription_out(s, user=u, plan=p) for s, u, p in rows]
 
 
 @router.post("/billing/subscriptions/manual", response_model=UserSubscriptionOut)
@@ -324,17 +335,7 @@ def admin_manual_subscription(
     db.add(sub)
     db.commit()
     db.refresh(sub)
-    return UserSubscriptionOut(
-        id=sub.id,
-        plan_id=sub.plan_id,
-        status=sub.status.value,
-        billing_provider=sub.billing_provider.value,
-        started_at=sub.started_at,
-        current_period_end=sub.current_period_end,
-        cancel_at_period_end=sub.cancel_at_period_end,
-        trial_end=sub.trial_end,
-        pending_plan_id=sub.pending_plan_id,
-    )
+    return _user_subscription_out(sub, user=user, plan=plan)
 
 
 @router.post("/billing/subscriptions/{sub_id}/deactivate")

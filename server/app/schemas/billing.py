@@ -60,6 +60,12 @@ class UserSubscriptionOut(BaseModel):
     cancel_at_period_end: bool
     trial_end: datetime | None
     pending_plan_id: int | None
+    # Populated by admin list (and manual assign); omitted elsewhere unless filled
+    user_id: int | None = None
+    user_email: str | None = None
+    user_name: str | None = None
+    plan_slug: str | None = None
+    plan_name: str | None = None
 
 
 class TransactionOut(BaseModel):

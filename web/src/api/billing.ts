@@ -33,6 +33,12 @@ export type UserSubscription = {
 	cancel_at_period_end: boolean;
 	trial_end: string | null;
 	pending_plan_id: number | null;
+	/** Admin list / manual assign */
+	user_id?: number | null;
+	user_email?: string | null;
+	user_name?: string | null;
+	plan_slug?: string | null;
+	plan_name?: string | null;
 };
 
 export type BillingTransaction = {

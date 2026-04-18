@@ -22,6 +22,7 @@ from src.infrastructure.db.models import (
     RazorpayWebhookEvent,
     SubscriptionPlan,
     UserBillingProfile,
+    Users,
     UserSubscription,
     UserSubscriptionStatus,
 )
@@ -127,6 +128,19 @@ class BillingRepository:
             .all()
         )
 
+    def list_all_subscriptions_with_user_plan(
+        self, limit: int = 500, offset: int = 0
+    ) -> list[tuple[UserSubscription, Users, SubscriptionPlan]]:
+        return (
+            self.db.query(UserSubscription, Users, SubscriptionPlan)
+            .join(Users, UserSubscription.user_id == Users.id)
+            .join(SubscriptionPlan, UserSubscription.plan_id == SubscriptionPlan.id)
+            .order_by(UserSubscription.id.desc())
+            .limit(limit)
+            .offset(offset)
+            .all()
+        )
+
     # --- Coupons ---
     def get_coupon_by_code(self, code: str) -> Coupon | None:
         return (
@@ -200,7 +214,7 @@ class BillingRepository:
         self.db.commit()
 
     # --- Transactions ---
-    def add_transaction(
+    def add_transaction(  # noqa: PLR0913
         self,
         *,
         user_id: int,
@@ -245,7 +259,7 @@ class BillingRepository:
         return q.limit(limit).offset(offset).all()
 
     # --- Refunds ---
-    def add_refund(
+    def add_refund(  # noqa: PLR0913
         self,
         *,
         billing_transaction_id: int,
@@ -306,7 +320,8 @@ class BillingRepository:
         """
         Logo churn for (period_start, period_end]:
         churned = distinct users whose subscription moved to cancelled/expired in window.
-        denominator = active subscribers at period_start (snapshot heuristic: status in active set at start).
+        denominator = active subscribers at period_start (snapshot heuristic:
+        status in active set at start).
         """
         active_at_start = (
             self.db.query(func.count(func.distinct(UserSubscription.user_id)))

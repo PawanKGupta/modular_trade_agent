@@ -702,32 +702,55 @@ export function AdminBillingPage() {
 							</tr>
 						</thead>
 						<tbody>
-							{(subsQ.data ?? []).map((r: UserSubscription) => (
-								<tr key={r.id} className="border-t border-[#1e293b]/60">
-									<td className="p-1">{r.id}</td>
-									<td className="p-1">—</td>
-									<td className="p-1">{r.plan_id}</td>
-									<td className="p-1">{r.status}</td>
-									<td className="p-1 flex flex-wrap gap-1">
-										<button
-											type="button"
-											className="px-1.5 py-0.5 rounded bg-emerald-800 text-white"
-											disabled={activateSubM.isPending}
-											onClick={() => activateSubM.mutate(r.id)}
-										>
-											Activate
-										</button>
-										<button
-											type="button"
-											className="px-1.5 py-0.5 rounded bg-rose-900 text-white"
-											disabled={suspendSubM.isPending}
-											onClick={() => suspendSubM.mutate(r.id)}
-										>
-											Suspend
-										</button>
-									</td>
-								</tr>
-							))}
+							{(subsQ.data ?? []).map((r: UserSubscription) => {
+								const st = r.status.toLowerCase();
+								const showActivate = !['active', 'trialing'].includes(st);
+								const showSuspend = !['suspended', 'cancelled', 'expired'].includes(st);
+								const userLabel = r.user_name?.trim() || r.user_email || null;
+								return (
+									<tr key={r.id} className="border-t border-[#1e293b]/60">
+										<td className="p-1">{r.id}</td>
+										<td className="p-1">
+											<div className="text-[var(--text)]">{userLabel ?? '—'}</div>
+											{r.user_id != null ? (
+												<div className="text-[var(--muted)] text-[10px] tabular-nums">#{r.user_id}</div>
+											) : null}
+										</td>
+										<td className="p-1">
+											<div className="text-[var(--text)]">
+												{r.plan_name ?? '—'}
+												{r.plan_slug != null ? (
+													<span className="text-[var(--muted)]"> · {r.plan_slug}</span>
+												) : null}
+											</div>
+											<div className="text-[var(--muted)] text-[10px] tabular-nums">#{r.plan_id}</div>
+										</td>
+										<td className="p-1">{r.status}</td>
+										<td className="p-1 flex flex-wrap gap-1">
+											{showActivate ? (
+												<button
+													type="button"
+													className="px-1.5 py-0.5 rounded bg-emerald-800 text-white"
+													disabled={activateSubM.isPending}
+													onClick={() => activateSubM.mutate(r.id)}
+												>
+													Activate
+												</button>
+											) : null}
+											{showSuspend ? (
+												<button
+													type="button"
+													className="px-1.5 py-0.5 rounded bg-rose-900 text-white"
+													disabled={suspendSubM.isPending}
+													onClick={() => suspendSubM.mutate(r.id)}
+												>
+													Suspend
+												</button>
+											) : null}
+										</td>
+									</tr>
+								);
+							})}
 						</tbody>
 					</table>
 				</div>
