@@ -9,8 +9,58 @@ import {
 	patchAdminBillingSettings,
 	runBillingReconcile,
 	type BillingPlan,
+	type BillingReports,
 	type UserSubscription,
 } from '@/api/billing';
+
+function formatInrPaise(paise: number): string {
+	return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatChurnRate(rate: number | null | undefined): string {
+	if (rate == null || Number.isNaN(rate)) return '—';
+	return `${(rate * 100).toFixed(2)}%`;
+}
+
+function BillingReportsGrid({ data }: { data: BillingReports | undefined }) {
+	if (!data) {
+		return <p className="text-sm text-[var(--muted)]">No data.</p>;
+	}
+	const items: { label: string; value: string; hint?: string }[] = [
+		{ label: 'Active subscribers', value: String(data.active_subscribers) },
+		{
+			label: 'Revenue (month)',
+			value: formatInrPaise(data.revenue_paise_month),
+			hint: 'Recognized in selected period',
+		},
+		{
+			label: 'MRR (approx.)',
+			value: formatInrPaise(data.mrr_paise_approx),
+			hint: 'Same as month revenue for monthly plans',
+		},
+		{ label: 'Churned users', value: String(data.churned_users), hint: 'In selected period' },
+		{
+			label: 'Active at period start',
+			value: String(data.active_at_period_start),
+			hint: 'Denominator for churn rate',
+		},
+		{ label: 'Churn rate', value: formatChurnRate(data.churn_rate), hint: 'Churned ÷ active at start' },
+	];
+	return (
+		<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+			{items.map((item) => (
+				<div
+					key={item.label}
+					className="rounded border border-[#1e293b] bg-[#0f1720] p-3 space-y-1"
+				>
+					<p className="text-xs text-[var(--muted)]">{item.label}</p>
+					<p className="text-lg font-semibold tabular-nums">{item.value}</p>
+					{item.hint ? <p className="text-[10px] text-[var(--muted)] leading-snug">{item.hint}</p> : null}
+				</div>
+			))}
+		</div>
+	);
+}
 
 export function AdminBillingPage() {
 	const qc = useQueryClient();
@@ -98,10 +148,10 @@ export function AdminBillingPage() {
 				</div>
 				{reportsQ.isLoading ? (
 					<p className="text-sm text-[var(--muted)]">Loading…</p>
+				) : reportsQ.isError ? (
+					<p className="text-sm text-red-400">Could not load reports.</p>
 				) : (
-					<pre className="text-xs overflow-auto bg-[#0f1720] p-3 rounded">
-						{JSON.stringify(reportsQ.data, null, 2)}
-					</pre>
+					<BillingReportsGrid data={reportsQ.data} />
 				)}
 			</section>
 

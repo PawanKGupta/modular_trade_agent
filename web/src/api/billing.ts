@@ -47,6 +47,16 @@ export type BillingTransaction = {
 	created_at: string;
 };
 
+/** GET /admin/billing/reports */
+export type BillingReports = {
+	active_subscribers: number;
+	revenue_paise_month: number;
+	mrr_paise_approx: number;
+	churned_users: number;
+	active_at_period_start: number;
+	churn_rate: number | null;
+};
+
 export async function getBillingPlans(): Promise<BillingPlan[]> {
 	const res = await api.get<BillingPlan[]>('/user/billing/plans');
 	return res.data;
@@ -127,8 +137,8 @@ export async function getAdminTransactions(params?: {
 	return res.data;
 }
 
-export async function getBillingReports(year: number, month: number): Promise<Record<string, unknown>> {
-	const res = await api.get('/admin/billing/reports', { params: { year, month } });
+export async function getBillingReports(year: number, month: number): Promise<BillingReports> {
+	const res = await api.get<BillingReports>('/admin/billing/reports', { params: { year, month } });
 	return res.data;
 }
 
