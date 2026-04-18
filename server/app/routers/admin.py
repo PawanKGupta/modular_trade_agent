@@ -1,7 +1,7 @@
 # ruff: noqa: B008
 from datetime import time
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from src.application.services.schedule_manager import ScheduleManager
@@ -25,8 +25,16 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 @router.get("/users", response_model=list[AdminUserResponse])
-def list_users(db: Session = Depends(get_db)):
-    users = UserRepository(db).list_users(active_only=False)
+def list_users(
+    db: Session = Depends(get_db),
+    q: str | None = Query(None, max_length=200),
+    limit: int = Query(50, ge=1, le=200),
+):
+    repo = UserRepository(db)
+    if q is not None and q.strip():
+        users = repo.search_users(q.strip(), limit=limit)
+    else:
+        users = repo.list_users(active_only=False)
     return [
         AdminUserResponse(
             id=u.id, email=u.email, name=u.name, role=u.role.value, is_active=u.is_active

@@ -22,6 +22,7 @@ import {
 	type BillingTransaction,
 	type UserSubscription,
 } from '@/api/billing';
+import { UserAutocomplete } from './UserAutocomplete';
 
 function formatInrPaise(paise: number): string {
 	return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -130,6 +131,7 @@ export function AdminBillingPage() {
 	const [syncRzp, setSyncRzp] = useState(false);
 
 	const [manualUserId, setManualUserId] = useState('');
+	const [manualUserFieldKey, setManualUserFieldKey] = useState(0);
 	const [manualPlanId, setManualPlanId] = useState('');
 	const [manualMonths, setManualMonths] = useState('1');
 
@@ -254,6 +256,8 @@ export function AdminBillingPage() {
 		mutationFn: postAdminManualSubscription,
 		onSuccess: () => {
 			void qc.invalidateQueries({ queryKey: ['adminSubs'] });
+			setManualUserId('');
+			setManualUserFieldKey((k) => k + 1);
 			setAdminMsg('Manual subscription created.');
 		},
 		onError: (e: unknown) => {
@@ -624,12 +628,12 @@ export function AdminBillingPage() {
 			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
 				<h2 className="font-medium">Manual subscription</h2>
 				<div className="flex flex-wrap gap-2 items-end">
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">User id</span>
-						<input
-							className="w-28 px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+					<label className="flex flex-col gap-1 min-w-[12rem] flex-1">
+						<span className="text-xs text-[var(--muted)]">User</span>
+						<UserAutocomplete
+							key={manualUserFieldKey}
 							value={manualUserId}
-							onChange={(e) => setManualUserId(e.target.value)}
+							onChange={setManualUserId}
 						/>
 					</label>
 					<label className="flex flex-col gap-1">
