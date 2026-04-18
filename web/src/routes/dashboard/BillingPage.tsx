@@ -10,7 +10,67 @@ import {
 	getSubscriptionPayLink,
 	subscribeCheckout,
 	type BillingPlan,
+	type Entitlements,
 } from '@/api/billing';
+
+const FEATURE_LABELS: Record<string, string> = {
+	stock_recommendations: 'Stock recommendations',
+	broker_execution: 'Broker execution',
+	auto_trade_services: 'Auto trade services',
+	paper_trading: 'Paper trading',
+};
+
+function formatPlanTier(tier: string | null): string {
+	if (!tier) return '—';
+	return tier.replace(/_/g, ' ');
+}
+
+function formatEntitlementStatus(status: string | null): string {
+	if (!status) return '—';
+	if (status === 'enforcement_off') return 'Full access (billing enforcement off)';
+	return status.replace(/_/g, ' ');
+}
+
+function EntitlementsCard({ e }: { e: Entitlements }) {
+	const featureEntries = Object.entries(e.features ?? {});
+	return (
+		<div className="rounded bg-[#0f1720] border border-[#1e293b] p-3 space-y-3 text-sm">
+			<div className="flex flex-wrap gap-x-6 gap-y-2">
+				<div>
+					<p className="text-xs text-[var(--muted)]">Access</p>
+					<p className="font-medium">{e.active ? 'Active' : 'Inactive'}</p>
+				</div>
+				<div>
+					<p className="text-xs text-[var(--muted)]">Billing status</p>
+					<p className="font-medium">{formatEntitlementStatus(e.status)}</p>
+				</div>
+				<div>
+					<p className="text-xs text-[var(--muted)]">Plan tier</p>
+					<p className="font-medium capitalize">{formatPlanTier(e.plan_tier)}</p>
+				</div>
+				<div>
+					<p className="text-xs text-[var(--muted)]">Current period ends</p>
+					<p className="font-medium">{e.current_period_end ?? '—'}</p>
+				</div>
+			</div>
+			<div>
+				<p className="text-xs text-[var(--muted)] mb-2">Included capabilities</p>
+				<ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+					{featureEntries.length ? (
+						featureEntries.map(([key, on]) => (
+							<li key={key} className="flex items-center justify-between gap-2 py-1 border-b border-[#1e293b]/40 last:border-0">
+								<span>{FEATURE_LABELS[key] ?? key.replace(/_/g, ' ')}</span>
+								<span className={on ? 'text-emerald-400' : 'text-[var(--muted)]'}>{on ? 'Yes' : 'No'}</span>
+							</li>
+						))
+					) : (
+						<li className="text-[var(--muted)]">No feature flags returned.</li>
+					)}
+				</ul>
+			</div>
+		</div>
+	);
+}
 
 declare global {
 	interface Window {
@@ -131,10 +191,10 @@ export function BillingPage() {
 				<h2 className="font-medium">Current access</h2>
 				{entQ.isLoading ? (
 					<p className="text-sm text-[var(--muted)]">Loading…</p>
+				) : entQ.data ? (
+					<EntitlementsCard e={entQ.data} />
 				) : (
-					<pre className="text-xs overflow-auto bg-[#0f1720] p-3 rounded">
-						{JSON.stringify(entQ.data ?? {}, null, 2)}
-					</pre>
+					<p className="text-sm text-[var(--muted)]">No entitlement data.</p>
 				)}
 			</section>
 
