@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from server.app.core.config import settings
+from src.application.services.billing_reconciliation_service import BillingReconciliationService
 from src.application.services.subscription_entitlement_service import default_features_for_tier
 from src.infrastructure.db.models import (
     BillingInterval,
@@ -104,6 +105,13 @@ def admin_create_plan(
     repo = BillingRepository(db)
     if repo.get_plan_by_slug(payload.slug):
         raise HTTPException(status_code=409, detail="Slug already exists")
+    # If Razorpay sync is requested, validate credentials before persisting the plan.
+    # Otherwise a 400 after commit leaves the slug in the DB and the next submit returns 409.
+    gw: RazorpayGateway | None = None
+    if payload.sync_razorpay_plan:
+        gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+        if not gw.is_configured:
+            raise HTTPException(status_code=400, detail="Razorpay not configured")
     tier = PlanTier(payload.plan_tier)
     feats = payload.features_json or default_features_for_tier(tier)
     plan = SubscriptionPlan(
@@ -122,9 +130,7 @@ def admin_create_plan(
     db.refresh(plan)
 
     if payload.sync_razorpay_plan:
-        gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
-        if not gw.is_configured:
-            raise HTTPException(status_code=400, detail="Razorpay not configured")
+        assert gw is not None
         period = "monthly" if payload.billing_interval == "month" else "yearly"  # noqa: PLR2004
         rz_plan = gw.create_plan(
             period=period,
@@ -382,7 +388,7 @@ def billing_reports(
 ):
     repo = BillingRepository(db)
     start = datetime(year, month, 1)
-    if month == 12:
+    if month == 12:  # noqa: PLR2004
         end = datetime(year + 1, 1, 1)
     else:
         end = datetime(year, month + 1, 1)
@@ -403,6 +409,4 @@ def billing_reports(
 
 @router.post("/billing/reconcile")
 def run_reconcile(db: Session = Depends(get_db)):
-    from src.application.services.billing_reconciliation_service import BillingReconciliationService
-
     return BillingReconciliationService(db).run()
