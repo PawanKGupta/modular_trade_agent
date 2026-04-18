@@ -313,12 +313,13 @@ export function AdminBillingPage() {
 			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
 				<h2 className="font-medium">Razorpay credentials</h2>
 				<p className="text-xs text-[var(--muted)] leading-relaxed">
-					API key secret and webhook secret are encrypted at rest (Fernet: set{' '}
-					<code className="text-[11px]">APP_DATA_ENCRYPTION_KEY</code> preferred, or{' '}
-					<code className="text-[11px]">BROKER_SECRET_KEY</code>). Environment variables{' '}
+					API key secret and webhook secret are encrypted at rest. Use one Fernet key for everything: set{' '}
+					<code className="text-[11px]">BROKER_SECRET_KEY</code> or{' '}
+					<code className="text-[11px]">APP_DATA_ENCRYPTION_KEY</code> (same value encrypts broker credentials
+					and these Razorpay fields—only one env var needed).{' '}
 					<code className="text-[11px]">RAZORPAY_KEY_SECRET</code> /{' '}
-					<code className="text-[11px]">RAZORPAY_WEBHOOK_SECRET</code> override stored values when set. Values
-					are never shown again after save.
+					<code className="text-[11px]">RAZORPAY_WEBHOOK_SECRET</code> override stored values when set. Saved
+					secrets are never shown again.
 				</p>
 				{settingsQ.isLoading ? (
 					<p className="text-sm text-[var(--muted)]">Loading…</p>

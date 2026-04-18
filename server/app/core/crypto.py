@@ -7,17 +7,19 @@ from cryptography.fernet import Fernet, InvalidToken
 
 
 class MissingDedicatedEncryptionKeyError(ValueError):
-    """Raised when DB secret persistence lacks APP_DATA_ENCRYPTION_KEY or BROKER_SECRET_KEY."""
+    """Raised when storing encrypted DB secrets without a dedicated Fernet env key."""
 
 
 def _fernet_key_material() -> bytes:
     """
     Symmetric key material for Fernet (URL-safe base64-encoded 32-byte key).
 
-    Priority:
-      1) APP_DATA_ENCRYPTION_KEY — preferred dedicated key for all at-rest secrets
-      2) BROKER_SECRET_KEY — backward compatible alias used for broker credentials
-      3) Derive from JWT secret (dev / tests only; not for production payment or broker secrets)
+    One Fernet key encrypts broker creds and Razorpay secrets in the DB. Set either env name
+    to the same value (only one is required):
+
+      1) APP_DATA_ENCRYPTION_KEY
+      2) BROKER_SECRET_KEY (legacy name; same key material as above if you use both names)
+      3) Derive from JWT secret (dev / tests only; not for production)
     """
     for env_name in ("APP_DATA_ENCRYPTION_KEY", "BROKER_SECRET_KEY"):
         raw = os.getenv(env_name, "") or ""
@@ -45,9 +47,9 @@ def assert_db_secret_encryption_allowed() -> None:
     """
     if not encryption_uses_dedicated_env_key():
         raise MissingDedicatedEncryptionKeyError(
-            "Set APP_DATA_ENCRYPTION_KEY (preferred) or BROKER_SECRET_KEY to a Fernet key "
-            "(generate via cryptography.fernet.Fernet.generate_key) before storing encrypted "
-            "API secrets in the database."
+            "Set one Fernet key: BROKER_SECRET_KEY or APP_DATA_ENCRYPTION_KEY (same key for "
+            "broker + Razorpay DB secrets; only one variable needed). Generate with "
+            "cryptography.fernet.Fernet.generate_key()."
         )
 
 
