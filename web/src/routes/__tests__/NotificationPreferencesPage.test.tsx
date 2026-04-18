@@ -31,10 +31,7 @@ const mockPreferences = {
 	notify_service_started: true,
 	notify_service_stopped: true,
 	notify_service_execution_completed: true,
-	notify_subscription_renewal_reminder: true,
 	notify_payment_failed: true,
-	notify_subscription_activated: true,
-	notify_subscription_cancelled: true,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 };
@@ -76,7 +73,7 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
 			expect(screen.getByText(/System Events/i)).toBeInTheDocument();
 			expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
-			expect(screen.getByText(/Billing & subscription/i)).toBeInTheDocument();
+			expect(screen.getByText(/Billing emails/i)).toBeInTheDocument();
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 		});
 	});

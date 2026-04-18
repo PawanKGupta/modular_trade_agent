@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import sys
+from datetime import datetime
 from types import ModuleType, SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 class FakeScheduler:
@@ -56,8 +61,6 @@ def _import_scheduler_module() -> ModuleType:
     sys.modules.pop("server.app.jobs.scheduler", None)
     sys.modules.pop("server.app.jobs", None)
 
-    import importlib
-
     return importlib.import_module("server.app.jobs.scheduler")
 
 
@@ -70,8 +73,12 @@ def test_start_scheduler_adds_job_and_starts(monkeypatch: pytest.MonkeyPatch):
     mod.start_scheduler()
 
     assert fake.running is True
-    assert len(fake.jobs) == 2
-    assert {j.id for j in fake.jobs} == {"mtm_daily_update", "billing_reconcile_daily"}
+    assert len(fake.jobs) == 3
+    assert {j.id for j in fake.jobs} == {
+        "mtm_daily_update",
+        "billing_reconcile_daily",
+        "performance_bills_month_close",
+    }
 
 
 def test_start_scheduler_is_idempotent(monkeypatch: pytest.MonkeyPatch):
@@ -112,3 +119,52 @@ def test_job_mtm_update_sums_results(monkeypatch: pytest.MonkeyPatch):
 
     # Should not raise
     mod.job_mtm_update()
+
+
+def test_closed_month_to_bill_first_of_month():
+    mod = _import_scheduler_module()
+    # March 1 00:30 IST → bill February of same year
+    assert mod.closed_month_to_bill(datetime(2026, 3, 1, 0, 30, tzinfo=IST)) == (2026, 2)
+    # January 1 → December previous year
+    assert mod.closed_month_to_bill(datetime(2026, 1, 1, 0, 30, tzinfo=IST)) == (2025, 12)
+
+
+def test_closed_month_to_bill_mid_month():
+    mod = _import_scheduler_module()
+    assert mod.closed_month_to_bill(datetime(2026, 3, 18, 12, 0, tzinfo=IST)) == (2026, 2)
+
+
+def test_job_performance_bills_month_close_calls_service(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+
+    captured: dict[str, object] = {}
+
+    class _FakeSvc:
+        def __init__(self, db):
+            captured["db"] = db
+
+        def close_month_for_all_broker_users(self, year, month):
+            captured["year"], captured["month"] = year, month
+            return ["bill-a"]
+
+    class _Ctx:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(mod, "closed_month_to_bill", lambda _now: (2026, 3))
+    monkeypatch.setattr(
+        "src.infrastructure.db.session.SessionLocal",
+        lambda: _Ctx(),
+    )
+    monkeypatch.setattr(
+        "src.application.services.performance_billing_service.PerformanceBillingService",
+        _FakeSvc,
+    )
+
+    mod.job_performance_bills_month_close()
+
+    assert captured.get("year") == 2026
+    assert captured.get("month") == 3

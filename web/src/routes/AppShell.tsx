@@ -120,7 +120,7 @@ export function AppShell() {
 			items: [
 				{ path: '/dashboard/trading-config', label: 'Trading Config', icon: '⚙️' },
 				{ path: '/dashboard/settings', label: 'Broker Settings', icon: '🔧' },
-				{ path: '/dashboard/billing', label: 'Subscription / Billing', icon: '💳' },
+				{ path: '/dashboard/billing', label: 'Billing', icon: '💳' },
 				{ path: '/dashboard/notification-preferences', label: 'Notification Settings', icon: '🔕' },
 			],
 		},

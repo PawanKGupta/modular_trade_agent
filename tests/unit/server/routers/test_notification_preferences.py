@@ -56,10 +56,7 @@ def _full_prefs(**overrides):
         "notify_service_started": False,
         "notify_service_stopped": False,
         "notify_service_execution_completed": False,
-        "notify_subscription_renewal_reminder": False,
         "notify_payment_failed": False,
-        "notify_subscription_activated": False,
-        "notify_subscription_cancelled": False,
         "quiet_hours_start": None,
         "quiet_hours_end": None,
     }
@@ -391,6 +388,7 @@ def test_preferences_to_response():
         notify_service_started=True,
         notify_service_stopped=False,
         notify_service_execution_completed=True,
+        notify_payment_failed=True,
         quiet_hours_start=None,
         quiet_hours_end=None,
     )

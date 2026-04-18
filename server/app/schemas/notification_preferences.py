@@ -66,12 +66,9 @@ class NotificationPreferencesResponse(BaseModel):
         default=True, description="Notify when a service execution completes"
     )
 
-    notify_subscription_renewal_reminder: bool = Field(
-        default=True, description="Subscription renewal reminder emails"
+    notify_payment_failed: bool = Field(
+        default=True, description="Email when a Razorpay billing payment fails"
     )
-    notify_payment_failed: bool = Field(default=True, description="Payment failure notifications")
-    notify_subscription_activated: bool = Field(default=True, description="Subscription activated")
-    notify_subscription_cancelled: bool = Field(default=True, description="Subscription cancelled")
 
     # Quiet hours
     quiet_hours_start: time | None = Field(
@@ -174,10 +171,7 @@ class NotificationPreferencesUpdate(BaseModel):
         default=None, description="Notify when a service execution completes"
     )
 
-    notify_subscription_renewal_reminder: bool | None = Field(default=None)
     notify_payment_failed: bool | None = Field(default=None)
-    notify_subscription_activated: bool | None = Field(default=None)
-    notify_subscription_cancelled: bool | None = Field(default=None)
 
     # Quiet hours
     quiet_hours_start: time | None = Field(

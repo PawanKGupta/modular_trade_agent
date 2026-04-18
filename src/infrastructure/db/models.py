@@ -13,6 +13,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    Numeric,
     String,
     Time,
     UniqueConstraint,
@@ -912,17 +913,8 @@ class UserNotificationPreferences(Base):
     notify_service_execution_completed: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
-    # Billing / subscription notifications
-    notify_subscription_renewal_reminder: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
-    )
+    # Billing (Razorpay payment failures, including performance-fee orders)
     notify_payment_failed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notify_subscription_activated: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
-    )
-    notify_subscription_cancelled: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
-    )
     # Quiet hours (optional)
     quiet_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
@@ -1328,10 +1320,13 @@ class BillingAdminSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     payment_card_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     payment_upi_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    default_trial_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    grace_period_days: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
-    renewal_reminder_days_before: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
-    dunning_retry_interval_hours: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    # Broker performance fee: bill due N days after invoice generation (admin configurable).
+    performance_fee_payment_days_after_invoice: Mapped[int] = mapped_column(
+        Integer, default=15, nullable=False
+    )
+    performance_fee_default_percentage: Mapped[float] = mapped_column(
+        Numeric(8, 4), default=10.0, nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, onupdate=ist_now, nullable=False
     )
@@ -1341,6 +1336,54 @@ class BillingAdminSettings(Base):
     razorpay_webhook_secret_encrypted: Mapped[bytes | None] = mapped_column(
         LargeBinary, nullable=True
     )
+
+
+class PerformanceBillStatus(str, Enum):
+    PENDING_PAYMENT = "pending_payment"
+    OVERDUE = "overdue"
+    PAID = "paid"
+    VOID = "void"
+
+
+class UserPerformanceBillingState(Base):
+    """Per-user carry-forward loss for performance-fee billing (same unit as monthly PnL)."""
+
+    __tablename__ = "user_performance_billing_state"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+
+class MonthlyPerformanceBill(Base):
+    """One generated invoice per user per calendar month (broker / real trading)."""
+
+    __tablename__ = "monthly_performance_bills"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    bill_month: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    previous_carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    current_month_pnl: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    fee_percentage: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False)
+    chargeable_profit: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    fee_amount: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    new_carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    payable_amount: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    status: Mapped[PerformanceBillStatus] = mapped_column(
+        SAEnum(PerformanceBillStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PerformanceBillStatus.PENDING_PAYMENT,
+        nullable=False,
+    )
+    razorpay_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    razorpay_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "bill_month", name="uq_perf_bill_user_month"),)
 
 
 class FreeTrialUsage(Base):

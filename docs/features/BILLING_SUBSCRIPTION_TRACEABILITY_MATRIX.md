@@ -1,53 +1,54 @@
-# Billing & subscription — traceability matrix (subscriber / end-user)
+# Billing — traceability matrix (subscriber / end-user)
 
 **Admin matrix:** [`BILLING_ADMIN_TRACEABILITY_MATRIX.md`](./BILLING_ADMIN_TRACEABILITY_MATRIX.md)
 
-This matrix maps common product requirements to **this repository** (FastAPI routes, services, web, webhooks). It is a QA / sign-off aid, not a legal guarantee of behavior.
+This matrix maps product requirements to **this repository** after **legacy subscription catalog removal**: there is **no** in-app plan list, subscribe, cancel, change-plan, or subscription pay-link API. Users see **current access** (`entitlements`), **broker performance fee** invoices and Razorpay **Order** checkout for those bills, and **payment history** (`transactions`). Existing **Razorpay subscription** webhooks and reconciliation can still update `UserSubscription` / transactions for data created before catalog removal or outside this app.
 
-**Legend:** ✓ implemented · ~ partial / depends on Razorpay or config · ✗ not implemented or gap
+**Legend:** ✓ implemented · ~ partial / depends on Razorpay or config · ✗ removed from app or gap
 
 | # | Requirement | Status | Where (primary) | Notes |
 |---|---------------|--------|-----------------|-------|
-| 1 | User can view available subscription plans | ✓ | `GET /user/billing/plans` — `server/app/routers/billing_user.py` · `web/src/routes/dashboard/BillingPage.tsx` · `web/src/api/billing.ts` | Lists active plans from DB. |
-| 2 | User can successfully subscribe to a plan | ~ | `POST /user/billing/subscribe` — `billing_user.py` · `billing_checkout_service.py` · `BillingPage.tsx` | After subscribe, **Razorpay Checkout.js** opens when `razorpay_key_id` + `razorpay_subscription_id` are returned. Needs Razorpay keys + plan linked to Razorpay. |
-| 3 | Subscription activated after successful payment | ✓ | `billing_webhook_service.py` · `billing_webhooks.py` | `subscription.activated` / `charged` / `resumed` → `ACTIVE`; payment `captured` can set `PENDING` → `ACTIVE`. |
-| 4 | User receives confirmation after subscription | ~ | `billing_webhook_service.py` (`_send_billing_email_if_allowed` on `subscription.activated`) · prefs in `notification_preference_service.py` | **Email** when SMTP + `email_enabled` + event pref allow. No in-app notification in this path. Renewal reminder still in `billing_reconciliation_service.py`. |
-| 5 | Correct subscription start and expiry dates | ~ | `billing_webhook_service.py` · `GET /user/billing/subscription` · `BillingPage.tsx` | Razorpay timestamps → `started_at` / `current_period_end`; UI shows renew + **trial_end** when set. |
-| 6 | User cannot subscribe with invalid payment details | ~ | Razorpay Checkout | Card validation is **Razorpay-side** in Checkout. |
-| 7 | System handles payment failure gracefully | ✓ | `billing_webhook_service.py` | Failed tx row + `PAST_DUE` + `grace_until` from admin settings. |
-| 8 | User can retry payment after failure | ~ | `GET /user/billing/subscription/pay-link` — `billing_user.py` · `BillingPage.tsx` (`getSubscriptionPayLink`) | Opens Razorpay **`short_url`** in a new tab when API returns it (depends on Razorpay subscription state). |
-| 9 | User can upgrade subscription plan | ✓ | `POST /user/billing/change-plan` · `BillingPage.tsx` · **`subscription.charged`** in `billing_webhook_service.py` | `pending_plan_id` applied via **`apply_pending_plan_change`** on each **charged** event when set. |
-| 10 | User can downgrade subscription plan | ✓ | Same as #9 | Same path. |
-| 11 | User can cancel subscription | ✓ | `POST /user/billing/cancel` — `billing_user.py` · `BillingCheckoutService` · `BillingPage.tsx` | |
-| 12 | Subscription status updates after cancellation | ✓ | `billing_webhook_service.py` · `billing_reconciliation_service.py` | |
+| 1 | User can view available subscription plans in the app | ✗ | N/A | **Removed.** Was `GET /user/billing/plans` · plan list on `BillingPage.tsx`. |
+| 2 | User can subscribe to a plan from the app | ✗ | N/A | **Removed.** Was `POST /user/billing/subscribe` · `BillingCheckoutService` (file removed). |
+| 3 | Subscription activated after successful payment | ✓ | `billing_webhook_service.py` · `billing_webhooks.py` | Applies to **legacy** Razorpay subscription payments still hitting webhooks. |
+| 4 | User receives confirmation after subscription | ~ | `billing_webhook_service.py` (`_send_billing_email_if_allowed`) · `notification_preference_service.py` | Email when SMTP + prefs allow. |
+| 5 | Correct subscription start and expiry dates | ~ | `billing_webhook_service.py` · `GET /user/billing/entitlements` | Period / trial surfaced on **entitlements**; no dedicated `GET /user/billing/subscription` route. |
+| 6 | User cannot complete checkout with invalid payment details | ~ | Razorpay Checkout | Applies to **performance fee** checkout (`POST …/performance-bills/{id}/checkout`); validation is Razorpay-side. |
+| 7 | System handles payment failure gracefully | ✓ | `billing_webhook_service.py` | Failed tx + `PAST_DUE` + `grace_until` from admin settings (subscription path). |
+| 8 | User can retry failed subscription payment via in-app pay link | ✗ | N/A | **Removed.** Was `GET /user/billing/subscription/pay-link`. Use Razorpay/hosted flows or support for legacy subs. |
+| 9 | User can upgrade subscription plan in the app | ✗ | N/A | **Removed.** Was `POST /user/billing/change-plan`. `apply_pending_plan_change` may still run from webhooks if `pending_plan_id` is set elsewhere. |
+| 10 | User can downgrade subscription plan in the app | ✗ | N/A | Same as #9. |
+| 11 | User can cancel subscription from the app | ✗ | N/A | **Removed.** Was `POST /user/billing/cancel`. |
+| 12 | Subscription status updates after cancellation | ✓ | `billing_webhook_service.py` | For events Razorpay still sends. |
 | 13 | User access revoked after subscription expiry | ~ | `subscription_entitlement_service.py` · `require_entitlement` | When **`subscription_enforcement_enabled`** is true. |
 | 14 | Premium features only with active subscription | ~ | `broker.py`, `service.py`, `paper_trading.py`, `signals.py` | Same enforcement flag as #13. |
-| 15 | Free trial activated for eligible users | ✓ | `billing_checkout_service.py` · admin settings | `trial_used` / `global_v1` gate. |
-| 16 | Free trial expires correctly after defined period | ✓ | `subscription_entitlement_service.py` (deny if `trial_end` passed) · `billing_reconciliation_service._expire_trials` | Access denied immediately; reconcile marks **`EXPIRED`** and returns **`trial_subscriptions_expired`** count. |
-| 17 | User cannot reuse free trial multiple times | ✓ | `billing_checkout_service.py` · `billing_repository.py` · `free_trial_usage` | |
-| 18 | Auto-renewal triggered before subscription expiry | ~ | `billing_reconciliation_service._renewal_reminders` | **Email reminder** before `current_period_end`; **billing** charge is Razorpay. |
+| 15 | Free trial activated on subscribe from the app | ✗ | N/A | No in-app subscribe; trial fields still matter for **existing** rows + reconciliation. |
+| 16 | Free trial expires correctly after defined period | ~ | `subscription_entitlement_service.py` | Access denied after `trial_end` when enforcement is on; app reconcile no longer bulk-marks `TRIALING` → `EXPIRED`. |
+| 17 | User cannot reuse free trial multiple times | ~ | `billing_repository.py` · `free_trial_usage` | DB rules remain; **no** first-party subscribe path to consume trial in-app. |
+| 18 | Auto-renewal reminder before subscription expiry | ✗ | N/A | App-driven renewal reminder job removed with reconcile slim-down. |
 | 19 | Payment deducted during auto-renewal | ~ | Razorpay + `billing_webhook_service.py` | App records tx from webhooks. |
-| 20 | Renewal failure with retry mechanism | ✗ | `billing_admin_settings.dunning_retry_interval_hours` | Stored + editable in admin UI; **no automated Razorpay retry job** in app. |
-| 21 | Grace period after failed renewal | ~ | `billing_webhook_service.py` · `billing_reconciliation_service._grace_and_expiry` | Uses **`PAST_DUE`** + `grace_until` (not `GRACE` enum value). |
-| 22 | User can view subscription details | ✓ | `GET /user/billing/subscription` · entitlements · `BillingPage.tsx` | Entitlements still JSON block (cosmetic). |
+| 20 | Renewal failure with in-app retry scheduling | ✗ | N/A | Dunning interval admin setting removed; **no** automated Razorpay retry job in app. |
+| 21 | Grace period after failed renewal | ~ | `billing_webhook_service.py` | Failed payment sets `PAST_DUE` + `grace_until` (**fixed 3-day** window). Reconcile no longer bulk-expires grace. |
+| 22 | User can view subscription / access summary | ✓ | `GET /user/billing/entitlements` · `BillingPage.tsx` | “Current access” card (tier, status, period end, feature flags). |
 | 23 | User can view billing history | ✓ | `GET /user/billing/transactions` · `BillingPage.tsx` | |
-| 24 | User can update payment method | ~ | `GET /user/billing/subscription/pay-link` | **Hosted** Razorpay flow when `short_url` exists; no first-class “save card” API on our side. |
-| 25 | Updated payment method used for next billing | ~ | Razorpay | Depends on customer completing Razorpay hosted / Checkout flows; not verified in-app. |
+| 24 | User can update payment method (subscription) in app | ✗ | N/A | Pay-link / first-party subscription card flows removed from user router. |
+| 25 | Updated payment method used for next subscription charge | ~ | Razorpay | Only if customer completes Razorpay-side flows; not wired through this app’s user APIs. |
+| 26 | User can pay broker performance fee invoices | ✓ | `GET /user/billing/performance-bills` · `POST …/performance-bills/{id}/checkout` — `billing_user.py` · `PerformanceFeeCheckoutService` · `BillingPage.tsx` | Razorpay **Order** Checkout.js. |
 
 ## Related files (quick index)
 
 | Area | Paths |
-|------|--------|
+|------|-------|
 | User billing API | `server/app/routers/billing_user.py` |
 | Webhooks | `server/app/routers/billing_webhooks.py`, `src/application/services/billing_webhook_service.py` |
-| Checkout / cancel / plan change | `src/application/services/billing_checkout_service.py` |
+| Performance fee checkout | `src/application/services/performance_fee_checkout_service.py` |
 | Entitlements | `src/application/services/subscription_entitlement_service.py`, `server/app/core/deps.py` |
-| Reconcile / reminders / expiry / trials | `src/application/services/billing_reconciliation_service.py` |
+| Reconcile (performance overdue only) | `src/application/services/billing_reconciliation_service.py` |
 | Admin reconcile trigger | `POST /admin/billing/reconcile` — `server/app/routers/billing_admin.py` |
-| Persistence | `src/infrastructure/persistence/billing_repository.py` |
+| Persistence | `src/infrastructure/persistence/billing_repository.py`, `performance_billing_repository.py` |
 | Models | `src/infrastructure/db/models.py` |
 | Subscriber UI | `web/src/routes/dashboard/BillingPage.tsx`, `web/src/api/billing.ts` |
-| Schemas | `server/app/schemas/billing.py` (`SubscriptionPayLinkOut`, …) |
+| Schemas | `server/app/schemas/billing.py` (`EntitlementsOut`, `PerformanceBillOut`, `PerformanceFeeCheckoutResponse`, `TransactionOut`, …) |
 
 ## Config switches
 
@@ -58,10 +59,11 @@ This matrix maps common product requirements to **this repository** (FastAPI rou
 
 ## Remaining product gaps (intentionally not claimed above)
 
+- **In-app** subscription catalog, subscribe, cancel, change-plan, and subscription pay-link (**removed by design**).
 - **Seat / usage quotas** beyond boolean `features_json`.
 - **App-driven dunning** / Razorpay retry scheduling from `dunning_retry_interval_hours`.
-- **Native card/token management** APIs (only hosted `short_url` + Checkout where applicable).
+- **Native card/token management** APIs for legacy Razorpay subscriptions (only performance-fee Order checkout is first-party in the UI).
 
 ---
 
-*Matrix revised to match billing gap implementation (Checkout, webhooks, pay-link, trial expiry, plan apply on charge). Re-run QA when changing billing behavior.*
+*Matrix aligned with legacy plan/subscribe API removal and performance-fee billing on `BillingPage`. Re-run QA when changing billing behavior.*

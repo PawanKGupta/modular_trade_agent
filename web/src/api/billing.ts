@@ -1,46 +1,5 @@
 import { api } from './client';
 
-export type BillingPlan = {
-	id: number;
-	slug: string;
-	name: string;
-	description: string | null;
-	plan_tier: string;
-	billing_interval: string;
-	base_amount_paise: number;
-	effective_amount_paise: number;
-	currency: string;
-	features_json: Record<string, boolean>;
-	razorpay_plan_id: string | null;
-	is_active: boolean;
-};
-
-export type Entitlements = {
-	active: boolean;
-	status: string | null;
-	plan_tier: string | null;
-	features: Record<string, boolean>;
-	current_period_end: string | null;
-};
-
-export type UserSubscription = {
-	id: number;
-	plan_id: number;
-	status: string;
-	billing_provider: string;
-	started_at: string | null;
-	current_period_end: string | null;
-	cancel_at_period_end: boolean;
-	trial_end: string | null;
-	pending_plan_id: number | null;
-	/** Admin list / manual assign */
-	user_id?: number | null;
-	user_email?: string | null;
-	user_name?: string | null;
-	plan_slug?: string | null;
-	plan_name?: string | null;
-};
-
 export type BillingTransaction = {
 	id: number;
 	user_id: number;
@@ -53,71 +12,43 @@ export type BillingTransaction = {
 	created_at: string;
 };
 
-/** GET /admin/billing/reports */
-export type BillingReports = {
-	active_subscribers: number;
-	revenue_paise_month: number;
-	mrr_paise_approx: number;
-	churned_users: number;
-	active_at_period_start: number;
-	churn_rate: number | null;
-};
-
-export async function getBillingPlans(): Promise<BillingPlan[]> {
-	const res = await api.get<BillingPlan[]>('/user/billing/plans');
-	return res.data;
-}
-
-export async function getEntitlements(): Promise<Entitlements> {
-	const res = await api.get<Entitlements>('/user/billing/entitlements');
-	return res.data;
-}
-
-export async function getMySubscription(): Promise<UserSubscription | null> {
-	const res = await api.get<UserSubscription | null>('/user/billing/subscription');
-	return res.data;
-}
-
-export async function subscribeCheckout(input: {
-	plan_id: number;
-	coupon_code?: string | null;
-}): Promise<{
-	razorpay_key_id: string | null;
-	razorpay_subscription_id: string | null;
-	user_subscription_id: number;
-	amount_quoted_paise: number;
-	trial_days_applied: number;
-}> {
-	const res = await api.post('/user/billing/subscribe', input);
-	return res.data;
-}
-
-export async function cancelSubscription(userSubscriptionId: number): Promise<UserSubscription> {
-	const res = await api.post('/user/billing/cancel', null, {
-		params: { user_subscription_id: userSubscriptionId },
-	});
-	return res.data;
-}
-
-export async function changePlan(userSubscriptionId: number, newPlanId: number): Promise<UserSubscription> {
-	const res = await api.post('/user/billing/change-plan', null, {
-		params: { user_subscription_id: userSubscriptionId, new_plan_id: newPlanId },
-	});
-	return res.data;
-}
-
 export async function getMyBillingTransactions(limit = 100): Promise<BillingTransaction[]> {
 	const res = await api.get<BillingTransaction[]>('/user/billing/transactions', { params: { limit } });
 	return res.data;
 }
 
-export type SubscriptionPayLink = {
-	short_url: string | null;
-	detail: string | null;
+export type PerformanceBill = {
+	id: number;
+	bill_month: string;
+	generated_at: string;
+	due_at: string;
+	status: string;
+	payable_amount: number;
+	fee_amount: number;
+	chargeable_profit: number;
+	current_month_pnl: number;
+	previous_carry_forward_loss: number;
+	new_carry_forward_loss: number;
+	fee_percentage: number;
+	paid_at: string | null;
+	razorpay_order_id: string | null;
 };
 
-export async function getSubscriptionPayLink(): Promise<SubscriptionPayLink> {
-	const res = await api.get<SubscriptionPayLink>('/user/billing/subscription/pay-link');
+export async function getPerformanceBills(limit = 36): Promise<PerformanceBill[]> {
+	const res = await api.get<PerformanceBill[]>('/user/billing/performance-bills', { params: { limit } });
+	return res.data;
+}
+
+export type PerformanceFeeCheckout = {
+	razorpay_key_id: string;
+	order_id: string;
+	amount_paise: number;
+	currency: string;
+	bill_id: number;
+};
+
+export async function checkoutPerformanceBill(billId: number): Promise<PerformanceFeeCheckout> {
+	const res = await api.post<PerformanceFeeCheckout>(`/user/billing/performance-bills/${billId}/checkout`);
 	return res.data;
 }
 
@@ -140,16 +71,6 @@ export async function patchAdminRazorpayCredentials(body: Record<string, unknown
 	return res.data;
 }
 
-export async function getAdminBillingPlans(): Promise<BillingPlan[]> {
-	const res = await api.get<BillingPlan[]>('/admin/billing/plans');
-	return res.data;
-}
-
-export async function getAdminSubscriptions(limit = 200): Promise<UserSubscription[]> {
-	const res = await api.get<UserSubscription[]>('/admin/billing/subscriptions', { params: { limit } });
-	return res.data;
-}
-
 export async function getAdminTransactions(params?: {
 	user_id?: number;
 	failed_only?: boolean;
@@ -159,79 +80,8 @@ export async function getAdminTransactions(params?: {
 	return res.data;
 }
 
-export async function getBillingReports(year: number, month: number): Promise<BillingReports> {
-	const res = await api.get<BillingReports>('/admin/billing/reports', { params: { year, month } });
-	return res.data;
-}
-
 export async function runBillingReconcile(): Promise<Record<string, unknown>> {
 	const res = await api.post('/admin/billing/reconcile');
-	return res.data;
-}
-
-export type AdminPlanCreateInput = {
-	slug: string;
-	name: string;
-	description?: string | null;
-	plan_tier: 'paper_basic' | 'auto_advanced';
-	billing_interval: 'month' | 'year';
-	base_amount_paise: number;
-	currency?: string;
-	features_json?: Record<string, boolean> | null;
-	sync_razorpay_plan?: boolean;
-};
-
-export async function postAdminCreatePlan(body: AdminPlanCreateInput): Promise<BillingPlan> {
-	const res = await api.post<BillingPlan>('/admin/billing/plans', body);
-	return res.data;
-}
-
-export async function patchAdminPlan(
-	planId: number,
-	body: Partial<{
-		name: string;
-		description: string | null;
-		base_amount_paise: number;
-		is_active: boolean;
-		razorpay_plan_id: string | null;
-		features_json: Record<string, boolean>;
-	}>
-): Promise<BillingPlan> {
-	const res = await api.patch<BillingPlan>(`/admin/billing/plans/${planId}`, body);
-	return res.data;
-}
-
-export async function postAdminDeactivatePlan(planId: number): Promise<{ ok: boolean }> {
-	const res = await api.post<{ ok: boolean }>(`/admin/billing/plans/${planId}/deactivate`);
-	return res.data;
-}
-
-export async function postAdminActivatePlan(planId: number): Promise<{ ok: boolean }> {
-	const res = await api.post<{ ok: boolean }>(`/admin/billing/plans/${planId}/activate`);
-	return res.data;
-}
-
-export async function deleteAdminPlan(planId: number): Promise<{ ok: boolean }> {
-	const res = await api.delete<{ ok: boolean }>(`/admin/billing/plans/${planId}`);
-	return res.data;
-}
-
-export async function postAdminManualSubscription(body: {
-	user_id: number;
-	plan_id: number;
-	period_months?: number;
-}): Promise<UserSubscription> {
-	const res = await api.post<UserSubscription>('/admin/billing/subscriptions/manual', body);
-	return res.data;
-}
-
-export async function postAdminActivateSubscription(subId: number): Promise<{ ok: boolean }> {
-	const res = await api.post<{ ok: boolean }>(`/admin/billing/subscriptions/${subId}/activate`);
-	return res.data;
-}
-
-export async function postAdminSuspendSubscription(subId: number): Promise<{ ok: boolean }> {
-	const res = await api.post<{ ok: boolean }>(`/admin/billing/subscriptions/${subId}/deactivate`);
 	return res.data;
 }
 

@@ -26,7 +26,7 @@ class RazorpayGateway:
         self._client: Any = None
         if key_id and key_secret:
             try:
-                import razorpay
+                import razorpay  # noqa: PLC0415
 
                 self._client = razorpay.Client(auth=(key_id, key_secret))
             except Exception as e:  # pragma: no cover - import guard
@@ -65,7 +65,7 @@ class RazorpayGateway:
             payload["notes"] = {k: str(v)[:250] for k, v in notes.items()}
         return self._client.plan.create(payload)
 
-    def create_subscription(
+    def create_subscription(  # noqa: PLR0913
         self,
         *,
         plan_id: str,
@@ -122,6 +122,26 @@ class RazorpayGateway:
         if not self._client:
             raise RuntimeError("Razorpay is not configured")
         return self._client.subscription.fetch(subscription_id)
+
+    def create_order(
+        self,
+        *,
+        amount_paise: int,
+        currency: str = "INR",
+        receipt: str,
+        notes: dict | None = None,
+    ) -> dict:
+        if not self._client:
+            raise RuntimeError("Razorpay is not configured")
+        receipt_safe = (receipt or "")[:40]
+        payload: dict[str, Any] = {
+            "amount": int(amount_paise),
+            "currency": currency,
+            "receipt": receipt_safe,
+        }
+        if notes:
+            payload["notes"] = {k: str(v)[:250] for k, v in notes.items()}
+        return self._client.order.create(payload)
 
 
 def safe_json_loads(body: bytes) -> dict:

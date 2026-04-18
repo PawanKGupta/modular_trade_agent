@@ -1,3 +1,4 @@
+# ruff: noqa: PLC0415
 """
 Background Jobs / Scheduler
 
@@ -5,9 +6,15 @@ Scheduled tasks for the trading application:
 - MTM (Mark-to-Market) updates at market close
 - Daily PnL calculations
 - Data cleanup tasks
+- Daily performance-fee billing reconcile (mark overdue invoices)
+- Monthly performance-fee invoices (broker users) after month close
 """
 
+from __future__ import annotations
+
 import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -16,12 +23,24 @@ from server.app.services.mtm_updater import update_mtm_for_all_users
 
 logger = logging.getLogger(__name__)
 
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def closed_month_to_bill(now_ist: datetime) -> tuple[int, int]:
+    """Calendar month to invoice: the month that ended immediately before *now_ist* (IST)."""
+    if now_ist.tzinfo is None:
+        raise ValueError("now_ist must be timezone-aware")
+    first_this_month = now_ist.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    last_day_prev_month = first_this_month - timedelta(days=1)
+    return last_day_prev_month.year, last_day_prev_month.month
+
+
 # Global scheduler instance
 scheduler = AsyncIOScheduler()
 
 
 def job_billing_reconcile():
-    """Renewal reminders, grace expiry, and subscription housekeeping."""
+    """Mark past-due performance fee bills as overdue (no subscription renewal / grace sweeps)."""
     try:
         from src.application.services.billing_reconciliation_service import (
             BillingReconciliationService,
@@ -33,6 +52,25 @@ def job_billing_reconcile():
         logger.info("Billing reconcile: %s", stats)
     except Exception:
         logger.exception("Billing reconcile job failed")
+
+
+def job_performance_bills_month_close():
+    """Generate performance-fee bills for broker users for the calendar month that just ended."""
+    try:
+        from src.application.services.performance_billing_service import PerformanceBillingService
+        from src.infrastructure.db.session import SessionLocal
+
+        year, month = closed_month_to_bill(datetime.now(IST))
+        with SessionLocal() as db:
+            bills = PerformanceBillingService(db).close_month_for_all_broker_users(year, month)
+        logger.info(
+            "Performance bills month-close %04d-%02d: generated %d bill(s)",
+            year,
+            month,
+            len(bills),
+        )
+    except Exception:
+        logger.exception("Performance bills month-close job failed")
 
 
 def start_scheduler():
@@ -56,7 +94,16 @@ def start_scheduler():
         job_billing_reconcile,
         trigger=CronTrigger(hour=6, minute=0, timezone="Asia/Kolkata"),
         id="billing_reconcile_daily",
-        name="Daily billing reconciliation",
+        name="Daily performance bill overdue sweep",
+        replace_existing=True,
+    )
+
+    # Performance fee invoices: 00:30 IST on the 1st — bills the *previous* calendar month.
+    scheduler.add_job(
+        job_performance_bills_month_close,
+        trigger=CronTrigger(day=1, hour=0, minute=30, timezone="Asia/Kolkata"),
+        id="performance_bills_month_close",
+        name="Monthly performance-fee bills (broker users)",
         replace_existing=True,
     )
 
@@ -115,4 +162,6 @@ __all__ = [
     "stop_scheduler",
     "job_mtm_update",
     "job_billing_reconcile",
+    "job_performance_bills_month_close",
+    "closed_month_to_bill",
 ]

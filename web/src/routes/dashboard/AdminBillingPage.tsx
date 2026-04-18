@@ -1,78 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
-	deleteAdminPlan,
-	getAdminBillingPlans,
 	getAdminBillingSettings,
-	getAdminSubscriptions,
 	getAdminTransactions,
-	getBillingReports,
 	patchAdminBillingSettings,
-	patchAdminPlan,
 	patchAdminRazorpayCredentials,
-	postAdminActivatePlan,
-	postAdminActivateSubscription,
-	postAdminCreatePlan,
-	postAdminDeactivatePlan,
-	postAdminManualSubscription,
 	postAdminRefund,
-	postAdminSuspendSubscription,
 	runBillingReconcile,
-	type AdminPlanCreateInput,
-	type BillingPlan,
-	type BillingReports,
 	type BillingTransaction,
-	type UserSubscription,
 } from '@/api/billing';
-import { UserAutocomplete } from './UserAutocomplete';
 
 function formatInrPaise(paise: number): string {
 	return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatChurnRate(rate: number | null | undefined): string {
-	if (rate == null || Number.isNaN(rate)) return '—';
-	return `${(rate * 100).toFixed(2)}%`;
-}
-
-function BillingReportsGrid({ data }: { data: BillingReports | undefined }) {
-	if (!data) {
-		return <p className="text-sm text-[var(--muted)]">No data.</p>;
-	}
-	const items: { label: string; value: string; hint?: string }[] = [
-		{ label: 'Active subscribers', value: String(data.active_subscribers) },
-		{
-			label: 'Revenue (month)',
-			value: formatInrPaise(data.revenue_paise_month),
-			hint: 'Recognized in selected period',
-		},
-		{
-			label: 'MRR (approx.)',
-			value: formatInrPaise(data.mrr_paise_approx),
-			hint: 'Same as month revenue for monthly plans',
-		},
-		{ label: 'Churned users', value: String(data.churned_users), hint: 'In selected period' },
-		{
-			label: 'Active at period start',
-			value: String(data.active_at_period_start),
-			hint: 'Denominator for churn rate',
-		},
-		{ label: 'Churn rate', value: formatChurnRate(data.churn_rate), hint: 'Churned ÷ active at start' },
-	];
-	return (
-		<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-			{items.map((item) => (
-				<div
-					key={item.label}
-					className="rounded border border-[#1e293b] bg-[#0f1720] p-3 space-y-1"
-				>
-					<p className="text-xs text-[var(--muted)]">{item.label}</p>
-					<p className="text-lg font-semibold tabular-nums">{item.value}</p>
-					{item.hint ? <p className="text-[10px] text-[var(--muted)] leading-snug">{item.hint}</p> : null}
-				</div>
-			))}
-		</div>
-	);
 }
 
 function TxTable({ rows, empty }: { rows: BillingTransaction[]; empty: string }) {
@@ -107,16 +46,7 @@ function TxTable({ rows, empty }: { rows: BillingTransaction[]; empty: string })
 
 export function AdminBillingPage() {
 	const qc = useQueryClient();
-	const [reportsYm, setReportsYm] = useState(() => {
-		const d = new Date();
-		return { y: d.getFullYear(), m: d.getMonth() + 1 };
-	});
 	const [adminMsg, setAdminMsg] = useState<string | null>(null);
-
-	const [trialDays, setTrialDays] = useState('');
-	const [graceDays, setGraceDays] = useState('');
-	const [reminderDays, setReminderDays] = useState('');
-	const [dunningHrs, setDunningHrs] = useState('');
 
 	const [rzKeyId, setRzKeyId] = useState('');
 	const [rzKeySecret, setRzKeySecret] = useState('');
@@ -125,40 +55,16 @@ export function AdminBillingPage() {
 	const [rzClearKeySecret, setRzClearKeySecret] = useState(false);
 	const [rzClearWebhook, setRzClearWebhook] = useState(false);
 
-	const [newSlug, setNewSlug] = useState('');
-	const [newName, setNewName] = useState('');
-	const [newTier, setNewTier] = useState<'paper_basic' | 'auto_advanced'>('paper_basic');
-	const [newInterval, setNewInterval] = useState<'month' | 'year'>('month');
-	const [newAmount, setNewAmount] = useState('0');
-	const [syncRzp, setSyncRzp] = useState(false);
-
-	const [manualUserId, setManualUserId] = useState('');
-	const [manualUserFieldKey, setManualUserFieldKey] = useState(0);
-	const [manualPlanId, setManualPlanId] = useState('');
-	const [manualMonths, setManualMonths] = useState('1');
-
 	const [refundTxId, setRefundTxId] = useState('');
 	const [refundAmount, setRefundAmount] = useState('');
 	const [refundReason, setRefundReason] = useState('');
 
-	const [editPlanId, setEditPlanId] = useState<number | null>(null);
-	const [editPlanName, setEditPlanName] = useState('');
-	const [editPlanDesc, setEditPlanDesc] = useState('');
-	const [editPlanPriceInr, setEditPlanPriceInr] = useState('');
-	const [editPlanRzpId, setEditPlanRzpId] = useState('');
-	const [editPlanActive, setEditPlanActive] = useState(true);
-
 	const settingsQ = useQuery({ queryKey: ['adminBillingSettings'], queryFn: getAdminBillingSettings });
-	const plansQ = useQuery({ queryKey: ['adminBillingPlans'], queryFn: getAdminBillingPlans });
-	const subsQ = useQuery({ queryKey: ['adminSubs'], queryFn: () => getAdminSubscriptions(100) });
+	const s = settingsQ.data;
 	const txQ = useQuery({ queryKey: ['adminTx'], queryFn: () => getAdminTransactions({ limit: 100 }) });
 	const failedQ = useQuery({
 		queryKey: ['adminTxFailed'],
 		queryFn: () => getAdminTransactions({ failed_only: true, limit: 50 }),
-	});
-	const reportsQ = useQuery({
-		queryKey: ['billingReports', reportsYm.y, reportsYm.m],
-		queryFn: () => getBillingReports(reportsYm.y, reportsYm.m),
 	});
 
 	const patchM = useMutation({
@@ -193,119 +99,10 @@ export function AdminBillingPage() {
 	const reconM = useMutation({
 		mutationFn: runBillingReconcile,
 		onSuccess: (r) => {
-			void qc.invalidateQueries({ queryKey: ['adminSubs'] });
+			void qc.invalidateQueries({ queryKey: ['adminTx'] });
+			void qc.invalidateQueries({ queryKey: ['adminTxFailed'] });
+			void qc.invalidateQueries({ queryKey: ['adminBillingSettings'] });
 			setAdminMsg(`Reconcile: ${JSON.stringify(r)}`);
-		},
-	});
-
-	const createPlanM = useMutation({
-		mutationFn: (body: AdminPlanCreateInput) => postAdminCreatePlan(body),
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
-			setAdminMsg('Plan created.');
-			setNewSlug('');
-			setNewName('');
-		},
-		onError: (e: unknown) => {
-			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-			setAdminMsg(d ?? 'Create plan failed');
-		},
-	});
-
-	const deactivatePlanM = useMutation({
-		mutationFn: postAdminDeactivatePlan,
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
-			setAdminMsg('Plan deactivated.');
-		},
-	});
-
-	const activatePlanM = useMutation({
-		mutationFn: postAdminActivatePlan,
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
-			setAdminMsg('Plan activated.');
-		},
-		onError: (e: unknown) => {
-			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-			setAdminMsg(d ?? 'Activate plan failed');
-		},
-	});
-
-	const deletePlanM = useMutation({
-		mutationFn: deleteAdminPlan,
-		onSuccess: (_, planId) => {
-			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
-			if (editPlanId === planId) setEditPlanId(null);
-			setAdminMsg('Plan deleted.');
-		},
-		onError: (e: unknown) => {
-			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-			setAdminMsg(typeof d === 'string' ? d : 'Delete plan failed');
-		},
-	});
-
-	const patchPlanM = useMutation({
-		mutationFn: ({
-			id,
-			body,
-		}: {
-			id: number;
-			body: {
-				name: string;
-				description: string | null;
-				base_amount_paise: number;
-				is_active: boolean;
-				razorpay_plan_id: string | null;
-			};
-		}) => patchAdminPlan(id, body),
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminBillingPlans'] });
-			setEditPlanId(null);
-			setAdminMsg('Plan updated.');
-		},
-		onError: (e: unknown) => {
-			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-			setAdminMsg(d ?? 'Update plan failed');
-		},
-	});
-
-	function openPlanEditor(p: BillingPlan) {
-		setEditPlanId(p.id);
-		setEditPlanName(p.name);
-		setEditPlanDesc(p.description ?? '');
-		setEditPlanPriceInr(String((p.base_amount_paise / 100).toFixed(2)));
-		setEditPlanRzpId(p.razorpay_plan_id ?? '');
-		setEditPlanActive(p.is_active);
-	}
-
-	const manualSubM = useMutation({
-		mutationFn: postAdminManualSubscription,
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminSubs'] });
-			setManualUserId('');
-			setManualUserFieldKey((k) => k + 1);
-			setAdminMsg('Manual subscription created.');
-		},
-		onError: (e: unknown) => {
-			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-			setAdminMsg(d ?? 'Manual subscription failed');
-		},
-	});
-
-	const activateSubM = useMutation({
-		mutationFn: postAdminActivateSubscription,
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminSubs'] });
-			setAdminMsg('Subscription activated.');
-		},
-	});
-
-	const suspendSubM = useMutation({
-		mutationFn: postAdminSuspendSubscription,
-		onSuccess: () => {
-			void qc.invalidateQueries({ queryKey: ['adminSubs'] });
-			setAdminMsg('Subscription suspended.');
 		},
 	});
 
@@ -321,21 +118,6 @@ export function AdminBillingPage() {
 			setAdminMsg(d ?? 'Refund failed');
 		},
 	});
-
-	const s = settingsQ.data;
-
-	const applyNumericSettings = () => {
-		const body: Record<string, unknown> = {};
-		if (trialDays !== '') body.default_trial_days = Number(trialDays);
-		if (graceDays !== '') body.grace_period_days = Number(graceDays);
-		if (reminderDays !== '') body.renewal_reminder_days_before = Number(reminderDays);
-		if (dunningHrs !== '') body.dunning_retry_interval_hours = Number(dunningHrs);
-		if (!Object.keys(body).length) {
-			setAdminMsg('Enter at least one numeric field to save.');
-			return;
-		}
-		patchM.mutate(body);
-	};
 
 	const applyRazorpayCredentials = () => {
 		const body: Record<string, unknown> = {};
@@ -490,458 +272,20 @@ export function AdminBillingPage() {
 				</div>
 			</section>
 
-			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
-				<h2 className="font-medium">Billing timing & trial</h2>
-				<p className="text-xs text-[var(--muted)]">
-					Current: trial {String(s?.default_trial_days ?? '—')}d · grace {String(s?.grace_period_days ?? '—')}
-					d · reminder {String(s?.renewal_reminder_days_before ?? '—')}d before · dunning{' '}
-					{String(s?.dunning_retry_interval_hours ?? '—')}h
+			<section className="p-4 rounded border border-[#1e293b] space-y-2 text-sm">
+				<h2 className="font-medium">Reconciliation</h2>
+				<p className="text-xs text-[var(--muted)] leading-relaxed">
+					Marks overdue performance-fee bills and refreshes billing-related state. Run periodically or after
+					webhook issues.
 				</p>
-				<div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Default trial days</span>
-						<input
-							type="number"
-							min={0}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={trialDays}
-							onChange={(e) => setTrialDays(e.target.value)}
-							placeholder={String(s?.default_trial_days ?? '')}
-						/>
-					</label>
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Grace period days</span>
-						<input
-							type="number"
-							min={0}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={graceDays}
-							onChange={(e) => setGraceDays(e.target.value)}
-							placeholder={String(s?.grace_period_days ?? '')}
-						/>
-					</label>
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Reminder days before</span>
-						<input
-							type="number"
-							min={1}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={reminderDays}
-							onChange={(e) => setReminderDays(e.target.value)}
-							placeholder={String(s?.renewal_reminder_days_before ?? '')}
-						/>
-					</label>
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Dunning interval (h)</span>
-						<input
-							type="number"
-							min={1}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={dunningHrs}
-							onChange={(e) => setDunningHrs(e.target.value)}
-							placeholder={String(s?.dunning_retry_interval_hours ?? '')}
-						/>
-					</label>
-				</div>
 				<button
 					type="button"
-					className="text-sm px-3 py-1.5 rounded bg-slate-600 text-white"
-					onClick={() => applyNumericSettings()}
-					disabled={patchM.isPending}
+					className="px-3 py-1.5 rounded bg-slate-600 text-white"
+					onClick={() => reconM.mutate()}
+					disabled={reconM.isPending}
 				>
-					Save billing settings
+					Run reconcile
 				</button>
-			</section>
-
-			<section className="p-4 rounded border border-[#1e293b] space-y-2">
-				<div className="flex flex-wrap items-center justify-between gap-2">
-					<h2 className="font-medium">Reports</h2>
-					<div className="flex gap-2 items-center text-sm">
-						<input
-							type="number"
-							className="w-20 px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={reportsYm.y}
-							onChange={(e) => setReportsYm((x) => ({ ...x, y: Number(e.target.value) }))}
-						/>
-						<input
-							type="number"
-							min={1}
-							max={12}
-							className="w-16 px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={reportsYm.m}
-							onChange={(e) => setReportsYm((x) => ({ ...x, m: Number(e.target.value) }))}
-						/>
-					</div>
-				</div>
-				{reportsQ.isLoading ? (
-					<p className="text-sm text-[var(--muted)]">Loading…</p>
-				) : reportsQ.isError ? (
-					<p className="text-sm text-red-400">Could not load reports.</p>
-				) : (
-					<BillingReportsGrid data={reportsQ.data} />
-				)}
-			</section>
-
-			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
-				<h2 className="font-medium">Create plan</h2>
-				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-					<input
-						className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-						placeholder="slug"
-						value={newSlug}
-						onChange={(e) => setNewSlug(e.target.value)}
-					/>
-					<input
-						className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-						placeholder="Display name"
-						value={newName}
-						onChange={(e) => setNewName(e.target.value)}
-					/>
-					<select
-						className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-						value={newTier}
-						onChange={(e) => setNewTier(e.target.value as 'paper_basic' | 'auto_advanced')}
-					>
-						<option value="paper_basic">paper_basic</option>
-						<option value="auto_advanced">auto_advanced</option>
-					</select>
-					<select
-						className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-						value={newInterval}
-						onChange={(e) => setNewInterval(e.target.value as 'month' | 'year')}
-					>
-						<option value="month">month</option>
-						<option value="year">year</option>
-					</select>
-					<label className="flex flex-col gap-1 sm:col-span-2">
-						<span className="text-xs text-[var(--muted)]">Price (INR per billing interval)</span>
-						<input
-							type="number"
-							min={0}
-							step={0.01}
-							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							placeholder="e.g. 100 for ₹100"
-							value={newAmount}
-							onChange={(e) => setNewAmount(e.target.value)}
-						/>
-						<span className="text-[10px] text-[var(--muted)]">
-							Enter rupees; the app stores paise (100 → ₹100.00). Razorpay sync uses the same amount.
-						</span>
-					</label>
-					<label className="flex items-center gap-2">
-						<input type="checkbox" checked={syncRzp} onChange={(e) => setSyncRzp(e.target.checked)} />
-						Sync plan to Razorpay
-					</label>
-				</div>
-				<button
-					type="button"
-					className="text-sm px-3 py-1.5 rounded bg-blue-600 text-white"
-					disabled={createPlanM.isPending || !newSlug.trim() || !newName.trim()}
-					onClick={() =>
-						createPlanM.mutate({
-							slug: newSlug.trim(),
-							name: newName.trim(),
-							plan_tier: newTier,
-							billing_interval: newInterval,
-							base_amount_paise: Math.max(0, Math.round((Number(newAmount) || 0) * 100)),
-							sync_razorpay_plan: syncRzp,
-						})
-					}
-				>
-					Create plan
-				</button>
-			</section>
-
-			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
-				<h2 className="font-medium">Manual subscription</h2>
-				<div className="flex flex-wrap gap-2 items-end">
-					<label className="flex flex-col gap-1 min-w-[12rem] flex-1">
-						<span className="text-xs text-[var(--muted)]">User</span>
-						<UserAutocomplete
-							key={manualUserFieldKey}
-							value={manualUserId}
-							onChange={setManualUserId}
-						/>
-					</label>
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Plan</span>
-						<select
-							className="min-w-[14rem] max-w-[28rem] px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={manualPlanId}
-							onChange={(e) => setManualPlanId(e.target.value)}
-						>
-							<option value="">—</option>
-							{(plansQ.data ?? []).map((p: BillingPlan) => (
-								<option key={p.id} value={p.id}>
-									{p.name} · {p.slug} (#{p.id})
-								</option>
-							))}
-						</select>
-					</label>
-					<label className="flex flex-col gap-1">
-						<span className="text-xs text-[var(--muted)]">Months</span>
-						<input
-							type="number"
-							min={1}
-							className="w-20 px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-							value={manualMonths}
-							onChange={(e) => setManualMonths(e.target.value)}
-						/>
-					</label>
-					<button
-						type="button"
-						className="text-sm px-3 py-1.5 rounded bg-emerald-700 text-white"
-						disabled={manualSubM.isPending || !manualUserId || !manualPlanId}
-						onClick={() =>
-							manualSubM.mutate({
-								user_id: Number(manualUserId),
-								plan_id: Number(manualPlanId),
-								period_months: Math.max(1, Number(manualMonths) || 1),
-							})
-						}
-					>
-						Assign
-					</button>
-				</div>
-			</section>
-
-			<section className="p-4 rounded border border-[#1e293b] space-y-2">
-				<div className="flex justify-between items-center">
-					<h2 className="font-medium">Subscriptions</h2>
-					<button
-						type="button"
-						className="text-sm px-2 py-1 rounded bg-slate-600 text-white"
-						onClick={() => reconM.mutate()}
-						disabled={reconM.isPending}
-					>
-						Run reconcile
-					</button>
-				</div>
-				<div className="max-h-56 overflow-auto text-xs">
-					<table className="w-full border-collapse">
-						<thead>
-							<tr className="text-left text-[var(--muted)]">
-								<th className="p-1">ID</th>
-								<th className="p-1">User</th>
-								<th className="p-1">Plan</th>
-								<th className="p-1">Status</th>
-								<th className="p-1">Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							{(subsQ.data ?? []).map((r: UserSubscription) => {
-								const st = r.status.toLowerCase();
-								const showActivate = !['active', 'trialing'].includes(st);
-								const showSuspend = !['suspended', 'cancelled', 'expired'].includes(st);
-								const userLabel = r.user_name?.trim() || r.user_email || null;
-								return (
-									<tr key={r.id} className="border-t border-[#1e293b]/60">
-										<td className="p-1">{r.id}</td>
-										<td className="p-1">
-											<div className="text-[var(--text)]">{userLabel ?? '—'}</div>
-											{r.user_id != null ? (
-												<div className="text-[var(--muted)] text-[10px] tabular-nums">#{r.user_id}</div>
-											) : null}
-										</td>
-										<td className="p-1">
-											<div className="text-[var(--text)]">
-												{r.plan_name ?? '—'}
-												{r.plan_slug != null ? (
-													<span className="text-[var(--muted)]"> · {r.plan_slug}</span>
-												) : null}
-											</div>
-											<div className="text-[var(--muted)] text-[10px] tabular-nums">#{r.plan_id}</div>
-										</td>
-										<td className="p-1">{r.status}</td>
-										<td className="p-1 flex flex-wrap gap-1">
-											{showActivate ? (
-												<button
-													type="button"
-													className="px-1.5 py-0.5 rounded bg-emerald-800 text-white"
-													disabled={activateSubM.isPending}
-													onClick={() => activateSubM.mutate(r.id)}
-												>
-													Activate
-												</button>
-											) : null}
-											{showSuspend ? (
-												<button
-													type="button"
-													className="px-1.5 py-0.5 rounded bg-rose-900 text-white"
-													disabled={suspendSubM.isPending}
-													onClick={() => suspendSubM.mutate(r.id)}
-												>
-													Suspend
-												</button>
-											) : null}
-										</td>
-									</tr>
-								);
-							})}
-						</tbody>
-					</table>
-				</div>
-			</section>
-
-			<section className="p-4 rounded border border-[#1e293b] space-y-2">
-				<h2 className="font-medium">Plans (catalog)</h2>
-				<p className="text-xs text-[var(--muted)]">
-					Slug and billing interval are fixed after create. Edit name, description, base price (INR), Razorpay
-					plan id, and catalog visibility. Delete (inactive plans only) requires no live subscribers and no
-					subscription rows referencing the plan.
-				</p>
-				<ul className="text-sm space-y-2 max-h-[28rem] overflow-auto">
-					{(plansQ.data ?? []).map((p: BillingPlan) => (
-						<li
-							key={p.id}
-							className="border border-[#1e293b]/60 rounded p-2 bg-[#0f1720] space-y-2"
-						>
-							<div className="flex flex-wrap items-center justify-between gap-2">
-								<span>
-									{p.slug} — {p.name} · {formatInrPaise(p.effective_amount_paise)} / {p.billing_interval}{' '}
-									({p.is_active ? 'active' : 'inactive'})
-								</span>
-								<div className="flex flex-wrap gap-1">
-									<button
-										type="button"
-										className="text-xs px-2 py-1 rounded bg-slate-600 text-white"
-										onClick={() => (editPlanId === p.id ? setEditPlanId(null) : openPlanEditor(p))}
-									>
-										{editPlanId === p.id ? 'Close' : 'Edit'}
-									</button>
-									{p.is_active ? (
-										<button
-											type="button"
-											className="text-xs px-2 py-1 rounded bg-rose-900 text-white"
-											disabled={
-												deactivatePlanM.isPending ||
-												activatePlanM.isPending ||
-												deletePlanM.isPending
-											}
-											onClick={() => deactivatePlanM.mutate(p.id)}
-										>
-											Deactivate
-										</button>
-									) : (
-										<>
-											<button
-												type="button"
-												className="text-xs px-2 py-1 rounded bg-emerald-800 text-white"
-												disabled={
-													activatePlanM.isPending ||
-													deactivatePlanM.isPending ||
-													deletePlanM.isPending
-												}
-												onClick={() => activatePlanM.mutate(p.id)}
-											>
-												Activate
-											</button>
-											<button
-												type="button"
-												className="text-xs px-2 py-1 rounded bg-[#7f1d1d] text-white border border-red-900/60"
-												disabled={
-													deletePlanM.isPending ||
-													activatePlanM.isPending ||
-													deactivatePlanM.isPending
-												}
-												onClick={() => {
-													const ok = window.confirm(
-														`Permanently delete plan "${p.name}" (${p.slug}, #${p.id})?\n\n` +
-															'Allowed only if the plan is inactive, has no live subscriptions, ' +
-															'no subscription rows reference this plan, and no coupon targets it.'
-													);
-													if (ok) deletePlanM.mutate(p.id);
-												}}
-											>
-												Delete
-											</button>
-										</>
-									)}
-								</div>
-							</div>
-							{editPlanId === p.id ? (
-								<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1 border-t border-[#1e293b]/50">
-									<label className="flex flex-col gap-1 sm:col-span-2">
-										<span className="text-[var(--muted)]">Slug (read-only)</span>
-										<input readOnly className="px-2 py-1 rounded bg-[#0a1018] border border-[#1e293b] opacity-80" value={p.slug} />
-									</label>
-									<label className="flex flex-col gap-1">
-										<span className="text-[var(--muted)]">Display name</span>
-										<input
-											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-											value={editPlanName}
-											onChange={(e) => setEditPlanName(e.target.value)}
-										/>
-									</label>
-									<label className="flex flex-col gap-1">
-										<span className="text-[var(--muted)]">Base price (INR)</span>
-										<input
-											type="number"
-											min={0}
-											step={0.01}
-											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-											value={editPlanPriceInr}
-											onChange={(e) => setEditPlanPriceInr(e.target.value)}
-										/>
-									</label>
-									<label className="flex flex-col gap-1 sm:col-span-2">
-										<span className="text-[var(--muted)]">Description</span>
-										<input
-											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
-											value={editPlanDesc}
-											onChange={(e) => setEditPlanDesc(e.target.value)}
-										/>
-									</label>
-									<label className="flex flex-col gap-1 sm:col-span-2">
-										<span className="text-[var(--muted)]">Razorpay plan id (optional)</span>
-										<input
-											className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] font-mono text-[11px]"
-											value={editPlanRzpId}
-											onChange={(e) => setEditPlanRzpId(e.target.value)}
-											placeholder="plan_…"
-										/>
-									</label>
-									<label className="flex items-center gap-2 sm:col-span-2">
-										<input
-											type="checkbox"
-											checked={editPlanActive}
-											onChange={(e) => setEditPlanActive(e.target.checked)}
-										/>
-										<span>Plan visible in catalog (active)</span>
-									</label>
-									<div className="flex flex-wrap gap-2 sm:col-span-2">
-										<button
-											type="button"
-											className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white"
-											disabled={patchPlanM.isPending || !editPlanName.trim()}
-											onClick={() =>
-												patchPlanM.mutate({
-													id: p.id,
-													body: {
-														name: editPlanName.trim(),
-														description: editPlanDesc.trim() ? editPlanDesc.trim() : null,
-														base_amount_paise: Math.max(0, Math.round((Number(editPlanPriceInr) || 0) * 100)),
-														is_active: editPlanActive,
-														razorpay_plan_id: editPlanRzpId.trim() || null,
-													},
-												})
-											}
-										>
-											Save changes
-										</button>
-										<button
-											type="button"
-											className="text-xs px-3 py-1.5 rounded bg-[#334155] text-white"
-											onClick={() => setEditPlanId(null)}
-										>
-											Cancel
-										</button>
-									</div>
-								</div>
-							) : null}
-						</li>
-					))}
-				</ul>
 			</section>
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-2 text-sm">

@@ -100,10 +100,7 @@ export function NotificationPreferencesPage() {
 			updates.notify_service_stopped = true;
 			updates.notify_service_execution_completed = true;
 		} else if (category === 'billing') {
-			updates.notify_subscription_renewal_reminder = true;
 			updates.notify_payment_failed = true;
-			updates.notify_subscription_activated = true;
-			updates.notify_subscription_cancelled = true;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
@@ -135,10 +132,7 @@ export function NotificationPreferencesPage() {
 			updates.notify_service_stopped = false;
 			updates.notify_service_execution_completed = false;
 		} else if (category === 'billing') {
-			updates.notify_subscription_renewal_reminder = false;
 			updates.notify_payment_failed = false;
-			updates.notify_subscription_activated = false;
-			updates.notify_subscription_cancelled = false;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
@@ -577,9 +571,9 @@ export function NotificationPreferencesPage() {
 			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
 				<div className="flex items-center justify-between">
 					<div>
-						<h2 className="text-base sm:text-lg font-semibold">Billing & subscription</h2>
+						<h2 className="text-base sm:text-lg font-semibold">Billing emails</h2>
 						<p className="text-xs sm:text-sm text-[var(--muted)]">
-							Renewal reminders, payment failures, and subscription lifecycle emails
+							When Razorpay reports a failed billing payment (e.g. performance fee order)
 						</p>
 					</div>
 					<div className="flex gap-2">
@@ -603,40 +597,11 @@ export function NotificationPreferencesPage() {
 					<label className="flex items-center gap-3">
 						<input
 							type="checkbox"
-							checked={localPrefs.notify_subscription_renewal_reminder}
-							onChange={(e) =>
-								handleChange('notify_subscription_renewal_reminder', e.target.checked)
-							}
-							className="w-4 h-4"
-						/>
-						<span>Renewal reminder</span>
-					</label>
-					<label className="flex items-center gap-3">
-						<input
-							type="checkbox"
 							checked={localPrefs.notify_payment_failed}
 							onChange={(e) => handleChange('notify_payment_failed', e.target.checked)}
 							className="w-4 h-4"
 						/>
 						<span>Payment failed</span>
-					</label>
-					<label className="flex items-center gap-3">
-						<input
-							type="checkbox"
-							checked={localPrefs.notify_subscription_activated}
-							onChange={(e) => handleChange('notify_subscription_activated', e.target.checked)}
-							className="w-4 h-4"
-						/>
-						<span>Subscription activated</span>
-					</label>
-					<label className="flex items-center gap-3">
-						<input
-							type="checkbox"
-							checked={localPrefs.notify_subscription_cancelled}
-							onChange={(e) => handleChange('notify_subscription_cancelled', e.target.checked)}
-							className="w-4 h-4"
-						/>
-						<span>Subscription cancelled</span>
 					</label>
 				</div>
 			</section>

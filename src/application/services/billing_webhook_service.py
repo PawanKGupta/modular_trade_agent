@@ -1,12 +1,8 @@
-"""Process Razorpay webhooks into local billing state."""
-
-# ruff: noqa: PLR0912
+"""Process Razorpay webhooks: performance-fee orders and generic payment records."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -15,14 +11,14 @@ from services.notification_preference_service import (
     NotificationEventType,
     NotificationPreferenceService,
 )
-from src.application.services.subscription_entitlement_service import default_features_for_tier
+from src.application.services.performance_fee_checkout_service import payable_amount_paise
 from src.infrastructure.db.models import (
     BillingTransactionStatus,
-    SubscriptionPlan,
+    MonthlyPerformanceBill,
+    PerformanceBillStatus,
     Users,
-    UserSubscription,
-    UserSubscriptionStatus,
 )
+from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.billing_repository import BillingRepository
 
 logger = logging.getLogger(__name__)
@@ -50,20 +46,6 @@ def _send_billing_email_if_allowed(
         notifier.send_email(email_to, subject, body)
 
 
-def _parse_ts(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        # Razorpay unix timestamp
-        if isinstance(value, (int, float)):
-            return datetime.utcfromtimestamp(int(value))
-        if isinstance(value, str) and value.isdigit():
-            return datetime.utcfromtimestamp(int(value))
-    except (ValueError, OSError):
-        return None
-    return None
-
-
 class BillingWebhookService:
     def __init__(self, db: Session):
         self.db = db
@@ -75,82 +57,73 @@ class BillingWebhookService:
         if not event:
             return
 
-        if event.startswith("subscription."):
-            self._handle_subscription_event(event, entity)
-        elif event.startswith("payment.") or event == "invoice.paid":
+        if event.startswith("payment.") or event == "invoice.paid":
             self._handle_payment_event(event, entity)
 
-    def _find_local_subscription(self, rz_sub: dict) -> UserSubscription | None:
-        rid = rz_sub.get("id")
-        if rid:
-            row = (
-                self.db.query(UserSubscription)
-                .filter(UserSubscription.razorpay_subscription_id == rid)
-                .first()
+    def _try_capture_performance_bill_payment(  # noqa: PLR0911
+        self,
+        pay: dict,
+        *,
+        status: str,
+        amount: int,
+        pid: str | None,
+        invoice_id: str | None,
+    ) -> bool:
+        """Match Razorpay notes to a performance bill; mark paid and record a transaction."""
+        notes = pay.get("notes") or {}
+        raw = notes.get("performance_bill_id")
+        if raw is None or not str(raw).isdigit():
+            return False
+        bill = self.db.get(MonthlyPerformanceBill, int(str(raw)))
+        if not bill:
+            logger.info("Performance bill webhook: unknown bill id %s", raw)
+            return True
+        uid_note = notes.get("user_id")
+        if uid_note is None or not str(uid_note).isdigit() or int(str(uid_note)) != bill.user_id:
+            logger.warning(
+                "Performance bill %s payment user mismatch (note=%s bill.user_id=%s)",
+                bill.id,
+                uid_note,
+                bill.user_id,
             )
-            if row:
-                return row
-        notes = rz_sub.get("notes") or {}
-        raw = notes.get("app_user_subscription_id")
-        if raw and str(raw).isdigit():
-            return self.db.get(UserSubscription, int(raw))
-        return None
-
-    def _handle_subscription_event(self, event: str, entity: dict) -> None:
-        sub_payload = entity.get("subscription", entity)
-        if isinstance(sub_payload, dict) and "entity" in sub_payload:
-            sub_payload = sub_payload.get("entity") or sub_payload
-        if not isinstance(sub_payload, dict):
-            return
-        local = self._find_local_subscription(sub_payload)
-        if not local:
-            logger.info("Webhook subscription: no local row for %s", sub_payload.get("id"))
-            return
-
-        current_start = _parse_ts(sub_payload.get("current_start"))
-        current_end = _parse_ts(sub_payload.get("current_end"))
-
-        if event in (
-            "subscription.authenticated",
-            "subscription.activated",
-            "subscription.resumed",
+            return True
+        if status != "captured":
+            return True
+        expected = payable_amount_paise(float(bill.payable_amount or 0))
+        if expected <= 0 or amount != expected:
+            logger.warning(
+                "Performance bill %s amount mismatch: rz=%s expected_paise=%s",
+                bill.id,
+                amount,
+                expected,
+            )
+            return True
+        if bill.status == PerformanceBillStatus.PAID:
+            logger.info("Performance bill %s already paid; ignoring duplicate webhook", bill.id)
+            return True
+        if bill.status not in (
+            PerformanceBillStatus.PENDING_PAYMENT,
+            PerformanceBillStatus.OVERDUE,
         ):
-            local.status = UserSubscriptionStatus.ACTIVE
-            if current_start:
-                local.started_at = current_start
-            if current_end:
-                local.current_period_end = current_end
-        elif event == "subscription.charged":
-            local.status = UserSubscriptionStatus.ACTIVE
-            if current_end:
-                local.current_period_end = current_end
-        elif event in ("subscription.pending",):
-            local.status = UserSubscriptionStatus.PENDING
-        elif event in ("subscription.halted", "subscription.cancelled", "subscription.completed"):
-            if local.cancel_at_period_end and event == "subscription.cancelled":
-                local.status = UserSubscriptionStatus.CANCELLED
-            elif event == "subscription.completed":
-                local.status = UserSubscriptionStatus.EXPIRED
-            else:
-                local.status = UserSubscriptionStatus.SUSPENDED
-        elif event == "subscription.paused":
-            local.status = UserSubscriptionStatus.SUSPENDED
+            st = bill.status.value if hasattr(bill.status, "value") else str(bill.status)
+            logger.info("Performance bill %s not payable (status=%s)", bill.id, st)
+            return True
 
-        if event == "subscription.charged" and local.pending_plan_id:
-            apply_pending_plan_change(self.db, local)
-
-        self.db.commit()
-
-        if event == "subscription.activated":
-            _send_billing_email_if_allowed(
-                self.db,
-                user_id=local.user_id,
-                event_type=NotificationEventType.SUBSCRIPTION_ACTIVATED,
-                subject="Your subscription is active",
-                body=(
-                    "Your subscription is now active. You can manage billing anytime from the app."
-                ),
-            )
+        bill.status = PerformanceBillStatus.PAID
+        bill.paid_at = ist_now()
+        if pid:
+            bill.razorpay_payment_id = str(pid)
+        self.repo.add_transaction(
+            user_id=bill.user_id,
+            user_subscription_id=None,
+            amount_paise=amount,
+            currency=pay.get("currency") or "INR",
+            status=BillingTransactionStatus.CAPTURED,
+            razorpay_payment_id=str(pid) if pid else None,
+            razorpay_invoice_id=invoice_id,
+            idempotency_key=f"perf_bill:{bill.id}:{pid}" if pid else None,
+        )
+        return True
 
     def _handle_payment_event(self, event: str, entity: dict) -> None:
         pay = entity.get("payment", entity.get("invoice", {}))
@@ -163,30 +136,22 @@ class BillingWebhookService:
         amount = int(pay.get("amount") or 0)
         invoice_id = pay.get("invoice_id")
 
-        local_sub: UserSubscription | None = None
-        sub_id = pay.get("subscription_id")
-        if sub_id:
-            local_sub = (
-                self.db.query(UserSubscription)
-                .filter(UserSubscription.razorpay_subscription_id == sub_id)
-                .first()
-            )
-
-        user_id = local_sub.user_id if local_sub else None
-        if user_id is None:
-            notes = pay.get("notes") or {}
-            uid = notes.get("user_id")
-            if uid and str(uid).isdigit():
-                user_id = int(uid)
-
-        if user_id is None:
-            logger.info("Payment webhook without resolvable user: %s", pid)
+        if self._try_capture_performance_bill_payment(
+            pay, status=status, amount=amount, pid=str(pid) if pid else None, invoice_id=invoice_id
+        ):
             return
+
+        notes = pay.get("notes") or {}
+        uid = notes.get("user_id")
+        if uid is None or not str(uid).isdigit():
+            logger.info("Payment webhook without user_id in notes: %s", pid)
+            return
+        user_id = int(str(uid))
 
         if status == "captured":
             self.repo.add_transaction(
                 user_id=user_id,
-                user_subscription_id=local_sub.id if local_sub else None,
+                user_subscription_id=None,
                 amount_paise=amount,
                 currency=pay.get("currency") or "INR",
                 status=BillingTransactionStatus.CAPTURED,
@@ -194,13 +159,10 @@ class BillingWebhookService:
                 razorpay_invoice_id=invoice_id,
                 idempotency_key=f"pay:{pid}" if pid else None,
             )
-            if local_sub and local_sub.status == UserSubscriptionStatus.PENDING:
-                local_sub.status = UserSubscriptionStatus.ACTIVE
-                self.db.commit()
         elif status in ("failed",):
             self.repo.add_transaction(
                 user_id=user_id,
-                user_subscription_id=local_sub.id if local_sub else None,
+                user_subscription_id=None,
                 amount_paise=amount,
                 currency=pay.get("currency") or "INR",
                 status=BillingTransactionStatus.FAILED,
@@ -211,36 +173,15 @@ class BillingWebhookService:
                 ),
                 idempotency_key=f"payfail:{pid}" if pid else None,
             )
-            if local_sub:
-                admin = self.repo.get_admin_settings()
-                local_sub.status = UserSubscriptionStatus.PAST_DUE
-                local_sub.grace_until = datetime.utcnow() + timedelta(
-                    days=int(admin.grace_period_days or 0)
-                )
-            self.db.commit()
             reason = str(pay.get("error_description") or pay.get("error_code") or "Payment failed")
             _send_billing_email_if_allowed(
                 self.db,
                 user_id=user_id,
                 event_type=NotificationEventType.PAYMENT_FAILED,
-                subject="Payment failed for your subscription",
+                subject="Payment failed",
                 body=(
-                    "We could not complete a subscription payment.\n\n"
+                    "We could not complete a billing payment.\n\n"
                     f"Reason: {reason}\n\n"
-                    "Please open Billing in the app to retry or update your payment method."
+                    "Open Billing in the app to review or retry if a payment is due."
                 ),
             )
-
-
-def apply_pending_plan_change(db: Session, local: UserSubscription) -> None:
-    """If pending_plan_id set at renewal boundary, swap plan and refresh snapshots."""
-    if not local.pending_plan_id:
-        return
-    plan = db.get(SubscriptionPlan, local.pending_plan_id)
-    if not plan:
-        return
-    local.plan_id = plan.id
-    local.plan_tier_snapshot = plan.plan_tier
-    local.features_snapshot = plan.features_json or default_features_for_tier(plan.plan_tier)
-    local.pending_plan_id = None
-    db.flush()
