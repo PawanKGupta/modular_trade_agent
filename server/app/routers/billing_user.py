@@ -2,12 +2,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from server.app.core.config import settings
 from src.application.services.billing_checkout_service import (
     BillingCheckoutError,
     BillingCheckoutService,
 )
 from src.application.services.subscription_entitlement_service import SubscriptionEntitlementService
-from src.infrastructure.db.models import Users
+from src.infrastructure.db.models import BillingProvider, Users
+from src.infrastructure.payments.razorpay_gateway import RazorpayGateway
 from src.infrastructure.persistence.billing_repository import BillingRepository
 
 from ..core.deps import get_current_user, get_db
@@ -16,6 +18,7 @@ from ..schemas.billing import (
     PlanOut,
     SubscribeRequest,
     SubscribeResponse,
+    SubscriptionPayLinkOut,
     TransactionOut,
     UserSubscriptionOut,
 )
@@ -57,6 +60,37 @@ def get_entitlements(db: Session = Depends(get_db), current: Users = Depends(get
         features=ent.features,
         current_period_end=ent.current_period_end,
     )
+
+
+@router.get("/billing/subscription/pay-link", response_model=SubscriptionPayLinkOut)
+def get_subscription_pay_link(
+    db: Session = Depends(get_db),
+    current: Users = Depends(get_current_user),
+):
+    """Return Razorpay short_url for payment / mandate (retry)."""
+    repo = BillingRepository(db)
+    subs = repo.list_subscriptions_for_user(current.id)
+    if not subs:
+        return SubscriptionPayLinkOut(detail="No subscription on file.")
+    s = subs[0]
+    if s.billing_provider != BillingProvider.RAZORPAY or not s.razorpay_subscription_id:
+        return SubscriptionPayLinkOut(detail="No Razorpay subscription to pay online.")
+    gw = RazorpayGateway(settings.razorpay_key_id, settings.razorpay_key_secret)
+    if not gw.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payments not configured",
+        )
+    try:
+        data = gw.fetch_subscription(s.razorpay_subscription_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    url = data.get("short_url") if isinstance(data, dict) else None
+    if not url:
+        return SubscriptionPayLinkOut(
+            detail="Razorpay did not return a pay link (subscription may already be authenticated)."
+        )
+    return SubscriptionPayLinkOut(short_url=url)
 
 
 @router.get("/billing/subscription", response_model=UserSubscriptionOut | None)

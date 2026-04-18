@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0911
 """
 Resolve effective subscription entitlements for a user.
 
@@ -69,7 +70,7 @@ class SubscriptionEntitlementService:
             return False
         try:
             # Accept date-only or full ISO
-            if len(raw) == 10:
+            if len(raw) == 10:  # noqa: PLR2004
                 end = datetime.fromisoformat(raw + "T23:59:59+00:00")
             else:
                 end = datetime.fromisoformat(raw.replace("Z", "+00:00"))
@@ -145,6 +146,17 @@ class SubscriptionEntitlementService:
                 current_period_end=None,
                 user_subscription_id=None,
             )
+
+        if sub.status == UserSubscriptionStatus.TRIALING and sub.trial_end:
+            if datetime.utcnow() > sub.trial_end:
+                return EffectiveEntitlement(
+                    active=False,
+                    status="trial_expired",
+                    plan_tier=sub.plan_tier_snapshot,
+                    features={k: False for k in FULL_FEATURES},
+                    current_period_end=sub.current_period_end,
+                    user_subscription_id=sub.id,
+                )
 
         feats = dict(sub.features_snapshot or {})
         for k, v in default_features_for_tier(sub.plan_tier_snapshot).items():

@@ -105,6 +105,16 @@ export async function getMyBillingTransactions(limit = 100): Promise<BillingTran
 	return res.data;
 }
 
+export type SubscriptionPayLink = {
+	short_url: string | null;
+	detail: string | null;
+};
+
+export async function getSubscriptionPayLink(): Promise<SubscriptionPayLink> {
+	const res = await api.get<SubscriptionPayLink>('/user/billing/subscription/pay-link');
+	return res.data;
+}
+
 /** Admin */
 export async function getAdminBillingSettings(): Promise<Record<string, unknown>> {
 	const res = await api.get('/admin/billing/settings');
@@ -144,5 +154,70 @@ export async function getBillingReports(year: number, month: number): Promise<Bi
 
 export async function runBillingReconcile(): Promise<Record<string, unknown>> {
 	const res = await api.post('/admin/billing/reconcile');
+	return res.data;
+}
+
+export type AdminPlanCreateInput = {
+	slug: string;
+	name: string;
+	description?: string | null;
+	plan_tier: 'paper_basic' | 'auto_advanced';
+	billing_interval: 'month' | 'year';
+	base_amount_paise: number;
+	currency?: string;
+	features_json?: Record<string, boolean> | null;
+	sync_razorpay_plan?: boolean;
+};
+
+export async function postAdminCreatePlan(body: AdminPlanCreateInput): Promise<BillingPlan> {
+	const res = await api.post<BillingPlan>('/admin/billing/plans', body);
+	return res.data;
+}
+
+export async function patchAdminPlan(
+	planId: number,
+	body: Partial<{
+		name: string;
+		description: string | null;
+		base_amount_paise: number;
+		is_active: boolean;
+		razorpay_plan_id: string | null;
+		features_json: Record<string, boolean>;
+	}>
+): Promise<BillingPlan> {
+	const res = await api.patch<BillingPlan>(`/admin/billing/plans/${planId}`, body);
+	return res.data;
+}
+
+export async function postAdminDeactivatePlan(planId: number): Promise<{ ok: boolean }> {
+	const res = await api.post<{ ok: boolean }>(`/admin/billing/plans/${planId}/deactivate`);
+	return res.data;
+}
+
+export async function postAdminManualSubscription(body: {
+	user_id: number;
+	plan_id: number;
+	period_months?: number;
+}): Promise<UserSubscription> {
+	const res = await api.post<UserSubscription>('/admin/billing/subscriptions/manual', body);
+	return res.data;
+}
+
+export async function postAdminActivateSubscription(subId: number): Promise<{ ok: boolean }> {
+	const res = await api.post<{ ok: boolean }>(`/admin/billing/subscriptions/${subId}/activate`);
+	return res.data;
+}
+
+export async function postAdminSuspendSubscription(subId: number): Promise<{ ok: boolean }> {
+	const res = await api.post<{ ok: boolean }>(`/admin/billing/subscriptions/${subId}/deactivate`);
+	return res.data;
+}
+
+export async function postAdminRefund(body: {
+	billing_transaction_id: number;
+	amount_paise?: number | null;
+	reason?: string | null;
+}): Promise<{ ok: boolean }> {
+	const res = await api.post<{ ok: boolean }>('/admin/billing/refunds', body);
 	return res.data;
 }

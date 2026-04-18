@@ -7,9 +7,29 @@ import {
 	getEntitlements,
 	getMyBillingTransactions,
 	getMySubscription,
+	getSubscriptionPayLink,
 	subscribeCheckout,
 	type BillingPlan,
 } from '@/api/billing';
+
+declare global {
+	interface Window {
+		Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
+	}
+}
+
+function loadRazorpayScript(): Promise<void> {
+	if (typeof window === 'undefined') return Promise.resolve();
+	if (window.Razorpay) return Promise.resolve();
+	return new Promise((resolve, reject) => {
+		const s = document.createElement('script');
+		s.src = 'https://checkout.razorpay.com/v1/checkout.js';
+		s.async = true;
+		s.onload = () => resolve();
+		s.onerror = () => reject(new Error('Failed to load Razorpay Checkout script'));
+		document.body.appendChild(s);
+	});
+}
 
 export function BillingPage() {
 	const qc = useQueryClient();
@@ -24,16 +44,64 @@ export function BillingPage() {
 	const subscribeM = useMutation({
 		mutationFn: (planId: number) =>
 			subscribeCheckout({ plan_id: planId, coupon_code: coupon.trim() || null }),
-		onSuccess: (data) => {
-			setMsg(
-				`Checkout created. Use Razorpay Checkout with subscription_id=${data.razorpay_subscription_id ?? 'n/a'} (key_id=${data.razorpay_key_id ?? 'n/a'}).`
-			);
+		onSuccess: async (data) => {
 			void qc.invalidateQueries({ queryKey: ['mySubscription'] });
 			void qc.invalidateQueries({ queryKey: ['entitlements'] });
+			if (data.razorpay_key_id && data.razorpay_subscription_id) {
+				try {
+					await loadRazorpayScript();
+					const Ctor = window.Razorpay;
+					if (!Ctor) {
+						setMsg('Razorpay script loaded but constructor missing.');
+						return;
+					}
+					const rzp = new Ctor({
+						key: data.razorpay_key_id,
+						subscription_id: data.razorpay_subscription_id,
+						name: 'Rebound',
+						description: 'Subscription checkout',
+						handler() {
+							setMsg('Payment completed.');
+							void qc.invalidateQueries({ queryKey: ['mySubscription'] });
+							void qc.invalidateQueries({ queryKey: ['entitlements'] });
+							void qc.invalidateQueries({ queryKey: ['billingTx'] });
+						},
+						modal: {
+							ondismiss() {
+								setMsg('Checkout closed before completion.');
+							},
+						},
+					});
+					setMsg(null);
+					rzp.open();
+				} catch (e) {
+					setMsg(e instanceof Error ? e.message : 'Checkout failed to open');
+				}
+			} else {
+				setMsg(
+					`Subscription row created (#${data.user_subscription_id}) but Razorpay is not configured — complete payment in the Razorpay dashboard.`
+				);
+			}
 		},
 		onError: (e: unknown) => {
 			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
 			setMsg(d ?? 'Subscribe failed');
+		},
+	});
+
+	const payLinkM = useMutation({
+		mutationFn: getSubscriptionPayLink,
+		onSuccess: (d) => {
+			if (d.short_url) {
+				window.open(d.short_url, '_blank', 'noopener,noreferrer');
+				setMsg('Opened Razorpay payment page in a new tab.');
+			} else {
+				setMsg(d.detail ?? 'No hosted payment link available right now.');
+			}
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setMsg(d ?? 'Could not load pay link');
 		},
 	});
 
@@ -48,7 +116,7 @@ export function BillingPage() {
 	const changeM = useMutation({
 		mutationFn: ({ sid, pid }: { sid: number; pid: number }) => changePlan(sid, pid),
 		onSuccess: () => {
-			setMsg('Plan change scheduled for next cycle.');
+			setMsg('Plan change scheduled for next billing cycle (applied on renewal charge).');
 			void qc.invalidateQueries({ queryKey: ['mySubscription'] });
 		},
 	});
@@ -80,7 +148,23 @@ export function BillingPage() {
 							Status: <strong>{sub.status}</strong> — Plan #{sub.plan_id}
 						</p>
 						<p className="text-[var(--muted)]">Renews: {sub.current_period_end ?? '—'}</p>
+						{sub.trial_end ? (
+							<p className="text-[var(--muted)]">Trial ends: {sub.trial_end}</p>
+						) : null}
+						{sub.pending_plan_id ? (
+							<p className="text-amber-300 text-xs">
+								Pending plan change to #{sub.pending_plan_id} (applied on next renewal charge).
+							</p>
+						) : null}
 						<div className="flex flex-wrap gap-2">
+							<button
+								type="button"
+								className="px-3 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-white text-sm"
+								onClick={() => payLinkM.mutate()}
+								disabled={payLinkM.isPending}
+							>
+								Open Razorpay pay / retry
+							</button>
 							<button
 								type="button"
 								className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 text-white text-sm"

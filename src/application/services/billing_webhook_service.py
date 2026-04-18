@@ -1,5 +1,7 @@
 """Process Razorpay webhooks into local billing state."""
 
+# ruff: noqa: PLR0912
+
 from __future__ import annotations
 
 import logging
@@ -8,16 +10,44 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from services.email_notifier import EmailNotifier
+from services.notification_preference_service import (
+    NotificationEventType,
+    NotificationPreferenceService,
+)
 from src.application.services.subscription_entitlement_service import default_features_for_tier
 from src.infrastructure.db.models import (
     BillingTransactionStatus,
     SubscriptionPlan,
+    Users,
     UserSubscription,
     UserSubscriptionStatus,
 )
 from src.infrastructure.persistence.billing_repository import BillingRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _send_billing_email_if_allowed(
+    db: Session,
+    *,
+    user_id: int,
+    event_type: str,
+    subject: str,
+    body: str,
+) -> None:
+    """Best-effort billing email respecting user notification preferences."""
+    user = db.get(Users, user_id)
+    if not user:
+        return
+    pref_svc = NotificationPreferenceService(db)
+    if not pref_svc.should_notify(user_id, event_type, channel="email"):
+        return
+    prefs = pref_svc.get_preferences(user_id)
+    email_to = (prefs.email_address if prefs else None) or user.email
+    notifier = EmailNotifier()
+    if notifier.is_available() and email_to:
+        notifier.send_email(email_to, subject, body)
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -77,7 +107,6 @@ class BillingWebhookService:
             logger.info("Webhook subscription: no local row for %s", sub_payload.get("id"))
             return
 
-        status = (sub_payload.get("status") or "").lower()
         current_start = _parse_ts(sub_payload.get("current_start"))
         current_end = _parse_ts(sub_payload.get("current_end"))
 
@@ -107,7 +136,21 @@ class BillingWebhookService:
         elif event == "subscription.paused":
             local.status = UserSubscriptionStatus.SUSPENDED
 
+        if event == "subscription.charged" and local.pending_plan_id:
+            apply_pending_plan_change(self.db, local)
+
         self.db.commit()
+
+        if event == "subscription.activated":
+            _send_billing_email_if_allowed(
+                self.db,
+                user_id=local.user_id,
+                event_type=NotificationEventType.SUBSCRIPTION_ACTIVATED,
+                subject="Your subscription is active",
+                body=(
+                    "Your subscription is now active. You can manage billing anytime from the app."
+                ),
+            )
 
     def _handle_payment_event(self, event: str, entity: dict) -> None:
         pay = entity.get("payment", entity.get("invoice", {}))
@@ -174,7 +217,19 @@ class BillingWebhookService:
                 local_sub.grace_until = datetime.utcnow() + timedelta(
                     days=int(admin.grace_period_days or 0)
                 )
-                self.db.commit()
+            self.db.commit()
+            reason = str(pay.get("error_description") or pay.get("error_code") or "Payment failed")
+            _send_billing_email_if_allowed(
+                self.db,
+                user_id=user_id,
+                event_type=NotificationEventType.PAYMENT_FAILED,
+                subject="Payment failed for your subscription",
+                body=(
+                    "We could not complete a subscription payment.\n\n"
+                    f"Reason: {reason}\n\n"
+                    "Please open Billing in the app to retry or update your payment method."
+                ),
+            )
 
 
 def apply_pending_plan_change(db: Session, local: UserSubscription) -> None:
@@ -188,4 +243,4 @@ def apply_pending_plan_change(db: Session, local: UserSubscription) -> None:
     local.plan_tier_snapshot = plan.plan_tier
     local.features_snapshot = plan.features_json or default_features_for_tier(plan.plan_tier)
     local.pending_plan_id = None
-    db.commit()
+    db.flush()

@@ -43,6 +43,13 @@ class SubscribeResponse(BaseModel):
     trial_days_applied: int = 0
 
 
+class SubscriptionPayLinkOut(BaseModel):
+    """Razorpay-hosted URL to authenticate / retry payment when available."""
+
+    short_url: str | None = None
+    detail: str | None = None
+
+
 class UserSubscriptionOut(BaseModel):
     id: int
     plan_id: int

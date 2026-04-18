@@ -95,6 +95,35 @@ def test_enforcement_on_paper_plan_blocks_broker(db_session, user, paper_plan):
         settings.subscription_enforcement_enabled = prev_e
 
 
+def test_trialing_past_trial_end_blocks_access(db_session, user, paper_plan):
+    prev_e = settings.subscription_enforcement_enabled
+    settings.subscription_enforcement_enabled = True
+    settings.subscription_grandfather_until = None
+    try:
+        past = datetime.utcnow() - timedelta(days=1)
+        db_session.add(
+            UserSubscription(
+                user_id=user.id,
+                plan_id=paper_plan.id,
+                plan_tier_snapshot=paper_plan.plan_tier,
+                features_snapshot=paper_plan.features_json,
+                status=UserSubscriptionStatus.TRIALING,
+                billing_provider=BillingProvider.RAZORPAY,
+                started_at=past - timedelta(days=7),
+                current_period_end=None,
+                trial_end=past,
+            )
+        )
+        db_session.commit()
+
+        ent = SubscriptionEntitlementService(db_session).resolve(user)
+        assert ent.active is False
+        assert ent.status == "trial_expired"
+        assert ent.features.get("paper_trading") is False
+    finally:
+        settings.subscription_enforcement_enabled = prev_e
+
+
 def test_admin_always_full(db_session):
     u = Users(
         email="admin-ent@example.com",

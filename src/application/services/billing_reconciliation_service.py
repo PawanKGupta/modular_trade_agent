@@ -28,8 +28,32 @@ class BillingReconciliationService:
         admin = self.repo.get_admin_settings()
         now = datetime.utcnow()
         reminders = self._renewal_reminders(admin, now)
+        trials = self._expire_trials(now)
         grace = self._grace_and_expiry(now)
-        return {"renewal_reminders_sent": reminders, "subscriptions_updated": grace}
+        return {
+            "renewal_reminders_sent": reminders,
+            "trial_subscriptions_expired": trials,
+            "subscriptions_updated": grace,
+        }
+
+    def _expire_trials(self, now: datetime) -> int:
+        """Mark TRIALING subscriptions past trial_end as EXPIRED (no webhook yet)."""
+        rows = (
+            self.db.query(UserSubscription)
+            .filter(
+                UserSubscription.status == UserSubscriptionStatus.TRIALING,
+                UserSubscription.trial_end.isnot(None),
+                UserSubscription.trial_end < now,
+            )
+            .all()
+        )
+        n = 0
+        for sub in rows:
+            sub.status = UserSubscriptionStatus.EXPIRED
+            n += 1
+        if n:
+            self.db.commit()
+        return n
 
     def _renewal_reminders(self, admin, now: datetime) -> int:
         lead = int(admin.renewal_reminder_days_before or 7)
