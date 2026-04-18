@@ -1,5 +1,7 @@
 # Billing & subscription — traceability matrix (subscriber / end-user)
 
+**Admin matrix:** [`BILLING_ADMIN_TRACEABILITY_MATRIX.md`](./BILLING_ADMIN_TRACEABILITY_MATRIX.md)
+
 This matrix maps common product requirements to **this repository** (FastAPI routes, services, web, webhooks). It is a QA / sign-off aid, not a legal guarantee of behavior.
 
 **Legend:** ✓ implemented · ~ partial / depends on Razorpay or config · ✗ not implemented or gap
