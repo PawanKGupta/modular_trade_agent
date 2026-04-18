@@ -19,7 +19,7 @@ from src.infrastructure.db.models import Orders, TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
 from ..core.crypto import decrypt_blob, encrypt_blob
-from ..core.deps import get_current_user, get_db
+from ..core.deps import get_current_user, get_db, require_entitlement
 from ..routers.paper_trading import (
     ClosedPosition,
     PaperTradingAccount,
@@ -33,7 +33,7 @@ from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestRespon
 from .broker_history_impl import _fifo_match_orders
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_entitlement("broker_execution"))])
 
 
 def _get_or_create_auth_session(

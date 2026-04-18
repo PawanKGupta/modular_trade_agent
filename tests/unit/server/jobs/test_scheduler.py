@@ -11,7 +11,9 @@ class FakeScheduler:
         self.running = False
         self.jobs: list[SimpleNamespace] = []
 
-    def add_job(self, func, trigger, id: str, name: str, replace_existing: bool = True):  # noqa: A002
+    def add_job(
+        self, func, trigger, id: str, name: str, replace_existing: bool = True
+    ):  # noqa: A002
         self.jobs.append(SimpleNamespace(func=func, trigger=trigger, id=id, name=name))
 
     def start(self):
@@ -68,8 +70,8 @@ def test_start_scheduler_adds_job_and_starts(monkeypatch: pytest.MonkeyPatch):
     mod.start_scheduler()
 
     assert fake.running is True
-    assert len(fake.jobs) == 1
-    assert fake.jobs[0].id == "mtm_daily_update"
+    assert len(fake.jobs) == 2
+    assert {j.id for j in fake.jobs} == {"mtm_daily_update", "billing_reconcile_daily"}
 
 
 def test_start_scheduler_is_idempotent(monkeypatch: pytest.MonkeyPatch):

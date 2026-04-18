@@ -113,6 +113,10 @@ def _preferences_to_response(prefs: UserNotificationPreferences) -> Notification
         notify_service_started=prefs.notify_service_started,
         notify_service_stopped=prefs.notify_service_stopped,
         notify_service_execution_completed=prefs.notify_service_execution_completed,
+        notify_subscription_renewal_reminder=prefs.notify_subscription_renewal_reminder,
+        notify_payment_failed=prefs.notify_payment_failed,
+        notify_subscription_activated=prefs.notify_subscription_activated,
+        notify_subscription_cancelled=prefs.notify_subscription_cancelled,
         quiet_hours_start=prefs.quiet_hours_start,
         quiet_hours_end=prefs.quiet_hours_end,
     )

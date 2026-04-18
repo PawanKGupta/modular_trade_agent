@@ -46,6 +46,12 @@ class NotificationEventType:
     SERVICE_STOPPED = "service_stopped"
     SERVICE_EXECUTION_COMPLETED = "service_execution_completed"
 
+    # Billing / subscription
+    SUBSCRIPTION_RENEWAL_REMINDER = "subscription_renewal_reminder"
+    PAYMENT_FAILED = "payment_failed"
+    SUBSCRIPTION_ACTIVATED = "subscription_activated"
+    SUBSCRIPTION_CANCELLED = "subscription_cancelled"
+
     # Legacy event types (for backward compatibility)
     SERVICE_EVENT = "service_event"
     TRADING_EVENT = "trading_event"
@@ -73,6 +79,10 @@ class NotificationEventType:
             cls.SERVICE_STARTED,
             cls.SERVICE_STOPPED,
             cls.SERVICE_EXECUTION_COMPLETED,
+            cls.SUBSCRIPTION_RENEWAL_REMINDER,
+            cls.PAYMENT_FAILED,
+            cls.SUBSCRIPTION_ACTIVATED,
+            cls.SUBSCRIPTION_CANCELLED,
             cls.SERVICE_EVENT,  # Legacy
         ]
 
@@ -172,6 +182,10 @@ class NotificationPreferenceService:
                 notify_service_started=True,
                 notify_service_stopped=True,
                 notify_service_execution_completed=True,
+                notify_subscription_renewal_reminder=True,
+                notify_payment_failed=True,
+                notify_subscription_activated=True,
+                notify_subscription_cancelled=True,
             )
             self.db.add(preferences)
             try:
@@ -308,6 +322,18 @@ class NotificationPreferenceService:
             NotificationEventType.SERVICE_STARTED: preferences.notify_service_started,
             NotificationEventType.SERVICE_STOPPED: preferences.notify_service_stopped,
             NotificationEventType.SERVICE_EXECUTION_COMPLETED: preferences.notify_service_execution_completed,
+            NotificationEventType.SUBSCRIPTION_RENEWAL_REMINDER: getattr(
+                preferences, "notify_subscription_renewal_reminder", True
+            ),
+            NotificationEventType.PAYMENT_FAILED: getattr(
+                preferences, "notify_payment_failed", True
+            ),
+            NotificationEventType.SUBSCRIPTION_ACTIVATED: getattr(
+                preferences, "notify_subscription_activated", True
+            ),
+            NotificationEventType.SUBSCRIPTION_CANCELLED: getattr(
+                preferences, "notify_subscription_cancelled", True
+            ),
             # Legacy event types (for backward compatibility)
             NotificationEventType.SERVICE_EVENT: preferences.notify_service_events,
             NotificationEventType.TRADING_EVENT: preferences.notify_trading_events,

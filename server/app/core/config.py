@@ -19,5 +19,13 @@ class Settings(BaseSettings):
     log_retention_days: int = 90
     jwt_refresh_days: int = 30
 
+    # Billing (Razorpay). When enforcement is off, non-admin users keep full app access (backward compatible).
+    subscription_enforcement_enabled: bool = False
+    # ISO 8601 end instant for grandfathering full entitlements (optional)
+    subscription_grandfather_until: str | None = None
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
+
 
 settings = Settings()

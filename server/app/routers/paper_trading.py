@@ -31,12 +31,12 @@ from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
-from ..core.deps import get_current_user, get_db
+from ..core.deps import get_current_user, get_db, require_entitlement
 from ..services.pnl_calculation_service import PnlCalculationService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_entitlement("paper_trading"))])
 
 
 class PaperTradingAccount(BaseModel):

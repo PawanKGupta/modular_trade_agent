@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
+def job_billing_reconcile():
+    """Renewal reminders, grace expiry, and subscription housekeeping."""
+    try:
+        from src.application.services.billing_reconciliation_service import (
+            BillingReconciliationService,
+        )
+        from src.infrastructure.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            stats = BillingReconciliationService(db).run()
+        logger.info("Billing reconcile: %s", stats)
+    except Exception:
+        logger.exception("Billing reconcile job failed")
+
+
 def start_scheduler():
     """
     Initialize and start the background job scheduler
@@ -34,6 +49,14 @@ def start_scheduler():
         trigger=CronTrigger(hour=15, minute=30, timezone="Asia/Kolkata"),
         id="mtm_daily_update",
         name="Daily MTM Update at Market Close",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        job_billing_reconcile,
+        trigger=CronTrigger(hour=6, minute=0, timezone="Asia/Kolkata"),
+        id="billing_reconcile_daily",
+        name="Daily billing reconciliation",
         replace_existing=True,
     )
 
@@ -86,4 +109,10 @@ def job_mtm_update():
 
 
 # Expose scheduler for manual job management
-__all__ = ["scheduler", "start_scheduler", "stop_scheduler", "job_mtm_update"]
+__all__ = [
+    "scheduler",
+    "start_scheduler",
+    "stop_scheduler",
+    "job_mtm_update",
+    "job_billing_reconcile",
+]

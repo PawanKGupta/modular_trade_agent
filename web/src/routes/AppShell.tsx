@@ -120,6 +120,7 @@ export function AppShell() {
 			items: [
 				{ path: '/dashboard/trading-config', label: 'Trading Config', icon: '⚙️' },
 				{ path: '/dashboard/settings', label: 'Broker Settings', icon: '🔧' },
+				{ path: '/dashboard/billing', label: 'Subscription / Billing', icon: '💳' },
 				{ path: '/dashboard/notification-preferences', label: 'Notification Settings', icon: '🔕' },
 			],
 		},
@@ -141,6 +142,7 @@ export function AppShell() {
 
 	const adminItems: NavItem[] = [
 		{ path: '/dashboard/admin/users', label: 'Users', icon: '👥' },
+		{ path: '/dashboard/admin/billing', label: 'Billing', icon: '💳' },
 		{ path: '/dashboard/admin/ml', label: 'ML Training', icon: '🤖' },
 		{ path: '/dashboard/admin/schedules', label: 'Schedules', icon: '📅' },
 		{ path: '/dashboard/admin/monitoring', label: 'Monitoring', icon: '📊' },

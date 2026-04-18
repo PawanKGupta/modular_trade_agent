@@ -75,7 +75,7 @@ export function NotificationPreferencesPage() {
 		}
 	};
 
-	const handleEnableAll = (category: 'order' | 'system' | 'retry' | 'service') => {
+	const handleEnableAll = (category: 'order' | 'system' | 'retry' | 'service' | 'billing') => {
 		if (!localPrefs) return;
 		const updates: Partial<NotificationPreferences> = {};
 
@@ -99,13 +99,18 @@ export function NotificationPreferencesPage() {
 			updates.notify_service_started = true;
 			updates.notify_service_stopped = true;
 			updates.notify_service_execution_completed = true;
+		} else if (category === 'billing') {
+			updates.notify_subscription_renewal_reminder = true;
+			updates.notify_payment_failed = true;
+			updates.notify_subscription_activated = true;
+			updates.notify_subscription_cancelled = true;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
 		setHasChanges(true);
 	};
 
-	const handleDisableAll = (category: 'order' | 'system' | 'retry' | 'service') => {
+	const handleDisableAll = (category: 'order' | 'system' | 'retry' | 'service' | 'billing') => {
 		if (!localPrefs) return;
 		const updates: Partial<NotificationPreferences> = {};
 
@@ -129,6 +134,11 @@ export function NotificationPreferencesPage() {
 			updates.notify_service_started = false;
 			updates.notify_service_stopped = false;
 			updates.notify_service_execution_completed = false;
+		} else if (category === 'billing') {
+			updates.notify_subscription_renewal_reminder = false;
+			updates.notify_payment_failed = false;
+			updates.notify_subscription_activated = false;
+			updates.notify_subscription_cancelled = false;
 		}
 
 		setLocalPrefs({ ...localPrefs, ...updates });
@@ -559,6 +569,74 @@ export function NotificationPreferencesPage() {
 							className="w-4 h-4"
 						/>
 						<span>Service Execution Completed</span>
+					</label>
+				</div>
+			</section>
+
+			{/* Billing */}
+			<section className="space-y-3 sm:space-y-4 p-3 sm:p-4 border border-[#1e293b] rounded">
+				<div className="flex items-center justify-between">
+					<div>
+						<h2 className="text-base sm:text-lg font-semibold">Billing & subscription</h2>
+						<p className="text-xs sm:text-sm text-[var(--muted)]">
+							Renewal reminders, payment failures, and subscription lifecycle emails
+						</p>
+					</div>
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={() => handleEnableAll('billing')}
+							className="text-xs px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white"
+						>
+							Enable All
+						</button>
+						<button
+							type="button"
+							onClick={() => handleDisableAll('billing')}
+							className="text-xs px-2 py-1 rounded bg-gray-600 hover:bg-gray-700 text-white"
+						>
+							Disable All
+						</button>
+					</div>
+				</div>
+				<div className="space-y-2">
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_subscription_renewal_reminder}
+							onChange={(e) =>
+								handleChange('notify_subscription_renewal_reminder', e.target.checked)
+							}
+							className="w-4 h-4"
+						/>
+						<span>Renewal reminder</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_payment_failed}
+							onChange={(e) => handleChange('notify_payment_failed', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Payment failed</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_subscription_activated}
+							onChange={(e) => handleChange('notify_subscription_activated', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Subscription activated</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_subscription_cancelled}
+							onChange={(e) => handleChange('notify_subscription_cancelled', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Subscription cancelled</span>
 					</label>
 				</div>
 			</section>

@@ -23,6 +23,8 @@ import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
 import { LogViewerPage } from './routes/dashboard/LogViewerPage';
 import { ServiceSchedulePage } from './routes/dashboard/ServiceSchedulePage';
 import { MonitoringDashboardPage } from './routes/dashboard/MonitoringDashboardPage';
+import { BillingPage } from './routes/dashboard/BillingPage';
+import { AdminBillingPage } from './routes/dashboard/AdminBillingPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -53,12 +55,14 @@ export function createAppRouter() {
 				{ path: 'trading-config', element: <TradingConfigPage /> },
 				{ path: 'logs', element: <LogViewerPage /> },
 				{ path: 'settings', element: <SettingsPage /> },
+				{ path: 'billing', element: <BillingPage /> },
 				{ path: 'notification-preferences', element: <NotificationPreferencesPage /> },
 				{ path: 'notifications', element: <NotificationsPage /> },
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
 				{ path: 'admin/schedules', element: <ServiceSchedulePage /> },
 				{ path: 'admin/monitoring', element: <MonitoringDashboardPage /> },
+				{ path: 'admin/billing', element: <AdminBillingPage /> },
 			],
 		},
 	]);

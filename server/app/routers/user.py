@@ -2,10 +2,11 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from src.application.services.subscription_entitlement_service import SubscriptionEntitlementService
 from src.infrastructure.db.models import TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
@@ -62,6 +63,13 @@ def update_settings(
     # CRITICAL: Normalize to lowercase before creating enum to handle "BROKER"/"PAPER"
     # This prevents validation errors when uppercase values are sent
     trade_mode = TradeMode(payload.trade_mode.lower()) if payload.trade_mode else None
+    if trade_mode == TradeMode.BROKER and not SubscriptionEntitlementService(db).user_has_feature(
+        current, "broker_execution"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active Auto Trade subscription required for broker mode",
+        )
     settings = repo.update(
         settings,
         trade_mode=trade_mode,
