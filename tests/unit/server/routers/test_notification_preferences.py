@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from types import ModuleType
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -56,6 +56,10 @@ def _full_prefs(**overrides):
         "notify_service_started": False,
         "notify_service_stopped": False,
         "notify_service_execution_completed": False,
+        "notify_subscription_renewal_reminder": False,
+        "notify_payment_failed": False,
+        "notify_subscription_activated": False,
+        "notify_subscription_cancelled": False,
         "quiet_hours_start": None,
         "quiet_hours_end": None,
     }
@@ -165,7 +169,13 @@ def test_telegram_connection_test_valid_inputs(monkeypatch):
     assert isinstance(message, str)
 
 
-def _install_fake_requests(monkeypatch: pytest.MonkeyPatch, *, status_code: int = 200, json_data=None, exc: Exception | None = None):
+def _install_fake_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    status_code: int = 200,
+    json_data=None,
+    exc: Exception | None = None,
+):
     """Inject a fake `requests` module to avoid network and cover branches."""
 
     mod = ModuleType("requests")
@@ -195,8 +205,6 @@ def _install_fake_requests(monkeypatch: pytest.MonkeyPatch, *, status_code: int 
 
     mod.post = post
 
-    import sys
-
     monkeypatch.setitem(sys.modules, "requests", mod)
     return mod
 
@@ -216,7 +224,9 @@ def test_telegram_connection_success(monkeypatch: pytest.MonkeyPatch):
         ("Some other error", "telegram api error"),
     ],
 )
-def test_telegram_connection_http_error_branches(monkeypatch: pytest.MonkeyPatch, error_desc: str, expected_substring: str):
+def test_telegram_connection_http_error_branches(
+    monkeypatch: pytest.MonkeyPatch, error_desc: str, expected_substring: str
+):
     _install_fake_requests(
         monkeypatch,
         status_code=400,
@@ -296,7 +306,9 @@ def test_update_notification_preferences_no_fields_returns_current(monkeypatch: 
     monkeypatch.setattr(notif_module, "NotificationPreferenceService", _Svc)
 
     payload = SimpleNamespace(model_dump=lambda **_k: {})
-    out = notif_module.update_notification_preferences(payload=payload, db=object(), current_user=DummyUser(id=1))
+    out = notif_module.update_notification_preferences(
+        payload=payload, db=object(), current_user=DummyUser(id=1)
+    )
     assert out.telegram_enabled is False
 
 
@@ -320,14 +332,18 @@ def test_update_notification_preferences_updates_and_clears_cache(monkeypatch: p
     monkeypatch.setattr(notif_module, "NotificationPreferenceService", lambda db_session: svc)
 
     payload = SimpleNamespace(model_dump=lambda **_k: {"telegram_enabled": True})
-    out = notif_module.update_notification_preferences(payload=payload, db=object(), current_user=DummyUser(id=1))
+    out = notif_module.update_notification_preferences(
+        payload=payload, db=object(), current_user=DummyUser(id=1)
+    )
     assert out.telegram_enabled is True
     assert svc.cleared == [1]
 
 
 def test_test_telegram_connection_endpoint_returns_dict(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(notif_module, "_test_telegram_connection", lambda *_a, **_k: (True, "ok"))
-    out = notif_module.test_telegram_connection(bot_token="t", chat_id="c", db=object(), current_user=DummyUser(id=1))
+    out = notif_module.test_telegram_connection(
+        bot_token="t", chat_id="c", db=object(), current_user=DummyUser(id=1)
+    )
     assert out == {"success": True, "message": "ok"}
 
 

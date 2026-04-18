@@ -65,7 +65,7 @@ export function BillingPage() {
 					<p className="text-sm text-[var(--muted)]">Loading…</p>
 				) : (
 					<pre className="text-xs overflow-auto bg-[#0f1720] p-3 rounded">
-						{JSON.stringify(ent, null, 2)}
+						{JSON.stringify(entQ.data ?? {}, null, 2)}
 					</pre>
 				)}
 			</section>

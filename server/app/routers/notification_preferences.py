@@ -84,6 +84,12 @@ def _test_telegram_connection(bot_token: str, chat_id: str) -> tuple[bool, str]:
         return False, "Unable to complete the connection test. Please try again later."
 
 
+def _bool_notification_pref(prefs: Any, attr: str, default: bool = True) -> bool:
+    """ORM rows or stubs may omit new columns; treat None as default."""
+    v = getattr(prefs, attr, default)
+    return default if v is None else bool(v)
+
+
 def _preferences_to_response(prefs: UserNotificationPreferences) -> NotificationPreferencesResponse:
     """Convert UserNotificationPreferences model to response schema"""
     return NotificationPreferencesResponse(
@@ -113,10 +119,16 @@ def _preferences_to_response(prefs: UserNotificationPreferences) -> Notification
         notify_service_started=prefs.notify_service_started,
         notify_service_stopped=prefs.notify_service_stopped,
         notify_service_execution_completed=prefs.notify_service_execution_completed,
-        notify_subscription_renewal_reminder=prefs.notify_subscription_renewal_reminder,
-        notify_payment_failed=prefs.notify_payment_failed,
-        notify_subscription_activated=prefs.notify_subscription_activated,
-        notify_subscription_cancelled=prefs.notify_subscription_cancelled,
+        notify_subscription_renewal_reminder=_bool_notification_pref(
+            prefs, "notify_subscription_renewal_reminder"
+        ),
+        notify_payment_failed=_bool_notification_pref(prefs, "notify_payment_failed"),
+        notify_subscription_activated=_bool_notification_pref(
+            prefs, "notify_subscription_activated"
+        ),
+        notify_subscription_cancelled=_bool_notification_pref(
+            prefs, "notify_subscription_cancelled"
+        ),
         quiet_hours_start=prefs.quiet_hours_start,
         quiet_hours_end=prefs.quiet_hours_end,
     )
