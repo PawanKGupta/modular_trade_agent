@@ -6,7 +6,10 @@ import hashlib
 import hmac
 import json
 import logging
+from http import HTTPStatus
 from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,22 @@ def verify_webhook_signature(body: bytes, signature: str, secret: str) -> bool:
         return False
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(digest, signature)
+
+
+def verify_checkout_payment_signature(
+    order_id: str, payment_id: str, client_signature: str, *, key_secret: str
+) -> bool:
+    """
+    Standard Web Checkout success callback: HMAC-SHA256 of ``order_id|payment_id`` (hex), compared
+    in constant time. Uses the same key secret as the Razorpay API (not the webhook secret).
+    """
+    if not key_secret or not order_id or not payment_id or not client_signature:
+        return False
+    message = f"{order_id}|{payment_id}"
+    expected = hmac.new(
+        key_secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, client_signature)
 
 
 class RazorpayGateway:
@@ -34,7 +53,8 @@ class RazorpayGateway:
 
     @property
     def is_configured(self) -> bool:
-        return self._client is not None
+        # Treat keys as "configured" even if SDK import fails; we can fall back to HTTP API calls.
+        return bool((self._key_id or "").strip() and (self._key_secret or "").strip())
 
     @property
     def key_id(self) -> str | None:
@@ -131,7 +151,7 @@ class RazorpayGateway:
         receipt: str,
         notes: dict | None = None,
     ) -> dict:
-        if not self._client:
+        if not self.is_configured:
             raise RuntimeError("Razorpay is not configured")
         receipt_safe = (receipt or "")[:40]
         payload: dict[str, Any] = {
@@ -141,7 +161,19 @@ class RazorpayGateway:
         }
         if notes:
             payload["notes"] = {k: str(v)[:250] for k, v in notes.items()}
-        return self._client.order.create(payload)
+        # Prefer SDK when available; otherwise use Razorpay Orders REST API directly.
+        if self._client is not None:
+            return self._client.order.create(payload)
+        resp = requests.post(
+            "https://api.razorpay.com/v1/orders",
+            auth=(str(self._key_id), str(self._key_secret)),
+            json=payload,
+            timeout=20,
+        )
+        if resp.status_code >= HTTPStatus.BAD_REQUEST:
+            # Surface Razorpay error JSON to caller (routers convert to HTTP responses).
+            raise RuntimeError(f"Razorpay order creation failed: {resp.status_code} {resp.text}")
+        return resp.json()
 
 
 def safe_json_loads(body: bytes) -> dict:

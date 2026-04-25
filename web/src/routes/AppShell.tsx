@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSessionStore } from '@/state/sessionStore';
 import { getNotificationCount } from '@/api/notifications';
+import { getPerformanceFeeArrears } from '@/api/billing';
 import { clsx } from 'clsx';
 import { BrandMark } from '@/components/BrandMark';
 import { useSettings } from '@/hooks/useSettings';
@@ -33,6 +34,14 @@ export function AppShell() {
 
 	// Get user settings to determine trade mode
 	const { isPaperMode, isBrokerMode, broker, isBrokerConnected } = useSettings();
+
+	const perfArrearsQ = useQuery({
+		queryKey: ['performanceFeeArrears'],
+		queryFn: getPerformanceFeeArrears,
+		enabled: Boolean(isBrokerMode && !isAdmin),
+		staleTime: 60_000,
+		refetchInterval: 120_000,
+	});
 
 	// Load expanded groups from localStorage, default only Overview expanded
 	const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
@@ -415,6 +424,23 @@ export function AppShell() {
 						</div>
 					</div>
 				</div>
+				{isBrokerMode && !isAdmin && perfArrearsQ.data?.blocks_new_broker_buys ? (
+					<div className="px-3 sm:px-6 pt-3">
+						<div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+							<p className="font-medium text-amber-200">Broker performance fee overdue</p>
+							<p className="mt-1 text-amber-100/90">{perfArrearsQ.data.message}</p>
+							<p className="mt-1 text-xs text-amber-200/80">
+								Sell orders still run — you can exit open positions while this is unpaid.
+							</p>
+							<Link
+								to="/dashboard/billing"
+								className="mt-2 inline-block text-amber-300 underline font-medium hover:text-amber-200"
+							>
+								Open Billing to pay
+							</Link>
+						</div>
+					</div>
+				) : null}
 				<div className="p-0 sm:p-6">
 					<Outlet />
 				</div>

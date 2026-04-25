@@ -65,3 +65,44 @@ class PerformanceFeeCheckoutResponse(BaseModel):
     amount_paise: int
     currency: str
     bill_id: int
+
+
+class PerformanceFeeArrearBillOut(BaseModel):
+    id: int
+    bill_month: str
+    due_at: str
+    payable_amount: float
+    status: str
+
+
+class PerformanceFeeArrearsOut(BaseModel):
+    """Soft gate: new broker buys / re-entries paused until past-due performance fees are paid."""
+
+    blocks_new_broker_buys: bool
+    message: str | None = None
+    bills: list[PerformanceFeeArrearBillOut] = Field(default_factory=list)
+
+
+class RazorpayCreateOrderRequest(BaseModel):
+    amount_paise: int = Field(..., ge=100, description="Razorpay minimum is 100 paise (₹1)")
+    currency: str = "INR"
+    receipt: str | None = Field(default=None, max_length=40)
+
+
+class RazorpayCreateOrderResponse(BaseModel):
+    order_id: str
+    amount: int
+    currency: str
+    key_id: str
+
+
+class RazorpayVerifyPaymentRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    performance_bill_id: int | None = None
+
+
+class RazorpayVerifyPaymentResponse(BaseModel):
+    verified: bool
+    detail: str | None = None

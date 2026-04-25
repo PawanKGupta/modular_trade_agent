@@ -56,7 +56,7 @@ class Users(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        CaseInsensitiveEnum(UserRole),
         default=UserRole.USER,
         nullable=False,
     )

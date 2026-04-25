@@ -386,7 +386,9 @@ class TradingService:
             logger.info("Initializing live price cache for real-time WebSocket prices...")
 
             # Load scrip master for symbol/token mapping
-            rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            rest_client = (
+                self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            )
             self.scrip_master = KotakNeoScripMaster(auth_client=rest_client, exchanges=["NSE"])
             if not self.scrip_master.load_scrip_master(force_download=False):
                 raise RuntimeError("Scrip master load failed")
@@ -625,7 +627,11 @@ class TradingService:
             logger.info("Pre-market AMO adjustment completed")
 
     def run_sell_monitor(self):
-        """9:15 AM - Place sell orders and start monitoring (runs continuously)"""
+        """9:15 AM - Place sell orders and start monitoring (runs continuously).
+
+        Not gated by performance-fee arrears: overdue invoices block only ``run_buy_orders``,
+        so users can still place sells and complete exits on existing holdings.
+        """
         from src.application.services.task_execution_wrapper import execute_task
 
         # Respect stop request when used from unified service (do not place orders if stopped)
@@ -978,69 +984,103 @@ class TradingService:
                 self.logger.error(error_msg, action="run_buy_orders")
                 raise RuntimeError(error_msg)
 
-            self.logger.info("Loading latest recommendations...", action="run_buy_orders")
-            recs = self.engine.load_latest_recommendations()
-            self.logger.info(
-                f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
-            )
-            if recs:
-                self.logger.info(
-                    f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+            skip_new_buys_for_arrears = False
+            try:
+                from src.application.services.performance_fee_arrears_service import (
+                    PerformanceFeeArrearsService,
                 )
-                try:
-                    # Place fresh entry orders
-                    summary = self.engine.place_new_entries(recs)
-                    self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
-                    # Log detailed summary
-                    self.logger.info(
-                        f"  - Attempted: {summary.get('attempted', 0)}, "
-                        f"Placed: {summary.get('placed', 0)}, "
-                        f"Retried: {summary.get('retried', 0)}, "
-                        f"Failed (balance): {summary.get('failed_balance', 0)}, "
-                        f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
-                        action="run_buy_orders",
-                    )
-                except OrderPlacementError as exc:
-                    # OrderPlacementError should no longer be raised (changed to continue)
-                    # But keep this handler for backward compatibility
-                    error_msg = (
-                        f"Unexpected OrderPlacementError: {exc}. "
-                        "This should not occur with current implementation."
-                    )
-                    self.logger.error(error_msg, action="run_buy_orders")
-                    task_context["recommendations_count"] = len(recs)
-                    task_context["error"] = str(exc)
-                    if getattr(exc, "symbol", None):
-                        task_context["failed_symbol"] = exc.symbol
-                    # Don't raise - let the summary be returned
-                    summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+                from src.infrastructure.db.models import Users
 
-                task_context["recommendations_count"] = len(recs)
-                task_context["summary"] = summary
-            else:
-                self.logger.warning(
-                    "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                db_user = self.db.get(Users, self.user_id)
+                if db_user:
+                    ar = PerformanceFeeArrearsService(self.db).status_for_user(db_user)
+                    if ar.blocks_new_broker_buys:
+                        skip_new_buys_for_arrears = True
+                        self.logger.warning(
+                            ar.message or "Performance fee arrears: skipping broker buys",
+                            action="run_buy_orders",
+                        )
+                        task_context["performance_fee_arrears_skipped_buys"] = True
+            except Exception:
+                self.logger.exception(
+                    "Performance fee arrears check failed; proceeding with buy orders",
                     action="run_buy_orders",
                 )
-                self.logger.warning(
-                    "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+
+            if skip_new_buys_for_arrears:
+                self.logger.info(
+                    "Skipping new entries and re-entries (unpaid performance fee past due); "
+                    "sell_monitor / sells are unchanged",
                     action="run_buy_orders",
                 )
                 task_context["recommendations_count"] = 0
-                task_context["summary"] = summary  # Return empty summary
+                task_context["summary"] = summary
+            else:
+                self.logger.info("Loading latest recommendations...", action="run_buy_orders")
+                recs = self.engine.load_latest_recommendations()
+                self.logger.info(
+                    f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
+                )
+                if recs:
+                    self.logger.info(
+                        f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+                    )
+                    try:
+                        # Place fresh entry orders
+                        summary = self.engine.place_new_entries(recs)
+                        self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
+                        # Log detailed summary
+                        self.logger.info(
+                            f"  - Attempted: {summary.get('attempted', 0)}, "
+                            f"Placed: {summary.get('placed', 0)}, "
+                            f"Retried: {summary.get('retried', 0)}, "
+                            f"Failed (balance): {summary.get('failed_balance', 0)}, "
+                            f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                            action="run_buy_orders",
+                        )
+                    except OrderPlacementError as exc:
+                        # OrderPlacementError should no longer be raised (changed to continue)
+                        # But keep this handler for backward compatibility
+                        error_msg = (
+                            f"Unexpected OrderPlacementError: {exc}. "
+                            "This should not occur with current implementation."
+                        )
+                        self.logger.error(error_msg, action="run_buy_orders")
+                        task_context["recommendations_count"] = len(recs)
+                        task_context["error"] = str(exc)
+                        if getattr(exc, "symbol", None):
+                            task_context["failed_symbol"] = exc.symbol
+                        # Don't raise - let the summary be returned
+                        summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
 
-            # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
-            # Re-entry should be checked independently of fresh entry orders
-            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
-            reentry_summary = self.engine.place_reentry_orders()
-            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
-            self.logger.info(
-                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                f"Placed: {reentry_summary.get('placed', 0)}, "
-                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
-                action="run_buy_orders",
-            )
+                    task_context["recommendations_count"] = len(recs)
+                    task_context["summary"] = summary
+                else:
+                    self.logger.warning(
+                        "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                        action="run_buy_orders",
+                    )
+                    self.logger.warning(
+                        "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                        action="run_buy_orders",
+                    )
+                    task_context["recommendations_count"] = 0
+                    task_context["summary"] = summary  # Return empty summary
+
+                # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
+                # Re-entry should be checked independently of fresh entry orders
+                self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+                reentry_summary = self.engine.place_reentry_orders()
+                self.logger.info(
+                    f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
+                )
+                self.logger.info(
+                    f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
+                    f"Placed: {reentry_summary.get('placed', 0)}, "
+                    f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
+                    f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                    action="run_buy_orders",
+                )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")

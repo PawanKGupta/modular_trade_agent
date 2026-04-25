@@ -115,3 +115,21 @@ class PerformanceBillingRepository:
         if n:
             self.db.commit()
         return n
+
+    def list_unpaid_performance_bills_past_due(
+        self, user_id: int, now_naive_ist: datetime
+    ) -> list[MonthlyPerformanceBill]:
+        """Bills with positive payable, past due_at, still open (pending or overdue)."""
+        stmt = (
+            select(MonthlyPerformanceBill)
+            .where(
+                MonthlyPerformanceBill.user_id == user_id,
+                MonthlyPerformanceBill.payable_amount > 0,
+                MonthlyPerformanceBill.due_at < now_naive_ist,
+                MonthlyPerformanceBill.status.in_(
+                    (PerformanceBillStatus.PENDING_PAYMENT, PerformanceBillStatus.OVERDUE)
+                ),
+            )
+            .order_by(MonthlyPerformanceBill.due_at.asc())
+        )
+        return list(self.db.execute(stmt).scalars().all())
