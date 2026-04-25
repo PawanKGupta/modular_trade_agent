@@ -22,26 +22,29 @@ def _decrypt_utf8(blob: bytes | None) -> str | None:
 
 
 def resolve_razorpay_key_id(admin_row: BillingAdminSettings) -> str | None:
-    """Non-secret key id: env wins, else DB column."""
-    env = (settings.razorpay_key_id or "").strip()
-    if env:
-        return env
+    """Non-secret key id: env wins, else DB column (unless razorpay_use_db_only)."""
+    if not settings.razorpay_use_db_only:
+        env = (settings.razorpay_key_id or "").strip()
+        if env:
+            return env
     dbv = (admin_row.razorpay_key_id or "").strip()
     return dbv or None
 
 
 def resolve_razorpay_key_secret(admin_row: BillingAdminSettings) -> str | None:
-    """API secret: env wins, else decrypted DB blob."""
-    env = (settings.razorpay_key_secret or "").strip()
-    if env:
-        return env
+    """API secret: env wins, else decrypted DB blob (unless razorpay_use_db_only)."""
+    if not settings.razorpay_use_db_only:
+        env = (settings.razorpay_key_secret or "").strip()
+        if env:
+            return env
     return _decrypt_utf8(admin_row.razorpay_key_secret_encrypted)
 
 
 def resolve_razorpay_webhook_secret(admin_row: BillingAdminSettings) -> str | None:
-    env = (settings.razorpay_webhook_secret or "").strip()
-    if env:
-        return env
+    if not settings.razorpay_use_db_only:
+        env = (settings.razorpay_webhook_secret or "").strip()
+        if env:
+            return env
     return _decrypt_utf8(admin_row.razorpay_webhook_secret_encrypted)
 
 
@@ -68,8 +71,13 @@ def razorpay_admin_meta(admin_row: BillingAdminSettings) -> dict[str, bool | str
         "razorpay_key_id_preview": preview,
         "razorpay_api_configured": bool(key_id and resolve_razorpay_key_secret(admin_row)),
         "razorpay_webhook_configured": bool(resolve_razorpay_webhook_secret(admin_row)),
-        "razorpay_key_secret_from_env": bool((settings.razorpay_key_secret or "").strip()),
-        "razorpay_webhook_secret_from_env": bool((settings.razorpay_webhook_secret or "").strip()),
+        "razorpay_use_db_only": settings.razorpay_use_db_only,
+        "razorpay_key_secret_from_env": bool(
+            (not settings.razorpay_use_db_only) and (settings.razorpay_key_secret or "").strip()
+        ),
+        "razorpay_webhook_secret_from_env": bool(
+            (not settings.razorpay_use_db_only) and (settings.razorpay_webhook_secret or "").strip()
+        ),
         "razorpay_key_secret_stored_in_db": bool(admin_row.razorpay_key_secret_encrypted),
         "razorpay_webhook_secret_stored_in_db": bool(admin_row.razorpay_webhook_secret_encrypted),
     }
