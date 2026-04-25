@@ -31,6 +31,10 @@ def _fernet_key_material() -> bytes:
     return derived
 
 
+# Backward-compatible name used by unit tests and any older imports.
+_get_or_create_key = _fernet_key_material
+
+
 def encryption_uses_dedicated_env_key() -> bool:
     """True when a non-JWT-derived Fernet key is configured (production-style)."""
     return bool(
