@@ -46,6 +46,9 @@ class NotificationEventType:
     SERVICE_STOPPED = "service_stopped"
     SERVICE_EXECUTION_COMPLETED = "service_execution_completed"
 
+    # Billing
+    PAYMENT_FAILED = "payment_failed"
+
     # Legacy event types (for backward compatibility)
     SERVICE_EVENT = "service_event"
     TRADING_EVENT = "trading_event"
@@ -73,6 +76,7 @@ class NotificationEventType:
             cls.SERVICE_STARTED,
             cls.SERVICE_STOPPED,
             cls.SERVICE_EXECUTION_COMPLETED,
+            cls.PAYMENT_FAILED,
             cls.SERVICE_EVENT,  # Legacy
         ]
 
@@ -172,6 +176,7 @@ class NotificationPreferenceService:
                 notify_service_started=True,
                 notify_service_stopped=True,
                 notify_service_execution_completed=True,
+                notify_payment_failed=True,
             )
             self.db.add(preferences)
             try:
@@ -307,7 +312,10 @@ class NotificationPreferenceService:
             # Granular service event types
             NotificationEventType.SERVICE_STARTED: preferences.notify_service_started,
             NotificationEventType.SERVICE_STOPPED: preferences.notify_service_stopped,
-            NotificationEventType.SERVICE_EXECUTION_COMPLETED: preferences.notify_service_execution_completed,
+            NotificationEventType.SERVICE_EXECUTION_COMPLETED: (
+                preferences.notify_service_execution_completed
+            ),
+            NotificationEventType.PAYMENT_FAILED: preferences.notify_payment_failed,
             # Legacy event types (for backward compatibility)
             NotificationEventType.SERVICE_EVENT: preferences.notify_service_events,
             NotificationEventType.TRADING_EVENT: preferences.notify_trading_events,

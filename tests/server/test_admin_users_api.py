@@ -55,3 +55,13 @@ def test_admin_create_and_update_user():
     assert lst.status_code == 200
     emails = [x["email"] for x in lst.json()]
     assert "admin_update@example.com" in emails and "target@example.com" in emails
+
+    found = client.get(
+        "/api/v1/admin/users",
+        headers=admin_headers,
+        params={"q": "target@", "limit": 20},
+    )
+    assert found.status_code == 200
+    found_emails = [x["email"] for x in found.json()]
+    assert "target@example.com" in found_emails
+    assert "admin_update@example.com" not in found_emails

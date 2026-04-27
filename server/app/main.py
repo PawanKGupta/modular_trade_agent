@@ -229,6 +229,9 @@ from .routers import (
     activity,
     admin,
     auth,
+    billing_admin,
+    billing_user,
+    billing_webhooks,
     broker,
     export,
     logs,
@@ -664,6 +667,7 @@ async def log_exceptions(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
+app.include_router(billing_user.router, prefix="/api/v1/user", tags=["billing"])
 app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-config"])
 app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
@@ -683,9 +687,11 @@ app.include_router(
 app.include_router(notifications.router, prefix="/api/v1/user", tags=["notifications"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["metrics"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(billing_admin.router, prefix="/api/v1/admin", tags=["admin-billing"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+app.include_router(billing_webhooks.router, prefix="/api/v1/billing", tags=["billing-webhooks"])
 app.include_router(monitoring.router, prefix="/api/v1/admin/monitoring", tags=["monitoring"])
 
 

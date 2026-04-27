@@ -66,6 +66,10 @@ class NotificationPreferencesResponse(BaseModel):
         default=True, description="Notify when a service execution completes"
     )
 
+    notify_payment_failed: bool = Field(
+        default=True, description="Email when a Razorpay billing payment fails"
+    )
+
     # Quiet hours
     quiet_hours_start: time | None = Field(
         default=None, description="Start time for quiet hours (HH:MM format)"
@@ -166,6 +170,8 @@ class NotificationPreferencesUpdate(BaseModel):
     notify_service_execution_completed: bool | None = Field(
         default=None, description="Notify when a service execution completes"
     )
+
+    notify_payment_failed: bool | None = Field(default=None)
 
     # Quiet hours
     quiet_hours_start: time | None = Field(

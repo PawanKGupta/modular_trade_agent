@@ -18,8 +18,13 @@ from src.application.services.broker_credentials import (
 from src.infrastructure.db.models import Orders, TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
-from ..core.crypto import decrypt_blob, encrypt_blob
-from ..core.deps import get_current_user, get_db
+from ..core.crypto import (
+    MissingDedicatedEncryptionKeyError,
+    assert_db_secret_encryption_allowed,
+    decrypt_blob,
+    encrypt_blob,
+)
+from ..core.deps import get_current_user, get_db, require_entitlement
 from ..routers.paper_trading import (
     ClosedPosition,
     PaperTradingAccount,
@@ -33,7 +38,7 @@ from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestRespon
 from .broker_history_impl import _fifo_match_orders
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_entitlement("broker_execution"))])
 
 
 def _get_or_create_auth_session(
@@ -407,6 +412,10 @@ def save_broker_creds(
         broker=payload.broker,
         broker_status="Stored",
     )
+    try:
+        assert_db_secret_encryption_allowed()
+    except MissingDedicatedEncryptionKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     # store encrypted creds
     settings.broker_creds_encrypted = encrypt_blob(json.dumps(creds_blob).encode("utf-8"))
     db.commit()

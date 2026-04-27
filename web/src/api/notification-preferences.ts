@@ -32,6 +32,7 @@ export type NotificationPreferences = {
 	notify_service_started: boolean;
 	notify_service_stopped: boolean;
 	notify_service_execution_completed: boolean;
+	notify_payment_failed: boolean;
 	// Quiet hours
 	quiet_hours_start: string | null; // Time in HH:MM:SS format
 	quiet_hours_end: string | null; // Time in HH:MM:SS format

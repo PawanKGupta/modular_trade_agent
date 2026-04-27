@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from src.application.services.subscription_entitlement_service import SubscriptionEntitlementService
 from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.db.session import get_session
 from src.infrastructure.persistence.user_repository import UserRepository
@@ -41,3 +42,23 @@ def require_admin(user: Users = Depends(get_current_user)) -> Users:
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     return user
+
+
+def require_entitlement(feature: str):
+    """
+    Require an active subscription feature (see SubscriptionEntitlementService).
+    Usage: Depends(require_entitlement("broker_execution"))
+    """
+
+    def _check(
+        user: Users = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> Users:
+        if not SubscriptionEntitlementService(db).user_has_feature(user, feature):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Active subscription with '{feature}' is required",
+            )
+        return user
+
+    return _check

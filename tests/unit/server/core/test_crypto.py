@@ -11,6 +11,7 @@ def _fresh_key() -> str:
 
 
 def test_get_or_create_key_prefers_broker_secret(monkeypatch):
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)
     monkeypatch.delenv("JWT_SECRET", raising=False)
@@ -19,6 +20,7 @@ def test_get_or_create_key_prefers_broker_secret(monkeypatch):
 
 
 def test_get_or_create_key_uses_jwt_secret(monkeypatch):
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("BROKER_SECRET_KEY", raising=False)
     monkeypatch.setenv("JWT_SECRET", "myjwt")
     expected = base64.urlsafe_b64encode(b"myjwt".ljust(32, b"_")[:32])
@@ -26,6 +28,7 @@ def test_get_or_create_key_uses_jwt_secret(monkeypatch):
 
 
 def test_get_or_create_key_default(monkeypatch):
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("BROKER_SECRET_KEY", raising=False)
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.delenv("jwt_secret", raising=False)
@@ -36,6 +39,7 @@ def test_get_or_create_key_default(monkeypatch):
 
 def test_get_or_create_key_uses_lowercase_jwt_secret(monkeypatch):
     """Test that lowercase jwt_secret env var is also checked"""
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     monkeypatch.delenv("BROKER_SECRET_KEY", raising=False)
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.setenv("jwt_secret", "lowercase-secret")
@@ -45,6 +49,7 @@ def test_get_or_create_key_uses_lowercase_jwt_secret(monkeypatch):
 
 def test_decrypt_blob_with_type_error(monkeypatch):
     """Test decrypt_blob handles TypeError (e.g., from None input)"""
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)
 
@@ -58,6 +63,7 @@ def test_decrypt_blob_with_type_error(monkeypatch):
 
 
 def test_encrypt_decrypt_roundtrip(monkeypatch):
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)
     token = crypto.encrypt_blob(b"hello-world")
@@ -66,6 +72,7 @@ def test_encrypt_decrypt_roundtrip(monkeypatch):
 
 @pytest.mark.parametrize("token", [b"", b"junk", b"!!"])
 def test_decrypt_blob_handles_invalid_tokens(monkeypatch, token):
+    monkeypatch.delenv("APP_DATA_ENCRYPTION_KEY", raising=False)
     key = _fresh_key()
     monkeypatch.setenv("BROKER_SECRET_KEY", key)
     assert crypto.decrypt_blob(token) is None

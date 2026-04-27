@@ -21,7 +21,7 @@ from src.infrastructure.utils.holiday_calendar import (
     is_trading_day,
 )
 
-from ..core.deps import get_current_user, get_db
+from ..core.deps import get_current_user, get_db, require_entitlement
 from ..schemas.service import (
     IndividualServicesStatusResponse,
     IndividualServiceStatus,
@@ -62,7 +62,7 @@ def get_individual_service_manager(
 @router.post("/service/start", response_model=ServiceStartResponse)
 def start_service(
     db: Session = Depends(get_db),
-    current: Users = Depends(get_current_user),
+    current: Users = Depends(require_entitlement("auto_trade_services")),
     trading_service: MultiUserTradingService = Depends(get_trading_service),
 ):
     """Start trading service for current user"""
@@ -252,7 +252,7 @@ def get_individual_services_status(
 def start_individual_service(
     request: StartIndividualServiceRequest,
     db: Session = Depends(get_db),
-    current: Users = Depends(get_current_user),
+    current: Users = Depends(require_entitlement("auto_trade_services")),
     service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
 ):
     """Start an individual service for current user"""
@@ -293,7 +293,7 @@ def stop_individual_service(
 def run_task_once(
     request: RunOnceRequest,
     db: Session = Depends(get_db),
-    current: Users = Depends(get_current_user),
+    current: Users = Depends(require_entitlement("auto_trade_services")),
     service_manager: IndividualServiceManager = Depends(get_individual_service_manager),
 ):
     """Run a task once immediately (run once execution)"""

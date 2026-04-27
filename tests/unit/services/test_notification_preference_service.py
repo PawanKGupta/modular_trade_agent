@@ -73,6 +73,7 @@ class TestNotificationPreferenceService:
             notify_service_started=True,
             notify_service_stopped=True,
             notify_service_execution_completed=True,
+            notify_payment_failed=True,
             quiet_hours_start=None,
             quiet_hours_end=None,
         )
@@ -405,8 +406,9 @@ class TestNotificationPreferenceService:
         """Test that all_event_types returns all event types"""
         event_types = NotificationEventType.all_event_types()
 
-        # 11 order/retry (including ORDER_SKIPPED) + 3 system + 3 service + 1 legacy SERVICE_EVENT
-        assert len(event_types) == 18
+        # 11 order/retry (incl. ORDER_SKIPPED) + 3 system + 3 service + 1 billing +
+        # 1 legacy SERVICE_EVENT
+        assert len(event_types) == 19
         assert NotificationEventType.ORDER_PLACED in event_types
         assert (
             NotificationEventType.ORDER_SKIPPED in event_types
@@ -440,6 +442,7 @@ class TestNotificationPreferenceService:
             NotificationEventType.SERVICE_STARTED,
             NotificationEventType.SERVICE_STOPPED,
             NotificationEventType.SERVICE_EXECUTION_COMPLETED,
+            NotificationEventType.PAYMENT_FAILED,
         ]
 
         for event_type in event_types:

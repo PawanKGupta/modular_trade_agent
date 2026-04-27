@@ -9,3 +9,4 @@ SQLAlchemy==2.0.49
 alembic==1.18.4
 cryptography==46.0.7
 pyotp==2.9.0
+razorpay==1.4.2
