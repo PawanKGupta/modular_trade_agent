@@ -30,7 +30,7 @@ vi.mock('@/api/logs', () => ({
 }));
 
 vi.mock('@/api/admin', () => ({
-	listUsers: () => mockListUsers(),
+	listUsers: (params: unknown) => mockListUsers(params),
 }));
 
 const mockUseSessionStore = vi.fn();
@@ -118,11 +118,12 @@ it('switches to admin scope and filters by user id', async () => {
 		expect(userInput).toBeInTheDocument();
 	});
 
-	// Focus the input to open dropdown
+	// UserAutocomplete only searches after at least one character (debounced); clicking alone shows a hint, not the list
 	const userInput = screen.getByPlaceholderText(/Any/i);
 	await userEvent.click(userInput);
+	await userEvent.type(userInput, '2');
 
-	// Wait for dropdown to appear with users
+	// Wait for debounced search + listUsers, then dropdown with users
 	await waitFor(() => {
 		expect(screen.getByText(/User 2/i)).toBeInTheDocument();
 	});
