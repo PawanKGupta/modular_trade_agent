@@ -77,10 +77,8 @@ services:
     image: postgres:15-alpine
     container_name: tradeagent-db
     restart: unless-stopped
-    # Host 15432 -> container 5432 (avoids conflict when 127.0.0.1:5432 is already in use on the host).
-    # App containers still use tradeagent-db:5432. From host: psql -h 127.0.0.1 -p 15432 -U trader tradeagent
     ports:
-      - "127.0.0.1:15432:5432"
+      - "127.0.0.1:5432:5432"  # Add this line - binds to localhost only
     environment:
       - POSTGRES_DB=tradeagent
       - POSTGRES_USER=trader
