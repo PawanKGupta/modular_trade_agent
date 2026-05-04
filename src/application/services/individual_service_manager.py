@@ -128,7 +128,18 @@ class IndividualServiceManager:
             if process.poll() is not None:
                 # Process already terminated (likely an error)
                 return_code = process.returncode
+                stderr_tail = ""
+                try:
+                    _, err = process.communicate(timeout=10)
+                    if err and err.strip():
+                        stderr_tail = err.strip()
+                        if len(stderr_tail) > 2000:
+                            stderr_tail = stderr_tail[-2000:]
+                except (subprocess.TimeoutExpired, ValueError):
+                    pass
                 error_msg = f"Process terminated immediately with code {return_code}"
+                if stderr_tail:
+                    error_msg = f"{error_msg}. stderr: {stderr_tail}"
                 logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
                 logger.error(
                     f"Failed to start {task_name}: {error_msg}",
