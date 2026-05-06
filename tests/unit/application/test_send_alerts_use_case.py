@@ -7,11 +7,12 @@ from src.application.use_cases.send_alerts import SendAlertsUseCase
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def make_resp(ticker, verdict='buy', final=None, combined=30.0, last_close=100.0, mtf=5.0):
     return AnalysisResponse(
         ticker=ticker,
         status='success',
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         verdict=verdict,
         final_verdict=final,
         last_close=last_close,
@@ -32,7 +33,7 @@ def test_send_alerts_no_candidates_returns_true(monkeypatch):
     uc = SendAlertsUseCase()
     bulk = BulkAnalysisResponse(
         results=[make_resp('AAA.NS', verdict='watch', combined=10)],
-        total_analyzed=1, successful=1, failed=0, buyable_count=0, timestamp=datetime.now(), execution_time_seconds=0.1
+        total_analyzed=1, successful=1, failed=0, buyable_count=0, timestamp=ist_now_naive(), execution_time_seconds=0.1
     )
     assert uc.execute(bulk) is True
 
@@ -45,7 +46,7 @@ def test_send_alerts_with_candidates_and_strong_buys(monkeypatch):
     r1 = make_resp('AAA.NS', verdict='buy', combined=50)
     r2 = make_resp('BBB.NS', verdict='strong_buy', combined=60)
     bulk = BulkAnalysisResponse(
-        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=2, timestamp=datetime.now(), execution_time_seconds=0.1
+        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=2, timestamp=ist_now_naive(), execution_time_seconds=0.1
     )
     assert uc.execute(bulk, min_combined_score=0.0) is True
     assert 'STRONG BUY' in sent['msg'] and 'BUY* candidates' in sent['msg']
@@ -59,7 +60,7 @@ def test_send_alerts_uses_final_verdict_and_min_score(monkeypatch):
     r1 = make_resp('AAA.NS', verdict='buy', final='watch', combined=50)
     r2 = make_resp('BBB.NS', verdict='watch', final='buy', combined=60)
     bulk = BulkAnalysisResponse(
-        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.1
+        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.1
     )
     assert uc.execute(bulk, min_combined_score=55, use_final_verdict=True) is True
     # Only BBB should be present
@@ -73,6 +74,6 @@ def test_send_alerts_handles_telegram_failure(monkeypatch):
     uc = SendAlertsUseCase()
     r = make_resp('AAA.NS', verdict='buy', combined=60)
     bulk = BulkAnalysisResponse(
-        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.1
+        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.1
     )
     assert uc.execute(bulk) is False

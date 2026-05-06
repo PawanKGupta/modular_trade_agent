@@ -27,6 +27,7 @@ if str(project_root) not in sys.path:
 import pandas as pd  # noqa: E402
 
 from core.data_fetcher import fetch_ohlcv_yf  # noqa: E402
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
 from modules.kotak_neo_auto_trader.utils.price_manager_utils import (  # noqa: E402
     get_ltp_from_manager,
 )
@@ -72,7 +73,7 @@ class PriceCache:
             try:
                 if key in self._cache:
                     entry = self._cache[key]
-                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    age = (ist_now_naive() - entry["timestamp"]).total_seconds()
                     if age < ttl_seconds:
                         logger.debug(f"Cache hit for historical price: {key} (age: {age:.1f}s)")
                         return entry["data"]
@@ -119,7 +120,7 @@ class PriceCache:
                     "data": (
                         data.copy() if isinstance(data, pd.DataFrame) else data
                     ),  # Copy to prevent external mutations
-                    "timestamp": datetime.now(),
+                    "timestamp": ist_now_naive(),
                 }
                 logger.debug(f"Cached historical price for {key}")
             finally:
@@ -146,7 +147,7 @@ class PriceCache:
             try:
                 if key in self._realtime_cache:
                     entry = self._realtime_cache[key]
-                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    age = (ist_now_naive() - entry["timestamp"]).total_seconds()
                     if age < ttl_seconds:
                         price = entry["price"]
                         # Validate price
@@ -208,7 +209,7 @@ class PriceCache:
 
                 self._realtime_cache[key] = {
                     "price": float(price),
-                    "timestamp": datetime.now(),
+                    "timestamp": ist_now_naive(),
                 }
                 logger.debug(f"Cached realtime price for {key}: Rs {price:.2f}")
             finally:
@@ -625,7 +626,7 @@ class PriceService:
         """
         from datetime import time as dt_time
 
-        now = datetime.now().time()
+        now = ist_now().time()
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
 

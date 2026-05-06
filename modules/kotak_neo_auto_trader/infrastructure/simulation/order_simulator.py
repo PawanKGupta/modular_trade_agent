@@ -6,12 +6,12 @@ Simulates realistic order execution with slippage and fees
 import random
 import sys
 import time
-from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 from ...config.paper_trading_config import PaperTradingConfig
@@ -292,7 +292,7 @@ class OrderSimulator:
             return True
 
         # Check current time
-        now = datetime.now().time()
+        now = ist_now().time()
         market_open = dt_time.fromisoformat(self.config.market_open_time)
         market_close = dt_time.fromisoformat(self.config.market_close_time)
 
@@ -325,7 +325,7 @@ class OrderSimulator:
         if not order.is_amo_order():
             return False
 
-        now = datetime.now().time()
+        now = ist_now().time()
         amo_time = dt_time.fromisoformat(self.config.amo_execution_time)
 
         # Execute if current time >= AMO execution time
@@ -389,5 +389,5 @@ class OrderSimulator:
             "net_value": net_value,
             "order_type": order.order_type.value,
             "transaction_type": order.transaction_type.value,
-            "executed_at": datetime.now().isoformat(),
+            "executed_at": ist_now().isoformat(),
         }

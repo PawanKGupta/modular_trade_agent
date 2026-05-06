@@ -17,13 +17,15 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.mock_broker_ad
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 from src.application.use_cases.execute_trades import ExecuteTradesUseCase
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 def make_resp(ticker, verdict="buy", combined=50.0, last_close=100.0, execution_capital=None):
     """Helper to create AnalysisResponse with optional execution_capital"""
     resp = AnalysisResponse(
         ticker=ticker,
         status="success",
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         verdict=verdict,
         last_close=last_close,
         combined_score=combined,
@@ -60,7 +62,7 @@ class TestQuantityCalculationWithUserConfig:
                 successful=1,
                 failed=0,
                 buyable_count=1,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 
@@ -105,7 +107,7 @@ class TestQuantityCalculationWithUserConfig:
                 successful=3,
                 failed=0,
                 buyable_count=3,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 
@@ -154,7 +156,7 @@ class TestQuantityCalculationWithUserConfig:
                 successful=1,
                 failed=0,
                 buyable_count=1,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 
@@ -190,7 +192,7 @@ class TestQuantityCalculationWithoutUserConfig:
             successful=1,
             failed=0,
             buyable_count=1,
-            timestamp=datetime.now(),
+            timestamp=ist_now_naive(),
             execution_time_seconds=0.1,
         )
 
@@ -220,7 +222,7 @@ class TestQuantityCalculationWithoutUserConfig:
             successful=1,
             failed=0,
             buyable_count=1,
-            timestamp=datetime.now(),
+            timestamp=ist_now_naive(),
             execution_time_seconds=0.1,
         )
 
@@ -250,7 +252,7 @@ class TestQuantityCalculationWithoutUserConfig:
             successful=3,
             failed=0,
             buyable_count=3,
-            timestamp=datetime.now(),
+            timestamp=ist_now_naive(),
             execution_time_seconds=0.1,
         )
 
@@ -294,7 +296,7 @@ class TestQuantityCalculationEdgeCases:
                 successful=1,
                 failed=0,
                 buyable_count=1,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 
@@ -331,7 +333,7 @@ class TestQuantityCalculationEdgeCases:
                 successful=1,
                 failed=0,
                 buyable_count=1,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 
@@ -373,7 +375,7 @@ class TestQuantityCalculationEdgeCases:
                 successful=2,
                 failed=0,
                 buyable_count=2,
-                timestamp=datetime.now(),
+                timestamp=ist_now_naive(),
                 execution_time_seconds=0.1,
             )
 

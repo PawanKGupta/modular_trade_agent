@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+
 from core.analysis import analyze_multiple_tickers, analyze_ticker
 from core.scrapping import get_stock_list  # TODO Phase 4: Migrate to infrastructure/web_scraping
 from core.telegram import send_telegram  # TODO Phase 4: Migrate to infrastructure/notifications
@@ -574,7 +576,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         results.sort(key=lambda x: -compute_trading_priority_score(x))
         # Export a final CSV with backtest fields for auto-trader
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ts = ist_now_naive().strftime("%Y%m%d_%H%M%S")
             out_dir = "analysis_results"
             os.makedirs(out_dir, exist_ok=True)
             out_path = os.path.join(out_dir, f"bulk_analysis_final_{ts}.csv")
@@ -988,7 +990,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
         # Add timestamp for context
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         msg_prefix = "*Reversal Buy Candidates (today)*"
         if enable_backtest_scoring:

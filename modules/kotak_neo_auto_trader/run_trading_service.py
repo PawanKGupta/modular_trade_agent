@@ -369,11 +369,16 @@ class TradingService:
         if is_trading_day_check and ist_now:
             return is_trading_day_check(ist_now().date())
         # Fallback to weekday check if imports failed
+        if ist_now is not None:
+            return ist_now().weekday() < 5
         return datetime.now().weekday() < 5
 
     def is_market_hours(self) -> bool:
-        """Check if currently in market hours (9:15 AM - 3:30 PM)"""
-        now = datetime.now().time()
+        """Check if currently in market hours (9:15 AM - 3:30 PM IST)."""
+        if ist_now is not None:
+            now = ist_now().time()
+        else:
+            now = datetime.now().time()
         return dt_time(9, 15) <= now <= dt_time(15, 30)
 
     def _initialize_live_prices(self):
@@ -529,7 +534,10 @@ class TradingService:
         if self.tasks_completed.get(task_name):
             return False  # Already completed today
 
-        now = datetime.now().time()
+        if ist_now is not None:
+            now = ist_now().time()
+        else:
+            now = datetime.now().time()
 
         # Allow 2 minute window for task execution
         time_diff = (now.hour * 60 + now.minute) - (
@@ -794,7 +802,7 @@ class TradingService:
         else:
             # Phase 4: Market closed - stop tracking buy orders (they'll be picked up next day)
             # Only log once per minute to avoid spam
-            now = datetime.now()
+            now = ist_now() if ist_now is not None else datetime.now()
             if now.minute == 0 and now.second < 30:
                 if self.unified_order_monitor and self.unified_order_monitor.active_buy_orders:
                     logger.info(
@@ -1496,9 +1504,9 @@ class TradingService:
         logger.info("Press Ctrl+C to stop")
         logger.info("")
 
-        # Log initial status
-        now_init = datetime.now()
-        logger.info(f"Current time: {now_init.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Log initial status (IST — matches exchange and DB conventions)
+        now_init = ist_now() if ist_now is not None else datetime.now()
+        logger.info(f"Current time: {now_init.strftime('%Y-%m-%d %H:%M:%S')} IST")
         logger.info(
             f"Is trading day: {self.is_trading_day()} (weekday: {now_init.weekday()}, 0=Mon, 4=Fri)"
         )
@@ -1542,7 +1550,7 @@ class TradingService:
             while not self.shutdown_requested:
                 loop_count += 1
                 try:
-                    now = datetime.now()
+                    now = ist_now() if ist_now is not None else datetime.now()
                     current_time = now.time()
                     current_minute = now.minute
 
@@ -1550,7 +1558,8 @@ class TradingService:
                     # Log first 10 iterations, then every 10 iterations
                     if loop_count <= 10 or loop_count % 10 == 0:
                         self.logger.info(
-                            f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
+                            f"Scheduler loop iteration #{loop_count} at "
+                            f"{now.strftime('%H:%M:%S')} IST",
                             action="scheduler",
                         )
 

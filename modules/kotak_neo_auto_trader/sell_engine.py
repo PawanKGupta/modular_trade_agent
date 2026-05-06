@@ -22,6 +22,8 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
+
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_indicator_service,
     get_price_service,
@@ -3435,7 +3437,7 @@ class SellOrderManager:
                     # Mark as closed
                     trade["status"] = "closed"
                     trade["exit_price"] = exit_price
-                    trade["exit_time"] = datetime.now().isoformat()
+                    trade["exit_time"] = ist_now().isoformat()
                     trade["exit_reason"] = "EMA9_TARGET"
                     trade["sell_order_id"] = order_id
 
@@ -3463,7 +3465,7 @@ class SellOrderManager:
                     try:
                         pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
                         if pos:
-                            pos.closed_at = datetime.now()
+                            pos.closed_at = ist_now_naive()
                             self.positions_repo.db.commit()
                             logger.debug(f"Position {symbol} marked as closed in DB")
                     except Exception as e:
@@ -3485,7 +3487,7 @@ class SellOrderManager:
         Returns:
             True if market is open
         """
-        now = datetime.now().time()
+        now = ist_now().time()
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
 
@@ -4010,7 +4012,7 @@ class SellOrderManager:
                         trade["partial_exits"].append(
                             {
                                 "qty": sold_qty,
-                                "exit_time": datetime.now().isoformat(),
+                                "exit_time": ist_now().isoformat(),
                                 "exit_reason": "MANUAL_PARTIAL_EXIT",
                                 "exit_price": avg_price,
                             }
@@ -4038,7 +4040,7 @@ class SellOrderManager:
             exit_reason: Exit reason string
         """
         trade["status"] = "closed"
-        trade["exit_time"] = datetime.now().isoformat()
+        trade["exit_time"] = ist_now().isoformat()
         trade["exit_reason"] = exit_reason
 
         avg_price = self._calculate_avg_price_from_orders(sell_info["orders"])
@@ -4601,7 +4603,7 @@ class SellOrderManager:
                 return stats  # Gracefully skip if API unavailable
 
             broker_orders = all_orders["data"]
-            now = datetime.now()
+            now = ist_now_naive()
 
             for db_order in pending_sell_orders:
                 stats["checked"] += 1
@@ -5972,7 +5974,7 @@ class SellOrderManager:
         # Holdings API only updates T+1 (next day after settlement), so running it every 30 minutes
         # during market hours is wasteful. Instead, we detect manual sells immediately using
         # get_orders() data which is already fetched every minute in monitor_all_orders().
-        now = datetime.now()
+        now = ist_now_naive()
 
         # Detect and track pending manual sell orders for system positions
         # This ensures manual sell orders are tracked to prevent duplicate placement
@@ -6682,7 +6684,7 @@ class SellOrderManager:
             rsi10: Current RSI10 value
         """
         try:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
             error_messages = {
                 "cancel_failed": "Failed to cancel limit order",
                 "place_failed": "Failed to place market order",

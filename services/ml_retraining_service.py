@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from pathlib import Path
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+
 from services.event_bus import EventBus, Event, EventType, get_event_bus
 from services.ml_training_service import MLTrainingService
 from utils.logger import logger
@@ -117,7 +119,7 @@ class MLRetrainingService:
         """
         # Check time since last retraining
         if self.last_retraining_time:
-            time_since_last = datetime.now() - self.last_retraining_time
+            time_since_last = ist_now_naive() - self.last_retraining_time
             if time_since_last < self.min_retraining_interval:
                 logger.debug(
                     f"Too soon to retrain: {time_since_last} < {self.min_retraining_interval}"
@@ -152,7 +154,7 @@ class MLRetrainingService:
         logger.info(f"Starting model retraining: {reason}")
 
         results = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": ist_now().isoformat(),
             "reason": reason,
             "models_trained": [],
             "errors": [],
@@ -189,7 +191,7 @@ class MLRetrainingService:
                     results["errors"].append(error_msg)
 
             # Update retraining metadata
-            self.last_retraining_time = datetime.now()
+            self.last_retraining_time = ist_now_naive()
             self.retraining_count += 1
 
             # Log to history
@@ -233,7 +235,7 @@ class MLRetrainingService:
             backup_dir.mkdir(parents=True, exist_ok=True)
 
             # Backup with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = ist_now_naive().strftime("%Y%m%d_%H%M%S")
 
             for model_file in models_dir.glob("*.pkl"):
                 backup_path = backup_dir / f"{model_file.stem}_{timestamp}.pkl"

@@ -19,6 +19,8 @@ from src.infrastructure.db.models import Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 @pytest.fixture
 def mock_auth():
@@ -108,7 +110,7 @@ def sample_trade():
         "placed_symbol": "RELIANCE-EQ",
         "ticker": "RELIANCE.NS",
         "entry_price": 2500.0,
-        "entry_time": datetime.now().isoformat(),
+        "entry_time": ist_now().isoformat(),
         "rsi10": 25.0,
         "ema9": 2550.0,
         "ema200": 2400.0,
@@ -161,7 +163,7 @@ class TestLoadTradesHistory:
             symbol="RELIANCE",
             quantity=20,
             avg_price=2500.0,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
         )
 
         # Create an order with metadata
@@ -214,9 +216,9 @@ class TestLoadTradesHistory:
             symbol="TATASTEEL",
             quantity=40,
             avg_price=1200.0,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
         )
-        position.closed_at = datetime.now()
+        position.closed_at = ist_now_naive()
         db_session.commit()
 
         # Create an order with exit metadata
@@ -286,7 +288,7 @@ class TestLoadTradesHistory:
             data = {
                 "trades": [sample_trade],
                 "failed_orders": [],
-                "last_run": datetime.now().isoformat(),
+                "last_run": ist_now().isoformat(),
             }
             json.dump(data, f)
             temp_path = f.name
@@ -387,7 +389,7 @@ class TestSaveTradesHistory:
             symbol="RELIANCE",
             quantity=20,
             avg_price=2500.0,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
         )
 
         # Now close it
@@ -396,7 +398,7 @@ class TestSaveTradesHistory:
             "qty": 20,
             "entry_price": 2500.0,
             "status": "closed",
-            "exit_time": datetime.now().isoformat(),
+            "exit_time": ist_now().isoformat(),
         }
         data = {
             "trades": [closed_trade],
@@ -422,7 +424,7 @@ class TestSaveTradesHistory:
             symbol="IMFA-EQ",
             quantity=82,
             avg_price=1222.7,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
         )
 
         # Close it with full exit details in trade dict
@@ -489,7 +491,7 @@ class TestSaveTradesHistory:
             symbol="IMFA-EQ",
             quantity=82,
             avg_price=1222.7,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
         )
 
         # Close it with sell_order_id as string (broker_order_id)
@@ -745,7 +747,7 @@ class TestFailedOrders:
             data = {
                 "trades": [],
                 "failed_orders": [sample_failed_order],
-                "last_run": datetime.now().isoformat(),
+                "last_run": ist_now().isoformat(),
             }
             json.dump(data, f)
             temp_path = f.name

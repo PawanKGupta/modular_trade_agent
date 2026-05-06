@@ -6,6 +6,7 @@ from src.domain.value_objects.indicators import IndicatorSet, RSIIndicator, EMAI
 from datetime import datetime
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def test_signal_generator_abstract_enforcement():
     # Cannot instantiate abstract base
     with pytest.raises(TypeError):
@@ -14,7 +15,7 @@ def test_signal_generator_abstract_enforcement():
     class SimpleGen(SignalGenerator):
         def generate_signal(self, ticker, indicators, current_price, **kwargs):
             sig_type = SignalType.BUY if indicators and indicators.rsi and indicators.rsi.is_oversold() else SignalType.WATCH
-            return Signal(ticker=ticker, signal_type=sig_type, timestamp=datetime.now(), strength_score=50.0)
+            return Signal(ticker=ticker, signal_type=sig_type, timestamp=ist_now_naive(), strength_score=50.0)
         def evaluate_signal_strength(self, signal: Signal) -> float:
             return signal.strength_score
         def should_generate_alert(self, signal: Signal) -> bool:

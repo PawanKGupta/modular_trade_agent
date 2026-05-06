@@ -27,6 +27,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Now in tests/regression/ so need to go up 2 levels
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -155,10 +157,10 @@ class TestWebSocketConnectionIssues:
         connection_timeout = 10
 
         # Wait for connection
-        wait_start = datetime.now()
+        wait_start = ist_now_naive()
         # Simulate connection established after 1 second
         connection_established = True
-        wait_duration = (datetime.now() - wait_start).total_seconds()
+        wait_duration = (ist_now_naive() - wait_start).total_seconds()
 
         if connection_established:
             assert wait_duration < connection_timeout, "Connection should establish before timeout"
@@ -180,7 +182,7 @@ class TestWebSocketLogThrottling:
         last_log_time = None
         throttle_seconds = 60
 
-        now = datetime.now()
+        now = ist_now_naive()
 
         # First log - should be INFO
         if last_log_time is None:
@@ -197,7 +199,7 @@ class TestWebSocketLogThrottling:
         assert log_level == "INFO", "First log should be INFO"
 
         # Second log within 60 seconds - should be DEBUG
-        now = datetime.now() + timedelta(seconds=30)
+        now = ist_now_naive() + timedelta(seconds=30)
         time_since_last = (now - last_log_time).total_seconds()
         if time_since_last < throttle_seconds:
             log_level = "DEBUG"
@@ -207,7 +209,7 @@ class TestWebSocketLogThrottling:
         assert log_level == "DEBUG", "Log within 60 seconds should be DEBUG"
 
         # Third log after 60 seconds - should be INFO
-        now = datetime.now() + timedelta(seconds=61)
+        now = ist_now_naive() + timedelta(seconds=61)
         time_since_last = (now - last_log_time).total_seconds()
         if time_since_last >= throttle_seconds:
             log_level = "INFO"
@@ -570,7 +572,7 @@ class TestCompletedOrderTradeHistoryUpdate:
                 "symbol": symbol,
                 "status": "closed",
                 "exit_price": order_price,
-                "exit_time": datetime.now().isoformat(),
+                "exit_time": ist_now().isoformat(),
                 "sell_order_id": order_id,
             }
 
@@ -596,7 +598,7 @@ class TestCompletedOrderTradeHistoryUpdate:
                 "symbol": symbol,
                 "status": "closed",
                 "exit_price": order_price,
-                "exit_time": datetime.now().isoformat(),
+                "exit_time": ist_now().isoformat(),
                 "sell_order_id": order_id,
             }
 
@@ -653,7 +655,7 @@ class TestFailedOrdersCleanup:
 
         # Mock time to be before market open (9:00 AM)
         with patch("modules.kotak_neo_auto_trader.storage.datetime") as mock_datetime:
-            mock_now = datetime.now().replace(hour=9, minute=0, second=0)
+            mock_now = ist_now_naive().replace(hour=9, minute=0, second=0)
             mock_datetime.now.return_value = mock_now
             mock_datetime.strptime = datetime.strptime
 
@@ -677,7 +679,7 @@ class TestFailedOrdersCleanup:
 
         # Mock time to be after market open (10:00 AM)
         with patch("modules.kotak_neo_auto_trader.storage.datetime") as mock_datetime:
-            mock_now = datetime.now().replace(hour=10, minute=0, second=0)
+            mock_now = ist_now_naive().replace(hour=10, minute=0, second=0)
             mock_datetime.now.return_value = mock_now
             mock_datetime.strptime = datetime.strptime
 

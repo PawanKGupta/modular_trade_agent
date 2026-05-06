@@ -10,8 +10,9 @@ Phase 3 Feature - Pipeline Pattern
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
-from datetime import datetime
 import logging
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 from services.event_bus import EventBus, Event, EventType, get_event_bus
 
@@ -280,7 +281,7 @@ class AnalysisPipeline:
             ticker=ticker,
             data=data,
             config=config or {},
-            metadata={'start_time': datetime.now()}
+            metadata={'start_time': ist_now_naive()}
         )
         
         # Publish start event
@@ -295,13 +296,13 @@ class AnalysisPipeline:
         
         # Execute each step
         for i, step in enumerate(self.steps):
-            step_start = datetime.now()
+            step_start = ist_now_naive()
             
             # Execute step
             context = step(context)
             
             # Track timing
-            step_duration = (datetime.now() - step_start).total_seconds()
+            step_duration = (ist_now_naive() - step_start).total_seconds()
             context.metadata[f'{step.name}_duration'] = step_duration
             
             logger.debug(f"Step {i+1}/{len(self.steps)} ({step.name}) completed in {step_duration:.2f}s")
@@ -312,7 +313,7 @@ class AnalysisPipeline:
                 break
         
         # Add timing metadata
-        context.metadata['end_time'] = datetime.now()
+        context.metadata['end_time'] = ist_now_naive()
         context.metadata['total_duration'] = (
             context.metadata['end_time'] - context.metadata['start_time']
         ).total_seconds()

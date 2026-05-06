@@ -1,8 +1,10 @@
 # Documentation Rules & Guidelines
 
-**Version:** 1.0
-**Last Updated:** 2025-11-07
+**Version:** 1.1
+**Last Updated:** 2026-04-27
 **Status:** Active
+
+**Canonical copy:** this file, `docs/DOCUMENTATION_RULES.md`, is the **only** project documentation standard. (The former duplicate in `docs/development/` was removed; link to this path everywhere.)
 
 ---
 
@@ -24,7 +26,23 @@
 ## Overview
 
 ### Purpose
-This document provides comprehensive rules and guidelines for writing, organizing, and maintaining documentation in the Modular Trade Agent project. All developers must follow these rules to ensure documentation quality, consistency, and usability.
+This document provides comprehensive rules and guidelines for writing, organizing, and maintaining documentation in the Modular Trade Agent project. All developers and AI tools must follow these rules to ensure documentation quality, consistency, and usability.
+
+### Quick reference (structure for new or substantially revised pages)
+
+**General:** Clear, concise, structured. Prefer **clarity over verbosity** and **simple, professional** language. Assume the reader is a new developer or operator.
+
+**Structured content — cover this information** (adjust section *titles* to the page type, e.g. how-to vs reference; omit a block only if it truly does not apply):
+
+1. **Overview** — context and scope
+2. **Purpose** — why this exists and for whom
+3. **Inputs / parameters** — configuration, arguments, environment, prerequisites
+4. **Outputs / return values** — what the user or caller gets, response shape, side effects
+5. **Steps / flow** — procedure or data flow as needed
+6. **Example usage** — copy-paste or concrete examples
+7. **Edge cases / notes** — limitations, gotchas, cross-links
+
+**Code:** Every function in Python has a **docstring**; use **one** of Google or NumPy style per file. See [Code documentation](#code-documentation) for module, class, and function patterns.
 
 ### Documentation Philosophy
 - **User-Centric**: Write for the user, not for yourself
@@ -705,10 +723,10 @@ See [Feature Documentation](docs/features/FEATURE.md) for details.
 
 ## References
 
-- [PROJECT_RULES.md](../../PROJECT_RULES.md) - Overall project rules
-- [CONTRIBUTING.md](../../CONTRIBUTING.md) - Contribution guidelines
-- [docs/getting-started/DOCUMENTATION_INDEX.md](../getting-started/DOCUMENTATION_INDEX.md) - Documentation index
+- [development/PROJECT_RULES.md](development/PROJECT_RULES.md) — Project rules (this repo)
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — Contribution guidelines
+- [getting-started/DOCUMENTATION_INDEX.md](getting-started/DOCUMENTATION_INDEX.md) — Documentation index
 
 ---
 
-**Last Updated**: 2025-11-07
+**Last Updated:** 2026-04-27

@@ -10,6 +10,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 from ...config.paper_trading_config import PaperTradingConfig
@@ -727,7 +728,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                         quantity=int(pos.quantity),
                         average_price=Money(pos.avg_price),
                         current_price=Money(pos.avg_price),  # Will be updated by price_provider
-                        last_updated=pos.opened_at or datetime.now(),
+                        last_updated=pos.opened_at or ist_now_naive(),
                     )
                     self.portfolio._holdings[symbol] = holding
 
@@ -1172,7 +1173,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Update order status
         self.store.update_order(
-            order_id, {"status": "CANCELLED", "cancelled_at": datetime.now().isoformat()}
+            order_id, {"status": "CANCELLED", "cancelled_at": ist_now().isoformat()}
         )
 
         # Sync cancellation to DB using stored db_session
@@ -1450,7 +1451,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     quantity=int(pos.quantity),
                     average_price=Money(pos.avg_price),
                     current_price=Money(pos.avg_price),  # Will be updated by price_provider
-                    last_updated=pos.opened_at or datetime.now(),
+                    last_updated=pos.opened_at or ist_now_naive(),
                 )
                 holdings.append(holding)
 
@@ -1547,7 +1548,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 quantity=int(position.quantity),
                 average_price=Money(position.avg_price),
                 current_price=Money(position.avg_price),  # Will be updated by price_provider
-                last_updated=position.opened_at or datetime.now(),
+                last_updated=position.opened_at or ist_now_naive(),
             )
 
             return holding
@@ -1575,7 +1576,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             for holding in holdings:
                 if holding.symbol in prices:
                     holding.current_price = Money(prices[holding.symbol])
-                    holding.last_updated = datetime.now()
+                    holding.last_updated = ist_now_naive()
 
         return holdings
 
@@ -1592,7 +1593,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             price = self.price_provider.get_price(symbol)
             if price:
                 holding.current_price = Money(price)
-                holding.last_updated = datetime.now()
+                holding.last_updated = ist_now_naive()
 
         return holding
 
@@ -1659,7 +1660,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         The counter is checked against the database to ensure uniqueness even after service restarts.
         """
-        timestamp = datetime.now().strftime("%Y%m%d")
+        timestamp = ist_now_naive().strftime("%Y%m%d")
 
         # Check database for highest counter value for today to prevent duplicates after restart
         if self.db_session and self.user_id:
@@ -1753,7 +1754,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             "price": float(execution_price.amount),
             "order_value": order_value,
             "charges": charges,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": ist_now().isoformat(),
         }
 
         # For sell orders, include P&L information from trade_info

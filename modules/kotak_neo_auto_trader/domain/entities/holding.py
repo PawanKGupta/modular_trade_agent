@@ -6,6 +6,9 @@ Represents a portfolio holding with P&L calculations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
+
 from ..value_objects import Money, Exchange
 
 
@@ -42,7 +45,7 @@ class Holding:
             raise ValueError(f"Quantity cannot be negative: {self.quantity}")
 
         if self.last_updated is None:
-            self.last_updated = datetime.now()
+            self.last_updated = ist_now_naive()
 
     # Calculation methods
 
@@ -120,7 +123,7 @@ class Holding:
             raise ValueError(f"Price cannot be negative: {new_price}")
 
         self.current_price = new_price
-        self.last_updated = update_time or datetime.now()
+        self.last_updated = update_time or ist_now_naive()
 
     def add_quantity(self, quantity: int, price: Money) -> None:
         """
@@ -138,7 +141,7 @@ class Holding:
         new_quantity = self.quantity + quantity
         self.average_price = total_cost / new_quantity
         self.quantity = new_quantity
-        self.last_updated = datetime.now()
+        self.last_updated = ist_now_naive()
 
     def reduce_quantity(self, quantity: int) -> None:
         """
@@ -157,7 +160,7 @@ class Holding:
             raise ValueError(f"Cannot reduce {quantity} shares: only {self.quantity} held")
 
         self.quantity -= quantity
-        self.last_updated = datetime.now()
+        self.last_updated = ist_now_naive()
 
     # Display methods
 

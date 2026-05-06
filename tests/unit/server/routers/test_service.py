@@ -13,6 +13,8 @@ from server.app.schemas.service import (
 )
 from src.infrastructure.db.models import UserRole
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
@@ -32,7 +34,7 @@ class DummyServiceStatus(SimpleNamespace):
             last_task_execution=kwargs.get("last_task_execution", None),
             error_count=kwargs.get("error_count", 0),
             last_error=kwargs.get("last_error", None),
-            updated_at=kwargs.get("updated_at", datetime.now()),
+            updated_at=kwargs.get("updated_at", ist_now_naive()),
         )
 
 
@@ -41,7 +43,7 @@ class DummyTask(SimpleNamespace):
         super().__init__(
             id=kwargs.get("id", 1),
             task_name=kwargs.get("task_name", "test_task"),
-            executed_at=kwargs.get("executed_at", datetime.now()),
+            executed_at=kwargs.get("executed_at", ist_now_naive()),
             status=kwargs.get("status", "success"),
             duration_seconds=kwargs.get("duration_seconds", 1.5),
             details=kwargs.get("details", None),
@@ -56,7 +58,7 @@ class DummyServiceLog(SimpleNamespace):
             module=kwargs.get("module", "test_module"),
             message=kwargs.get("message", "Test message"),
             context=kwargs.get("context", None),
-            timestamp=kwargs.get("timestamp", datetime.now()),
+            timestamp=kwargs.get("timestamp", ist_now_naive()),
         )
 
 
@@ -403,7 +405,7 @@ def test_get_service_status_success(trading_service, current_user, mock_db):
     """Test get_service_status successfully returns status"""
     status_obj = DummyServiceStatus(
         service_running=True,
-        last_heartbeat=datetime.now(),
+        last_heartbeat=ist_now_naive(),
         error_count=0,
     )
     trading_service.status_by_user[42] = status_obj
@@ -457,9 +459,9 @@ def test_get_individual_services_status_success(individual_service_manager, curr
     individual_service_manager.status_dict = {
         "test_task": {
             "is_running": True,
-            "started_at": datetime.now(),
-            "last_execution_at": datetime.now(),
-            "next_execution_at": datetime.now() + timedelta(hours=1),
+            "started_at": ist_now_naive(),
+            "last_execution_at": ist_now_naive(),
+            "next_execution_at": ist_now_naive() + timedelta(hours=1),
             "process_id": 12345,
             "schedule_enabled": True,
             "last_execution_status": "success",

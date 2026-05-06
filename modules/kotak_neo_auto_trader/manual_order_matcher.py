@@ -19,6 +19,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
 from utils.logger import logger  # noqa: E402
 
 from .order_tracker import OrderTracker, get_order_tracker  # noqa: E402
@@ -407,7 +408,7 @@ class ManualOrderMatcher:
                     "expected_total_qty": expected_total_qty,
                     "broker_qty": broker_qty,
                     "qty_diff": qty_diff,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": ist_now().isoformat(),
                 }
 
                 # Determine if manual buy or sell
@@ -612,7 +613,7 @@ class ManualOrderMatcher:
                         "symbol": symbol,
                         "shares_sold": shares_sold,
                         "remaining": broker_qty,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": ist_now().isoformat(),
                     }
                 )
 

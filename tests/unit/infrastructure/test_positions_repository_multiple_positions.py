@@ -21,6 +21,7 @@ from src.infrastructure.db.models import Positions, UserRole, Users
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def db_session():
     """Create in-memory SQLite database for testing"""
@@ -73,8 +74,8 @@ class TestGetBySymbolMultiplePositions:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -106,8 +107,8 @@ class TestGetBySymbolMultiplePositions:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -127,8 +128,8 @@ class TestGetBySymbolMultiplePositions:
                 symbol=symbol,
                 quantity=0.0,
                 avg_price=2500.0 + i * 100,
-                opened_at=datetime.now() - timedelta(days=10 - i),
-                closed_at=datetime.now() - timedelta(days=5 - i),
+                opened_at=ist_now_naive() - timedelta(days=10 - i),
+                closed_at=ist_now_naive() - timedelta(days=5 - i),
             )
             positions_repo.db.add(closed_pos)
 
@@ -162,8 +163,8 @@ class TestGetBySymbolForUpdateMultiplePositions:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -192,8 +193,8 @@ class TestGetBySymbolForUpdateMultiplePositions:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -216,8 +217,8 @@ class TestGetBySymbolAny:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -246,8 +247,8 @@ class TestGetBySymbolAny:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -277,8 +278,8 @@ class TestGetBySymbolAny:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -303,8 +304,8 @@ class TestUpsertWithMultiplePositions:
             symbol=symbol,
             quantity=0.0,
             avg_price=2500.0,
-            opened_at=datetime.now() - timedelta(days=10),
-            closed_at=datetime.now() - timedelta(days=5),
+            opened_at=ist_now_naive() - timedelta(days=10),
+            closed_at=ist_now_naive() - timedelta(days=5),
         )
         positions_repo.db.add(closed_pos)
         positions_repo.db.commit()
@@ -376,8 +377,8 @@ class TestUpsertWithMultiplePositions:
                 symbol=symbol,
                 quantity=0.0,
                 avg_price=2500.0 + i * 100,
-                opened_at=datetime.now() - timedelta(days=10 - i),
-                closed_at=datetime.now() - timedelta(days=5 - i),
+                opened_at=ist_now_naive() - timedelta(days=10 - i),
+                closed_at=ist_now_naive() - timedelta(days=5 - i),
             )
             positions_repo.db.add(closed_pos)
         positions_repo.db.commit()

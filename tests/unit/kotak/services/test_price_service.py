@@ -12,6 +12,7 @@ import pandas as pd
 from modules.kotak_neo_auto_trader.services.price_service import PriceCache, PriceService
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class TestPriceCache:
     """Tests for PriceCache"""
 
@@ -162,7 +163,7 @@ class TestPriceService:
         mock_df = pd.DataFrame(
             {
                 "close": [2500.50],
-                "date": [datetime.now()],
+                "date": [ist_now_naive()],
             }
         )
         mock_fetch.return_value = mock_df

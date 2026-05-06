@@ -6,6 +6,8 @@ import pytest
 
 from server.app.routers.broker_history_impl import _fifo_match_orders
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestFIFOMatchingBasic:
     """Basic FIFO matching tests."""
@@ -319,7 +321,7 @@ class TestFIFOMatchingEdgeCases:
 
     def test_timestamp_parsing_iso_format(self):
         """Timestamps in ISO format should be parsed correctly."""
-        now = datetime.now()
+        now = ist_now_naive()
         later = now + timedelta(days=1)
         transactions = [
             {
@@ -345,7 +347,7 @@ class TestFIFOMatchingEdgeCases:
 
     def test_timestamp_parsing_datetime_object(self):
         """Timestamp as datetime object should be handled."""
-        now = datetime.now()
+        now = ist_now_naive()
         later = now + timedelta(days=1)
         transactions = [
             {

@@ -7,12 +7,11 @@ High-level manager for real-time LTP with automatic fallback to yfinance
 import sys
 from pathlib import Path
 from typing import Optional, List
-from datetime import datetime
-
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
 from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
@@ -174,7 +173,7 @@ class LivePriceManager:
                 ltp = self.price_cache.get_ltp(symbol)
                 if ltp is not None:
                     self.stats["websocket_hits"] += 1
-                    self.stats["last_websocket_time"] = datetime.now()
+                    self.stats["last_websocket_time"] = ist_now_naive()
                     logger.debug(f"Got LTP from WebSocket: {symbol} = Rs {ltp}")
                     return ltp
             except Exception as e:
@@ -187,7 +186,7 @@ class LivePriceManager:
                 ltp = self._get_ltp_yfinance(symbol, ticker)
                 if ltp is not None:
                     self.stats["yfinance_fallbacks"] += 1
-                    self.stats["last_yfinance_time"] = datetime.now()
+                    self.stats["last_yfinance_time"] = ist_now_naive()
                     logger.debug(f"Got LTP from yfinance: {symbol} = Rs {ltp}")
                     return ltp
             except Exception as e:

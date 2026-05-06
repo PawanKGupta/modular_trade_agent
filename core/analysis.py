@@ -1,6 +1,7 @@
 from config.settings import (
     VOLUME_LOOKBACK_DAYS,
 )
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 
@@ -519,9 +520,7 @@ def analyze_multiple_tickers(
         if export_to_csv:
             # AsyncAnalysisService exports CSV internally
             # Return a placeholder path for backward compatibility
-            from datetime import datetime
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = ist_now_naive().strftime("%Y%m%d_%H%M%S")
             csv_filepath = f"analysis_results/bulk_analysis_{timestamp}.csv"
             logger.info(f"Batch analysis complete. Results exported to: {csv_filepath}")
         else:

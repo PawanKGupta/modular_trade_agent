@@ -30,6 +30,7 @@ from src.application.services.broker_credentials import (
 from src.application.services.config_converter import user_config_to_strategy_config
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
 from src.application.services.schedule_manager import ScheduleManager
+from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
@@ -546,7 +547,7 @@ class MultiUserTradingService:
 
             while service.running and not getattr(service, "shutdown_requested", False):
                 try:
-                    now = datetime.now()
+                    now = ist_now()
                     current_time = now.time()
 
                     # Check only once per minute

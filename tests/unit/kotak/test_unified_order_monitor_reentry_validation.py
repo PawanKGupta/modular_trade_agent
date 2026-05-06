@@ -13,6 +13,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -72,7 +74,7 @@ class TestReentryDataValidation:
             "level": 20,
             "rsi": 19.5,
             "price": 2500.0,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
             "order_id": "ORDER123",
         }
 
@@ -82,7 +84,7 @@ class TestReentryDataValidation:
         """Test that missing qty field fails validation"""
         invalid_data = {
             "price": 2500.0,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -91,7 +93,7 @@ class TestReentryDataValidation:
         """Test that missing price field fails validation"""
         invalid_data = {
             "qty": 10,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -110,7 +112,7 @@ class TestReentryDataValidation:
         invalid_data = {
             "qty": "10",  # String instead of int
             "price": 2500.0,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -120,7 +122,7 @@ class TestReentryDataValidation:
         invalid_data = {
             "qty": 0,  # Zero qty
             "price": 2500.0,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -133,7 +135,7 @@ class TestReentryDataValidation:
         invalid_data = {
             "qty": 10,
             "price": "2500.0",  # String instead of number
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -143,7 +145,7 @@ class TestReentryDataValidation:
         invalid_data = {
             "qty": 10,
             "price": 0.0,  # Zero price
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -166,7 +168,7 @@ class TestReentryDataValidation:
         invalid_data = {
             "qty": 10,
             "price": 2500.0,
-            "time": datetime.now(),  # datetime object instead of string
+            "time": ist_now_naive(),  # datetime object instead of string
         }
 
         assert unified_monitor._validate_reentry_data(invalid_data) is False
@@ -176,7 +178,7 @@ class TestReentryDataValidation:
         valid_data = {
             "qty": 10,
             "price": 2500.0,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
             # Optional fields can be None or missing
             "level": None,
             "rsi": None,

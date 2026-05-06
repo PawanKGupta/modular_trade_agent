@@ -17,6 +17,8 @@ from typing import Any, Callable
 
 from utils.logger import logger
 
+from src.infrastructure.db.timezone_utils import ist_now_naive
+
 from ...domain import (
     Exchange,
     Holding,
@@ -643,7 +645,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     order_id=order_id,
                     status=status,
                     placed_at=created_at,
-                    created_at=created_at or datetime.now(),
+                    created_at=created_at or ist_now_naive(),
                     executed_price=executed_price,
                     executed_quantity=executed_quantity,
                 )
@@ -683,7 +685,7 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         quantity=qty,
                         average_price=Money.from_float(avg),
                         current_price=Money.from_float(ltp),
-                        last_updated=datetime.now(),
+                        last_updated=ist_now_naive(),
                     )
                 )
             except Exception as e:  # noqa: BLE001

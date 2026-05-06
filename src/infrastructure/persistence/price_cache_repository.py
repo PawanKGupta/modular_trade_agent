@@ -8,6 +8,7 @@ from sqlalchemy import select, and_, delete
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import PriceCache
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 try:
     from utils.logger import logger
@@ -34,10 +35,10 @@ class PriceCacheRepository:
         self,
         symbol: str,
         date: date,
+        close: float,
         open: float | None = None,
         high: float | None = None,
         low: float | None = None,
-        close: float,
         volume: int | None = None,
         source: str = "yfinance",
     ) -> PriceCache:
@@ -52,7 +53,7 @@ class PriceCacheRepository:
             existing.close = close
             existing.volume = volume
             existing.source = source
-            existing.cached_at = datetime.now()
+            existing.cached_at = ist_now_naive()
             self.db.commit()
             self.db.refresh(existing)
             return existing

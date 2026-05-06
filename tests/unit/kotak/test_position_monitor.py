@@ -16,6 +16,8 @@ from modules.kotak_neo_auto_trader.position_monitor import (
     get_position_monitor,
 )
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestPositionMonitorInitialization:
     """Test PositionMonitor initialization with services"""
@@ -570,7 +572,7 @@ class TestPositionMonitorSubscription:
         monitor.position_loader = mock_position_loader
 
         # Mock services
-        mock_df = pd.DataFrame({"close": [2500], "date": [datetime.now()]})
+        mock_df = pd.DataFrame({"close": [2500], "date": [ist_now_naive()]})
         monitor.price_service.get_price = Mock(return_value=mock_df)
         monitor.price_service.get_realtime_price = Mock(return_value=2500.0)
         monitor.price_service.subscribe_to_symbols = Mock(return_value=True)
