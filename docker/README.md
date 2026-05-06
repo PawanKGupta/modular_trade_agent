@@ -287,6 +287,7 @@ docker/
 - Uses `docker-compose.prod.yml`
 - Resource limits optimized for free tier
 - Named volumes for data persistence
+- **PostgreSQL backup, cron, and restore:** see [docs/deployment/POSTGRES_DOCKER_BACKUP_CRON.md](../docs/deployment/POSTGRES_DOCKER_BACKUP_CRON.md) and `docker/scripts/backup_postgres_docker.sh`
 
 ---
 

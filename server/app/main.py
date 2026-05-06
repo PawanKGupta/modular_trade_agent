@@ -706,9 +706,41 @@ async def _log_retention_worker():
         await asyncio.sleep(24 * 60 * 60)
 
 
+async def _individual_subprocess_reaper_worker(interval_seconds: int = 45):
+    """
+    Poll spawned individual-service Popen handles and reap exited children.
+
+    Keeps SQLite/Postgres task status aligned when processes exit outside stop_service
+    and prevents zombie buildup on the API worker (waitpid runs via subprocess.Popen.poll).
+    """
+    from src.application.services.individual_service_manager import IndividualServiceManager
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            with SessionLocal() as db:
+                n = IndividualServiceManager(db).cleanup_stopped_processes()
+                if n:
+                    logging.getLogger(__name__).info(
+                        "Reaped %s stopped individual-service subprocess(es)", n
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("Individual-service subprocess reap failed")
+
+
 @app.on_event("startup")
 async def start_log_retention_worker():
     app.state.log_retention_task = asyncio.create_task(_log_retention_worker())
+
+
+@app.on_event("startup")
+async def start_individual_subprocess_reaper():
+    """Background reap for IndividualServiceManager child processes."""
+    app.state.individual_subprocess_reaper_task = asyncio.create_task(
+        _individual_subprocess_reaper_worker()
+    )
 
 
 @app.on_event("startup")
@@ -732,6 +764,15 @@ async def stop_log_retention_worker():
             await task
 
     # File-based logging doesn't require shutdown
+
+
+@app.on_event("shutdown")
+async def stop_individual_subprocess_reaper():
+    reap_task = getattr(app.state, "individual_subprocess_reaper_task", None)
+    if reap_task:
+        reap_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reap_task
 
 
 @app.on_event("shutdown")

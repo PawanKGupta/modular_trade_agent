@@ -64,6 +64,12 @@ from src.infrastructure.persistence.user_trading_config_repository import (
 # Project root for script execution
 project_root = Path(__file__).parent.parent.parent.parent
 
+# Tracks Popen handles for spawned individual-service processes across requests.
+# Without a process-wide registry, each request-scoped manager instance would lose
+# references while the OS child remains parented by the API worker — causing
+# zombie accumulation until waitpid runs.
+_INDIVIDUAL_SERVICE_SUBPROCESSES: dict[tuple[int, str], subprocess.Popen] = {}
+
 
 class IndividualServiceManager:
     """Manages individual service execution and lifecycle"""
@@ -79,9 +85,6 @@ class IndividualServiceManager:
         self._conflict_service = ConflictDetectionService(db)
         self._schedule_manager = ScheduleManager(db)
         self._notification_repo = NotificationRepository(db)
-        self._processes: dict[tuple[int, str], subprocess.Popen] = (
-            {}
-        )  # (user_id, task_name) -> process
         self._run_once_threads: dict[tuple[int, str], threading.Thread] = (
             {}
         )  # (user_id, task_name) -> thread
@@ -156,8 +159,8 @@ class IndividualServiceManager:
                 self._status_repo.update_next_execution(user_id, task_name, next_execution)
                 self.db.commit()
 
-            # Store process reference
-            self._processes[(user_id, task_name)] = process
+            # Store process reference (module-level — survives past request scope)
+            _INDIVIDUAL_SERVICE_SUBPROCESSES[(user_id, task_name)] = process
 
             logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
             logger.info(
@@ -193,7 +196,7 @@ class IndividualServiceManager:
         try:
             # Get process
             process_key = (user_id, task_name)
-            process = self._processes.get(process_key)
+            process = _INDIVIDUAL_SERVICE_SUBPROCESSES.get(process_key)
 
             if process and process.poll() is None:
                 # Process is still running
@@ -220,8 +223,8 @@ class IndividualServiceManager:
                         pass  # Process already dead
 
             # Remove from processes dict
-            if process_key in self._processes:
-                del self._processes[process_key]
+            if process_key in _INDIVIDUAL_SERVICE_SUBPROCESSES:
+                del _INDIVIDUAL_SERVICE_SUBPROCESSES[process_key]
 
             # Update status
             self._status_repo.mark_stopped(user_id, task_name)
@@ -1837,7 +1840,7 @@ class IndividualServiceManager:
             process_id = None
             if service and service.process_id:
                 process_key = (user_id, task_name)
-                internal_process = self._processes.get(process_key)
+                internal_process = _INDIVIDUAL_SERVICE_SUBPROCESSES.get(process_key)
                 if internal_process:
                     if internal_process.poll() is None:
                         process_id = service.process_id
@@ -1866,6 +1869,8 @@ class IndividualServiceManager:
                             task_name=task_name,
                         )
                         self._status_repo.mark_stopped(user_id, task_name)
+                        self.db.commit()
+                        _INDIVIDUAL_SERVICE_SUBPROCESSES.pop(process_key, None)
                         service = self._status_repo.get_by_user_and_task(user_id, task_name)
                 else:
                     process_exists = False
@@ -2322,10 +2327,12 @@ class IndividualServiceManager:
     def cleanup_stopped_processes(self) -> int:
         """Clean up processes that have stopped (for crash detection)"""
         count = 0
-        for (user_id, task_name), process in list(self._processes.items()):
+        for (user_id, task_name), process in list(_INDIVIDUAL_SERVICE_SUBPROCESSES.items()):
             if process.poll() is not None:
                 # Process has terminated
                 self._status_repo.mark_stopped(user_id, task_name)
-                del self._processes[(user_id, task_name)]
+                del _INDIVIDUAL_SERVICE_SUBPROCESSES[(user_id, task_name)]
                 count += 1
+        if count:
+            self.db.commit()
         return count
