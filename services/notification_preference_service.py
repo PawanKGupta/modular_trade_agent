@@ -11,12 +11,12 @@ This service provides:
 - Getting enabled notification channels
 """
 
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import UserNotificationPreferences
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 
@@ -350,7 +350,7 @@ class NotificationPreferenceService:
         ):
             return False
 
-        now = datetime.now().time()
+        now = ist_now().time()
         start = preferences.quiet_hours_start
         end = preferences.quiet_hours_end
 

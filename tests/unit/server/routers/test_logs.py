@@ -9,6 +9,7 @@ from server.app.schemas.logs import ErrorResolutionRequest
 from src.infrastructure.db.models import UserRole
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
@@ -28,7 +29,7 @@ class DummyServiceLog(SimpleNamespace):
             module=kwargs.get("module", "test_module"),
             message=kwargs.get("message", "Test message"),
             context=kwargs.get("context", None),
-            timestamp=kwargs.get("timestamp", datetime.now()),
+            timestamp=kwargs.get("timestamp", ist_now_naive()),
         )
 
 
@@ -45,7 +46,7 @@ class DummyErrorLog(SimpleNamespace):
             resolved_at=kwargs.get("resolved_at", None),
             resolved_by=kwargs.get("resolved_by", None),
             resolution_notes=kwargs.get("resolution_notes", None),
-            occurred_at=kwargs.get("occurred_at", datetime.now()),
+            occurred_at=kwargs.get("occurred_at", ist_now_naive()),
         )
 
 
@@ -86,7 +87,7 @@ class DummyFileLogReader:
                 "module": module or "test_module",
                 "message": "Test log message",
                 "context": None,
-                "timestamp": datetime.now(),
+                "timestamp": ist_now_naive(),
             }
         ]
 
@@ -117,7 +118,7 @@ class DummyFileLogReader:
                 "module": "test_module",
                 "message": "Test error message",
                 "context": None,
-                "timestamp": datetime.now(),
+                "timestamp": ist_now_naive(),
             }
         ]
 
@@ -137,7 +138,7 @@ class DummyFileLogReader:
                 "module": "test_module",
                 "message": "Test log message",
                 "context": None,
-                "timestamp": datetime.now(),
+                "timestamp": ist_now_naive(),
             }
         ]
 
@@ -218,7 +219,7 @@ class DummyErrorLogRepo:
         if not error:
             raise ValueError(f"Error log {error_id} not found")
         error.resolved = True
-        error.resolved_at = datetime.now()
+        error.resolved_at = ist_now_naive()
         error.resolved_by = resolved_by
         error.resolution_notes = resolution_notes
         return error

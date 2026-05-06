@@ -230,8 +230,12 @@ class TestNotificationPreferenceService:
         service._preference_cache[1] = sample_preferences
 
         # Mock current time to be 11 PM (within quiet hours)
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(23, 0)
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            from datetime import datetime
+
+            from src.infrastructure.db.timezone_utils import IST
+
+            mock_ist_now.return_value = datetime(2026, 1, 15, 23, 0, 0, tzinfo=IST)
 
             result = service.should_notify(
                 user_id=1, event_type=NotificationEventType.ORDER_PLACED, channel="telegram"
@@ -295,13 +299,17 @@ class TestNotificationPreferenceService:
         service._preference_cache[1] = sample_preferences
 
         # Test within quiet hours
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(22, 30)
+        from datetime import datetime
+
+        from src.infrastructure.db.timezone_utils import IST
+
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = datetime(2026, 1, 15, 22, 30, 0, tzinfo=IST)
             assert service.is_quiet_hours(user_id=1) is True
 
         # Test outside quiet hours
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(21, 0)
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = datetime(2026, 1, 15, 21, 0, 0, tzinfo=IST)
             assert service.is_quiet_hours(user_id=1) is False
 
     def test_is_quiet_hours_spanning_midnight(self, service, sample_preferences):
@@ -310,19 +318,23 @@ class TestNotificationPreferenceService:
         sample_preferences.quiet_hours_end = time(8, 0)  # 8 AM
         service._preference_cache[1] = sample_preferences
 
+        from datetime import datetime
+
+        from src.infrastructure.db.timezone_utils import IST
+
         # Test within quiet hours (after start)
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(23, 0)
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = datetime(2026, 1, 15, 23, 0, 0, tzinfo=IST)
             assert service.is_quiet_hours(user_id=1) is True
 
         # Test within quiet hours (before end)
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(7, 0)
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = datetime(2026, 1, 15, 7, 0, 0, tzinfo=IST)
             assert service.is_quiet_hours(user_id=1) is True
 
         # Test outside quiet hours
-        with patch("services.notification_preference_service.datetime") as mock_datetime:
-            mock_datetime.now.return_value.time.return_value = time(12, 0)
+        with patch("services.notification_preference_service.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = datetime(2026, 1, 15, 12, 0, 0, tzinfo=IST)
             assert service.is_quiet_hours(user_id=1) is False
 
     def test_get_enabled_channels_all_enabled(self, service, sample_preferences):

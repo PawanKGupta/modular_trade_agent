@@ -6,16 +6,17 @@ import src.presentation.cli.commands.analyze_command as mod
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class FakeBulkAnalyze:
     def execute(self, req):
         r_buy = AnalysisResponse(
-            ticker='AAA.NS', status='success', timestamp=datetime.now(), verdict='buy', combined_score=50.0, last_close=100.0
+            ticker='AAA.NS', status='success', timestamp=ist_now_naive(), verdict='buy', combined_score=50.0, last_close=100.0
         )
         r_watch = AnalysisResponse(
-            ticker='BBB.NS', status='success', timestamp=datetime.now(), verdict='watch', combined_score=10.0, last_close=90.0
+            ticker='BBB.NS', status='success', timestamp=ist_now_naive(), verdict='watch', combined_score=10.0, last_close=90.0
         )
         return BulkAnalysisResponse(
-            results=[r_buy, r_watch], total_analyzed=2, successful=2, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.1
+            results=[r_buy, r_watch], total_analyzed=2, successful=2, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.1
         )
 
 

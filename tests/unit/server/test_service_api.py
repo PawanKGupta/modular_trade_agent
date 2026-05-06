@@ -1,5 +1,6 @@
 # ruff: noqa: E402, PLC0415, E501
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 """Unit tests for service management API endpoints (Phase 3.1)
 
 Tests cover:
@@ -346,7 +347,7 @@ class TestServiceLogsAPI:
                         "module": "TradingService",
                         "message": "Service started successfully",
                         "context": {"action": "start_service"},
-                        "timestamp": datetime.now(),
+                        "timestamp": ist_now_naive(),
                     }
                 ]
 
@@ -393,7 +394,7 @@ class TestServiceLogsAPI:
                         "module": "TradingService",
                         "message": "Info message",
                         "context": None,
-                        "timestamp": datetime.now(),
+                        "timestamp": ist_now_naive(),
                     },
                     {
                         "id": "file:2",
@@ -402,7 +403,7 @@ class TestServiceLogsAPI:
                         "module": "TradingService",
                         "message": "Error message",
                         "context": None,
-                        "timestamp": datetime.now(),
+                        "timestamp": ist_now_naive(),
                     },
                 ]
                 # Apply filters

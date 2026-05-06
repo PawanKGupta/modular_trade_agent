@@ -21,6 +21,7 @@ import pytest
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def mock_auth():
     """Mock authentication"""
@@ -58,7 +59,7 @@ class TestResetDetectionAndCycles:
         """Edge Case 1.1: Service restart between RSI > 30 and < 30"""
         # Setup: Service stopped after RSI > 30, restarted when RSI < 30
         # Position has last_rsi_above_30 stored from previous run
-        now = datetime.now()
+        now = ist_now_naive()
         yesterday = now - timedelta(days=1)
 
         mock_position.reentries = {
@@ -92,7 +93,7 @@ class TestResetDetectionAndCycles:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=2)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=2)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [{"qty": 10, "level": 20, "cycle": 0, "rsi": 18.0}],
@@ -112,7 +113,7 @@ class TestResetDetectionAndCycles:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 1,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 33.0,
             },
             "reentries": [
@@ -375,7 +376,7 @@ class TestResetBehavior:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -394,7 +395,7 @@ class TestResetBehavior:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -413,7 +414,7 @@ class TestResetBehavior:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -432,7 +433,7 @@ class TestResetBehavior:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -451,7 +452,7 @@ class TestResetBehavior:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -565,7 +566,7 @@ class TestLevelsTakenUpdates:
         entry_rsi = 25.0
 
         # Position has re-entry from yesterday
-        yesterday = datetime.now() - timedelta(days=1)
+        yesterday = ist_now_naive() - timedelta(days=1)
         mock_position.reentries = {
             "_cycle_metadata": {"current_cycle": 0},
             "reentries": [
@@ -587,7 +588,7 @@ class TestLevelsTakenUpdates:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [
@@ -611,7 +612,7 @@ class TestBackwardCompatibility:
 
     def test_reentries_today_handles_old_format(self, engine, mock_position):
         """Test that reentries_today handles old format (list)"""
-        today = datetime.now().date()
+        today = ist_now().date()
 
         # Old format: reentries is a list
         mock_position.reentries = [
@@ -620,7 +621,7 @@ class TestBackwardCompatibility:
                 "level": 20,
                 "rsi": 18.0,
                 "placed_at": today.isoformat(),
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
             }
         ]
 
@@ -632,7 +633,7 @@ class TestBackwardCompatibility:
 
     def test_reentries_today_handles_new_format(self, engine, mock_position):
         """Test that reentries_today handles new format (dict with metadata)"""
-        today = datetime.now().date()
+        today = ist_now().date()
 
         # New format: reentries is a dict with metadata
         mock_position.reentries = {
@@ -648,7 +649,7 @@ class TestBackwardCompatibility:
                     "cycle": 0,
                     "rsi": 18.0,
                     "placed_at": today.isoformat(),
-                    "time": datetime.now().isoformat(),
+                    "time": ist_now().isoformat(),
                 }
             ],
         }
@@ -680,7 +681,7 @@ class TestOrderPlacementAndExecution:
     def test_edge_case_7_2_amo_placement_vs_execution_date(self, engine, mock_position):
         """Edge Case 7.2: AMO placement vs execution date"""
         # Order placed Day 1, executed Day 2
-        today = datetime.now().date()
+        today = ist_now().date()
         yesterday = today - timedelta(days=1)
 
         mock_position.reentries = {
@@ -692,7 +693,7 @@ class TestOrderPlacementAndExecution:
                     "cycle": 0,
                     "rsi": 18.0,
                     "placed_at": yesterday.isoformat(),  # Placed yesterday
-                    "time": datetime.now().isoformat(),  # Executed today
+                    "time": ist_now().isoformat(),  # Executed today
                 }
             ],
         }
@@ -720,7 +721,7 @@ class TestOrderPlacementAndExecution:
     def test_edge_case_7_4_retry_failed_order(self, engine, mock_position):
         """Edge Case 7.4: Retry failed order"""
         # First order failed, retried next day
-        today = datetime.now().date()
+        today = ist_now().date()
 
         mock_position.reentries = {
             "_cycle_metadata": {"current_cycle": 0},
@@ -752,7 +753,7 @@ class TestServiceRestartScenarios:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=2)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=2)).isoformat(),
                 "last_rsi_value": 32.0,
             },
             "reentries": [],
@@ -819,8 +820,8 @@ class TestServiceRestartScenarios:
                     "level": 20,
                     "cycle": 0,
                     "rsi": 18.0,
-                    "placed_at": datetime.now().date().isoformat(),
-                    "time": datetime.now().isoformat(),
+                    "placed_at": ist_now().date().isoformat(),
+                    "time": ist_now().isoformat(),
                 }
             ],
         }
@@ -860,7 +861,7 @@ class TestComplexScenarios:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 35.0,
             },
             "reentries": [
@@ -914,7 +915,7 @@ class TestComplexScenarios:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 35.0,
             },
             "reentries": [{"qty": 10, "level": 10, "cycle": 0, "rsi": 8.0}],
@@ -940,7 +941,7 @@ class TestComplexScenarios:
         mock_position.reentries = {
             "_cycle_metadata": {
                 "current_cycle": 0,
-                "last_rsi_above_30": (datetime.now() - timedelta(hours=1)).isoformat(),
+                "last_rsi_above_30": (ist_now_naive() - timedelta(hours=1)).isoformat(),
                 "last_rsi_value": 35.0,
             },
             "reentries": [{"qty": 10, "level": 10, "cycle": 0, "rsi": 8.0}],

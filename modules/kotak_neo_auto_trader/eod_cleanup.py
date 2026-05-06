@@ -20,6 +20,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 from .manual_order_matcher import ManualOrderMatcher, get_manual_order_matcher
@@ -78,7 +79,7 @@ class EODCleanup:
         logger.info("STARTING END-OF-DAY CLEANUP")
         logger.info("=" * 70)
 
-        start_time = datetime.now()
+        start_time = ist_now_naive()
 
         results = {
             "start_time": start_time.isoformat(),
@@ -155,7 +156,7 @@ class EODCleanup:
             results["steps_failed"].append("archive")
 
         # Summary
-        end_time = datetime.now()
+        end_time = ist_now_naive()
         duration = (end_time - start_time).total_seconds()
 
         results["end_time"] = end_time.isoformat()
@@ -192,7 +193,7 @@ class EODCleanup:
         # Check if OrderStatusVerifier ran very recently (within 1 minute) to log info
         last_check = self.order_verifier.get_last_check_time()
         if last_check:
-            time_since_check = datetime.now() - last_check
+            time_since_check = ist_now_naive() - last_check
             minutes_since_check = time_since_check.total_seconds() / 60
 
             if minutes_since_check < 1.0:
@@ -285,7 +286,7 @@ class EODCleanup:
         except ImportError:
             logger.error("trading_day_utils not available, falling back to 24-hour cleanup")
             # Fallback to old logic if utility not available
-            cutoff_time = datetime.now() - timedelta(hours=24)
+            cutoff_time = ist_now_naive() - timedelta(hours=24)
             pending_orders = self.order_tracker.get_pending_orders(status_filter="PENDING")
             if not pending_orders:
                 return {"removed": 0, "remaining": 0, "cutoff_time": cutoff_time.isoformat()}
@@ -330,7 +331,7 @@ class EODCleanup:
             elif current_time.tzinfo != IST:
                 current_time = current_time.astimezone(IST)
         except ImportError:
-            current_time = datetime.now()
+            current_time = ist_now_naive()
 
         pending_orders = self.order_tracker.get_pending_orders(status_filter="PENDING")
 
@@ -579,7 +580,7 @@ def schedule_eod_cleanup(
 
     def wait_and_run():
         while True:
-            now = datetime.now()
+            now = ist_now_naive()
             target_hour, target_minute = map(int, target_time.split(":"))
 
             # Calculate next target time
@@ -601,7 +602,10 @@ def schedule_eod_cleanup(
 
             # Run cleanup
             try:
-                logger.info(f"Triggering scheduled EOD cleanup at {datetime.now()}")
+                logger.info(
+                    f"Triggering scheduled EOD cleanup at "
+                    f"{ist_now().strftime('%Y-%m-%d %H:%M:%S')} IST"
+                )
                 eod_cleanup = get_eod_cleanup(broker_client)
                 results = eod_cleanup.run_eod_cleanup()
 

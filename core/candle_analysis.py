@@ -10,6 +10,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, time
 
+from src.infrastructure.db.timezone_utils import ist_now
+
 # Robust logging import
 try:
     from utils.logger import logger
@@ -222,7 +224,7 @@ def is_market_open():
         bool: True if market is currently open
     """
     try:
-        now = datetime.now()
+        now = ist_now()
 
         # Check if it's a weekday (Monday=0, Sunday=6)
         if now.weekday() >= 5:  # Saturday or Sunday
@@ -257,7 +259,7 @@ def is_today_candle(candle_date):
         elif isinstance(candle_date, datetime):
             candle_date = candle_date.date()
 
-        return candle_date == datetime.now().date()
+        return candle_date == ist_now().date()
     except Exception:
         return False
 

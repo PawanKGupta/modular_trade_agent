@@ -6,23 +6,27 @@ Tests verify adaptive TTL and cache warming strategies.
 Phase 4.2: Enhanced Caching Strategy
 """
 
-from datetime import time as dt_time
+from datetime import datetime
 from unittest.mock import Mock, patch
+
+from src.infrastructure.db.timezone_utils import IST
 
 from modules.kotak_neo_auto_trader.services.price_service import (
     PriceService,
 )
 
 
+def _ist_clock(hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 1, 15, hour, minute, 0, tzinfo=IST)
+
+
 class TestPriceServiceAdaptiveTTL:
     """Test adaptive cache TTL in PriceService"""
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_historical_market_open(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_historical_market_open(self, mock_ist_now):
         """Test adaptive TTL for historical data during market hours"""
-        # Mock market open time (10:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(10, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(10, 0))
+        mock_ist_now.return_value = _ist_clock(10, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -35,12 +39,10 @@ class TestPriceServiceAdaptiveTTL:
         assert adaptive_ttl == int(300 * 0.7)  # 210 seconds (3.5 min)
         assert service._last_market_state == "open"
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_historical_pre_market(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_historical_pre_market(self, mock_ist_now):
         """Test adaptive TTL for historical data before market open"""
-        # Mock pre-market time (8:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(8, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(8, 0))
+        mock_ist_now.return_value = _ist_clock(8, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -53,12 +55,10 @@ class TestPriceServiceAdaptiveTTL:
         assert adaptive_ttl == int(300 * 1.5)  # 450 seconds (7.5 min)
         assert service._last_market_state == "pre_market"
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_historical_post_market(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_historical_post_market(self, mock_ist_now):
         """Test adaptive TTL for historical data after market close"""
-        # Mock post-market time (4:00 PM)
-        mock_datetime.now.return_value.time.return_value = dt_time(16, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(16, 0))
+        mock_ist_now.return_value = _ist_clock(16, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -71,12 +71,10 @@ class TestPriceServiceAdaptiveTTL:
         assert adaptive_ttl == int(300 * 3)  # 900 seconds (15 min)
         assert service._last_market_state == "post_market"
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_realtime_market_open(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_realtime_market_open(self, mock_ist_now):
         """Test adaptive TTL for real-time data during market hours"""
-        # Mock market open time (10:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(10, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(10, 0))
+        mock_ist_now.return_value = _ist_clock(10, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -89,12 +87,10 @@ class TestPriceServiceAdaptiveTTL:
         assert adaptive_ttl == int(30 * 0.7)  # 21 seconds
         assert service._last_market_state == "open"
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_realtime_post_market(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_realtime_post_market(self, mock_ist_now):
         """Test adaptive TTL for real-time data after market close"""
-        # Mock post-market time (4:00 PM)
-        mock_datetime.now.return_value.time.return_value = dt_time(16, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(16, 0))
+        mock_ist_now.return_value = _ist_clock(16, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -107,12 +103,10 @@ class TestPriceServiceAdaptiveTTL:
         assert adaptive_ttl == int(30 * 5)  # 150 seconds (2.5 min)
         assert service._last_market_state == "post_market"
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_adaptive_ttl_realtime_pre_market(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_adaptive_ttl_realtime_pre_market(self, mock_ist_now):
         """Test adaptive TTL for real-time data before market open"""
-        # Mock pre-market time (8:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(8, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(8, 0))
+        mock_ist_now.return_value = _ist_clock(8, 0)
 
         service = PriceService(
             enable_caching=True,
@@ -383,12 +377,10 @@ class TestPriceServiceAdaptiveTTLInUse:
         # Cache may or may not be hit depending on when test runs
         # But we verify adaptive TTL is available for use
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.datetime")
-    def test_get_realtime_price_uses_adaptive_ttl_post_market(self, mock_datetime):
+    @patch("modules.kotak_neo_auto_trader.services.price_service.ist_now")
+    def test_get_realtime_price_uses_adaptive_ttl_post_market(self, mock_ist_now):
         """Test that get_realtime_price() uses adaptive TTL after market close"""
-        # Mock post-market time (4:00 PM)
-        mock_datetime.now.return_value.time.return_value = dt_time(16, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(16, 0))
+        mock_ist_now.return_value = _ist_clock(16, 0)
 
         service = PriceService(
             enable_caching=True,

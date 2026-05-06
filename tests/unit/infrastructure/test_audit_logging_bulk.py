@@ -13,6 +13,7 @@ from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 EXPIRED_SIGNAL_OFFSET = timedelta(days=14)
 
 
@@ -146,9 +147,9 @@ class TestBulkAuditLogCreation:
         ]
 
         # This should complete quickly with bulk insert
-        start_time = datetime.now()
+        start_time = ist_now_naive()
         result = audit_log_repo.create_bulk(audit_logs)
-        end_time = datetime.now()
+        end_time = ist_now_naive()
 
         assert len(result) == 150
         # Should complete in reasonable time (less than 5 seconds for 150 entries)

@@ -21,6 +21,8 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+
 # Core market data
 from core.telegram import send_telegram
 from modules.kotak_neo_auto_trader.services import (
@@ -364,7 +366,7 @@ class AutoTradeEngine:
                     "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
                     "entry_price": pos.avg_price,
                     "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else datetime.now().isoformat()
+                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
                     ),
                     "rsi10": metadata.get("rsi10"),
                     "ema9": metadata.get("ema9"),
@@ -404,7 +406,7 @@ class AutoTradeEngine:
                     "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
                     "entry_price": pos.avg_price,
                     "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else datetime.now().isoformat()
+                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
                     ),
                     "exit_price": metadata.get("exit_price"),
                     "exit_time": pos.closed_at.isoformat() if pos.closed_at else None,
@@ -426,7 +428,7 @@ class AutoTradeEngine:
             return {
                 "trades": trades,
                 "failed_orders": failed_orders,
-                "last_run": datetime.now().isoformat(),
+                "last_run": ist_now().isoformat(),
             }
         # Fallback to file-based storage
         elif self.history_path:
@@ -460,10 +462,10 @@ class AutoTradeEngine:
             # Upsert open position
             try:
                 entry_time = datetime.fromisoformat(
-                    trade.get("entry_time", datetime.now().isoformat())
+                    trade.get("entry_time", ist_now().isoformat())
                 )
             except:
-                entry_time = datetime.now()
+                entry_time = ist_now_naive()
 
             # Get reentry data from trade history
             reentries = trade.get("reentries", [])
@@ -522,10 +524,10 @@ class AutoTradeEngine:
             if pos:
                 try:
                     exit_time = datetime.fromisoformat(
-                        trade.get("exit_time", datetime.now().isoformat())
+                        trade.get("exit_time", ist_now().isoformat())
                     )
                 except:
-                    exit_time = datetime.now()
+                    exit_time = ist_now_naive()
 
                 # Extract exit details from trade dictionary if available
                 exit_price = trade.get("exit_price")
@@ -928,7 +930,7 @@ class AutoTradeEngine:
 
     @staticmethod
     def is_trading_weekday(d: date | None = None) -> bool:
-        d = d or datetime.now().date()
+        d = d or ist_now().date()
         return d.weekday() in config.MARKET_DAYS
 
     def _get_order_variety_for_market_hours(self) -> str:
@@ -959,7 +961,7 @@ class AutoTradeEngine:
             if df is None or df.empty:
                 return False
             latest = df["date"].iloc[-1].date()
-            return latest == datetime.now().date()
+            return latest == ist_now().date()
         except Exception:
             # If detection fails, fallback to weekday check only
             return AutoTradeEngine.is_trading_weekday()
@@ -1656,7 +1658,7 @@ class AutoTradeEngine:
                     "placed_symbol": sym,
                     "ticker": ticker,
                     "entry_price": float(entry_price) if entry_price else None,
-                    "entry_time": datetime.now().isoformat(),
+                    "entry_time": ist_now().isoformat(),
                     "rsi10": ind.get("rsi10"),
                     "ema9": ind.get("ema9"),
                     "ema200": ind.get("ema200"),
@@ -2363,7 +2365,7 @@ class AutoTradeEngine:
             if not isinstance(reentries, list):
                 return 0
 
-            today = datetime.now().date()
+            today = ist_now().date()
             cnt = 0
             for reentry in reentries:
                 if not isinstance(reentry, dict):
@@ -2741,7 +2743,7 @@ class AutoTradeEngine:
         """
         resp = None
         placed_symbol = None
-        placement_time = datetime.now().isoformat()
+        placement_time = ist_now().isoformat()
 
         # Determine order variety based on market hours
         # AMO orders should only be used when market is closed
@@ -2842,7 +2844,7 @@ class AutoTradeEngine:
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
                     f"Symbol: `{actual_symbol}`\n"
@@ -3168,7 +3170,7 @@ class AutoTradeEngine:
 
                         # Phase 5: Send notification
                         try:
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
                                 f"⚠️ *AMO Order Immediately Rejected*\n\n"
                                 f"Symbol: `{symbol}`\n"
@@ -5308,7 +5310,7 @@ class AutoTradeEngine:
 
             if not has_sufficient_balance:
                 # Telegram message with emojis
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
                     f"💰 *Insufficient Balance - AMO BUY*\n\n"
                     f"Symbol: `{broker_symbol}`\n"
@@ -5533,7 +5535,7 @@ class AutoTradeEngine:
         # - At/after market close on trading days, use current day close-inclusive RSI.
         # - During next-day market hours, keep using previous closed-day RSI snapshot
         #   until the next post-close evaluation window.
-        now_time = datetime.now().time()
+        now_time = ist_now().time()
         market_close = dt_time(15, 30)
         use_latest_rsi_after_close = (
             self.is_trading_weekday()
@@ -6252,7 +6254,7 @@ class AutoTradeEngine:
 
                                     if retry_failed:
                                         # Send Telegram notification for failed retry
-                                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                         telegram_msg = (
                                             f"❌ *Sell Order Retry Failed*\n\n"
                                             f"Symbol: `{symbol}`\n"
@@ -6295,7 +6297,7 @@ class AutoTradeEngine:
                                         total_qty = actual_qty
                                 else:
                                     # Send Telegram notification when no holdings found
-                                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                     telegram_msg = (
                                         f"❌ *Sell Order Retry Failed*\n\n"
                                         f"Symbol: `{symbol}`\n"
@@ -6327,7 +6329,7 @@ class AutoTradeEngine:
                                     )
                             else:
                                 # Send Telegram notification when holdings fetch fails
-                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                 telegram_msg = (
                                     f"❌ *Sell Order Retry Failed*\n\n"
                                     f"Symbol: `{symbol}`\n"
@@ -6359,7 +6361,7 @@ class AutoTradeEngine:
                                 )
                         except Exception as e:
                             # Send Telegram notification for exception during retry
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
                                 f"❌ *Sell Order Retry Exception*\n\n"
                                 f"Symbol: `{symbol}`\n"
@@ -6392,7 +6394,7 @@ class AutoTradeEngine:
                             )
 
                     # Mark all entries as closed
-                    exit_time = datetime.now().isoformat()
+                    exit_time = ist_now().isoformat()
                     for e in entries:
                         e["status"] = "closed"
                         e["exit_price"] = price
@@ -6634,7 +6636,7 @@ class AutoTradeEngine:
                                 # Construct reentry data matching database structure
                                 # This structure must match what unified_order_monitor writes to DB.
                                 # Since this is a market order placed immediately, placed_at = today
-                                current_time = datetime.now()
+                                current_time = ist_now()
                                 reentry_data = {
                                     "qty": int(qty),
                                     "level": int(next_level) if next_level is not None else None,

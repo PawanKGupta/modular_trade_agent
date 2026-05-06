@@ -26,6 +26,7 @@ if str(project_root) not in sys.path:
 import pandas as pd  # noqa: E402
 import pandas_ta as ta  # noqa: E402
 
+from src.infrastructure.db.timezone_utils import ist_now_naive  # noqa: E402
 from config.settings import VOLUME_LOOKBACK_DAYS  # noqa: E402
 from config.strategy_config import StrategyConfig  # noqa: E402
 from core.data_fetcher import fetch_ohlcv_yf  # noqa: E402
@@ -50,7 +51,7 @@ class IndicatorCache:
         """Get cached indicator data if not expired"""
         if key in self._cache:
             entry = self._cache[key]
-            age = (datetime.now() - entry["timestamp"]).total_seconds()
+            age = (ist_now_naive() - entry["timestamp"]).total_seconds()
             if age < ttl_seconds:
                 logger.debug(f"Cache hit for indicator: {key} (age: {age:.1f}s)")
                 return entry["data"]
@@ -63,7 +64,7 @@ class IndicatorCache:
         """Cache indicator data"""
         self._cache[key] = {
             "data": data,
-            "timestamp": datetime.now(),
+            "timestamp": ist_now_naive(),
         }
 
     def clear(self):
@@ -519,7 +520,9 @@ class IndicatorService:
         """
         from datetime import time as dt_time
 
-        now = datetime.now().time()
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        now = ist_now().time()
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
 

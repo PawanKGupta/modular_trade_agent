@@ -27,6 +27,8 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_
     PaperTradingBrokerAdapter,
 )
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestPaperTradingAdapterDBSyncEdgeCases:
     """Test edge cases for paper trading adapter DB sync"""
@@ -84,7 +86,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
 
         # Mock ist_now
         with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method
             self.adapter._sync_order_execution_to_db(order, execution_price)
@@ -133,7 +135,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
         ):
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method
             self.adapter._sync_order_execution_to_db(order, execution_price)
@@ -189,7 +191,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         }
 
         with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method
             self.adapter._sync_order_execution_to_db(order, execution_price, trade_info)
@@ -233,7 +235,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
         ):
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method
             self.adapter._sync_order_execution_to_db(order, execution_price)
@@ -274,7 +276,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
         self.mock_positions_repo.get_by_symbol.return_value = None
 
         with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method
             self.adapter._sync_order_execution_to_db(order, execution_price)
@@ -322,7 +324,7 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
                 "modules.kotak_neo_auto_trader.infrastructure.broker_adapters.paper_trading_adapter.logger"
             ) as mock_logger,
         ):
-            mock_ist_now.return_value = datetime.now()
+            mock_ist_now.return_value = ist_now_naive()
 
             # Call sync method (should handle error gracefully)
             self.adapter._sync_order_execution_to_db(order, execution_price)

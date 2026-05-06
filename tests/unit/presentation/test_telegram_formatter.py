@@ -3,6 +3,7 @@ from src.presentation.formatters.telegram_formatter import TelegramFormatter
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def make_resp(ticker="RELIANCE.NS", verdict="buy", rsi=25.0, mtf=7.0, backtest=55.0, combined=45.0, priority=90.0,
                buy_range=(100.0, 105.0), target=115.0, stop=95.0, pe=20.0, vol_mult=1.8, rr=2.5,
                sentiment={"enabled": True, "used": 2, "label": "positive", "score": 0.3}):
@@ -22,7 +23,7 @@ def make_resp(ticker="RELIANCE.NS", verdict="buy", rsi=25.0, mtf=7.0, backtest=5
     return AnalysisResponse(
         ticker=ticker,
         status='success',
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         verdict=verdict,
         last_close=102.0,
         buy_range=buy_range,
@@ -42,7 +43,7 @@ def test_format_bulk_response_with_candidates():
     r1 = make_resp(ticker='AAA.NS', verdict='strong_buy', priority=120.0)
     r2 = make_resp(ticker='BBB.NS', verdict='buy')
     bulk = BulkAnalysisResponse(
-        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=2, timestamp=datetime.now(), execution_time_seconds=0.2
+        results=[r1, r2], total_analyzed=2, successful=2, failed=0, buyable_count=2, timestamp=ist_now_naive(), execution_time_seconds=0.2
     )
 
     msg = fmt.format_bulk_response(bulk, include_backtest=True)
@@ -55,7 +56,7 @@ def test_format_bulk_response_no_candidates():
     fmt = TelegramFormatter()
     r = make_resp(verdict='watch')
     bulk = BulkAnalysisResponse(
-        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=0, timestamp=datetime.now(), execution_time_seconds=0.1
+        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=0, timestamp=ist_now_naive(), execution_time_seconds=0.1
     )
     msg = fmt.format_bulk_response(bulk)
     assert msg.startswith("*No buy candidates")
@@ -75,7 +76,7 @@ def test_format_stock_detailed_and_simple_and_summary():
     assert "RELIANCE.NS" in simple and "BUY" in simple and "Priority:" in simple
 
     bulk = BulkAnalysisResponse(
-        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.3
+        results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.3
     )
     summary = fmt.format_summary(bulk)
     assert "Analysis Summary" in summary and "Total: 1" in summary

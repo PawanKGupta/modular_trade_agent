@@ -6,11 +6,13 @@ Tests verify adaptive TTL and cache warming strategies.
 Phase 4.2: Enhanced Caching Strategy
 """
 
-from datetime import datetime, time as dt_time
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+
+from src.infrastructure.db.timezone_utils import IST
 
 from modules.kotak_neo_auto_trader.services.indicator_service import (
     IndicatorService,
@@ -18,15 +20,17 @@ from modules.kotak_neo_auto_trader.services.indicator_service import (
 )
 
 
+def _ist_clock(hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 1, 15, hour, minute, 0, tzinfo=IST)
+
+
 class TestIndicatorServiceAdaptiveTTL:
     """Test adaptive cache TTL in IndicatorService"""
 
-    @patch("modules.kotak_neo_auto_trader.services.indicator_service.datetime")
-    def test_get_adaptive_ttl_market_open(self, mock_datetime):
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
+    def test_get_adaptive_ttl_market_open(self, mock_ist_now):
         """Test adaptive TTL for indicators during market hours"""
-        # Mock market open time (10:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(10, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(10, 0))
+        mock_ist_now.return_value = _ist_clock(10, 0)
 
         service = IndicatorService(enable_caching=True, cache_ttl=60)  # 1 minute base
 
@@ -35,12 +39,10 @@ class TestIndicatorServiceAdaptiveTTL:
         assert adaptive_ttl == int(60 * 0.7)  # 42 seconds
         assert service._last_market_state == "open"
 
-    @patch("modules.kotak_neo_auto_trader.services.indicator_service.datetime")
-    def test_get_adaptive_ttl_pre_market(self, mock_datetime):
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
+    def test_get_adaptive_ttl_pre_market(self, mock_ist_now):
         """Test adaptive TTL for indicators before market open"""
-        # Mock pre-market time (8:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(8, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(8, 0))
+        mock_ist_now.return_value = _ist_clock(8, 0)
 
         service = IndicatorService(enable_caching=True, cache_ttl=60)  # 1 minute base
 
@@ -49,12 +51,10 @@ class TestIndicatorServiceAdaptiveTTL:
         assert adaptive_ttl == int(60 * 1.5)  # 90 seconds
         assert service._last_market_state == "pre_market"
 
-    @patch("modules.kotak_neo_auto_trader.services.indicator_service.datetime")
-    def test_get_adaptive_ttl_post_market(self, mock_datetime):
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
+    def test_get_adaptive_ttl_post_market(self, mock_ist_now):
         """Test adaptive TTL for indicators after market close"""
-        # Mock post-market time (4:00 PM)
-        mock_datetime.now.return_value.time.return_value = dt_time(16, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(16, 0))
+        mock_ist_now.return_value = _ist_clock(16, 0)
 
         service = IndicatorService(enable_caching=True, cache_ttl=60)  # 1 minute base
 
@@ -216,15 +216,13 @@ class TestIndicatorServiceCacheWarming:
 class TestIndicatorServiceAdaptiveTTLInUse:
     """Test that adaptive TTL is actually used in cache operations"""
 
-    @patch("modules.kotak_neo_auto_trader.services.indicator_service.datetime")
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
     @patch("modules.kotak_neo_auto_trader.services.indicator_service.compute_indicators")
     def test_calculate_rsi_uses_adaptive_ttl_market_open(
-        self, mock_compute_indicators, mock_datetime
+        self, mock_compute_indicators, mock_ist_now
     ):
         """Test that calculate_rsi() uses adaptive TTL during market hours"""
-        # Mock market open time (10:00 AM)
-        mock_datetime.now.return_value.time.return_value = dt_time(10, 0)
-        mock_datetime.now.return_value = Mock(time=lambda: dt_time(10, 0))
+        mock_ist_now.return_value = _ist_clock(10, 0)
 
         # Mock indicator calculation
         mock_rsi = pd.Series([50.0, 52.0, 48.0, 51.0, 49.0])

@@ -12,6 +12,7 @@ from src.infrastructure.persistence.error_log_repository import ErrorLogReposito
 from src.infrastructure.persistence.user_repository import UserRepository
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def admin_user(db_session):
     return UserRepository(db_session).create_user(
@@ -74,7 +75,7 @@ def seed_logs(db_session, normal_user, other_user, monkeypatch):
                         "module": "worker.analysis",
                         "message": "Analysis task completed",
                         "context": {"task": "analysis"},
-                        "timestamp": datetime.now(),
+                        "timestamp": ist_now_naive(),
                     }
                 ]
             elif user_id == other_user.id:
@@ -86,7 +87,7 @@ def seed_logs(db_session, normal_user, other_user, monkeypatch):
                         "module": "worker.sell",
                         "message": "Sell task failed",
                         "context": {"task": "sell"},
-                        "timestamp": datetime.now(),
+                        "timestamp": ist_now_naive(),
                     }
                 ]
             return []

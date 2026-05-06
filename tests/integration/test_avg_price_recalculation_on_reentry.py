@@ -12,6 +12,8 @@ from datetime import datetime
 
 import pytest
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -52,7 +54,7 @@ class TestAveragePriceRecalculationOnReentry:
             "level": 30,
             "rsi": 29.5,
             "price": reentry_price,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         })
 
         # Verify calculation

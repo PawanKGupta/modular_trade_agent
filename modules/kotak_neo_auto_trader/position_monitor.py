@@ -14,6 +14,12 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+try:
+    from src.infrastructure.db.timezone_utils import IST, ist_now
+except ImportError:
+    IST = None
+    ist_now = None
+
 from modules.kotak_neo_auto_trader.live_price_manager import get_live_price_manager  # noqa: E402
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_indicator_service,
@@ -121,7 +127,8 @@ class PositionMonitor:
         logger.info("=" * 70)
         logger.info("LIVE POSITION MONITORING")
         logger.info("=" * 70)
-        logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        ts = ist_now().strftime("%Y-%m-%d %H:%M:%S") if ist_now else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(f"Time: {ts}")
         logger.info("")
 
         # Get open positions using PositionLoader (Phase 2.2)
@@ -296,8 +303,15 @@ class PositionMonitor:
         # Calculate days held
         entry_time_str = entries[0].get("entry_time", "")
         try:
-            entry_time = datetime.fromisoformat(entry_time_str)
-            days_held = (datetime.now() - entry_time).days
+            entry_time = datetime.fromisoformat(entry_time_str.replace("Z", "+00:00"))
+            if entry_time.tzinfo is None:
+                entry_d = entry_time.date()
+            elif IST:
+                entry_d = entry_time.astimezone(IST).date()
+            else:
+                entry_d = entry_time.date()
+            now_d = ist_now().date() if ist_now else datetime.now().date()
+            days_held = (now_d - entry_d).days
         except (ValueError, TypeError):
             days_held = 0
 

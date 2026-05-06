@@ -10,6 +10,8 @@ from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 from enum import Enum
 
+from src.infrastructure.db.timezone_utils import ist_now_naive
+
 
 class Verdict(str, Enum):
     """Trading verdict types"""
@@ -210,7 +212,7 @@ class AnalysisResult:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
         elif timestamp is None:
-            timestamp = datetime.now()
+            timestamp = ist_now_naive()
         
         return cls(
             ticker=data.get('ticker', ''),

@@ -25,6 +25,8 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adap
     KotakNeoBrokerAdapter,
 )
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 @pytest.fixture
 def mock_client():
@@ -440,7 +442,7 @@ class TestBrokerOrdersAPIEndpoint:
             status=OrderStatus.EXECUTED,
             executed_price=Money(Decimal("2500.50")),
             executed_quantity=10,
-            created_at=datetime.now(),
+            created_at=ist_now_naive(),
         )
 
         mock_client.order_report.return_value = {"data": []}
@@ -465,7 +467,7 @@ class TestBrokerOrdersAPIEndpoint:
             status=OrderStatus.OPEN,
             executed_price=None,
             executed_quantity=0,
-            created_at=datetime.now(),
+            created_at=ist_now_naive(),
         )
 
         mock_client.order_report.return_value = {"data": []}

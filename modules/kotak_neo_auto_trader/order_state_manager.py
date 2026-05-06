@@ -14,6 +14,7 @@ import threading
 from datetime import datetime
 from typing import Any
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 try:
@@ -155,7 +156,7 @@ class OrderStateManager:
                     if needs_update:
                         self.active_sell_orders[base_symbol][
                             "last_updated"
-                        ] = datetime.now().isoformat()
+                        ] = ist_now().isoformat()
                         return True
                     else:
                         # Order already registered with same price and has ticker
@@ -173,7 +174,7 @@ class OrderStateManager:
                     "qty": qty,
                     "symbol": symbol,
                     "ticker": ticker,
-                    "registered_at": datetime.now().isoformat(),
+                    "registered_at": ist_now().isoformat(),
                     **kwargs,
                 }
 
@@ -243,7 +244,7 @@ class OrderStateManager:
                     "order_id": order_id,
                     "price": price,
                     "ticker": ticker,
-                    "registered_at": datetime.now().isoformat(),
+                    "registered_at": ist_now().isoformat(),
                     "original_price": price,  # Phase 10: Track original price
                     "original_quantity": quantity,  # Phase 10: Track original quantity
                     "is_manual_cancelled": False,  # Phase 10: Track if manually cancelled
@@ -386,7 +387,7 @@ class OrderStateManager:
                         "qty": execution_qty,
                         "status": "open",
                         "buy_order_id": order_id,
-                        "placed_at": datetime.now().date().isoformat(),
+                        "placed_at": ist_now().date().isoformat(),
                     }
                     append_trade(self.history_path, trade_data)
                     logger.debug(
@@ -422,7 +423,7 @@ class OrderStateManager:
 
             if base_symbol in self.active_sell_orders:
                 self.active_sell_orders[base_symbol]["target_price"] = new_price
-                self.active_sell_orders[base_symbol]["last_updated"] = datetime.now().isoformat()
+                self.active_sell_orders[base_symbol]["last_updated"] = ist_now().isoformat()
                 logger.debug(f"Updated sell order price: {base_symbol} -> Rs {new_price:.2f}")
                 return True
 

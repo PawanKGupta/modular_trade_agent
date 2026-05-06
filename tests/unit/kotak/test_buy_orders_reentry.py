@@ -7,6 +7,8 @@ Tests verify re-entry condition checking, level progression, and order placement
 from datetime import datetime
 from unittest.mock import Mock, patch
 
+from src.infrastructure.db.timezone_utils import IST
+
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
 
@@ -836,9 +838,11 @@ class TestPlaceReentryOrders:
                 "core.volume_analysis.is_market_hours",
                 return_value=False,
             ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.datetime") as mock_datetime,
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
         ):
-            mock_datetime.now.return_value = datetime(2026, 3, 2, 16, 5, 0)  # Monday 4:05 PM
+            mock_ist_now.return_value = datetime(
+                2026, 3, 2, 16, 5, 0, tzinfo=IST
+            )  # Monday 4:05 PM IST
             summary_after_close = engine.place_reentry_orders()
             assert summary_after_close["attempted"] == 1
 
@@ -848,9 +852,11 @@ class TestPlaceReentryOrders:
                 "core.volume_analysis.is_market_hours",
                 return_value=True,
             ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.datetime") as mock_datetime,
+            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
         ):
-            mock_datetime.now.return_value = datetime(2026, 3, 3, 10, 0, 0)  # Tuesday 10:00 AM
+            mock_ist_now.return_value = datetime(
+                2026, 3, 3, 10, 0, 0, tzinfo=IST
+            )  # Tuesday 10:00 AM IST
             summary_market_hours = engine.place_reentry_orders()
             assert summary_market_hours["attempted"] == 1
 

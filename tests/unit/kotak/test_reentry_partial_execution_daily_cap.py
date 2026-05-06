@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -46,7 +48,7 @@ class TestReentryPartialExecutionDailyCap:
 
     def test_partial_execution_counts_as_one_reentry(self, engine, mock_positions_repo):
         """Test that partial execution (7 shares) counts as 1 re-entry for daily cap"""
-        today = datetime.now().date()
+        today = ist_now().date()
 
         # Mock position with partial re-entry execution
         mock_position = MagicMock()
@@ -54,7 +56,7 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 7,  # Partial execution (less than order quantity of 10)
                 "level": 20,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
                 "placed_at": today.isoformat(),  # Placed today
             }
         ]
@@ -69,7 +71,7 @@ class TestReentryPartialExecutionDailyCap:
         self, engine, mock_positions_repo
     ):
         """Test that AMO order placed Day 1, executed Day 2 doesn't block Day 2's re-entry"""
-        today = datetime.now().date()
+        today = ist_now().date()
         yesterday = today - timedelta(days=1)
 
         # Scenario: AMO order placed Day 1 (4:05 PM), executed Day 2 (9:15 AM)
@@ -78,7 +80,7 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 10,
                 "level": 20,
-                "time": datetime.now().isoformat(),  # Executed today (Day 2)
+                "time": ist_now().isoformat(),  # Executed today (Day 2)
                 "placed_at": yesterday.isoformat(),  # Placed yesterday (Day 1) ✅
             }
         ]
@@ -92,7 +94,7 @@ class TestReentryPartialExecutionDailyCap:
 
     def test_partial_execution_with_different_placement_date(self, engine, mock_positions_repo):
         """Test partial execution where order was placed on different day"""
-        today = datetime.now().date()
+        today = ist_now().date()
         yesterday = today - timedelta(days=1)
 
         # Partial execution: 7 shares executed, but order was placed yesterday
@@ -101,7 +103,7 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 7,  # Partial execution
                 "level": 20,
-                "time": datetime.now().isoformat(),  # Executed today
+                "time": ist_now().isoformat(),  # Executed today
                 "placed_at": yesterday.isoformat(),  # Placed yesterday
             }
         ]
@@ -114,7 +116,7 @@ class TestReentryPartialExecutionDailyCap:
 
     def test_multiple_partial_executions_same_order(self, engine, mock_positions_repo):
         """Test that multiple partial fills of same order only count once"""
-        today = datetime.now().date()
+        today = ist_now().date()
 
         # Note: In practice, same order_id would be detected as duplicate
         # This test verifies that if somehow multiple entries exist, they're counted correctly
@@ -123,14 +125,14 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 5,  # First partial fill
                 "level": 20,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
                 "placed_at": today.isoformat(),
                 "order_id": "ORDER123",
             },
             {
                 "qty": 3,  # Second partial fill (same order, different execution)
                 "level": 20,
-                "time": (datetime.now() + timedelta(hours=1)).isoformat(),
+                "time": (ist_now_naive() + timedelta(hours=1)).isoformat(),
                 "placed_at": today.isoformat(),  # Same placement date
                 "order_id": "ORDER123",  # Same order_id
             },
@@ -145,7 +147,7 @@ class TestReentryPartialExecutionDailyCap:
 
     def test_full_vs_partial_execution_same_daily_cap(self, engine, mock_positions_repo):
         """Test that full and partial executions both count as 1 for daily cap"""
-        today = datetime.now().date()
+        today = ist_now().date()
 
         # Two re-entries: one full (10 shares), one partial (7 shares)
         mock_position = MagicMock()
@@ -153,13 +155,13 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 10,  # Full execution
                 "level": 20,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
                 "placed_at": today.isoformat(),
             },
             {
                 "qty": 7,  # Partial execution
                 "level": 10,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
                 "placed_at": today.isoformat(),
             },
         ]
@@ -172,7 +174,7 @@ class TestReentryPartialExecutionDailyCap:
 
     def test_daily_cap_resets_with_placement_date(self, engine, mock_positions_repo):
         """Test that daily cap resets based on placement date, not execution date"""
-        today = datetime.now().date()
+        today = ist_now().date()
         yesterday = today - timedelta(days=1)
 
         # Re-entry placed yesterday, executed today
@@ -181,7 +183,7 @@ class TestReentryPartialExecutionDailyCap:
             {
                 "qty": 10,
                 "level": 20,
-                "time": datetime.now().isoformat(),  # Executed today
+                "time": ist_now().isoformat(),  # Executed today
                 "placed_at": yesterday.isoformat(),  # Placed yesterday
             }
         ]

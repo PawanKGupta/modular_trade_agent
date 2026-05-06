@@ -5,10 +5,11 @@ Persists paper trading data to JSON files
 
 import json
 import shutil
-from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any
+
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 
 
 class PaperTradeStore:
@@ -75,8 +76,8 @@ class PaperTradeStore:
                 "total_pnl": 0.0,
                 "realized_pnl": 0.0,
                 "unrealized_pnl": 0.0,
-                "created_at": datetime.now().isoformat(),
-                "last_updated": datetime.now().isoformat(),
+                "created_at": ist_now().isoformat(),
+                "last_updated": ist_now().isoformat(),
             }
 
             if config:
@@ -103,7 +104,7 @@ class PaperTradeStore:
                 raise ValueError("Account not initialized")
 
             self._account.update(updates)
-            self._account["last_updated"] = datetime.now().isoformat()
+            self._account["last_updated"] = ist_now().isoformat()
 
             if self.auto_save:
                 self._save_account()
@@ -170,7 +171,7 @@ class PaperTradeStore:
             for i, order in enumerate(self._orders):
                 if order.get("order_id") == order_id:
                     self._orders[i].update(updates)
-                    self._orders[i]["last_updated"] = datetime.now().isoformat()
+                    self._orders[i]["last_updated"] = ist_now().isoformat()
 
                     if self.auto_save:
                         self._save_orders()
@@ -203,7 +204,7 @@ class PaperTradeStore:
         """
         with self._lock:
             self._holdings[symbol] = holding
-            self._holdings[symbol]["last_updated"] = datetime.now().isoformat()
+            self._holdings[symbol]["last_updated"] = ist_now().isoformat()
 
             if self.auto_save:
                 self._save_holdings()
@@ -247,7 +248,7 @@ class PaperTradeStore:
             transaction: Transaction dictionary
         """
         with self._lock:
-            transaction["timestamp"] = datetime.now().isoformat()
+            transaction["timestamp"] = ist_now().isoformat()
             self._transactions.append(transaction)
 
             if self.auto_save:
@@ -364,7 +365,7 @@ class PaperTradeStore:
         Returns:
             Path to backup directory
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = ist_now_naive().strftime("%Y%m%d_%H%M%S")
         backup_dir = self.storage_path.parent / "backups" / timestamp
         backup_dir.mkdir(parents=True, exist_ok=True)
 

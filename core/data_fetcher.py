@@ -16,6 +16,7 @@ from config.settings import (
     RETRY_MAX_DELAY,
 )
 from utils.circuit_breaker import CircuitBreaker
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
 
@@ -147,7 +148,7 @@ def _get_current_day_data(ticker, session=None):
         hist = stock.history(period="2d")  # Get last 2 days to find today's data
 
         # Check if we have today's data in history
-        today = datetime.now().date()
+        today = ist_now().date()
         if not hist.empty and hist.index[-1].date() == today:
             # Use today's data from history
             latest = hist.iloc[-1]
@@ -223,7 +224,7 @@ def _append_current_day_data(df, live_data):
 def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
     # Determine end date (exclusive in yfinance); include the requested day by adding 1 day
     if end_date is None:
-        end = datetime.now()
+        end = ist_now_naive()
     else:
         if isinstance(end_date, str):
             end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -323,7 +324,7 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
 
         # Only add current day data if explicitly requested (avoid data leakage in backtests)
         if add_current_day:
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            today_str = ist_now_naive().strftime("%Y-%m-%d")
             latest_date_str = df["date"].iloc[-1].strftime("%Y-%m-%d")
 
             if latest_date_str < today_str and interval == "1d":

@@ -5,12 +5,12 @@ Generate reports and analytics for paper trading
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 from ..persistence import PaperTradeStore
@@ -464,7 +464,7 @@ class PaperTradeReporter:
             filepath: Path to save JSON file
         """
         report = {
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": ist_now().isoformat(),
             "portfolio_summary": self.portfolio_summary(),
             "holdings": self.holdings_report(),
             "order_history": self.order_history(limit=100),

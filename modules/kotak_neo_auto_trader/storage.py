@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 try:
@@ -64,7 +65,7 @@ def append_trade(path: str, trade: Dict[str, Any]) -> None:
         data = load_history(path)
         data.setdefault("trades", [])
         data["trades"].append(trade)
-        data["last_run"] = datetime.now().isoformat()
+        data["last_run"] = ist_now().isoformat()
         ensure_dir(path)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -102,12 +103,12 @@ def add_failed_order(path: str, failed_order: Dict[str, Any]) -> None:
             for fo in data["failed_orders"]:
                 if fo.get("symbol") == symbol:
                     fo.update(failed_order)
-                    fo["last_retry_attempt"] = datetime.now().isoformat()
+                    fo["last_retry_attempt"] = ist_now().isoformat()
                     break
             logger.info(f"Updated existing failed order for {symbol}")
         else:
             # Add new failed order
-            failed_order["first_failed_at"] = datetime.now().isoformat()
+            failed_order["first_failed_at"] = ist_now().isoformat()
             failed_order["retry_count"] = 0
             data["failed_orders"].append(failed_order)
             logger.info(f"Added new failed order for {symbol} to retry queue")
@@ -137,7 +138,7 @@ def get_failed_orders(path: str, include_previous_day_before_market: bool = True
         if not include_previous_day_before_market:
             return failed_orders
 
-        now = datetime.now()
+        now = ist_now_naive()
         today = now.date()
         current_time = now.time()
 
@@ -233,7 +234,7 @@ def check_manual_buys_of_failed_orders(
         if not executed_orders:
             return []
 
-        now = datetime.now()
+        now = ist_now_naive()
         today = date.today()
         market_open = dt_time(9, 15)
         before_open = now.time() < market_open
@@ -291,7 +292,7 @@ def check_manual_buys_of_failed_orders(
                         "symbol": symbol,
                         "ticker": failed_order.get("ticker", f"{symbol}.NS"),
                         "entry_price": avg_price,
-                        "entry_time": datetime.now().isoformat(),
+                        "entry_time": ist_now().isoformat(),
                         "entry_type": "manual_buy_of_bot_recommendation",
                         "qty": qty,
                         "status": "open",
@@ -352,7 +353,7 @@ def cleanup_expired_failed_orders(path: str) -> int:
         data = load_history(path)
         failed_orders = data.get("failed_orders", [])
 
-        now = datetime.now()
+        now = ist_now_naive()
         today = now.date()
         current_time = now.time()
         market_open_time = datetime.strptime("09:15", "%H:%M").time()
@@ -431,7 +432,7 @@ def mark_position_closed(
                 # Mark as closed
                 trade["status"] = "closed"
                 trade["exit_price"] = exit_price
-                trade["exit_time"] = datetime.now().isoformat()
+                trade["exit_time"] = ist_now().isoformat()
                 trade["exit_reason"] = "EMA9_TARGET"
                 trade["sell_order_id"] = sell_order_id
 

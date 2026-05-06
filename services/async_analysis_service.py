@@ -7,7 +7,7 @@ Expected to reduce analysis time by 80% for batch operations.
 
 import asyncio
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 from services.analysis_service import AnalysisService
 from services.async_data_service import AsyncDataService
@@ -128,7 +128,7 @@ class AsyncAnalysisService:
         Returns:
             List of analysis results
         """
-        start_time = datetime.now()
+        start_time = ist_now_naive()
         logger.info(
             f"Starting async batch analysis for {len(tickers)} tickers "
             f"(max {self.max_concurrent} concurrent)"
@@ -173,7 +173,7 @@ class AsyncAnalysisService:
             logger.info(f"Batch analysis results exported to: {csv_filepath}")
 
         # Calculate statistics
-        end_time = datetime.now()
+        end_time = ist_now_naive()
         duration = (end_time - start_time).total_seconds()
 
         successful = sum(1 for r in processed_results if r.get("status") == "success")
@@ -212,7 +212,7 @@ class AsyncAnalysisService:
         Returns:
             List of analysis results
         """
-        start_time = datetime.now()
+        start_time = ist_now_naive()
         logger.info(
             f"Starting prefetch batch analysis for {len(tickers)} tickers "
             f"(prefetching data, then analyzing)"
@@ -227,7 +227,7 @@ class AsyncAnalysisService:
             add_current_day=as_of_date is None,
         )
 
-        prefetch_time = datetime.now()
+        prefetch_time = ist_now_naive()
         prefetch_duration = (prefetch_time - start_time).total_seconds()
         successful_prefetch = sum(1 for v in data_map.values() if v is not None)
         logger.info(
@@ -272,7 +272,7 @@ class AsyncAnalysisService:
             logger.info(f"Batch analysis results exported to: {csv_filepath}")
 
         # Calculate statistics
-        end_time = datetime.now()
+        end_time = ist_now_naive()
         total_duration = (end_time - start_time).total_seconds()
         analysis_duration = (end_time - prefetch_time).total_seconds()
 

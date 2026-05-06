@@ -21,6 +21,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 
@@ -249,8 +250,8 @@ class OrderTracker:
             "order_type": order_type,
             "variety": variety,
             "price": price,
-            "placed_at": datetime.now().isoformat(),
-            "last_status_check": datetime.now().isoformat(),
+            "placed_at": ist_now().isoformat(),
+            "last_status_check": ist_now().isoformat(),
             "status": "PENDING",
             "rejection_reason": None,
             "check_count": 0,
@@ -316,12 +317,12 @@ class OrderTracker:
                         "placed_at": (
                             db_order.placed_at.isoformat()
                             if db_order.placed_at
-                            else datetime.now().isoformat()
+                            else ist_now().isoformat()
                         ),
                         "last_status_check": (
                             db_order.last_status_check.isoformat()
                             if db_order.last_status_check
-                            else datetime.now().isoformat()
+                            else ist_now().isoformat()
                         ),
                         "status": db_order.status.value if db_order.status else "PENDING",
                         "rejection_reason": getattr(db_order, "reason", None),
@@ -433,7 +434,7 @@ class OrderTracker:
                         if new_db_status:
                             db_order.status = new_db_status
 
-                        now = datetime.now()
+                        now = ist_now_naive()
                         if executed_qty is not None:
                             db_order.execution_qty = executed_qty
                             db_order.execution_time = now
@@ -467,7 +468,7 @@ class OrderTracker:
             if order["order_id"] == order_id:
                 old_status = order["status"]
                 order["status"] = status
-                order["last_status_check"] = datetime.now().isoformat()
+                order["last_status_check"] = ist_now().isoformat()
                 order["check_count"] = order.get("check_count", 0) + 1
 
                 if executed_qty is not None:
@@ -595,12 +596,12 @@ class OrderTracker:
                         "placed_at": (
                             db_order.placed_at.isoformat()
                             if db_order.placed_at
-                            else datetime.now().isoformat()
+                            else ist_now().isoformat()
                         ),
                         "last_status_check": (
                             db_order.last_status_check.isoformat()
                             if db_order.last_status_check
-                            else datetime.now().isoformat()
+                            else ist_now().isoformat()
                         ),
                         "status": db_order.status.value if db_order.status else "PENDING",
                         "rejection_reason": getattr(db_order, "reason", None),
@@ -668,7 +669,7 @@ class OrderTracker:
             try:
                 after_time = datetime.fromisoformat(after_timestamp)
             except Exception:
-                after_time = datetime.now()
+                after_time = ist_now_naive()
 
             # Search for matching order
             for order in orders_response["data"]:

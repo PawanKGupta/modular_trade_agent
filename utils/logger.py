@@ -40,22 +40,26 @@ console_handler.setFormatter(formatter)
 from datetime import datetime
 import os
 
-# Create logs directory if it doesn't exist
-os.makedirs("logs", exist_ok=True)
-
-# Use date-based log filename
-today = datetime.now().strftime("%Y%m%d")
-log_filename = f"logs/trade_agent_{today}.log"
-
-# File handler keeps full Unicode (explicit utf-8)
-file_handler = logging.FileHandler(log_filename, encoding="utf-8")
-file_handler.setLevel(logging.DEBUG)
-# Use base formatter that preserves characters for file
-file_handler.setFormatter(
-    logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    )
-)
-
 logger.addHandler(console_handler)
-logger.addHandler(file_handler)
+
+# File logging is optional: subprocesses / containers often run with a read-only or
+# root-owned `logs/` mount (PermissionError). Console logging still works.
+try:
+    from src.infrastructure.db.timezone_utils import ist_now_naive
+
+    _log_day_stamp = ist_now_naive().strftime("%Y%m%d")
+except ImportError:
+    _log_day_stamp = datetime.now().strftime("%Y%m%d")
+_log_path = f"logs/trade_agent_{_log_day_stamp}.log"
+try:
+    os.makedirs("logs", exist_ok=True)
+    file_handler = logging.FileHandler(_log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(module)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+    )
+    logger.addHandler(file_handler)
+except OSError as exc:
+    logger.warning("File logging disabled (%s): %s", _log_path, exc)

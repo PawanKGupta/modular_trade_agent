@@ -2,8 +2,8 @@
 # Nightly/scheduled logical backup of tradeagent PostgreSQL in Docker.
 # Run on the host (not inside a container). Requires: docker, container name tradeagent-db.
 #
-# Crontab example (daily 02:15):
-#   15 2 * * * /home/ubuntu/modular_trade_agent/docker/scripts/backup_postgres_docker.sh >>/var/log/tradeagent-pg-backup.log 2>&1
+# Crontab example (daily 02:15). Use a path the cron user can write (not /var/log unless root).
+#   15 2 * * * /path/to/modular_trade_agent/docker/scripts/backup_postgres_docker.sh >>$HOME/logs/tradeagent-pg-backup.log 2>&1
 #
 # The postgres image already sets POSTGRES_USER / POSTGRES_DB inside the container; we use
 # them so the password is not required on the host command line.

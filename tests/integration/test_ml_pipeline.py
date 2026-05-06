@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -30,7 +32,7 @@ from utils.logger import logger
 
 def create_mock_dataframe(days=365):
     """Create a mock DataFrame with OHLCV data for testing"""
-    dates = pd.date_range(end=datetime.now(), periods=days, freq="D")
+    dates = pd.date_range(end=ist_now_naive(), periods=days, freq="D")
     # Generate realistic price data
     base_price = 2000.0
     prices = []

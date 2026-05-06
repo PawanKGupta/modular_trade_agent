@@ -19,6 +19,7 @@ import requests
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 try:
@@ -65,7 +66,7 @@ class KotakNeoScripMaster:
     def _get_cache_path(self, exchange: str, date_str: str = None) -> Path:
         """Get cache file path for an exchange and date"""
         if date_str is None:
-            date_str = datetime.now().strftime("%Y%m%d")
+            date_str = ist_now_naive().strftime("%Y%m%d")
         return self.cache_dir / f"scrip_master_{exchange}_{date_str}.json"
 
     def _find_latest_cache_file(self, exchange: str) -> Path | None:
@@ -102,7 +103,7 @@ class KotakNeoScripMaster:
             with open(cache_path, encoding="utf-8") as f:
                 data = json.load(f)
                 cache_date = data.get("download_date", "")
-                if cache_date == datetime.now().strftime("%Y-%m-%d"):
+                if cache_date == ist_now_naive().strftime("%Y-%m-%d"):
                     return True
         except Exception as e:
             logger.warning(f"Error reading cache for {exchange}: {e}")
@@ -246,8 +247,8 @@ class KotakNeoScripMaster:
 
             cache_data = {
                 "exchange": exchange,
-                "download_date": datetime.now().strftime("%Y-%m-%d"),
-                "download_timestamp": datetime.now().isoformat(),
+                "download_date": ist_now_naive().strftime("%Y-%m-%d"),
+                "download_timestamp": ist_now().isoformat(),
                 "instrument_count": len(instruments),
                 "instruments": instruments,
             }
