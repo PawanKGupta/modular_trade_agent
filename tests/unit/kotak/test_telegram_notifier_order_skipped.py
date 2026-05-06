@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from src.infrastructure.db.timezone_utils import IST
+
 from modules.kotak_neo_auto_trader.telegram_notifier import TelegramNotifier
 from services.notification_preference_service import NotificationEventType
 
@@ -195,11 +197,10 @@ class TestTelegramNotifierOrderSkipped:
         assert "ORDER SKIPPED" in message
         assert "Custom Reason" in message  # Should be formatted
 
-    @patch("modules.kotak_neo_auto_trader.telegram_notifier.datetime")
-    def test_notify_order_skipped_includes_timestamp(self, mock_datetime, telegram_notifier):
+    @patch("modules.kotak_neo_auto_trader.telegram_notifier.ist_now")
+    def test_notify_order_skipped_includes_timestamp(self, mock_ist_now, telegram_notifier):
         """Test that notification includes timestamp"""
-        mock_datetime.now.return_value = datetime(2025, 1, 22, 14, 30, 0)
-        mock_datetime.strftime = datetime.strftime
+        mock_ist_now.return_value = datetime(2025, 1, 22, 14, 30, 0, tzinfo=IST)
 
         result = telegram_notifier.notify_order_skipped(
             symbol="RELIANCE-EQ",
