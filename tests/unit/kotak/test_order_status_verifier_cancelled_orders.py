@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta, time as dt_time
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -124,7 +126,7 @@ class TestCancelledOrderDetection:
     
     def test_should_assume_cancelled_after_grace_period(self, verifier):
         """Test that _should_assume_cancelled returns True after grace period"""
-        today = datetime.now().date()
+        today = ist_now().date()
         placed_time = datetime.combine(today, dt_time(9, 15))  # 9:15 AM today
         
         pending_order = {
@@ -151,7 +153,7 @@ class TestCancelledOrderDetection:
     
     def test_should_assume_cancelled_before_grace_period(self, verifier):
         """Test that _should_assume_cancelled returns False before grace period"""
-        today = datetime.now().date()
+        today = ist_now().date()
         placed_time = datetime.combine(today, dt_time(9, 15))  # 9:15 AM today
         
         pending_order = {
@@ -173,7 +175,7 @@ class TestCancelledOrderDetection:
     
     def test_should_assume_cancelled_during_market_hours(self, verifier):
         """Test that _should_assume_cancelled returns False during market hours"""
-        today = datetime.now().date()
+        today = ist_now().date()
         placed_time = datetime.combine(today, dt_time(9, 15))  # 9:15 AM today
         
         pending_order = {
@@ -195,7 +197,7 @@ class TestCancelledOrderDetection:
     
     def test_should_assume_cancelled_different_day(self, verifier):
         """Test that _should_assume_cancelled returns False for orders from different day"""
-        yesterday = datetime.now().date() - timedelta(days=1)
+        yesterday = ist_now().date() - timedelta(days=1)
         placed_time = datetime.combine(yesterday, dt_time(9, 15))  # Yesterday
         
         pending_order = {
@@ -206,7 +208,7 @@ class TestCancelledOrderDetection:
         }
         
         # Mock current time to be 4:00 PM today
-        today = datetime.now().date()
+        today = ist_now().date()
         with patch('modules.kotak_neo_auto_trader.order_status_verifier.datetime') as mock_dt:
             mock_now = datetime.combine(today, dt_time(16, 0))  # 4:00 PM
             
@@ -267,7 +269,7 @@ class TestCancelledOrderDetection:
     
     def test_verify_pending_orders_time_based_cancellation(self, verifier, order_tracker, mock_broker_client):
         """Test that verify_pending_orders uses time-based cancellation after grace period"""
-        today = datetime.now().date()
+        today = ist_now().date()
         placed_time = datetime.combine(today, dt_time(9, 15))  # 9:15 AM today
         
         # Add pending order
@@ -310,7 +312,7 @@ class TestCancelledOrderDetection:
     
     def test_verify_pending_orders_before_grace_period(self, verifier, order_tracker, mock_broker_client):
         """Test that verify_pending_orders does NOT assume cancellation before grace period"""
-        today = datetime.now().date()
+        today = ist_now().date()
         placed_time = datetime.combine(today, dt_time(9, 15))  # 9:15 AM today
         
         # Add pending order

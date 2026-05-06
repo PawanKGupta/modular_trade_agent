@@ -11,6 +11,7 @@ import pytest
 from modules.kotak_neo_auto_trader.run_trading_service import TradingService
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class TestTradingServiceHolidayChecks:
     """Test TradingService holiday awareness"""
 
@@ -85,8 +86,8 @@ class TestTradingServiceHolidayChecks:
         # Mock the imports to fail
         with patch("modules.kotak_neo_auto_trader.run_trading_service.is_trading_day_check", None):
             with patch("modules.kotak_neo_auto_trader.run_trading_service.ist_now", None):
-                # Should fall back to weekday check using datetime.now()
-                # We can't easily mock datetime.now(), so we'll just verify the fallback logic exists
+                # Should fall back to weekday check using ist_now_naive()
+                # We can't easily mock ist_now_naive(), so we'll just verify the fallback logic exists
                 # The actual fallback behavior is tested implicitly in the other tests
                 # when imports work correctly
                 pass  # Test passes if no exception is raised

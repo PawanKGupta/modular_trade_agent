@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch, MagicMock
 from services.ml_verdict_service import MLVerdictService
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class TestMLVerdictServiceBalanced:
     """Test cases for balanced model predictions"""
 
@@ -50,7 +51,7 @@ class TestMLVerdictServiceBalanced:
             'support_hold_count': 2
         }
         
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        dates = pd.date_range(end=ist_now_naive(), periods=50, freq='D')
         mock_df = pd.DataFrame({
             'close': np.random.uniform(95, 105, 50),
             'high': np.random.uniform(100, 110, 50),
@@ -116,7 +117,7 @@ class TestMLVerdictServiceBalanced:
             'support_hold_count': 2
         }
         
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        dates = pd.date_range(end=ist_now_naive(), periods=50, freq='D')
         mock_df = pd.DataFrame({
             'close': np.random.uniform(95, 105, 50),
             'high': np.random.uniform(100, 110, 50),
@@ -165,7 +166,7 @@ class TestMLVerdictServiceBalanced:
             'support_hold_count': 2
         }
         
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        dates = pd.date_range(end=ist_now_naive(), periods=50, freq='D')
         mock_df = pd.DataFrame({
             'close': np.random.uniform(95, 105, 50),
             'high': np.random.uniform(100, 110, 50),
@@ -215,7 +216,7 @@ class TestMLVerdictServiceBalanced:
             'support_hold_count': 1
         }
         
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        dates = pd.date_range(end=ist_now_naive(), periods=50, freq='D')
         mock_df = pd.DataFrame({
             'close': np.random.uniform(95, 105, 50),
             'high': np.random.uniform(100, 110, 50),
@@ -260,7 +261,7 @@ class TestMLVerdictServiceBalanced:
             'support_hold_count': 1
         }
         
-        dates = pd.date_range(end=datetime.now(), periods=50, freq='D')
+        dates = pd.date_range(end=ist_now_naive(), periods=50, freq='D')
         mock_df = pd.DataFrame({
             'close': np.random.uniform(95, 105, 50),
             'high': np.random.uniform(100, 110, 50),
@@ -283,7 +284,7 @@ class TestMLVerdictServiceBalanced:
         )
         
         # Time features should match current date
-        now = datetime.now()
+        now = ist_now_naive()
         
         assert 'day_of_week' in features
         assert 0 <= features['day_of_week'] <= 6

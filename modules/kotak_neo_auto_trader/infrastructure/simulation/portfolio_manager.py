@@ -4,7 +4,6 @@ Tracks holdings, calculates P&L, manages positions
 """
 
 from typing import Dict, Optional, List
-from datetime import datetime
 from threading import Lock
 
 import sys
@@ -12,6 +11,7 @@ from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 from ...domain import Holding, Money, Exchange
@@ -69,7 +69,7 @@ class PortfolioManager:
                     quantity=quantity,
                     average_price=price,
                     current_price=price,
-                    last_updated=datetime.now(),
+                    last_updated=ist_now_naive(),
                 )
                 self._holdings[symbol] = holding
                 logger.info(f"? New holding {symbol}: " f"{quantity} @ Rs {price.amount:.2f}")

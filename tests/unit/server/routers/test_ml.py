@@ -10,6 +10,7 @@ from server.app.schemas.ml import MLTrainingRequest
 from src.infrastructure.db.models import UserRole
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
@@ -29,7 +30,7 @@ class DummyTrainingJob(SimpleNamespace):
             model_type=kwargs.get("model_type", "verdict_classifier"),
             algorithm=kwargs.get("algorithm", "random_forest"),
             training_data_path=kwargs.get("training_data_path", "/data/train.csv"),
-            started_at=kwargs.get("started_at", datetime.now()),
+            started_at=kwargs.get("started_at", ist_now_naive()),
             completed_at=kwargs.get("completed_at", None),
             model_path=kwargs.get("model_path", None),
             accuracy=kwargs.get("accuracy", None),
@@ -48,7 +49,7 @@ class DummyMLModel(SimpleNamespace):
             accuracy=kwargs.get("accuracy", 0.85),
             training_job_id=kwargs.get("training_job_id", 1),
             is_active=kwargs.get("is_active", False),
-            created_at=kwargs.get("created_at", datetime.now()),
+            created_at=kwargs.get("created_at", ist_now_naive()),
             created_by=kwargs.get("created_by", 1),
         )
 

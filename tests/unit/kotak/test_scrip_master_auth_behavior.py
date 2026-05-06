@@ -13,6 +13,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -32,9 +34,9 @@ class TestScripMasterAuthBehavior:
     @pytest.fixture
     def mock_cache_file(self, tmp_cache_dir):
         """Create a mock cache file"""
-        cache_file = tmp_cache_dir / f"scrip_master_NSE_{datetime.now().strftime('%Y%m%d')}.json"
+        cache_file = tmp_cache_dir / f"scrip_master_NSE_{ist_now_naive().strftime('%Y%m%d')}.json"
         cache_data = {
-            "download_date": datetime.now().strftime("%Y-%m-%d"),
+            "download_date": ist_now_naive().strftime("%Y-%m-%d"),
             "instruments": [
                 {"symbol": "RELIANCE-EQ", "token": "12345"},
                 {"symbol": "TCS-EQ", "token": "67890"},

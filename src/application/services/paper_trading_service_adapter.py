@@ -11,8 +11,6 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
-
 import pandas as pd
 
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
@@ -21,6 +19,7 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import (
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 from src.infrastructure.db.models import TradeMode
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from src.infrastructure.logging import get_user_logger
 
 logger = logging.getLogger(__name__)
@@ -871,7 +870,7 @@ class PaperTradingServiceAdapter:
                     # Export report
                     from datetime import datetime
 
-                    timestamp = datetime.now().strftime("%Y%m%d")
+                    timestamp = ist_now_naive().strftime("%Y%m%d")
                     report_path = f"{self.storage_path}/reports/report_{timestamp}.json"
                     Path(report_path).parent.mkdir(parents=True, exist_ok=True)
                     self.reporter.export_to_json(report_path)
@@ -1024,7 +1023,7 @@ class PaperTradingServiceAdapter:
                                         "target_price": target_price,
                                         "qty": quantity,
                                         "ticker": ticker,
-                                        "entry_date": datetime.now().strftime("%Y-%m-%d"),
+                                        "entry_date": ist_now_naive().strftime("%Y-%m-%d"),
                                     }
                                     self.logger.info(
                                         f"Restored sell order tracking for {symbol_base} from broker",
@@ -1091,7 +1090,7 @@ class PaperTradingServiceAdapter:
                         "target_price": ema9_target,  # Updated on re-entry (EMA9)
                         "qty": quantity,
                         "ticker": ticker,
-                        "entry_date": datetime.now().strftime("%Y-%m-%d"),
+                        "entry_date": ist_now_naive().strftime("%Y-%m-%d"),
                     }
 
                     self.logger.info(
@@ -1189,7 +1188,7 @@ class PaperTradingServiceAdapter:
                     latest_date_ist = None
 
                 if latest_date_ist is not None:
-                    today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+                    today_ist = ist_now().date()
                     # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
                     if latest_date_ist != today_ist:
                         continue
@@ -1712,7 +1711,9 @@ class PaperTradingServiceAdapter:
                     "target_price": new_target,  # Updated target (EMA9)
                     "qty": new_quantity,  # Updated quantity
                     "ticker": ticker,
-                    "entry_date": order_info.get("entry_date", datetime.now().strftime("%Y-%m-%d")),
+                    "entry_date": order_info.get(
+                        "entry_date", ist_now_naive().strftime("%Y-%m-%d")
+                    ),
                 }
 
                 target_change = f"{old_target:.2f} -> {new_target:.2f}"
@@ -2531,7 +2532,7 @@ class PaperTradingEngineAdapter:
 
                 if next_level is not None:
                     # Daily cap: allow max 1 re-entry per symbol per day
-                    today = datetime.now().date().isoformat()
+                    today = ist_now().date().isoformat()
                     today_reentries = sum(1 for d in reentry_dates if d == today)
 
                     if today_reentries >= 1:

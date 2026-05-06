@@ -9,6 +9,8 @@ import argparse
 from pathlib import Path
 from datetime import datetime, time as dt_time
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -93,7 +95,7 @@ class TestTradingService(TradingService):
         logger.info("=" * 80)
         logger.info("TEST: Running ALL Tasks")
         logger.info("=" * 80)
-        logger.info(f"Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Current time: {ist_now_naive().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("Force trading day mode: ENABLED")
         logger.info("")
 

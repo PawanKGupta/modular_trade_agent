@@ -5,7 +5,8 @@ Orchestrates the single stock analysis workflow.
 """
 
 from typing import Optional
-from datetime import datetime
+
+from src.infrastructure.db.timezone_utils import ist_now
 
 # Import existing code (bridge to old architecture)
 from core.analysis import analyze_ticker as legacy_analyze_ticker
@@ -68,7 +69,7 @@ class AnalyzeStockUseCase:
                 return AnalysisResponse(
                     ticker=request.ticker,
                     status=result.get('status', 'error'),
-                    timestamp=datetime.now(),
+                    timestamp=ist_now(),
                     error_message=result.get('error', 'Analysis failed')
                 )
 
@@ -142,7 +143,7 @@ class AnalyzeStockUseCase:
             return AnalysisResponse(
                 ticker=request.ticker,
                 status="error",
-                timestamp=datetime.now(),
+                timestamp=ist_now(),
                 error_message=str(e)
             )
 
@@ -175,7 +176,7 @@ class AnalyzeStockUseCase:
         return AnalysisResponse(
             ticker=result.get('ticker'),
             status=result.get('status', 'success'),
-            timestamp=datetime.now(),
+            timestamp=ist_now(),
             verdict=result.get('verdict', 'unknown'),
             final_verdict=result.get('final_verdict'),  # Verdict after backtest reclassification
             last_close=result.get('last_close', 0.0),

@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 
@@ -151,7 +152,7 @@ class LivePriceCache:
             entry = self._cache.get(symbol)
             if not entry:
                 return None
-            if datetime.now() - entry.timestamp > self.stale_threshold:
+            if ist_now_naive() - entry.timestamp > self.stale_threshold:
                 return None
             return entry.ltp
 
@@ -186,7 +187,7 @@ class LivePriceCache:
                 data = rest.get_quotes_neosymbol(query=query_str, filter_name="ltp")
 
                 if isinstance(data, list):
-                    now = datetime.now()
+                    now = ist_now_naive()
                     with self._cache_lock:
                         for item in data:
                             if not isinstance(item, dict):

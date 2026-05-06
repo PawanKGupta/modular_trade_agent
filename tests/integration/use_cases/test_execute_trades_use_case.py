@@ -10,11 +10,12 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.mock_broker_ad
 from modules.kotak_neo_auto_trader.domain.value_objects.money import Money
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def make_resp(ticker, verdict='buy', combined=50.0, last_close=100.0):
     return AnalysisResponse(
         ticker=ticker,
         status='success',
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         verdict=verdict,
         last_close=last_close,
         combined_score=combined,
@@ -36,7 +37,7 @@ def test_execute_trades_buy_and_sell_and_record_csv(tmp_path):
         successful=2,
         failed=0,
         buyable_count=1,
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         execution_time_seconds=0.1,
     )
 

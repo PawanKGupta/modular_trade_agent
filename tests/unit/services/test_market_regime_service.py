@@ -13,6 +13,8 @@ from services.market_regime_service import (
     get_market_regime_service,
 )
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestMarketRegimeService:
     """Test cases for MarketRegimeService"""
@@ -278,7 +280,7 @@ class TestMarketRegimeService:
         # Set cache
         self.service._nifty_cache = pd.DataFrame({"Close": [18000]})
         self.service._cache_date = "2024-11-10"
-        self.service._cache_timestamp = datetime.now()
+        self.service._cache_timestamp = ist_now_naive()
 
         # Should be valid
         assert self.service._is_cache_valid("2024-11-10")
@@ -287,7 +289,7 @@ class TestMarketRegimeService:
         assert not self.service._is_cache_valid("2024-11-11")
 
         # Expired cache should be invalid
-        self.service._cache_timestamp = datetime.now() - timedelta(hours=2)
+        self.service._cache_timestamp = ist_now_naive() - timedelta(hours=2)
         assert not self.service._is_cache_valid("2024-11-10")
 
     def test_clear_cache(self):
@@ -295,7 +297,7 @@ class TestMarketRegimeService:
         # Set cache
         self.service._nifty_cache = pd.DataFrame({"Close": [18000]})
         self.service._vix_cache = 22.5
-        self.service._cache_timestamp = datetime.now()
+        self.service._cache_timestamp = ist_now_naive()
         self.service._cache_date = "2024-11-10"
 
         # Clear
@@ -311,7 +313,7 @@ class TestMarketRegimeService:
     def test_get_market_regime_features_uses_current_date_if_none(self, mock_download):
         """Test that current date is used when date parameter is None"""
         # Mock data
-        dates = pd.date_range(start=datetime.now() - timedelta(days=60), periods=60, freq="D")
+        dates = pd.date_range(start=ist_now_naive() - timedelta(days=60), periods=60, freq="D")
         mock_data = pd.DataFrame(
             {
                 "Close": [17500.0] * 60,

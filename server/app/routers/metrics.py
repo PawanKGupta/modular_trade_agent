@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.connection_monitor import check_pool_health, get_pool_status
 from src.infrastructure.db.models import Orders, Positions, TradeMode, Users
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from src.infrastructure.db.session import engine
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
@@ -71,8 +72,8 @@ def get_dashboard_metrics(
                     detail=f"Invalid trade_mode: {trade_mode}. Must be 'paper' or 'broker'",
                 ) from None
 
-        # Calculate date range
-        end_date = datetime.now()
+        # Calculate date range (IST naive to align with stored position timestamps)
+        end_date = ist_now_naive()
         start_date = end_date - timedelta(days=period_days)
 
         # Query closed positions within the date range

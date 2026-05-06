@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_orders.db")
 
 from server.app.core.config import settings  # noqa: E402
@@ -447,7 +448,7 @@ def test_list_orders_with_filters(client: TestClient, db_session):
     assert any("insufficient" in (o.get("reason") or "").lower() for o in items)
 
     # Filter by date range (using today's date)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = ist_now_naive().strftime("%Y-%m-%d")
     r2 = client.get(
         f"/api/v1/user/orders?from_date={today}&to_date={today}",
         headers=headers,

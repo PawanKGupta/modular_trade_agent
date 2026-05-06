@@ -32,11 +32,12 @@ from utils.logger import logger
 
 # Import holiday calendar for trading day checks
 try:
-    from src.infrastructure.db.timezone_utils import ist_now
+    from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
     from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
 except ImportError:
     # Fallback if running from different context
     ist_now = None
+    ist_now_naive = None
     is_trading_day_check = None
 
 
@@ -164,12 +165,16 @@ class PaperTradingService:
         """Check if today is a trading day (Monday-Friday, excluding holidays)"""
         if is_trading_day_check and ist_now:
             return is_trading_day_check(ist_now().date())
-        # Fallback to weekday check if imports failed
+        if ist_now is not None:
+            return ist_now().weekday() < 5
         return datetime.now().weekday() < 5
 
     def is_market_hours(self) -> bool:
-        """Check if currently in market hours (9:15 AM - 3:30 PM)"""
-        now = datetime.now().time()
+        """Check if currently in market hours (9:15 AM - 3:30 PM IST)."""
+        if ist_now is not None:
+            now = ist_now().time()
+        else:
+            now = datetime.now().time()
         return dt_time(9, 15) <= now <= dt_time(15, 30)
 
     def run_analysis(self):
@@ -228,7 +233,11 @@ class PaperTradingService:
             self.reporter.print_summary()
 
             # Export report
-            timestamp = datetime.now().strftime("%Y%m%d")
+            timestamp = (
+                ist_now_naive().strftime("%Y%m%d")
+                if ist_now_naive is not None
+                else datetime.now().strftime("%Y%m%d")
+            )
             report_path = f"{self.storage_path}/reports/report_{timestamp}.json"
             self.reporter.export_to_json(report_path)
             logger.info(f"? Report saved to: {report_path}")
@@ -252,7 +261,7 @@ class PaperTradingService:
 
         while self.running and not self.shutdown_requested:
             try:
-                now = datetime.now()
+                now = ist_now() if ist_now is not None else datetime.now()
                 current_time = now.time()
 
                 # Check only once per minute

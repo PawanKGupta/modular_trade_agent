@@ -15,6 +15,7 @@ import pytest
 from config.strategy_config import StrategyConfig
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def mock_auth():
     """Mock KotakNeoAuth"""
@@ -183,7 +184,7 @@ class TestFailureStatusPromotion:
         mock_order1.price = 2450.0
         mock_order1.quantity = 10
         mock_order1.reason = "insufficient_balance - shortfall: Rs 5,000"
-        mock_order1.first_failed_at = datetime.now()
+        mock_order1.first_failed_at = ist_now_naive()
         mock_order1.retry_count = 2
         mock_order1.status = DbOrderStatus.FAILED
 
@@ -193,7 +194,7 @@ class TestFailureStatusPromotion:
         mock_order2.price = 3200.0
         mock_order2.quantity = 5
         mock_order2.reason = "broker_api_error"
-        mock_order2.first_failed_at = datetime.now()
+        mock_order2.first_failed_at = ist_now_naive()
         mock_order2.retry_count = 0
         mock_order2.status = DbOrderStatus.FAILED
 
@@ -223,7 +224,7 @@ class TestFailureStatusPromotion:
         mock_order.price = 2450.0
         mock_order.quantity = 10
         mock_order.reason = "insufficient_balance"
-        mock_order.first_failed_at = datetime.now()
+        mock_order.first_failed_at = ist_now_naive()
         mock_order.retry_count = 1
         mock_order.status = DbOrderStatus.FAILED
 

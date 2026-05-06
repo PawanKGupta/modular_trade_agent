@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 import sys
 
@@ -156,8 +158,8 @@ class TestOrderTrackerDualWrite:
         mock_order.price = 2450.0
         mock_order.order_type = "market"
         mock_order.status = DbOrderStatus.PENDING
-        mock_order.placed_at = datetime.now()
-        mock_order.last_status_check = datetime.now()
+        mock_order.placed_at = ist_now_naive()
+        mock_order.last_status_check = ist_now_naive()
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
         mock_orders_repo.list.return_value = ([mock_order], 1)
@@ -262,8 +264,8 @@ class TestOrderTrackerDualWrite:
         mock_order.price = 2450.0
         mock_order.order_type = "market"
         mock_order.status = DbOrderStatus.PENDING
-        mock_order.placed_at = datetime.now()
-        mock_order.last_status_check = datetime.now()
+        mock_order.placed_at = ist_now_naive()
+        mock_order.last_status_check = ist_now_naive()
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
         mock_orders_repo.get_by_broker_order_id.return_value = mock_order
@@ -317,8 +319,8 @@ class TestOrderTrackerDualWrite:
         mock_order1.price = 2450.0
         mock_order1.order_type = "market"
         mock_order1.status = DbOrderStatus.PENDING
-        mock_order1.placed_at = datetime.now()
-        mock_order1.last_status_check = datetime.now()
+        mock_order1.placed_at = ist_now_naive()
+        mock_order1.last_status_check = ist_now_naive()
         mock_order1.rejection_reason = None
         mock_order1.execution_qty = None
 
@@ -330,8 +332,8 @@ class TestOrderTrackerDualWrite:
         mock_order2.price = 3200.0
         mock_order2.order_type = "market"
         mock_order2.status = DbOrderStatus.ONGOING
-        mock_order2.placed_at = datetime.now()
-        mock_order2.last_status_check = datetime.now()
+        mock_order2.placed_at = ist_now_naive()
+        mock_order2.last_status_check = ist_now_naive()
         mock_order2.rejection_reason = None
         mock_order2.execution_qty = None
 
@@ -358,8 +360,8 @@ class TestOrderTrackerDualWrite:
         mock_order1.price = 2450.0
         mock_order1.order_type = "market"
         mock_order1.status = DbOrderStatus.PENDING
-        mock_order1.placed_at = datetime.now()
-        mock_order1.last_status_check = datetime.now()
+        mock_order1.placed_at = ist_now_naive()
+        mock_order1.last_status_check = ist_now_naive()
         mock_order1.rejection_reason = None
         mock_order1.execution_qty = None
 
@@ -371,8 +373,8 @@ class TestOrderTrackerDualWrite:
         mock_order2.price = 3200.0
         mock_order2.order_type = "market"
         mock_order2.status = DbOrderStatus.PENDING
-        mock_order2.placed_at = datetime.now()
-        mock_order2.last_status_check = datetime.now()
+        mock_order2.placed_at = ist_now_naive()
+        mock_order2.last_status_check = ist_now_naive()
         mock_order2.rejection_reason = None
         mock_order2.execution_qty = None
 
@@ -632,8 +634,8 @@ class TestOrderTrackerDualWrite:
         mock_order.price = 2450.0
         mock_order.order_type = "market"
         mock_order.status = DbOrderStatus.PENDING
-        mock_order.placed_at = datetime.now()
-        mock_order.last_status_check = datetime.now()
+        mock_order.placed_at = ist_now_naive()
+        mock_order.last_status_check = ist_now_naive()
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
 
@@ -657,8 +659,8 @@ class TestOrderTrackerDualWrite:
         mock_order.price = 2450.0
         mock_order.order_type = "market"
         mock_order.status = DbOrderStatus.PENDING
-        mock_order.placed_at = datetime.now()
-        mock_order.last_status_check = datetime.now()
+        mock_order.placed_at = ist_now_naive()
+        mock_order.last_status_check = ist_now_naive()
         mock_order.rejection_reason = None
         mock_order.execution_qty = None
 

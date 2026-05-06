@@ -20,6 +20,7 @@ import warnings
 import pandas as pd
 import numpy as np
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 warnings.filterwarnings("ignore")
 
 # Add project root to path
@@ -666,7 +667,7 @@ def run_comprehensive_backtest_validation(
     print("=" * 80)
 
     # Calculate date range
-    end_date = datetime.now()
+    end_date = ist_now_naive()
     start_date = end_date - timedelta(days=years * 365)
     date_range = (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 

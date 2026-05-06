@@ -18,13 +18,14 @@ from datetime import datetime
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 from modules.kotak_neo_auto_trader.position_monitor import get_position_monitor
 
 
 def is_market_hours() -> bool:
-    """Check if current time is during market hours."""
-    now = datetime.now()
+    """Check if current time is during market hours (IST)."""
+    now = ist_now()
     hour = now.hour
     minute = now.minute
     weekday = now.weekday()
@@ -61,7 +62,7 @@ def run_position_monitoring(
     logger.info("=" * 70)
     logger.info("POSITION MONITOR RUNNER")
     logger.info("=" * 70)
-    logger.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"Time (IST): {ist_now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("")
     
     # Check market hours

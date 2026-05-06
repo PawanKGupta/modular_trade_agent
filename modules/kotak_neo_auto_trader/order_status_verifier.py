@@ -23,6 +23,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 # Import Phase 1 modules
@@ -118,7 +119,7 @@ class OrderStatusVerifier:
         while self._running:
             try:
                 self.verify_pending_orders()
-                self._last_check_time = datetime.now()
+                self._last_check_time = ist_now_naive()
 
                 # Sleep in small intervals to allow responsive shutdown
                 sleep_interval = min(self.check_interval_seconds, 30)
@@ -229,7 +230,7 @@ class OrderStatusVerifier:
                         "status": broker_status["status"],
                         "executed_qty": broker_status.get("executed_qty", 0),
                         "rejection_reason": broker_status.get("rejection_reason"),
-                        "verified_at": datetime.now().isoformat(),
+                        "verified_at": ist_now().isoformat(),
                         "broker_order": broker_order,
                     }
 
@@ -258,7 +259,7 @@ class OrderStatusVerifier:
                         "status": "PENDING",
                         "executed_qty": 0,
                         "rejection_reason": None,
-                        "verified_at": datetime.now().isoformat(),
+                        "verified_at": ist_now().isoformat(),
                         "broker_order": None,
                     }
                     counts["still_pending"] += 1
@@ -288,7 +289,7 @@ class OrderStatusVerifier:
                         "status": broker_status["status"],
                         "executed_qty": 0,
                         "rejection_reason": None,
-                        "verified_at": datetime.now().isoformat(),
+                        "verified_at": ist_now().isoformat(),
                         "broker_order": mock_cancelled_order,
                     }
 
@@ -301,7 +302,7 @@ class OrderStatusVerifier:
                         "status": broker_status["status"],
                         "executed_qty": 0,
                         "rejection_reason": None,
-                        "verified_at": datetime.now().isoformat(),
+                        "verified_at": ist_now().isoformat(),
                         "broker_order": mock_cancelled_order,
                     }
 
@@ -322,7 +323,7 @@ class OrderStatusVerifier:
                         )
                         if placed_at.tzinfo:
                             placed_at = placed_at.replace(tzinfo=None)
-                        age_hours = (datetime.now() - placed_at).total_seconds() / 3600
+                        age_hours = (ist_now_naive() - placed_at).total_seconds() / 3600
 
                         # Only mark as stale if order is > 12 hours old
                         if age_hours > 12:
@@ -371,7 +372,7 @@ class OrderStatusVerifier:
                                 "status": "FAILED",
                                 "executed_qty": 0,
                                 "rejection_reason": f"Stale order - not found in broker after {age_hours:.1f} hours",
-                                "verified_at": datetime.now().isoformat(),
+                                "verified_at": ist_now().isoformat(),
                                 "broker_order": None,
                             }
 
@@ -398,7 +399,7 @@ class OrderStatusVerifier:
                     "status": "NOT_FOUND",
                     "executed_qty": 0,
                     "rejection_reason": None,
-                    "verified_at": datetime.now().isoformat(),
+                    "verified_at": ist_now().isoformat(),
                     "broker_order": None,
                 }
 
@@ -415,7 +416,7 @@ class OrderStatusVerifier:
                 "status": broker_status["status"],
                 "executed_qty": broker_status.get("executed_qty", 0),
                 "rejection_reason": broker_status.get("rejection_reason"),
-                "verified_at": datetime.now().isoformat(),
+                "verified_at": ist_now().isoformat(),
                 "broker_order": broker_order,  # Store full broker order for reference
             }
 
@@ -713,7 +714,7 @@ class OrderStatusVerifier:
             if placed_at.tzinfo:
                 placed_at = placed_at.replace(tzinfo=None)
 
-            now = datetime.now()
+            now = ist_now_naive()
             current_time = now.time()
             market_close_time = dt_time(15, 30)  # 3:30 PM
             market_close_datetime = datetime.combine(now.date(), market_close_time)
@@ -1139,7 +1140,7 @@ class OrderStatusVerifier:
         if not self._last_check_time:
             return False  # Never checked, don't skip
 
-        time_since_last_check = datetime.now() - self._last_check_time
+        time_since_last_check = ist_now_naive() - self._last_check_time
         threshold_seconds = minutes_threshold * 60
 
         should_skip = time_since_last_check.total_seconds() < threshold_seconds

@@ -4,8 +4,6 @@ Intelligent Volume Analysis Module
 Provides time-aware and context-sensitive volume analysis for trading decisions.
 """
 
-from datetime import datetime
-
 import pandas as pd
 
 from config.settings import (
@@ -20,13 +18,13 @@ from config.settings import (
 )
 from utils.logger import logger
 
+from src.infrastructure.db.timezone_utils import ist_now
+
 
 def get_current_market_time() -> float:
-    """Get current time as fractional hour in IST (e.g., 15.5 for 3:30 PM)"""
+    """Get current time as fractional hour in IST (e.g., 15.5 for 3:30 PM)."""
     try:
-        now = datetime.now()
-        # If running in UTC, convert to IST (+5:30)
-        # For simplicity, assuming local time is IST
+        now = ist_now()
         return now.hour + now.minute / 60.0
     except Exception:
         return 15.5  # Default to market close hour

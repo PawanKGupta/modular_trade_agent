@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from backtest.backtest_engine import BacktestEngine
@@ -63,7 +65,7 @@ def test_backtest_engine_2years(symbol: str, years: int = 2):
     print("=" * 80)
 
     # Calculate date range
-    end_date = datetime.now()
+    end_date = ist_now_naive()
     start_date = end_date - timedelta(days=years * 365)
 
     start_str = start_date.strftime("%Y-%m-%d")
@@ -182,7 +184,7 @@ def test_integrated_backtest_2years(symbol: str, years: int = 2):
     print("=" * 80)
 
     # Calculate date range
-    end_date = datetime.now()
+    end_date = ist_now_naive()
     start_date = end_date - timedelta(days=years * 365)
 
     start_str = start_date.strftime("%Y-%m-%d")

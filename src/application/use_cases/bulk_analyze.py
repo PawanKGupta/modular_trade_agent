@@ -5,8 +5,9 @@ Orchestrates bulk stock analysis workflow.
 """
 
 from typing import Optional, List
-from datetime import datetime
 import time
+
+from src.infrastructure.db.timezone_utils import ist_now
 
 from ..dto.analysis_request import BulkAnalysisRequest, AnalysisRequest
 from ..dto.analysis_response import BulkAnalysisResponse, AnalysisResponse
@@ -88,7 +89,7 @@ class BulkAnalyzeUseCase:
                     AnalysisResponse(
                         ticker=ticker,
                         status="error",
-                        timestamp=datetime.now(),
+                        timestamp=ist_now(),
                         error_message=str(e),
                     )
                 )
@@ -126,6 +127,6 @@ class BulkAnalyzeUseCase:
             successful=successful,
             failed=failed,
             buyable_count=buyable_count,
-            timestamp=datetime.now(),
+            timestamp=ist_now(),
             execution_time_seconds=execution_time,
         )

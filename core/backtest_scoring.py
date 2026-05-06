@@ -9,7 +9,9 @@ to provide additional scoring based on past performance of the trading strategy.
 import os
 import sys
 import warnings
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 warnings.filterwarnings("ignore")
 
@@ -194,7 +196,7 @@ def run_simple_backtest(
 
     try:
         # Get historical data
-        end_date = datetime.now()
+        end_date = ist_now_naive()
         start_date = end_date - timedelta(days=years_back * 365)
 
         logger.info(f"Running simple backtest for {stock_symbol}")
@@ -463,7 +465,7 @@ def run_stock_backtest(
         # Use integrated backtest
         try:
             # Calculate date range
-            end_date = datetime.now()
+            end_date = ist_now_naive()
             start_date = end_date - timedelta(days=years_back * 365)
 
             date_range = (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))

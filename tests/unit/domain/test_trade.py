@@ -4,6 +4,7 @@ import pytest
 from src.domain.entities.trade import Trade, TradeDirection, TradeStatus
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def test_trade_lifecycle_and_pnl_long():
     t = Trade(
         ticker='AAA.NS',
@@ -46,8 +47,8 @@ def test_trade_short_and_cancel_and_validation():
     assert t2.status == TradeStatus.CANCELLED
 
     with pytest.raises(ValueError):
-        Trade(ticker='X', entry_date=datetime.now(), entry_price=0, quantity=1, capital=1)
+        Trade(ticker='X', entry_date=ist_now_naive(), entry_price=0, quantity=1, capital=1)
     with pytest.raises(ValueError):
-        Trade(ticker='X', entry_date=datetime.now(), entry_price=1, quantity=0, capital=1)
+        Trade(ticker='X', entry_date=ist_now_naive(), entry_price=1, quantity=0, capital=1)
     with pytest.raises(ValueError):
-        Trade(ticker='X', entry_date=datetime.now(), entry_price=1, quantity=1, capital=0)
+        Trade(ticker='X', entry_date=ist_now_naive(), entry_price=1, quantity=1, capital=0)

@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -216,7 +218,7 @@ class TestHoldingsAPI:
             symbol="RELIANCE",
             quantity=10.0,
             avg_price=100.0,
-            closed_at=datetime.now(),
+            closed_at=ist_now_naive(),
         )
         sell_manager.positions_repo = Mock()
         sell_manager.positions_repo.get_by_symbol = Mock(return_value=position)

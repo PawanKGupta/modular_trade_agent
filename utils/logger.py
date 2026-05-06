@@ -44,7 +44,13 @@ logger.addHandler(console_handler)
 
 # File logging is optional: subprocesses / containers often run with a read-only or
 # root-owned `logs/` mount (PermissionError). Console logging still works.
-_log_path = "logs/trade_agent_{}.log".format(datetime.now().strftime("%Y%m%d"))
+try:
+    from src.infrastructure.db.timezone_utils import ist_now_naive
+
+    _log_day_stamp = ist_now_naive().strftime("%Y%m%d")
+except ImportError:
+    _log_day_stamp = datetime.now().strftime("%Y%m%d")
+_log_path = f"logs/trade_agent_{_log_day_stamp}.log"
 try:
     os.makedirs("logs", exist_ok=True)
     file_handler = logging.FileHandler(_log_path, encoding="utf-8")

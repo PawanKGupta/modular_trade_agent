@@ -5,12 +5,13 @@ import src.application.use_cases.example_usage as ex
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class FakeAnalyze:
     def execute(self, req):
         return AnalysisResponse(
             ticker=req.ticker,
             status='success',
-            timestamp=datetime.now(),
+            timestamp=ist_now_naive(),
             verdict='buy',
             last_close=100.0,
             priority_score=50.0,
@@ -22,10 +23,10 @@ class FakeBulk:
         self._resp = resp
     def execute(self, req):
         r = AnalysisResponse(
-            ticker='AAA.NS', status='success', timestamp=datetime.now(), verdict='buy', priority_score=60.0
+            ticker='AAA.NS', status='success', timestamp=ist_now_naive(), verdict='buy', priority_score=60.0
         )
         return BulkAnalysisResponse(
-            results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.1
+            results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.1
         )
 
 

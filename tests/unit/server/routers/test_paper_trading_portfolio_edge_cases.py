@@ -20,6 +20,7 @@ from server.app.routers import paper_trading
 from src.infrastructure.db.models import TradeMode
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser:
     def __init__(self, id: int):
         self.id = id
@@ -35,7 +36,7 @@ class DummyOrder(SimpleNamespace):
         kwargs.setdefault("avg_price", 0.0)
         kwargs.setdefault("order_type", "market")
         kwargs.setdefault("quantity", 0)
-        kwargs.setdefault("placed_at", datetime.now())
+        kwargs.setdefault("placed_at", ist_now_naive())
         kwargs.setdefault("filled_at", None)
         kwargs.setdefault("broker_order_id", None)
         kwargs.setdefault("order_id", None)
@@ -160,7 +161,7 @@ class TestPaperTradingPortfolioEdgeCases:
             quantity=10.0,
             avg_price=100.0,
             closed_at=None,
-            opened_at=datetime.now(),
+            opened_at=ist_now_naive(),
             reentry_count=0,
             entry_rsi=29.5,
             initial_entry_price=100.0,
@@ -168,7 +169,7 @@ class TestPaperTradingPortfolioEdgeCases:
         )
 
         # User 2 has paper position for RELIANCE-EQ
-        position_time = datetime.now()
+        position_time = ist_now_naive()
         user2_position = DummyPosition(
             symbol="RELIANCE-EQ",
             quantity=5.0,
@@ -185,7 +186,7 @@ class TestPaperTradingPortfolioEdgeCases:
         DummyOrder(
             symbol="RELIANCE-EQ",
             side="buy",
-            placed_at=datetime.now(),
+            placed_at=ist_now_naive(),
             trade_mode=TradeMode.BROKER,
         )
 
@@ -229,7 +230,7 @@ class TestPaperTradingPortfolioEdgeCases:
             quantity=10.0,
             avg_price=100.0,
             closed_at=None,
-            opened_at=datetime.now() - timedelta(days=1),
+            opened_at=ist_now_naive() - timedelta(days=1),
             reentry_count=0,
             entry_rsi=29.5,
             initial_entry_price=100.0,
@@ -270,7 +271,7 @@ class TestPaperTradingPortfolioEdgeCases:
             quantity=10.0,
             avg_price=100.0,
             closed_at=None,
-            opened_at=datetime.now() - timedelta(days=1),
+            opened_at=ist_now_naive() - timedelta(days=1),
             reentry_count=0,
             entry_rsi=29.5,
             initial_entry_price=100.0,
@@ -292,7 +293,7 @@ class TestPaperTradingPortfolioEdgeCases:
     def test_position_with_broker_order_skipped(self, monkeypatch):
         """Test that positions with broker orders are skipped in paper portfolio"""
         # Position with broker order
-        position_time = datetime.now()
+        position_time = ist_now_naive()
         position = DummyPosition(
             symbol="STOCK3-EQ",
             quantity=10.0,
@@ -324,7 +325,7 @@ class TestPaperTradingPortfolioEdgeCases:
     def test_account_balance_mismatch_validation(self, monkeypatch):
         """Test account balance vs positions mismatch validation"""
         # Position with large investment
-        position_time = datetime.now()
+        position_time = ist_now_naive()
         position = DummyPosition(
             symbol="STOCK4-EQ",
             quantity=1000.0,  # Large quantity
@@ -369,7 +370,7 @@ class TestPaperTradingPortfolioEdgeCases:
     def test_symbol_format_mismatch_target_prices(self, monkeypatch):
         """Test that target prices work with both full and base symbol formats"""
         # Position with full symbol (RELIANCE-EQ)
-        position_time = datetime.now()
+        position_time = ist_now_naive()
         position = DummyPosition(
             symbol="RELIANCE-EQ",
             quantity=10.0,
@@ -418,7 +419,7 @@ class TestPaperTradingPortfolioEdgeCases:
     def test_order_time_matching_within_one_hour(self, monkeypatch):
         """Test that orders are matched with positions within 1 hour window"""
         # Position opened 30 minutes ago
-        position_time = datetime.now() - timedelta(minutes=30)
+        position_time = ist_now_naive() - timedelta(minutes=30)
         position = DummyPosition(
             symbol="STOCK5-EQ",
             quantity=10.0,
@@ -463,7 +464,7 @@ class TestPaperTradingPortfolioEdgeCases:
     def test_order_time_matching_outside_one_hour(self, monkeypatch):
         """Test that orders outside 1 hour window don't match"""
         # Position opened 2 hours ago
-        position_time = datetime.now() - timedelta(hours=2)
+        position_time = ist_now_naive() - timedelta(hours=2)
         position = DummyPosition(
             symbol="STOCK6-EQ",
             quantity=10.0,

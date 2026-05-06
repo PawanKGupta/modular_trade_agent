@@ -14,6 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -255,7 +257,7 @@ class TestReentryTrackingWorkflow:
             "status": "open",
             "qty": 15,
             "entry_price": 2480.0,
-            "entry_time": datetime.now().isoformat(),
+            "entry_time": ist_now().isoformat(),
             "reentries": [
                 {"qty": 5, "level": 30, "rsi": 29.5, "price": 2480.0, "time": "2024-01-01T10:00:00"}
             ],

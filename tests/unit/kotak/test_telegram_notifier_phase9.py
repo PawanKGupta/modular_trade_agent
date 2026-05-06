@@ -1,4 +1,6 @@
 # ruff: noqa: E402, PLC0415
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 """
 Tests for Phase 9: Notification triggers in TelegramNotifier
 
@@ -226,7 +228,7 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
         mock_post.return_value = mock_response
 
         # Add old timestamps
-        old_time = datetime.now() - timedelta(hours=2)
+        old_time = ist_now_naive() - timedelta(hours=2)
         self.notifier._notification_timestamps = [old_time] * 25
 
         # Check rate limit should clean up old timestamps
@@ -241,7 +243,7 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
         mock_post.return_value = mock_response
 
         # Add recent timestamps (within last hour) up to limit
-        recent_time = datetime.now() - timedelta(minutes=30)
+        recent_time = ist_now_naive() - timedelta(minutes=30)
         self.notifier._notification_timestamps = [recent_time] * 20
 
         # Next notification should be rate limited

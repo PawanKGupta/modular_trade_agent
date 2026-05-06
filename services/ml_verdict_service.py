@@ -11,6 +11,8 @@ from typing import Any
 import joblib
 import pandas as pd
 
+from src.infrastructure.db.timezone_utils import ist_now_naive
+
 from services.verdict_service import VerdictService
 from utils.logger import logger
 
@@ -770,13 +772,11 @@ class MLVerdictService(VerdictService):
         # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
         # For live predictions, use current date unless analysis_date provided
         try:
-            from datetime import datetime
-
-            # Get analysis date from indicators if available (for historical), otherwise use today
+            # Get analysis date from indicators if available (for historical), otherwise IST now
             if indicators and "analysis_date" in indicators:
                 analysis_datetime = pd.to_datetime(indicators["analysis_date"])
             else:
-                analysis_datetime = datetime.now()
+                analysis_datetime = ist_now_naive()
 
             features["day_of_week"] = analysis_datetime.weekday()  # 0=Monday, 6=Sunday
             features["is_monday"] = 1.0 if analysis_datetime.weekday() == 0 else 0.0

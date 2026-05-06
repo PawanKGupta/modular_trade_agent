@@ -4,7 +4,9 @@ Test implementation of IBrokerGateway for unit testing
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
+
 from ...domain import Order, Holding, Money, IBrokerGateway, OrderStatus
 
 
@@ -98,7 +100,7 @@ class MockBrokerAdapter(IBrokerGateway):
             quantity=quantity,
             average_price=Money.from_float(avg_price),
             current_price=Money.from_float(current_price),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
         self._holdings[symbol.upper()] = holding
 

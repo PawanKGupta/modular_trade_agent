@@ -10,10 +10,11 @@ Phase 4 Feature - ML Monitoring and Logging
 import os
 import json
 import csv
-from datetime import datetime
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dataclasses import dataclass, asdict
+
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 
 from utils.logger import logger
 
@@ -61,7 +62,7 @@ class MLLoggingService:
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         # Daily log file
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = ist_now_naive().strftime("%Y-%m-%d")
         self.log_file = self.log_dir / f"predictions_{today}.jsonl"
         self.csv_file = self.log_dir / f"predictions_{today}.csv"
 
@@ -105,7 +106,7 @@ class MLLoggingService:
         try:
             # Create log entry
             log_entry = MLPredictionLog(
-                timestamp=datetime.now().isoformat(),
+                timestamp=ist_now().isoformat(),
                 ticker=ticker,
                 ml_verdict=ml_verdict,
                 ml_confidence=ml_confidence,
@@ -275,7 +276,7 @@ class MLLoggingService:
         report.append("=" * 60)
         report.append("ML PREDICTION MONITORING REPORT")
         report.append("=" * 60)
-        report.append(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"Date: {ist_now().strftime('%Y-%m-%d %H:%M:%S')}")
         report.append(f"Log File: {self.log_file}")
         report.append("")
 
