@@ -27,8 +27,8 @@ def test_skips_when_users_missing(monkeypatch):
     engine.dispose = MagicMock()
 
     with (
-        patch("tools.alembic_reconcile_drift.create_engine", return_value=engine),
-        patch("tools.alembic_reconcile_drift.inspect") as insp_mock,
+        patch("sqlalchemy.create_engine", return_value=engine),
+        patch("sqlalchemy.inspect") as insp_mock,
         patch.dict("os.environ", {"DB_URL": "sqlite:///:memory:"}, clear=False),
     ):
         insp_mock.return_value.get_table_names.return_value = []

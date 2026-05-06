@@ -4,10 +4,12 @@ Tests for Order Simulator AMO Order Execution
 Tests that AMO orders execute correctly at market open with opening price.
 """
 
-from datetime import time as dt_time
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
+
+from src.infrastructure.db.timezone_utils import IST
 
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.domain import (
@@ -19,6 +21,10 @@ from modules.kotak_neo_auto_trader.domain import (
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator import OrderSimulator
 from modules.kotak_neo_auto_trader.infrastructure.simulation.price_provider import PriceProvider
+
+
+def _aware_at(h: int, m: int) -> datetime:
+    return datetime(2026, 1, 6, h, m, 0, tzinfo=IST)
 
 
 @pytest.fixture
@@ -54,14 +60,10 @@ class TestAMOMarketOrderExecution:
         opening_price = 101.0
         order_simulator.price_provider.get_price.return_value = opening_price
 
-        # Mock current time as 9:15 AM (market open)
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 15)
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 15),
+        ):
             success, message, execution_price = order_simulator.execute_order(order)
 
             # Verify execution
@@ -81,14 +83,10 @@ class TestAMOMarketOrderExecution:
             status=OrderStatus.OPEN,
         )
 
-        # Mock time as 9:14 AM (before market open)
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 14)
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 14),
+        ):
             success, message, execution_price = order_simulator.execute_order(order)
 
             # Should not execute yet
@@ -114,12 +112,9 @@ class TestAMOMarketOrderExecution:
         order_simulator.price_provider.get_price.return_value = opening_price
 
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 15)
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 15),
+        ):
             success, message, execution_price = order_simulator.execute_order(order)
 
             # Should execute at opening price
@@ -142,12 +137,9 @@ class TestAMOMarketOrderExecution:
         order_simulator.price_provider.get_price.return_value = opening_price
 
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 15)
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 15),
+        ):
             order_simulator.execute_order(order)
 
             # Verify price was fetched using original ticker
@@ -168,12 +160,9 @@ class TestAMOExecutionTimeCheck:
         )
 
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 15)  # Market open
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 15),
+        ):
             result = order_simulator.should_execute_amo(order)
 
             assert result is True
@@ -189,12 +178,9 @@ class TestAMOExecutionTimeCheck:
         )
 
         with patch(
-            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.datetime"
-        ) as mock_datetime:
-            mock_now = Mock()
-            mock_now.time.return_value = dt_time(9, 14)  # Before market open
-            mock_datetime.now.return_value = mock_now
-
+            "modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator.ist_now",
+            return_value=_aware_at(9, 14),
+        ):
             result = order_simulator.should_execute_amo(order)
 
             assert result is False
