@@ -4,9 +4,11 @@ import type { StartTrainingPayload } from '@/api/ml-training';
 interface Props {
 	onSubmit: (payload: StartTrainingPayload) => void;
 	isSubmitting: boolean;
+	/** API / network error from the parent mutation (e.g. HTTP 400 missing CSV). */
+	serverError?: string | null;
 }
 
-export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
+export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 	const [modelType, setModelType] = useState<StartTrainingPayload['model_type']>('verdict_classifier');
 	const [algorithm, setAlgorithm] = useState<StartTrainingPayload['algorithm']>('xgboost');
 	const [trainingDataPath, setTrainingDataPath] = useState('data/training/verdict_classifier.csv');
@@ -157,7 +159,11 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				<span>Auto-activate new model version</span>
 			</label>
 
-			{error && <div className="text-xs sm:text-sm text-red-400">{error}</div>}
+			{(serverError || error) && (
+				<div role="alert" className="text-xs sm:text-sm text-red-400 break-words whitespace-pre-wrap">
+					{serverError || error}
+				</div>
+			)}
 
 			<button
 				type="submit"

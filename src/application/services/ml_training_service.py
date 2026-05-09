@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -16,6 +17,8 @@ from src.infrastructure.persistence.ml_model_repository import MLModelRepository
 from src.infrastructure.persistence.ml_training_job_repository import (
     MLTrainingJobRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _json_safe(value: Any) -> Any:
@@ -61,7 +64,8 @@ class MLTrainingService:
 
         return LegacyTrainer(str(self.artifact_dir))
 
-    def _resolve_training_csv(self, raw_path: str) -> Path:
+    def resolve_training_csv(self, raw_path: str) -> Path:
+        """Absolute path to the CSV as seen by the API worker (respects cwd, e.g. /app)."""
         candidate = Path(raw_path)
         if candidate.is_absolute():
             return candidate.resolve()
@@ -82,7 +86,7 @@ class MLTrainingService:
         incremental_diag: dict[str, Any] | None = None
 
         try:
-            csv_path = self._resolve_training_csv(config.training_data_path)
+            csv_path = self.resolve_training_csv(config.training_data_path)
             if not csv_path.is_file():
                 raise FileNotFoundError(f"Training CSV not found at {csv_path}")
 
@@ -220,7 +224,12 @@ class MLTrainingService:
                 error_message=str(exc),
                 logs=json.dumps(failure_payload)[:15800],
             )
-            raise
+            logger.warning(
+                "ML training job %s failed (%s): %s",
+                job_id,
+                type(exc).__name__,
+                exc,
+            )
 
     def _next_semantic_version(self, model_type: str) -> str:
         existing = self.model_repo.list(model_type=model_type)

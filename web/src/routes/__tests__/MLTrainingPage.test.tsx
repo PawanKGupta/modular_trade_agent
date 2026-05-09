@@ -1,9 +1,11 @@
 import { describe, it, beforeEach, expect, vi } from 'vitest';
+import { AxiosError } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient } from '@tanstack/react-query';
 import { withProviders } from '@/test/utils';
 import { MLTrainingPage } from '../dashboard/MLTrainingPage';
+import type { MLTrainingJob } from '@/api/ml-training';
 import * as mlApi from '@/api/ml-training';
 
 vi.mock('@/api/ml-training', () => ({
@@ -122,6 +124,121 @@ describe('MLTrainingPage', () => {
 
 		await waitFor(() => {
 			expect(mlApi.startTrainingJob).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('shows FastAPI detail when Start Training rejects', async () => {
+		const detail = 'Training CSV not found at /app/data/foo.csv — mount volumes';
+		const axiosErr = new AxiosError('fail');
+		axiosErr.response = {
+			status: 400,
+			data: { detail },
+			statusText: 'Bad Request',
+			headers: {},
+			config: {} as AxiosError['config'],
+		};
+		vi.mocked(mlApi.startTrainingJob).mockRejectedValueOnce(axiosErr);
+
+		render(
+			withProviders(
+				<MemoryRouter initialEntries={['/dashboard/admin/ml']}>
+					<MLTrainingPage />
+				</MemoryRouter>,
+				{ queryClient }
+			)
+		);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Start Training/i })).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Start Training/i }));
+
+		await waitFor(() => {
+			const alert = screen.getByRole('alert');
+			expect(alert.textContent).toContain('/app/data/foo.csv');
+			expect(alert.textContent).toContain('mount volumes');
+		});
+	});
+
+	it('shows persisted error_message for failed jobs', async () => {
+		const jobs: MLTrainingJob[] = [
+			{
+				id: 1,
+				started_by: 1,
+				status: 'completed',
+				model_type: 'verdict_classifier',
+				algorithm: 'xgboost',
+				training_data_path: 'data/mock.csv',
+				started_at: new Date().toISOString(),
+				completed_at: new Date().toISOString(),
+				model_path: 'models/mock.json',
+				accuracy: 0.82,
+				error_message: null,
+				logs: 'done',
+			},
+			{
+				id: 2,
+				started_by: 1,
+				status: 'failed',
+				model_type: 'verdict_classifier',
+				algorithm: 'xgboost',
+				training_data_path: 'data/missing.csv',
+				started_at: new Date().toISOString(),
+				completed_at: new Date().toISOString(),
+				model_path: null,
+				accuracy: null,
+				error_message: 'CSV file not found during background training',
+				logs: 'error',
+			},
+		];
+		vi.mocked(mlApi.getTrainingJobs).mockResolvedValueOnce(jobs);
+
+		render(
+			withProviders(
+				<MemoryRouter initialEntries={['/dashboard/admin/ml']}>
+					<MLTrainingPage />
+				</MemoryRouter>,
+				{ queryClient }
+			)
+		);
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(/CSV file not found during background training/i)
+			).toBeInTheDocument();
+		});
+	});
+
+	it('shows activation failure message', async () => {
+		const detail = 'Forbidden for this user';
+		const axiosErr = new AxiosError('fail');
+		axiosErr.response = {
+			status: 403,
+			data: { detail },
+			statusText: 'Forbidden',
+			headers: {},
+			config: {} as AxiosError['config'],
+		};
+		vi.mocked(mlApi.activateModel).mockRejectedValueOnce(axiosErr);
+
+		render(
+			withProviders(
+				<MemoryRouter initialEntries={['/dashboard/admin/ml']}>
+					<MLTrainingPage />
+				</MemoryRouter>,
+				{ queryClient }
+			)
+		);
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /Activate/i })).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: /Activate/i }));
+
+		await waitFor(() => {
+			expect(screen.getByRole('alert')).toHaveTextContent('Forbidden for this user');
 		});
 	});
 

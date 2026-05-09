@@ -72,6 +72,8 @@ curl -X POST http://localhost:8000/api/v1/admin/ml/train \
 
 `incremental_training` uses the active model's saved **data-through** watermark: the CSV must still contain all historical samples up through that watermark, plus newer rows through `training_run_end_date` (inclusive); omit the date field to cap at server **today IST**. Set `"incremental_training": false` to refit everything in the CSV up to the requested end date regardless of watermark.
 
+The API resolves relative paths against the server's working directory (often `/app` in Docker); the file **must exist** before the job is queued, or you'll get HTTP 400. Mount your dataset into the container (for example `./data/training:/app/data/training:ro`) and point `training_data_path` at that path.
+
 ### Manual Training Data Collection (Advanced)
 
 If you need to collect training data manually:

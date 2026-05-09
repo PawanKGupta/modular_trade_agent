@@ -34,17 +34,24 @@ export function MLTrainingJobsTable({ jobs, isLoading }: Props) {
 							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm hidden sm:table-cell">{job.model_type}</td>
 							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm hidden md:table-cell">{job.algorithm}</td>
 							<td className="py-2 pr-2 sm:pr-4">
-								<span
-									className={`px-2 py-1 rounded-full text-xs ${
-										job.status === 'completed'
-											? 'bg-green-500/20 text-green-300'
-											: job.status === 'failed'
-												? 'bg-red-500/20 text-red-300'
-												: 'bg-slate-500/20 text-slate-200'
-									}`}
-								>
-									{job.status}
-								</span>
+								<div className="space-y-1">
+									<span
+										className={`inline-flex px-2 py-1 rounded-full text-xs ${
+											job.status === 'completed'
+												? 'bg-green-500/20 text-green-300'
+												: job.status === 'failed'
+													? 'bg-red-500/20 text-red-300'
+													: 'bg-slate-500/20 text-slate-200'
+										}`}
+									>
+										{job.status}
+									</span>
+									{job.status === 'failed' && job.error_message ? (
+										<p className="text-red-400/90 text-xs max-w-xl break-words whitespace-pre-wrap">
+											{job.error_message}
+										</p>
+									) : null}
+								</div>
 							</td>
 							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm">
 								{job.accuracy !== null ? `${(job.accuracy * 100).toFixed(2)}%` : '-'}

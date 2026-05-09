@@ -102,6 +102,25 @@ def wait_for_models(model_repo, timeout: float = 2.0):
 
 
 class TestMLTrainingAPI:
+    def test_admin_train_rejected_when_csv_missing(
+        self, client: TestClient, admin_user, ml_service, tmp_path: Path
+    ):
+        """Missing CSV path yields 400 and no orphaned background failure noise."""
+        token = login(client, admin_user.email, "Admin@123")
+        phantom = tmp_path / "does_not_exist_verdict.csv"
+        assert not phantom.exists()
+        response = client.post(
+            "/api/v1/admin/ml/train",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "model_type": "verdict_classifier",
+                "algorithm": "random_forest",
+                "training_data_path": str(phantom),
+            },
+        )
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower()
+
     def test_non_admin_cannot_start_training(self, client: TestClient, normal_user, ml_service):
         token = login(client, normal_user.email, "User@123")
         csv_path = ml_service._fixture_training_csv
