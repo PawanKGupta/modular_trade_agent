@@ -34,6 +34,8 @@ def _to_config(request: MLTrainingRequest) -> TrainingJobConfig:
         hyperparameters=request.hyperparameters or {},
         notes=request.notes,
         auto_activate=request.auto_activate,
+        incremental_training=request.incremental_training,
+        training_run_end_date=request.training_run_end_date,
     )
 
 

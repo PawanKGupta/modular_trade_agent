@@ -56,15 +56,21 @@ Integrate AI/ML capabilities into the trading agent system to enhance verdict pr
 ### Training via API
 
 ```bash
-# Start ML training job via API
+# Start ML training job via API (runs real sklearn training on the server filesystem)
 curl -X POST http://localhost:8000/api/v1/admin/ml/train \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model_version": "v4",
-    "force_retrain": false
+    "model_type": "verdict_classifier",
+    "algorithm": "random_forest",
+    "training_data_path": "data/ml/verdict_rows.csv",
+    "incremental_training": true,
+    "training_run_end_date": null,
+    "auto_activate": true
   }'
 ```
+
+`incremental_training` uses the active model's saved **data-through** watermark: the CSV must still contain all historical samples up through that watermark, plus newer rows through `training_run_end_date` (inclusive); omit the date field to cap at server **today IST**. Set `"incremental_training": false` to refit everything in the CSV up to the requested end date regardless of watermark.
 
 ### Manual Training Data Collection (Advanced)
 

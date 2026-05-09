@@ -11,9 +11,8 @@ from typing import Any
 import joblib
 import pandas as pd
 
-from src.infrastructure.db.timezone_utils import ist_now_naive
-
 from services.verdict_service import VerdictService
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 
@@ -70,12 +69,15 @@ class MLVerdictService(VerdictService):
 
                 # Extract model type from filename (e.g., "verdict_model_random_forest" -> "random_forest")
                 model_type = None
-                if "random_forest" in model_stem:
+                if "random_forest" in model_stem.lower():
                     model_type = "random_forest"
-                elif "xgboost" in model_stem:
+                elif "xgboost" in model_stem.lower():
                     model_type = "xgboost"
+                elif "logistic" in model_stem.lower():
+                    model_type = "logistic_regression"
 
                 possible_paths = [
+                    Path(model_path).parent / f"{model_stem}_features.txt",
                     # Current format: verdict_model_features_{model_type}.txt (from training service)
                     (
                         Path(model_path).parent / f"verdict_model_features_{model_type}.txt"

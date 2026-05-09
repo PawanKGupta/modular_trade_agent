@@ -179,9 +179,9 @@ During demos, highlight:
 ### Components
 | Widget | File | Notes |
 | --- | --- | --- |
-| Training form | `MLTrainingForm.tsx` | Validates path + JSON hyperparameters, optional notes, auto-activate toggle. |
+| Training form | `MLTrainingForm.tsx` | Validates path + JSON hyperparameters, optional notes, auto-activate, incremental + run-through-date controls. |
 | Jobs table | `MLTrainingJobsTable.tsx` | Shows job ID, type, algorithm, status badge, accuracy, timestamps. Auto-refresh 12s + manual refresh. |
-| Models table | `MLModelsTable.tsx` | Lists versions, accuracy, active state with Activate button (per-row loading). |
+| Models table | `MLModelsTable.tsx` | Lists versions, observed accuracy/R² metric, inclusive **data-through** watermark, Activate button (per-row loading). |
 | Page shell | `MLTrainingPage.tsx` | Coordinates TanStack Query hooks, start/activate mutations, and section layout. |
 
 ### Backend Contracts
@@ -199,9 +199,9 @@ Implementation lives in:
 - `server/app/schemas/ml.py`
 
 ### Training Workflow
-1. Admin fills out the training form (model type, algorithm, data path, hyperparams JSON, optional notes).
+1. Admin fills out the training form (model type, algorithm, **server-visible** CSV path, hyperparams JSON, optional incremental training + capped run date, notes).
 2. Submit → `startTrainingJob` mutation posts to `/train`.
-3. Backend creates `MLTrainingJob` row, runs simulated training, writes artifact JSON under `models/{type}/{algorithm}-vN.json`, and creates an `MLModel` record.
+3. Backend creates `MLTrainingJob` row, subsets rows (`entry_date` / `backtest_date`) according to watermark + incremental rules, invokes sklearn trainers in `services/ml_training_service.py`, writes **`{algorithm}-{vN}.pkl`** + paired `{stem}_features.txt` + **`{stem}.meta.json`**, persists `accuracy`/R², and stamps `training_data_through_date`.
 4. Jobs + models queries auto-refresh so the UI reflects completion.
 5. Admin can activate any inactive model; first model of each type auto-activates.
 6. Users select `ml_model_version` (or default to active) via Trading Config.

@@ -862,6 +862,8 @@ class MLModel(Base):
         String(16), index=True, nullable=False
     )  # 'v1.0', 'v1.1', etc.
     model_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    #: Inclusive end of training data window (typically max entry/backtest row date used).
+    training_data_through_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
     training_job_id: Mapped[int] = mapped_column(ForeignKey("ml_training_jobs.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)

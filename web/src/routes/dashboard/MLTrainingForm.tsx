@@ -13,6 +13,8 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 	const [hyperparametersText, setHyperparametersText] = useState('{"max_depth": 6, "learning_rate": 0.1}');
 	const [notes, setNotes] = useState<string>('');
 	const [autoActivate, setAutoActivate] = useState(true);
+	const [incrementalTraining, setIncrementalTraining] = useState(true);
+	const [trainingRunEndDate, setTrainingRunEndDate] = useState<string>(''); // yyyy-mm-dd ISO
 	const [error, setError] = useState<string | null>(null);
 
 	const parsedHyperparameters = useMemo<Record<string, string | number | boolean>>(() => {
@@ -40,6 +42,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 		}
 
 		try {
+			const trimmedEnd = trainingRunEndDate.trim();
 			const payload: StartTrainingPayload = {
 				model_type: modelType,
 				algorithm,
@@ -47,6 +50,8 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				hyperparameters: parsedHyperparameters,
 				notes: notes.trim() || undefined,
 				auto_activate: autoActivate,
+				incremental_training: incrementalTraining,
+				training_run_end_date: trimmedEnd ? trimmedEnd : undefined,
 			};
 			onSubmit(payload);
 		} catch (err) {
@@ -104,6 +109,31 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				/>
 				<span className="text-[var(--muted)] text-xs">
 					Example: {"{ \"max_depth\": 6, \"learning_rate\": 0.1 }"}
+				</span>
+			</label>
+
+			<label className="text-xs sm:text-sm flex flex-col gap-1">
+				<span className="text-[var(--muted)]">Training runs through (optional)</span>
+				<input
+					type="date"
+					value={trainingRunEndDate}
+					onChange={(e) => setTrainingRunEndDate(e.target.value)}
+					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
+				/>
+				<span className="text-[var(--muted)] text-xs">
+					Leave blank to use today (server IST). Rows are capped by entry/backtest date.
+				</span>
+			</label>
+
+			<label className="text-xs sm:text-sm flex items-center gap-2 min-h-[44px] sm:min-h-0">
+				<input
+					type="checkbox"
+					checked={incrementalTraining}
+					onChange={(e) => setIncrementalTraining(e.target.checked)}
+					className="w-4 h-4 sm:w-auto sm:h-auto"
+				/>
+				<span className="text-[var(--text)]">
+					Incremental training (requires watermark + consolidated CSV baseline)
 				</span>
 			</label>
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -8,9 +8,9 @@ from fastapi import HTTPException, status
 from server.app.routers import ml
 from server.app.schemas.ml import MLTrainingRequest
 from src.infrastructure.db.models import UserRole
+from tests.ist_clock import ist_now_naive
 
 
-from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
         super().__init__(
@@ -167,6 +167,8 @@ def test_to_config():
     assert config.hyperparameters == {"n_estimators": 100}
     assert config.notes == "Test training"
     assert config.auto_activate is True
+    assert config.incremental_training is True
+    assert config.training_run_end_date is None
 
 
 def test_to_config_defaults():
@@ -183,6 +185,23 @@ def test_to_config_defaults():
     assert config.hyperparameters == {}
     assert config.notes is None
     assert config.auto_activate is False
+
+
+def test_to_config_incremental_flags():
+    """Incremental window fields map into TrainingJobConfig."""
+
+    request = MLTrainingRequest(
+        model_type="verdict_classifier",
+        algorithm="xgboost",
+        training_data_path="/data/train.csv",
+        incremental_training=False,
+        training_run_end_date=date(2026, 5, 10),
+    )
+
+    config = ml._to_config(request)
+
+    assert config.incremental_training is False
+    assert config.training_run_end_date == date(2026, 5, 10)
 
 
 # POST /admin/ml/train tests
@@ -615,6 +634,8 @@ def test_run_training_job_async(monkeypatch):
         "hyperparameters": {},
         "notes": None,
         "auto_activate": False,
+        "incremental_training": True,
+        "training_run_end_date": None,
     }
 
     # Call the async function
