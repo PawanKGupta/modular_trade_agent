@@ -7,6 +7,8 @@ Tests for ML configuration enhancements:
 - Model path resolution from database
 """
 
+# ruff: noqa: E402 -- sys.path must be amended before src imports
+
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -286,3 +288,11 @@ class TestMLConfigurationEnhancements:
                 assert resolved_path == "models/verdict_model_random_forest.pkl"
                 mock_warning.assert_called_once()
                 assert "not found in database" in str(mock_warning.call_args)
+
+    def test_ml_price_enabled_passed_to_strategy_config(self, sample_user_config, db_session):
+        """Trading DB flag maps to StrategyConfig.ml_price_enabled for AnalysisService."""
+        sample_user_config.ml_price_enabled = True
+        db_session.commit()
+
+        strategy_config = user_config_to_strategy_config(sample_user_config, db_session=db_session)
+        assert strategy_config.ml_price_enabled is True

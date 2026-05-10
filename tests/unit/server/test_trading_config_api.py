@@ -11,15 +11,16 @@ Tests cover:
 import pytest
 from fastapi.testclient import TestClient
 
+from server.app.core.deps import get_db
+from server.app.main import app
 from src.infrastructure.db.models import UserRole
+from src.infrastructure.persistence import UserRepository
 from src.infrastructure.persistence.config_factory import create_default_user_config
 
 
 @pytest.fixture
 def client(db_session):
     """Create test client with database override"""
-    from server.app.core.deps import get_db
-    from server.app.main import app
 
     def override_get_db():
         try:
@@ -35,8 +36,6 @@ def client(db_session):
 @pytest.fixture
 def test_user(db_session):
     """Create a test user"""
-    from src.infrastructure.persistence import UserRepository
-
     repo = UserRepository(db_session)
     user = repo.create_user(
         email="test@example.com",
@@ -84,6 +83,17 @@ class TestTradingConfigAPI:
         assert data["user_capital"] == 100000.0
         assert data["max_portfolio_size"] == 6
         assert data["chart_quality_enabled"] is True
+        assert data.get("ml_price_enabled") is False
+
+    def test_update_ml_price_enabled(self, client, test_user_with_config, auth_token):
+        """PUT persists ml_price_enabled (boolean)."""
+        response = client.put(
+            "/api/v1/user/trading-config",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"ml_price_enabled": True},
+        )
+        assert response.status_code == 200
+        assert response.json()["ml_price_enabled"] is True
 
     def test_get_trading_config_returns_existing(
         self, client, db_session, test_user_with_config, auth_token

@@ -12,6 +12,7 @@ extend-exclude = [
 	"build",
 	"htmlcov",
 	# Legacy ML modules exceed PL/complexity rules; refactor tracked separately.
+	"services/analysis_service.py",
 	"services/ml_verdict_service.py",
 	"services/ml_training_service.py",
 	"services/ml_retraining_service.py",
@@ -27,6 +28,9 @@ ignore = ["S101"] # allow assert in tests
 "tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
 # Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.
 "services/pipeline_steps.py" = ["E501"]
+
+[tool.ruff.format]
+exclude = ["tests/unit/infrastructure/test_database_schema_validation.py"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["server", "src"]

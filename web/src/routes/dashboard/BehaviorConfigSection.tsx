@@ -194,6 +194,24 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 			<div className="mt-6 pt-6 border-t border-[#1e293b]">
 				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">ML Configuration</h3>
 				<div className="mb-4">
+					<label htmlFor="ml_price_enabled" className="flex items-center gap-2">
+						<input
+							id="ml_price_enabled"
+							type="checkbox"
+							checked={config.ml_price_enabled}
+							onChange={(e) => onChange({ ml_price_enabled: e.target.checked })}
+							className="rounded"
+						/>
+						<span className="text-sm">
+							Use ML for target / stop (when model files exist on server)
+							{!isDefault('ml_price_enabled') && <span className="text-yellow-400 ml-1">*</span>}
+						</span>
+					</label>
+					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
+						Separate from verdict ML. Uses confidence threshold when either ML option is enabled.
+					</div>
+				</div>
+				<div className="mb-4">
 					<label htmlFor="ml_enabled" className="flex items-center gap-2">
 						<input
 							id="ml_enabled"
@@ -211,28 +229,30 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 						Default: {defaultConfig.ml_enabled ? 'Enabled' : 'Disabled'}
 					</div>
 				</div>
-				{config.ml_enabled && (
+				{(config.ml_enabled || config.ml_price_enabled) && (
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
-						<div>
-							<label htmlFor="ml_model_version" className="block text-sm mb-1">
-								ML Model Version
-								{!isDefault('ml_model_version') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="ml_model_version"
-								type="text"
-								value={config.ml_model_version || ''}
-								onChange={(e) => onChange({ ml_model_version: e.target.value || null })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-								placeholder="v1.0"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">
-								Default: {defaultConfig.ml_model_version || 'None'}
+						{config.ml_enabled && (
+							<div>
+								<label htmlFor="ml_model_version" className="block text-sm mb-1">
+									ML Model Version
+									{!isDefault('ml_model_version') && <span className="text-yellow-400 ml-1">*</span>}
+								</label>
+								<input
+									id="ml_model_version"
+									type="text"
+									value={config.ml_model_version || ''}
+									onChange={(e) => onChange({ ml_model_version: e.target.value || null })}
+									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									placeholder="v1.0"
+								/>
+								<div className="text-xs text-[var(--muted)] mt-1">
+									Default: {defaultConfig.ml_model_version || 'None'}
+								</div>
 							</div>
-						</div>
+						)}
 						<div>
 							<label htmlFor="ml_confidence_threshold" className="block text-sm mb-1">
-								Confidence Threshold
+								ML Confidence Threshold
 								{!isDefault('ml_confidence_threshold') && <span className="text-yellow-400 ml-1">*</span>}
 							</label>
 							<input
@@ -247,24 +267,26 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.ml_confidence_threshold}</div>
 						</div>
-						<div>
-							<label htmlFor="ml_combine_with_rules" className="flex items-center gap-2">
-								<input
-									id="ml_combine_with_rules"
-									type="checkbox"
-									checked={config.ml_combine_with_rules}
-									onChange={(e) => onChange({ ml_combine_with_rules: e.target.checked })}
-									className="rounded"
-								/>
-								<span className="text-sm">
-									Combine ML with Rule-Based Logic
-									{!isDefault('ml_combine_with_rules') && <span className="text-yellow-400 ml-1">*</span>}
-								</span>
-							</label>
-							<div className="text-xs text-[var(--muted)] mt-1 ml-6">
-								Default: {defaultConfig.ml_combine_with_rules ? 'Enabled' : 'Disabled'}
+						{config.ml_enabled && (
+							<div>
+								<label htmlFor="ml_combine_with_rules" className="flex items-center gap-2">
+									<input
+										id="ml_combine_with_rules"
+										type="checkbox"
+										checked={config.ml_combine_with_rules}
+										onChange={(e) => onChange({ ml_combine_with_rules: e.target.checked })}
+										className="rounded"
+									/>
+									<span className="text-sm">
+										Combine ML with Rule-Based Logic
+										{!isDefault('ml_combine_with_rules') && <span className="text-yellow-400 ml-1">*</span>}
+									</span>
+								</label>
+								<div className="text-xs text-[var(--muted)] mt-1 ml-6">
+									Default: {defaultConfig.ml_combine_with_rules ? 'Enabled' : 'Disabled'}
+								</div>
 							</div>
-						</div>
+						)}
 					</div>
 				)}
 			</div>

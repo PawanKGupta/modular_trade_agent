@@ -124,6 +124,11 @@ class StrategyConfig:
     ml_enabled: bool = False
     ml_verdict_model_path: str = "models/verdict_model_random_forest.pkl"
     ml_price_model_path: str = "models/price_model_random_forest.pkl"
+    #: When True, ``AnalysisService`` may override rule-based target/stop using ``MLPriceService``
+    #: if the corresponding model files exist (separate from ``ml_enabled`` / verdict ML).
+    ml_price_enabled: bool = False
+    #: Optional path to a separate stop-loss regression model; if unset, only target ML may apply.
+    ml_stop_loss_model_path: str | None = None
     ml_confidence_threshold: float = 0.5  # 50% confidence threshold
     ml_combine_with_rules: bool = True  # Combine ML with rule-based logic
 
@@ -231,6 +236,9 @@ class StrategyConfig:
             ml_confidence_threshold=float(os.getenv("ML_CONFIDENCE_THRESHOLD", "0.5")),
             ml_combine_with_rules=os.getenv("ML_COMBINE_WITH_RULES", "true").lower()
             in ("1", "true", "yes", "on"),
+            ml_price_enabled=os.getenv("ML_PRICE_ENABLED", "false").lower()
+            in ("1", "true", "yes", "on"),
+            ml_stop_loss_model_path=(os.getenv("ML_STOP_LOSS_MODEL_PATH", "").strip() or None),
             # Support/Resistance Lookback
             support_resistance_lookback_daily=int(
                 os.getenv("SUPPORT_RESISTANCE_LOOKBACK_DAILY", "20")
@@ -277,4 +285,7 @@ class StrategyConfig:
         return cls()
 
     def __repr__(self) -> str:
-        return f"StrategyConfig(rsi_oversold={self.rsi_oversold}, volume_lookback={self.volume_lookback_days}, ...)"
+        return (
+            f"StrategyConfig(rsi_oversold={self.rsi_oversold}, "
+            f"volume_lookback={self.volume_lookback_days}, ...)"
+        )

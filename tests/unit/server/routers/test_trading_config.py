@@ -74,6 +74,7 @@ class DummyTradingConfig(SimpleNamespace):
             news_sentiment_neg_threshold=kwargs.get("news_sentiment_neg_threshold", -0.25),
             # ML Configuration
             ml_enabled=kwargs.get("ml_enabled", False),
+            ml_price_enabled=kwargs.get("ml_price_enabled", False),
             ml_model_version=kwargs.get("ml_model_version", None),
             ml_confidence_threshold=kwargs.get("ml_confidence_threshold", 0.5),
             ml_combine_with_rules=kwargs.get("ml_combine_with_rules", True),
@@ -150,6 +151,7 @@ def test_get_trading_config_creates_default(trading_config_repo, current_user):
 
     assert result.rsi_period == 10  # Default value
     assert result.user_capital == 100000.0  # Default value
+    assert result.ml_price_enabled is False
     assert len(trading_config_repo.get_or_create_called) == 1
     assert 42 in trading_config_repo.configs_by_user
 
@@ -559,6 +561,7 @@ def test_config_to_response_handles_all_fields(trading_config_repo, current_user
     assert hasattr(result, "default_stop_loss_pct")
     assert hasattr(result, "default_exchange")
     assert hasattr(result, "ml_enabled")
+    assert hasattr(result, "ml_price_enabled")
     assert hasattr(result, "news_sentiment_enabled")
 
 

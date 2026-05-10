@@ -290,6 +290,8 @@ pip install xgboost
 
 **Canonical (production):** Live and batch analysis use `services.analysis_service.AnalysisService` (or `AsyncAnalysisService`) with `StrategyConfig.ml_enabled`. When a model loads, verdicts go through `MLVerdictService.determine_verdict` (chart-quality gate, flexible fundamentals, dip indicators, combine/threshold logic). This is the only path you should extend or tune for behaviour parity.
 
+**ML price targets / stops (optional):** When `StrategyConfig.ml_price_enabled` is True (Trading Config UI or env `ML_PRICE_ENABLED`), after rule-based trading parameters are computed `AnalysisService` may override `target` and/or `stop` using `MLPriceService` if `ml_price_model_path` / optional `ML_STOP_LOSS_MODEL_PATH` model files exist and prediction confidence clears `ml_confidence_threshold`. Result fields include `ml_price_target_applied`, `ml_price_stop_applied`, and related confidences.
+
 **Legacy (deprecated):** `services.pipeline_steps.create_analysis_pipeline(..., enable_ml=True)` adds `MLVerdictStep`, which calls `predict_verdict_with_confidence` after a rule-only `DetermineVerdictStep`. It **does not** match `AnalysisService` semantics. Passing `enable_ml=True` emits a `DeprecationWarning`. Prefer `AnalysisService.analyze_ticker(...)` (or async batch) for integration tests and new code.
 
 ### Automatic Integration

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
+from utils.logger import logger
+from utils.ml_model_resolver import get_model_path_from_version
 
 
 def _resolve_ml_model_path(
@@ -32,22 +34,16 @@ def _resolve_ml_model_path(
         return default_path
 
     try:
-        from utils.ml_model_resolver import get_model_path_from_version
-
         resolved_path = get_model_path_from_version(db_session, model_type, ml_model_version)
         if resolved_path:
             return resolved_path
         else:
             # If version specified but not found, log warning but use default
-            from utils.logger import logger
-
             logger.warning(
                 f"ML model version {ml_model_version} not found in database, using default model"
             )
             return default_path
     except Exception as e:
-        from utils.logger import logger
-
         logger.warning(f"Error resolving ML model path from version {ml_model_version}: {e}")
         return default_path
 
@@ -137,11 +133,13 @@ def user_config_to_strategy_config(
         news_sentiment_neg_threshold=user_config.news_sentiment_neg_threshold,
         # ML Configuration
         ml_enabled=user_config.ml_enabled,  # Use user's ML enabled setting from UI
+        ml_price_enabled=user_config.ml_price_enabled,
         # Resolve model path from ml_model_version if provided and db_session is available
         ml_verdict_model_path=_resolve_ml_model_path(
             user_config.ml_model_version, "verdict_classifier", db_session
         ),
-        ml_price_model_path="models/price_model_random_forest.pkl",  # TODO: Add price model version support
+        # TODO: Add price model version support
+        ml_price_model_path="models/price_model_random_forest.pkl",
         ml_confidence_threshold=user_config.ml_confidence_threshold,
         ml_combine_with_rules=user_config.ml_combine_with_rules,
         # Order Defaults
