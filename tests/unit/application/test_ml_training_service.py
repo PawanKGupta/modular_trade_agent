@@ -152,8 +152,8 @@ def test_run_training_job_failure_updates_status(training_service, admin_user, t
 
     training_service.sklearn_trainer_factory = _boom_factory  # type: ignore[method-assign]
 
-    with pytest.raises(RuntimeError):
-        training_service.run_training_job(job.id, config)
+    # Failures are recorded on the job; exceptions are not re-raised (background-safe).
+    training_service.run_training_job(job.id, config)
 
     stored_job = training_service.job_repo.get(job.id)
     assert stored_job.status == "failed"

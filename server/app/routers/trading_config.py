@@ -63,7 +63,7 @@ def _config_to_response(config) -> TradingConfigResponse:
         news_sentiment_neg_threshold=config.news_sentiment_neg_threshold,
         # ML Configuration
         ml_enabled=config.ml_enabled,
-        ml_price_enabled=config.ml_price_enabled,
+        ml_price_enabled=getattr(config, "ml_price_enabled", False),
         ml_model_version=config.ml_model_version,
         ml_confidence_threshold=config.ml_confidence_threshold,
         ml_combine_with_rules=config.ml_combine_with_rules,
