@@ -234,6 +234,8 @@ Configure news sentiment analysis.
 
 **Server-side headline model (operators):** The API stores the same UI fields; scoring is implemented in `core/news_sentiment.py`. On the server you can install optional **CPU Transformers** deps (`requirements-sentiment.txt` + PyTorch CPU wheels) so headlines use a small Hugging Face model by default (`NEWS_SENTIMENT_BACKEND=auto`). If those packages are missing, the code **falls back** to the legacy word-list heuristic. Relevant env vars: `NEWS_SENTIMENT_BACKEND` (`auto`|`transformer`|`lexicon`), `NEWS_SENTIMENT_TRANSFORMER_MODEL`, `NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE`, `NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH`. The returned payload may include `scorer` (`transformer`|`lexicon`|`none`) and `model` when a transformer was used.
 
+**Rule-based downgrade (operators):** `VerdictService` only downgrades `buy` / `strong_buy` → `watch` when news is **strongly** negative **and** the aggregate is credible: **`used` ≥ `news_sentiment_min_articles`** (from this config), **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), and average **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`, stricter than the UI “negative label” cutoff). Tune via environment on the server; justification tag remains `news_negative`.
+
 ### 8. ML Configuration
 
 Configure machine learning features.

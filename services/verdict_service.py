@@ -5,39 +5,47 @@ Handles verdict determination and trading parameter calculation.
 Extracted from core/analysis.py to improve modularity.
 """
 
-import pandas as pd
-from typing import Optional, Dict, Any, Tuple, List
-import math
 import threading
-
-from core.volume_analysis import assess_volume_quality_intelligent, get_volume_verdict, analyze_volume_pattern
-from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal
-from core.analysis import (
-    avg_volume,
-    calculate_smart_buy_range,
-    calculate_smart_stop_loss,
-    calculate_smart_target
-)
-import yfinance as yf
-
-from utils.logger import logger
-from utils.circuit_breaker import CircuitBreaker
-from utils.retry_handler import exponential_backoff_retry
-from config.strategy_config import StrategyConfig
-from config.settings import (
-    RETRY_MAX_ATTEMPTS, RETRY_BASE_DELAY, RETRY_MAX_DELAY, RETRY_BACKOFF_MULTIPLIER,
-    CIRCUITBREAKER_FAILURE_THRESHOLD, CIRCUITBREAKER_RECOVERY_TIMEOUT,
-    API_RATE_LIMIT_DELAY
-)
-from services.chart_quality_service import ChartQualityService
-from services.liquidity_capital_service import LiquidityCapitalService
 
 # Rate limiting for fundamental data API calls
 # IMPORTANT: Share the same rate limiter as OHLCV data since they hit the same Yahoo Finance API
 # This prevents hitting rate limits by spacing out ALL API calls (OHLCV + fundamental)
-import time
+from typing import Any
+
+import pandas as pd
+import yfinance as yf
+
+from config.settings import (
+    CIRCUITBREAKER_FAILURE_THRESHOLD,
+    CIRCUITBREAKER_RECOVERY_TIMEOUT,
+    NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE,
+    NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD,
+    RETRY_BACKOFF_MULTIPLIER,
+    RETRY_BASE_DELAY,
+    RETRY_MAX_ATTEMPTS,
+    RETRY_MAX_DELAY,
+)
+from config.strategy_config import StrategyConfig
+from core.analysis import (
+    avg_volume,
+    calculate_smart_buy_range,
+    calculate_smart_stop_loss,
+    calculate_smart_target,
+)
+from core.candle_analysis import analyze_recent_candle_quality, should_downgrade_signal
+
 # Import the rate limiting function from data_fetcher to share the same limiter
 from core.data_fetcher import _enforce_rate_limit
+from core.volume_analysis import (
+    analyze_volume_pattern,
+    assess_volume_quality_intelligent,
+    get_volume_verdict,
+)
+from services.chart_quality_service import ChartQualityService
+from services.liquidity_capital_service import LiquidityCapitalService
+from utils.circuit_breaker import CircuitBreaker
+from utils.logger import logger
+from utils.retry_handler import exponential_backoff_retry
 
 # Circuit breaker configuration for fundamental data API calls
 # Use same configuration as OHLCV data fetching for consistency
@@ -45,7 +53,7 @@ from core.data_fetcher import _enforce_rate_limit
 yfinance_fundamental_circuit_breaker = CircuitBreaker(
     name="YFinance_Fundamental_API",
     failure_threshold=CIRCUITBREAKER_FAILURE_THRESHOLD,
-    recovery_timeout=CIRCUITBREAKER_RECOVERY_TIMEOUT
+    recovery_timeout=CIRCUITBREAKER_RECOVERY_TIMEOUT,
 )
 
 # Create retry decorator with configurable parameters (same as OHLCV data fetching)
@@ -55,7 +63,7 @@ api_retry_configured = exponential_backoff_retry(
     max_delay=RETRY_MAX_DELAY,
     backoff_multiplier=RETRY_BACKOFF_MULTIPLIER,
     jitter=True,
-    exceptions=(Exception,)
+    exceptions=(Exception,),
 )
 
 # In-memory cache for fundamental data (FIX 3: Cache fundamental data)
@@ -66,7 +74,7 @@ _cache_lock = threading.Lock()
 class VerdictService:
     """Service for determining verdicts and calculating trading parameters"""
 
-    def __init__(self, config: Optional[StrategyConfig] = None):
+    def __init__(self, config: StrategyConfig | None = None):
         """
         Initialize verdict service
 
@@ -77,11 +85,7 @@ class VerdictService:
         self.chart_quality_service = ChartQualityService(config=self.config)
         self.liquidity_capital_service = LiquidityCapitalService(config=self.config)
 
-    def assess_fundamentals(
-        self,
-        pe: Optional[float],
-        pb: Optional[float]
-    ) -> Dict[str, Any]:
+    def assess_fundamentals(self, pe: float | None, pb: float | None) -> dict[str, Any]:
         """
         Assess fundamental quality with flexible logic for growth stocks
 
@@ -104,44 +108,44 @@ class VerdictService:
         # Default: profitable company (PE >= 0)
         if pe is None or pe >= 0:
             return {
-                'fundamental_ok': True,
-                'fundamental_growth_stock': False,
-                'fundamental_avoid': False,
-                'fundamental_reason': 'profitable' if pe is not None else 'pe_unavailable'
+                "fundamental_ok": True,
+                "fundamental_growth_stock": False,
+                "fundamental_avoid": False,
+                "fundamental_reason": "profitable" if pe is not None else "pe_unavailable",
             }
 
         # Negative PE (loss-making or growth stock)
         if pe < 0:
             # Check PB ratio to distinguish growth stocks from expensive loss-makers
             # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Use configurable PB threshold
-            pb_threshold = getattr(self.config, 'pb_max_for_growth_stock', 5.0)
+            pb_threshold = getattr(self.config, "pb_max_for_growth_stock", 5.0)
             if pb is not None and pb < pb_threshold:
                 # Growth stock with reasonable PB ratio - allow "watch" verdict
                 return {
-                    'fundamental_ok': False,  # Cannot give "buy" verdict
-                    'fundamental_growth_stock': True,  # Allow "watch" verdict
-                    'fundamental_avoid': False,  # Don't force "avoid"
-                    'fundamental_reason': f'pb={pb:.2f}<{pb_threshold}'
+                    "fundamental_ok": False,  # Cannot give "buy" verdict
+                    "fundamental_growth_stock": True,  # Allow "watch" verdict
+                    "fundamental_avoid": False,  # Don't force "avoid"
+                    "fundamental_reason": f"pb={pb:.2f}<{pb_threshold}",
                 }
             else:
                 # Expensive loss-making company or unknown PB - force "avoid"
-                pb_reason = f'pb={pb:.2f}' if pb is not None else 'pb_unavailable'
+                pb_reason = f"pb={pb:.2f}" if pb is not None else "pb_unavailable"
                 return {
-                    'fundamental_ok': False,
-                    'fundamental_growth_stock': False,
-                    'fundamental_avoid': True,  # Force "avoid" verdict
-                    'fundamental_reason': f'loss_making_expensive({pb_reason}>={pb_threshold})'
+                    "fundamental_ok": False,
+                    "fundamental_growth_stock": False,
+                    "fundamental_avoid": True,  # Force "avoid" verdict
+                    "fundamental_reason": f"loss_making_expensive({pb_reason}>={pb_threshold})",
                 }
 
         # Should not reach here, but return safe default
         return {
-            'fundamental_ok': True,
-            'fundamental_growth_stock': False,
-            'fundamental_avoid': False,
-            'fundamental_reason': 'unknown'
+            "fundamental_ok": True,
+            "fundamental_growth_stock": False,
+            "fundamental_avoid": False,
+            "fundamental_reason": "unknown",
         }
 
-    def fetch_fundamentals(self, ticker: str) -> Dict[str, Optional[float]]:
+    def fetch_fundamentals(self, ticker: str) -> dict[str, float | None]:
         """
         Fetch fundamental data (PE, PB ratios)
 
@@ -171,11 +175,11 @@ class VerdictService:
             return data
         except Exception as e:
             logger.warning(f"Failed to fetch fundamental data for {ticker}: {e}")
-            return {'pe': None, 'pb': None}
+            return {"pe": None, "pb": None}
 
     @yfinance_fundamental_circuit_breaker
     @api_retry_configured
-    def _fetch_fundamentals_protected(self, ticker: str) -> Dict[str, Optional[float]]:
+    def _fetch_fundamentals_protected(self, ticker: str) -> dict[str, float | None]:
         """
         Protected method to fetch fundamental data with circuit breaker and retry
 
@@ -198,39 +202,51 @@ class VerdictService:
 
             # Handle case where info is None or empty
             if not info or not isinstance(info, dict):
-                logger.warning(f"Fundamental data for {ticker}: Empty or invalid response from YFinance API")
-                return {'pe': None, 'pb': None}
+                logger.warning(
+                    f"Fundamental data for {ticker}: Empty or invalid response from YFinance API"
+                )
+                return {"pe": None, "pb": None}
 
-            pe = info.get('trailingPE', None)
-            pb = info.get('priceToBook', None)
+            pe = info.get("trailingPE", None)
+            pb = info.get("priceToBook", None)
 
             # Log if values are missing (but not an error)
             if pe is None or pb is None:
-                logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb} (some values may be unavailable)")
+                logger.debug(
+                    f"Fundamental data for {ticker}: PE={pe}, PB={pb} (some values may be unavailable)"
+                )
             else:
                 logger.debug(f"Fundamental data for {ticker}: PE={pe}, PB={pb}")
 
-            return {'pe': pe, 'pb': pb}
+            return {"pe": pe, "pb": pb}
         except KeyError as e:
-            logger.warning(f"Could not fetch fundamental data for {ticker}: Missing key in API response - {e}")
-            return {'pe': None, 'pb': None}
+            logger.warning(
+                f"Could not fetch fundamental data for {ticker}: Missing key in API response - {e}"
+            )
+            return {"pe": None, "pb": None}
         except AttributeError as e:
             # Handle "argument of type 'NoneType' is not iterable" or similar
-            logger.warning(f"Could not fetch fundamental data for {ticker}: API response format issue - {e}")
-            return {'pe': None, 'pb': None}
+            logger.warning(
+                f"Could not fetch fundamental data for {ticker}: API response format issue - {e}"
+            )
+            return {"pe": None, "pb": None}
         except Exception as e:
             error_msg = str(e)
             # Provide more specific error messages
-            if 'NoneType' in error_msg:
-                logger.warning(f"Could not fetch fundamental data for {ticker}: API returned None (data may be unavailable for this ticker)")
-            elif '401' in error_msg or 'Unauthorized' in error_msg:
-                logger.warning(f"Could not fetch fundamental data for {ticker}: API authentication error (rate limiting or access issue)")
+            if "NoneType" in error_msg:
+                logger.warning(
+                    f"Could not fetch fundamental data for {ticker}: API returned None (data may be unavailable for this ticker)"
+                )
+            elif "401" in error_msg or "Unauthorized" in error_msg:
+                logger.warning(
+                    f"Could not fetch fundamental data for {ticker}: API authentication error (rate limiting or access issue)"
+                )
             else:
                 logger.warning(f"Could not fetch fundamental data for {ticker}: {error_msg}")
             # Re-raise to trigger circuit breaker
             raise
 
-    def assess_chart_quality(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def assess_chart_quality(self, df: pd.DataFrame) -> dict[str, Any]:
         """
         Assess chart quality for a stock
 
@@ -255,11 +271,8 @@ class VerdictService:
         return self.chart_quality_service.is_chart_acceptable(df)
 
     def calculate_execution_capital(
-        self,
-        avg_volume: float,
-        stock_price: float,
-        user_capital: Optional[float] = None
-    ) -> Dict[str, Any]:
+        self, avg_volume: float, stock_price: float, user_capital: float | None = None
+    ) -> dict[str, Any]:
         """
         Calculate execution capital based on liquidity
 
@@ -272,9 +285,7 @@ class VerdictService:
             Dict with execution capital details
         """
         return self.liquidity_capital_service.calculate_execution_capital(
-            user_capital=user_capital,
-            avg_volume=avg_volume,
-            stock_price=stock_price
+            user_capital=user_capital, avg_volume=avg_volume, stock_price=stock_price
         )
 
     def assess_volume(
@@ -282,8 +293,8 @@ class VerdictService:
         df: pd.DataFrame,
         last: pd.Series,
         disable_liquidity_filter: bool = False,
-        rsi_value: Optional[float] = None
-    ) -> Dict[str, Any]:
+        rsi_value: float | None = None,
+    ) -> dict[str, Any]:
         """
         Assess volume quality for a stock
 
@@ -305,59 +316,58 @@ class VerdictService:
         # RELAXED VOLUME REQUIREMENTS (2025-11-09): RSI-based volume threshold adjustment
         # For dip-buying (RSI < 30), volume requirement is further reduced to 0.5x
         volume_analysis = assess_volume_quality_intelligent(
-            current_volume=last['volume'],
+            current_volume=last["volume"],
             avg_volume=avg_vol,
             enable_time_adjustment=True,
             disable_liquidity_filter=disable_liquidity_filter,
-            rsi_value=rsi_value
+            rsi_value=rsi_value,
         )
 
         vol_ok, vol_strong, volume_description = get_volume_verdict(volume_analysis)
 
         # Log low liquidity stocks
-        if volume_analysis.get('quality') == 'illiquid':
+        if volume_analysis.get("quality") == "illiquid":
             logger.info(f"Filtered out - {volume_analysis.get('reason')}")
 
         # Additional volume pattern context
         volume_pattern = analyze_volume_pattern(df)
 
         # Calculate execution capital based on liquidity
-        stock_price = last['close']
+        stock_price = last["close"]
         execution_capital_data = self.calculate_execution_capital(
-            avg_volume=avg_vol,
-            stock_price=stock_price
+            avg_volume=avg_vol, stock_price=stock_price
         )
 
         return {
-            'volume_analysis': volume_analysis,
-            'vol_ok': vol_ok,
-            'vol_strong': vol_strong,
-            'volume_description': volume_description,
-            'volume_pattern': volume_pattern,
-            'avg_vol': avg_vol,
-            'today_vol': last['volume'],
-            'execution_capital': execution_capital_data.get('execution_capital', 0.0),
-            'max_capital': execution_capital_data.get('max_capital', 0.0),
-            'capital_adjusted': execution_capital_data.get('capital_adjusted', False),
-            'liquidity_recommendation': execution_capital_data,
+            "volume_analysis": volume_analysis,
+            "vol_ok": vol_ok,
+            "vol_strong": vol_strong,
+            "volume_description": volume_description,
+            "volume_pattern": volume_pattern,
+            "avg_vol": avg_vol,
+            "today_vol": last["volume"],
+            "execution_capital": execution_capital_data.get("execution_capital", 0.0),
+            "max_capital": execution_capital_data.get("max_capital", 0.0),
+            "capital_adjusted": execution_capital_data.get("capital_adjusted", False),
+            "liquidity_recommendation": execution_capital_data,
         }
 
     def determine_verdict(
         self,
-        signals: List[str],
-        rsi_value: Optional[float],
+        signals: list[str],
+        rsi_value: float | None,
         is_above_ema200: bool,
         vol_ok: bool,
         vol_strong: bool,
         fundamental_ok: bool,
-        timeframe_confirmation: Optional[Dict[str, Any]],
-        news_sentiment: Optional[Dict[str, Any]],
+        timeframe_confirmation: dict[str, Any] | None,
+        news_sentiment: dict[str, Any] | None,
         chart_quality_passed: bool = True,
-        fundamental_assessment: Optional[Dict[str, Any]] = None,
-        indicators: Optional[Dict[str, Any]] = None,
-        fundamentals: Optional[Dict[str, Any]] = None,
-        df: Optional[Any] = None
-    ) -> Tuple[str, List[str]]:
+        fundamental_assessment: dict[str, Any] | None = None,
+        indicators: dict[str, Any] | None = None,
+        fundamentals: dict[str, Any] | None = None,
+        df: Any | None = None,
+    ) -> tuple[str, list[str]]:
         """
         Determine verdict (strong_buy/buy/watch/avoid) and justification
 
@@ -387,16 +397,16 @@ class VerdictService:
         # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Use fundamental_assessment if provided
         # Otherwise, fall back to fundamental_ok for backward compatibility
         if fundamental_assessment is not None:
-            fundamental_ok_for_buy = fundamental_assessment.get('fundamental_ok', fundamental_ok)
-            fundamental_growth_stock = fundamental_assessment.get('fundamental_growth_stock', False)
-            fundamental_avoid = fundamental_assessment.get('fundamental_avoid', False)
-            fundamental_reason = fundamental_assessment.get('fundamental_reason', 'unknown')
+            fundamental_ok_for_buy = fundamental_assessment.get("fundamental_ok", fundamental_ok)
+            fundamental_growth_stock = fundamental_assessment.get("fundamental_growth_stock", False)
+            fundamental_avoid = fundamental_assessment.get("fundamental_avoid", False)
+            fundamental_reason = fundamental_assessment.get("fundamental_reason", "unknown")
         else:
             # Backward compatibility: use fundamental_ok
             fundamental_ok_for_buy = fundamental_ok
             fundamental_growth_stock = False
             fundamental_avoid = False
-            fundamental_reason = 'profitable' if fundamental_ok else 'loss_making'
+            fundamental_reason = "profitable" if fundamental_ok else "loss_making"
 
         # Hard filter: Force "avoid" for expensive loss-making companies
         if fundamental_avoid:
@@ -409,7 +419,9 @@ class VerdictService:
         if is_above_ema200:
             rsi_threshold = self.config.rsi_oversold  # 30 - Standard oversold in uptrend
         else:
-            rsi_threshold = self.config.rsi_extreme_oversold  # 20 - Extreme oversold required when below trend
+            rsi_threshold = (
+                self.config.rsi_extreme_oversold
+            )  # 20 - Extreme oversold required when below trend
 
         rsi_oversold = rsi_value is not None and rsi_value < rsi_threshold
         decent_volume = vol_ok
@@ -418,28 +430,44 @@ class VerdictService:
         # Use fundamental_ok_for_buy for "buy" verdicts (requires profitable company)
         if rsi_oversold and decent_volume and fundamental_ok_for_buy:
             # Simple quality-based classification using MTF and patterns
-            alignment_score = timeframe_confirmation.get('alignment_score', 0) if timeframe_confirmation else 0
+            alignment_score = (
+                timeframe_confirmation.get("alignment_score", 0) if timeframe_confirmation else 0
+            )
 
             # Determine signal strength based on EMA200 position and RSI level
             if is_above_ema200:
                 # Above EMA200: Standard uptrend dip buying (RSI < 30)
-                if alignment_score >= self.config.mtf_alignment_excellent or "excellent_uptrend_dip" in signals:
+                if (
+                    alignment_score >= self.config.mtf_alignment_excellent
+                    or "excellent_uptrend_dip" in signals
+                ):
                     verdict = "strong_buy"
-                elif (alignment_score >= self.config.mtf_alignment_fair or
-                      any(s in signals for s in ["good_uptrend_dip", "fair_uptrend_dip", "hammer", "bullish_engulfing"]) or
-                      vol_strong):
+                elif (
+                    alignment_score >= self.config.mtf_alignment_fair
+                    or any(
+                        s in signals
+                        for s in [
+                            "good_uptrend_dip",
+                            "fair_uptrend_dip",
+                            "hammer",
+                            "bullish_engulfing",
+                        ]
+                    )
+                    or vol_strong
+                ):
                     verdict = "buy"
                 else:
                     verdict = "buy"  # Default for valid uptrend reversal conditions
+            # Below EMA200: Extreme oversold reversal (RSI < 20)
+            # More conservative - only buy with strong confirmation
+            elif (
+                alignment_score >= self.config.mtf_alignment_good
+                or any(s in signals for s in ["hammer", "bullish_engulfing", "bullish_divergence"])
+                or vol_strong
+            ):
+                verdict = "buy"  # Require stronger signals when below trend
             else:
-                # Below EMA200: Extreme oversold reversal (RSI < 20)
-                # More conservative - only buy with strong confirmation
-                if (alignment_score >= self.config.mtf_alignment_good or
-                    any(s in signals for s in ["hammer", "bullish_engulfing", "bullish_divergence"]) or
-                    vol_strong):
-                    verdict = "buy"  # Require stronger signals when below trend
-                else:
-                    verdict = "watch"  # Default to watch for below-trend stocks
+                verdict = "watch"  # Default to watch for below-trend stocks
 
         elif len(signals) > 0 and vol_ok:
             # Has some signals and volume but not core reversal conditions
@@ -454,15 +482,14 @@ class VerdictService:
                 # Normal case: partial signals
                 verdict = "watch"
 
+        # No significant signals
+        # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Allow "watch" for growth stocks with strong conditions
+        elif fundamental_growth_stock and (rsi_oversold or vol_strong):
+            # Growth stock with some strong conditions - allow "watch"
+            verdict = "watch"
         else:
-            # No significant signals
-            # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Allow "watch" for growth stocks with strong conditions
-            if fundamental_growth_stock and (rsi_oversold or vol_strong):
-                # Growth stock with some strong conditions - allow "watch"
-                verdict = "watch"
-            else:
-                # No signals and not a growth stock - "avoid"
-                verdict = "avoid"
+            # No signals and not a growth stock - "avoid"
+            verdict = "avoid"
 
         # Build justification based on what was found
         if verdict in ["buy", "strong_buy"]:
@@ -472,7 +499,11 @@ class VerdictService:
                 justification.append(f"rsi:{rsi_value:.1f}({trend_status})")
 
             # Add pattern signals (excluding MTF signals)
-            pattern_signals = [s for s in signals if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]]
+            pattern_signals = [
+                s
+                for s in signals
+                if s not in ["excellent_uptrend_dip", "good_uptrend_dip", "fair_uptrend_dip"]
+            ]
             if pattern_signals:
                 justification.append("pattern:" + ",".join(pattern_signals))
 
@@ -486,9 +517,9 @@ class VerdictService:
 
             # Add volume information
             if vol_strong:
-                justification.append(f"volume_strong")
+                justification.append("volume_strong")
             elif decent_volume:
-                justification.append(f"volume_adequate")
+                justification.append("volume_adequate")
 
         elif verdict == "watch":
             # FLEXIBLE FUNDAMENTAL FILTER (2025-11-09): Add growth stock justification
@@ -503,21 +534,26 @@ class VerdictService:
             else:
                 justification.append("partial_reversal_setup")
 
-        # Apply news sentiment adjustment (downgrade on negative news)
-        if news_sentiment and news_sentiment.get('enabled') and verdict in ["buy", "strong_buy"]:
-            sc = float(news_sentiment.get('score', 0.0))
-            used = int(news_sentiment.get('used', 0))
-            if used >= 1 and sc <= self.config.news_sentiment_neg_threshold:
+        # Apply news sentiment: downgrade only on strong, well-supported negatives.
+        # Uses env-tunable thresholds (config.settings); min article count from user StrategyConfig.
+        if news_sentiment and news_sentiment.get("enabled") and verdict in ["buy", "strong_buy"]:
+            sc = float(news_sentiment.get("score", 0.0))
+            used = int(news_sentiment.get("used", 0))
+            conf = float(news_sentiment.get("confidence", 0.0))
+            min_used = max(1, int(self.config.news_sentiment_min_articles))
+            if (
+                used >= min_used
+                and conf >= NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE
+                and sc <= NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD
+            ):
                 verdict = "watch"
                 justification.append("news_negative")
 
         return verdict, justification
 
     def apply_candle_quality_check(
-        self,
-        df: pd.DataFrame,
-        verdict: str
-    ) -> Tuple[str, Optional[Dict[str, Any]], Optional[str]]:
+        self, df: pd.DataFrame, verdict: str
+    ) -> tuple[str, dict[str, Any] | None, str | None]:
         """
         Apply candle quality analysis and potentially downgrade verdict
 
@@ -535,7 +571,6 @@ class VerdictService:
             candle_analysis = analyze_recent_candle_quality(df, lookback_candles=3)
 
             # Apply candle-based verdict downgrade if needed
-            original_verdict = verdict
             verdict, downgrade_reason = should_downgrade_signal(candle_analysis, verdict)
 
             if downgrade_reason:
@@ -553,11 +588,11 @@ class VerdictService:
         verdict: str,
         recent_low: float,
         recent_high: float,
-        timeframe_confirmation: Optional[Dict[str, Any]],
+        timeframe_confirmation: dict[str, Any] | None,
         df: pd.DataFrame,
-        rsi_value: Optional[float] = None,
-        is_above_ema200: bool = True
-    ) -> Optional[Dict[str, Any]]:
+        rsi_value: float | None = None,
+        is_above_ema200: bool = True,
+    ) -> dict[str, Any] | None:
         """
         Calculate trading parameters (buy_range, target, stop)
 
@@ -588,15 +623,21 @@ class VerdictService:
             if is_above_ema200:
                 rsi_threshold = self.config.rsi_oversold  # 30 - Standard oversold in uptrend
             else:
-                rsi_threshold = self.config.rsi_extreme_oversold  # 20 - Extreme oversold when below trend
+                rsi_threshold = (
+                    self.config.rsi_extreme_oversold
+                )  # 20 - Extreme oversold when below trend
 
             # Only calculate trading parameters if RSI < threshold
             if rsi_value >= rsi_threshold:
-                logger.warning(f"Trading parameters NOT calculated: RSI {rsi_value:.1f} >= {rsi_threshold} (RSI10 < {rsi_threshold} required for dip-buying strategy)")
+                logger.warning(
+                    f"Trading parameters NOT calculated: RSI {rsi_value:.1f} >= {rsi_threshold} (RSI10 < {rsi_threshold} required for dip-buying strategy)"
+                )
                 return None
         else:
             # If RSI is None/unavailable, log warning and don't calculate
-            logger.warning(f"Trading parameters NOT calculated: RSI value is None (RSI10 < 30 required for dip-buying strategy)")
+            logger.warning(
+                "Trading parameters NOT calculated: RSI value is None (RSI10 < 30 required for dip-buying strategy)"
+            )
             return None
 
         # Enhanced buy range based on support levels
@@ -606,10 +647,8 @@ class VerdictService:
         stop = calculate_smart_stop_loss(current_price, recent_low, timeframe_confirmation, df)
 
         # Enhanced target based on MTF quality and resistance levels
-        target = calculate_smart_target(current_price, stop, verdict, timeframe_confirmation, recent_high)
+        target = calculate_smart_target(
+            current_price, stop, verdict, timeframe_confirmation, recent_high
+        )
 
-        return {
-            'buy_range': buy_range,
-            'target': target,
-            'stop': stop
-        }
+        return {"buy_range": buy_range, "target": target, "stop": stop}

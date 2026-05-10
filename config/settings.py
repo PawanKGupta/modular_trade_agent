@@ -90,6 +90,15 @@ NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH = int(
     os.getenv("NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH", "128")
 )
 
+# Rule-based verdict: downgrade buy/strong_buy → watch only on strong aggregates (VerdictService).
+# Score is [-1, 1] from core.news_sentiment; must be <= this threshold (more negative = stricter bar).
+NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD = float(
+    os.getenv("NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD", "-0.52")
+)
+NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE = float(
+    os.getenv("NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE", "0.35")
+)
+
 # Retry and Circuit Breaker Configuration
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "1.0"))

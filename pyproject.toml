@@ -34,6 +34,8 @@ ignore = ["S101"] # allow assert in tests
 "tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
 # Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.
 "services/pipeline_steps.py" = ["E501"]
+# Large verdict module; refactor tracked separately (line length / complexity).
+"services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
 
 [tool.ruff.format]
 exclude = [
