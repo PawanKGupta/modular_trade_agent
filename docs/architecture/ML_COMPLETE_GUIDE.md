@@ -294,6 +294,8 @@ pip install xgboost
 
 **Observation fields (`verdict` vs `rule_verdict`):** In `AnalysisService.analyze_ticker` results, `verdict` is the **final actionable** label (after ML/threshold/combine logic inside `MLVerdictService` when enabled, then candle-quality downgrade). **`rule_verdict`** is the **rules-only baseline** aligned with `get_last_ml_prediction()["rule_verdict"]` when ML produced metadata; if ML did not run, `rule_verdict` matches `verdict`. Use `rule_verdict` for monitoring/Telegram “what rules alone said” comparisons, not as a synonym for final.
 
+**Verdict feature contract (train/serve):** `services.ml_training_service.MLTrainingService.train_verdict_classifier` writes **`{stem}.verdict_features.json`** next to the pickled classifier (alongside `{stem}_features.txt`). At load, `MLVerdictService` **prefers this manifest**: ordered `feature_names`, schema version `artifact` / `feature_schema_version`, and a check against sklearn `n_features_in_` when present. Missing or incompatible manifests fall back to legacy sidecars / `feature_names_in_`; mismatch disables ML verdict for that path. Admin jobs record `artifacts.verdict_features_manifest` in `.meta.json` when the file exists.
+
 **Legacy (deprecated):** `services.pipeline_steps.create_analysis_pipeline(..., enable_ml=True)` adds `MLVerdictStep`, which calls `predict_verdict_with_confidence` after a rule-only `DetermineVerdictStep`. It **does not** match `AnalysisService` semantics. Passing `enable_ml=True` emits a `DeprecationWarning`. Prefer `AnalysisService.analyze_ticker(...)` (or async batch) for integration tests and new code.
 
 ### Automatic Integration

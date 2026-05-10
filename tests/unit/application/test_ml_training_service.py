@@ -8,6 +8,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from services.ml_verdict_feature_manifest import (
+    load_verdict_feature_manifest,
+    verdict_feature_manifest_path,
+)
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.ml_model_repository import MLModelRepository
@@ -79,6 +83,11 @@ def test_run_training_job_creates_model_and_artifact(training_service, admin_use
     model_path = Path(stored_job.model_path)
     assert model_path.exists()
     assert model_path.suffix == ".pkl"
+
+    mf_path = verdict_feature_manifest_path(model_path)
+    assert mf_path.is_file(), "train_verdict_classifier should emit .verdict_features.json"
+    loaded = load_verdict_feature_manifest(model_path)
+    assert loaded is not None and len(loaded["feature_names"]) >= 1
 
     models = training_service.model_repo.list(model_type="verdict_classifier")
     assert len(models) == 1

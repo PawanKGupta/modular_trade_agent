@@ -163,6 +163,9 @@ class MLTrainingService:
             watermark = date.fromisoformat(str(incremental_diag["max_date"]))
 
             feature_sidecar = resolved_pickled.with_name(f"{resolved_pickled.stem}_features.txt")
+            verdict_manifest_path = resolved_pickled.with_name(
+                f"{resolved_pickled.stem}.verdict_features.json"
+            )
 
             manifest = {
                 "model_type": config.model_type,
@@ -176,6 +179,11 @@ class MLTrainingService:
                     "model_pickled_joblib": resolved_pickled.as_posix(),
                     "feature_columns_text": (
                         feature_sidecar.as_posix() if feature_sidecar.is_file() else None
+                    ),
+                    "verdict_features_manifest": (
+                        verdict_manifest_path.as_posix()
+                        if verdict_manifest_path.is_file()
+                        else None
                     ),
                 },
                 "notes": config.notes,

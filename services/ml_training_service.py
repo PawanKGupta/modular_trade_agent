@@ -11,6 +11,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
 from utils.logger import logger
 
 try:
@@ -300,6 +301,8 @@ class MLTrainingService:
         feature_cols_path = model_path.parent / f"{model_path.stem}_features.txt"
         feature_cols_path.write_text("\n".join(feature_cols), encoding="utf-8")
         logger.info(f"   Feature columns saved to: {feature_cols_path}")
+
+        write_verdict_feature_manifest(model_path, feature_cols)
 
         return str(model_path), float(accuracy)
 
