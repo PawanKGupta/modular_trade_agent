@@ -1,6 +1,6 @@
 # ML Integration - Complete Guide
 
-**Last Updated:** 2025-12-14
+**Last Updated:** 2026-05-08
 **Status:** Production Ready
 
 ---
@@ -285,6 +285,12 @@ pip install xgboost
 ---
 
 ## Integration
+
+### Runtime verdict path (canonical vs legacy)
+
+**Canonical (production):** Live and batch analysis use `services.analysis_service.AnalysisService` (or `AsyncAnalysisService`) with `StrategyConfig.ml_enabled`. When a model loads, verdicts go through `MLVerdictService.determine_verdict` (chart-quality gate, flexible fundamentals, dip indicators, combine/threshold logic). This is the only path you should extend or tune for behaviour parity.
+
+**Legacy (deprecated):** `services.pipeline_steps.create_analysis_pipeline(..., enable_ml=True)` adds `MLVerdictStep`, which calls `predict_verdict_with_confidence` after a rule-only `DetermineVerdictStep`. It **does not** match `AnalysisService` semantics. Passing `enable_ml=True` emits a `DeprecationWarning`. Prefer `AnalysisService.analyze_ticker(...)` (or async batch) for integration tests and new code.
 
 ### Automatic Integration
 

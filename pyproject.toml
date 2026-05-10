@@ -16,9 +16,17 @@ extend-exclude = [
 	"services/ml_training_service.py",
 	"services/ml_retraining_service.py",
 ]
-lint.select = ["E", "F", "I", "B", "UP", "S", "PL"]
-lint.ignore = ["S101"] # allow assert in tests
-lint.per-file-ignores = { "tests/**" = ["S", "PLR2004"] }
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "PL"]
+ignore = ["S101"] # allow assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR2004"]
+# sys.path bootstrap + long log lines; legacy integration style.
+"tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
+# Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.
+"services/pipeline_steps.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["server", "src"]
