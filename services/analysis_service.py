@@ -697,6 +697,16 @@ class AnalysisService:
                     confidence_value = float(ml_conf)
 
             # Step 15: Build result
+            # rule_verdict = rules-only baseline from MLVerdictService when ML ran (matches
+            # get_last_ml_prediction()["rule_verdict"]). Otherwise same as final verdict (ML off
+            # or no baseline in metadata). Top-level "verdict" remains the actionable label
+            # (post ML combine and post candle-quality check).
+            rule_verdict_for_observation = (
+                ml_prediction.get("rule_verdict")
+                if ml_prediction is not None and ml_prediction.get("rule_verdict") is not None
+                else verdict
+            )
+
             result = {
                 "ticker": ticker,
                 "verdict": verdict,
@@ -759,7 +769,7 @@ class AnalysisService:
                 "ml_probabilities": (
                     ml_prediction.get("ml_probabilities") if ml_prediction else None
                 ),
-                "rule_verdict": verdict,
+                "rule_verdict": rule_verdict_for_observation,
                 "verdict_source": verdict_source,
                 "status": "success",
             }

@@ -4,6 +4,8 @@ Unit Tests for ML Verdict Service - Confidence-Aware Combination Logic
 Tests the confidence-aware combination of ML and rule-based verdicts.
 """
 
+# ruff: noqa: E402 -- project root must be on path before config/services imports
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
@@ -300,6 +302,27 @@ class TestConfidenceAwareCombination:
             # Should use rule-based verdict (ML confidence too low)
             assert verdict == "watch"
 
+    def test_low_confidence_ml_prediction_info_includes_rule_verdict(self, service):
+        """Below-threshold ML still exposes rules baseline alongside ml_verdict."""
+        service._predict_with_ml = Mock(return_value=("buy", 0.45, {"buy": 0.45}))
+
+        verdict, _ = service.determine_verdict(
+            signals=["volume_spike"],
+            rsi_value=25.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True,
+        )
+
+        info = service.get_last_ml_prediction()
+        assert info is not None
+        assert info["ml_verdict"] == "buy"
+        assert info["rule_verdict"] == verdict
+
     def test_determine_verdict_chart_quality_fails(self, service, config):
         """Test determine_verdict when chart quality fails (hard filter)"""
         # Should return "avoid" immediately without ML prediction
@@ -396,10 +419,9 @@ class TestConfidenceAwareCombination:
 
                 # All results should be at least as conservative as the more conservative input
                 max_input_rank = max(ml_rank, rule_rank)
-                assert (
-                    result_high_rank >= max_input_rank
-                    or result_high == ml_verdict
-                    or result_high == rule_verdict
+                assert result_high_rank >= max_input_rank or result_high in (
+                    ml_verdict,
+                    rule_verdict,
                 )
                 assert result_medium_rank >= max_input_rank
                 assert (

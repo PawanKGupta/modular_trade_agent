@@ -292,6 +292,8 @@ pip install xgboost
 
 **ML price targets / stops (optional):** When `StrategyConfig.ml_price_enabled` is True (Trading Config UI or env `ML_PRICE_ENABLED`), after rule-based trading parameters are computed `AnalysisService` may override `target` and/or `stop` using `MLPriceService` if `ml_price_model_path` / optional `ML_STOP_LOSS_MODEL_PATH` model files exist and prediction confidence clears `ml_confidence_threshold`. Result fields include `ml_price_target_applied`, `ml_price_stop_applied`, and related confidences.
 
+**Observation fields (`verdict` vs `rule_verdict`):** In `AnalysisService.analyze_ticker` results, `verdict` is the **final actionable** label (after ML/threshold/combine logic inside `MLVerdictService` when enabled, then candle-quality downgrade). **`rule_verdict`** is the **rules-only baseline** aligned with `get_last_ml_prediction()["rule_verdict"]` when ML produced metadata; if ML did not run, `rule_verdict` matches `verdict`. Use `rule_verdict` for monitoring/Telegram “what rules alone said” comparisons, not as a synonym for final.
+
 **Legacy (deprecated):** `services.pipeline_steps.create_analysis_pipeline(..., enable_ml=True)` adds `MLVerdictStep`, which calls `predict_verdict_with_confidence` after a rule-only `DetermineVerdictStep`. It **does not** match `AnalysisService` semantics. Passing `enable_ml=True` emits a `DeprecationWarning`. Prefer `AnalysisService.analyze_ticker(...)` (or async batch) for integration tests and new code.
 
 ### Automatic Integration

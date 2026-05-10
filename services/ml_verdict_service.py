@@ -445,6 +445,9 @@ class MLVerdictService(VerdictService):
             fundamental_assessment=fundamental_assessment,
         )
 
+        if ml_prediction_info is not None and "rule_verdict" not in ml_prediction_info:
+            ml_prediction_info["rule_verdict"] = verdict
+
         # Store ML prediction info for monitoring/telegram (even if not used for verdict)
         if ml_prediction_info:
             ml_prediction_info["verdict_source"] = verdict_source
@@ -466,7 +469,9 @@ class MLVerdictService(VerdictService):
         Get the ML prediction info from the last determine_verdict call.
 
         Returns:
-            Dict with ml_verdict, ml_confidence, ml_probabilities or None
+            Dict with ml_verdict, ml_confidence, ml_probabilities, rule_verdict
+            (rules-only baseline when ML ran), verdict_source, etc., or None if no
+            prediction was stored for the last call.
         """
         if hasattr(self, "_ml_prediction_info"):
             return self._ml_prediction_info
