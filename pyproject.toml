@@ -24,13 +24,23 @@ ignore = ["S101"] # allow assert in tests
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "PLR2004"]
+# Mid-file deprecation imports; NEWS_SENTIMENT block lines.
+"config/settings.py" = ["E402", "I001", "E501"]
+# Lazy optional-import for transformers; legacy typing/time parsing.
+"core/news_sentiment.py" = ["PLR0912", "PLR0915", "UP035", "UP006", "UP045", "S112", "PLR2004", "E501", "PLC0415"]
+# Singleton pipeline + lazy torch/transformers imports.
+"core/news_sentiment_transformers.py" = ["PLW0603", "PLC0415", "PLR0911"]
 # sys.path bootstrap + long log lines; legacy integration style.
 "tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
 # Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.
 "services/pipeline_steps.py" = ["E501"]
 
 [tool.ruff.format]
-exclude = ["tests/unit/infrastructure/test_database_schema_validation.py"]
+exclude = [
+	"tests/unit/infrastructure/test_database_schema_validation.py",
+	# Formatting clashes with Black on large string sets / line wrapping.
+	"core/news_sentiment.py",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["server", "src"]

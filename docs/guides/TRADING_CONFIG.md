@@ -232,6 +232,8 @@ Configure news sentiment analysis.
   - Lower = stricter
   - Range: -1-0
 
+**Server-side headline model (operators):** The API stores the same UI fields; scoring is implemented in `core/news_sentiment.py`. On the server you can install optional **CPU Transformers** deps (`requirements-sentiment.txt` + PyTorch CPU wheels) so headlines use a small Hugging Face model by default (`NEWS_SENTIMENT_BACKEND=auto`). If those packages are missing, the code **falls back** to the legacy word-list heuristic. Relevant env vars: `NEWS_SENTIMENT_BACKEND` (`auto`|`transformer`|`lexicon`), `NEWS_SENTIMENT_TRANSFORMER_MODEL`, `NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE`, `NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH`. The returned payload may include `scorer` (`transformer`|`lexicon`|`none`) and `model` when a transformer was used.
+
 ### 8. ML Configuration
 
 Configure machine learning features.

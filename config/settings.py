@@ -73,6 +73,23 @@ NEWS_SENTIMENT_POS_THRESHOLD = float(os.getenv("NEWS_SENTIMENT_POS_THRESHOLD", "
 NEWS_SENTIMENT_NEG_THRESHOLD = float(os.getenv("NEWS_SENTIMENT_NEG_THRESHOLD", "-0.25"))
 NEWS_SENTIMENT_CACHE_TTL_SEC = int(os.getenv("NEWS_SENTIMENT_CACHE_TTL_SEC", "900"))  # 15 min
 
+# Headline sentiment backend: auto (try local Transformer on CPU, else lexicon),
+# transformer (same as auto), lexicon (word-list only; no torch/transformers).
+_NEWS_SB = os.getenv("NEWS_SENTIMENT_BACKEND", "auto").strip().lower()
+if _NEWS_SB not in ("auto", "transformer", "lexicon"):
+    _NEWS_SB = "auto"
+NEWS_SENTIMENT_BACKEND = _NEWS_SB
+
+# Small DistilBERT SST-2 — fast on CPU (Oracle free tier / Ubuntu). Override for e.g. FinBERT.
+NEWS_SENTIMENT_TRANSFORMER_MODEL = os.getenv(
+    "NEWS_SENTIMENT_TRANSFORMER_MODEL",
+    "distilbert-base-uncased-finetuned-sst-2-english",
+)
+NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE = int(os.getenv("NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE", "8"))
+NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH = int(
+    os.getenv("NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH", "128")
+)
+
 # Retry and Circuit Breaker Configuration
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "1.0"))
