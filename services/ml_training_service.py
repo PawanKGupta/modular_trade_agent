@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
+from services.ml_dip_feature_manifest import write_dip_feature_manifest
 from utils.logger import logger
 
 try:
@@ -305,6 +306,133 @@ class MLTrainingService:
         write_verdict_feature_manifest(model_path, feature_cols)
 
         return str(model_path), float(accuracy)
+
+    def train_dip_success_classifier(
+        self,
+        training_data_path: str | None = None,
+        *,
+        df: pd.DataFrame | None = None,
+        label_column: str = "net_win",
+        test_size: float = 0.2,
+        random_state: int = 42,
+        model_save_path: str | Path | None = None,
+        hyperparameters: dict[str, Any] | None = None,
+        calibrate: bool = True,
+    ) -> tuple[str, float]:
+        """
+        Train a pooled dip-success binary classifier and (optionally) calibrate probabilities.
+
+        The training dataset should be generated from dip episodes (see
+        :mod:`services.dip_episode_dataset`) and contain:
+
+        - metadata columns (ticker, entry_date, exit_date, n_adds, pnl_pct)
+        - a binary label column (default: ``net_win``)
+        - numeric feature columns (e.g. rsi_10, dip_depth_from_20d_high_pct, volume_ratio...)
+
+        Args:
+            training_data_path: CSV path (required if df is omitted).
+            df: Optional in-memory dataframe (skips CSV read).
+            label_column: Binary label in {0,1}. Recommended: net_win (>= +1% PnL after costs).
+            test_size: Holdout fraction (time-split when entry_date exists; otherwise random split).
+            random_state: RNG seed.
+            model_save_path: Target ``.pkl`` path (defaults to models/dip_success_model.pkl).
+            hyperparameters: Optional RandomForest overrides.
+            calibrate: If True, wrap the fitted estimator in CalibratedClassifierCV (sigmoid).
+
+        Returns:
+            Tuple of pickled model filesystem path and accuracy on held-out samples.
+        """
+        src = training_data_path or "(dataframe)"
+        logger.info("Training dip success classifier from %s (label=%s)...", src, label_column)
+
+        hp = hyperparameters or {}
+        if df is not None:
+            frame = df.copy()
+        elif training_data_path:
+            frame = pd.read_csv(training_data_path)
+        else:
+            raise ValueError("train_dip_success_classifier requires training_data_path or df")
+
+        if frame.empty:
+            raise ValueError("Training data is empty")
+        if label_column not in frame.columns:
+            raise ValueError(f"Missing label column '{label_column}'")
+
+        df = cast(pd.DataFrame, frame)
+        logger.info("Loaded %s dip episode rows", len(df))
+
+        exclude_cols = [
+            "ticker",
+            "entry_date",
+            "exit_date",
+            "n_adds",
+            "pnl_pct",
+            "net_win",
+            "strong_win",
+        ]
+        feature_cols = [c for c in df.columns if c not in exclude_cols]
+        if not feature_cols:
+            raise ValueError("No feature columns found for dip training")
+
+        X = df[feature_cols].copy().fillna(0.0)
+        y = df[label_column].astype(int).values
+
+        # Time-aware holdout when entry_date exists.
+        if "entry_date" in df.columns:
+            order = pd.to_datetime(df["entry_date"], errors="coerce")
+            valid = order.notna()
+            df_ord = df.loc[valid].copy()
+            X = df_ord[feature_cols].copy().fillna(0.0)
+            y = df_ord[label_column].astype(int).values
+            order = pd.to_datetime(df_ord["entry_date"])
+            idx = np.argsort(order.values)
+            X = X.iloc[idx].reset_index(drop=True)
+            y = y[idx]
+            split = int((1.0 - test_size) * len(X))
+            X_train, X_test = X.iloc[:split], X.iloc[split:]
+            y_train, y_test = y[:split], y[split:]
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X,
+                y,
+                test_size=test_size,
+                random_state=random_state,
+                stratify=y if len(set(y)) > 1 else None,
+            )
+
+        rf = RandomForestClassifier(
+            n_estimators=_coerce_hp(hp, "n_estimators", int, 400),
+            max_depth=_coerce_hp(hp, "max_depth", int, None),
+            min_samples_split=_coerce_hp(hp, "min_samples_split", int, 2),
+            min_samples_leaf=_coerce_hp(hp, "min_samples_leaf", int, 1),
+            class_weight=_coerce_hp(hp, "class_weight", str, "balanced"),
+            random_state=random_state,
+            n_jobs=-1,
+        )
+        rf.fit(X_train, y_train)
+
+        model = rf
+        if calibrate:
+            from sklearn.calibration import CalibratedClassifierCV  # noqa: PLC0415
+
+            model = CalibratedClassifierCV(rf, method="sigmoid", cv=3)
+            model.fit(X_train, y_train)
+
+        preds = model.predict(X_test) if len(X_test) else []
+        acc = accuracy_score(y_test, preds) if len(y_test) else 0.0
+        logger.info("Dip success holdout accuracy: %.3f (%s rows)", acc, len(y_test))
+
+        model_path = (
+            Path(model_save_path).resolve()
+            if model_save_path
+            else self.models_dir / "dip_success_model.pkl"
+        )
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, model_path)
+        logger.info("Dip model saved to: %s", model_path)
+
+        write_dip_feature_manifest(model_path, feature_cols)
+        return str(model_path), float(acc)
 
     def train_price_regressor(
         self,

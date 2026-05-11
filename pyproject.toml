@@ -36,6 +36,8 @@ ignore = ["S101"] # allow assert in tests
 "services/pipeline_steps.py" = ["E501"]
 # Large verdict module; refactor tracked separately (line length / complexity).
 "services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
+# Dip episode generator is intentionally stateful; refactor later.
+"services/dip_episode_dataset.py" = ["PLR0912", "PLR0915", "PLR2004"]
 
 [tool.ruff.format]
 exclude = [

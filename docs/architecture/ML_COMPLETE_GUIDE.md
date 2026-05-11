@@ -78,6 +78,36 @@ The API resolves relative paths against the server's working directory (often `/
 
 If you need to collect training data manually:
 
+---
+
+## Dip-buy success model (RSI-based averaging)
+
+This repo supports a dedicated **dip-success** classifier for your RSI-based averaging strategy:
+
+- **Entry**: RSI10 < 30 (daily candles)
+- **Adds**: RSI10 <= 20, RSI10 <= 10, and re-activation (RSI > 30 then back < 30)
+- **Exit**: first EMA9 touch (close >= EMA9) or RSI10 >= 50 **after the last add**
+- **Sizing**: equal capital per add
+- **Target label**: binary `net_win` (PnL% at exit >= +1.0 by default; cost-aware floor)
+
+### Generate training rows
+
+Use `services.dip_episode_dataset.generate_dip_episode_rows` to convert per-ticker OHLCV history into one row per episode.
+Each row contains feature values at the entry day plus outcome labels (`net_win`, `strong_win`) computed from the full episode.
+
+### Train + calibrate
+
+Use `services.ml_training_service.MLTrainingService.train_dip_success_classifier` to fit a pooled binary model and (optionally)
+calibrate probabilities. Artifacts:
+
+- `models/dip_success_model.pkl` (or custom path)
+- `{stem}.dip_features.json` manifest describing feature column order
+
+### Score / rank current candidates
+
+Use `services.ml_dip_success_service.MLDipSuccessService.score_current_setup` to get calibrated `P(net_win)` for a ticker whose
+current RSI10 < 30. To rank a watchlist, use `services.dip_ranking_service.rank_dip_candidates`.
+
 ```bash
 # Get all NSE stocks
 python scripts/get_all_nse_stocks.py --output data/all_nse_stocks.txt
