@@ -144,20 +144,19 @@ class TestMLModelResolver:
 
     def test_get_model_path_from_version_success(self, db_session, sample_ml_model):
         """Test getting model path from version when model exists"""
-        # Create temporary model file
-        model_path = Path("models/verdict_model_v1.0.pkl")
-        model_path.parent.mkdir(exist_ok=True)
+        # Use repo-root absolute path so Path(...).is_file() works regardless of pytest cwd.
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        model_path = project_root / "models" / "verdict_model_v1.0.pkl"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
         model_path.touch()
+        sample_ml_model.model_path = str(model_path)
+        db_session.commit()
 
         try:
             result = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
 
-            # Normalize path separators (Windows vs Unix)
-            expected_path = str(Path("models/verdict_model_v1.0.pkl"))
-            assert (
-                result == expected_path
-                or result.replace("\\", "/") == "models/verdict_model_v1.0.pkl"
-            )
+            assert result is not None
+            assert result == str(model_path) or result == str(model_path.resolve())
         finally:
             if model_path.exists():
                 model_path.unlink()
@@ -195,20 +194,18 @@ class TestMLModelResolver:
 
     def test_get_active_model_path_success(self, db_session, sample_ml_model):
         """Test getting active model path when active model exists"""
-        # Create temporary model file
-        model_path = Path("models/verdict_model_v1.0.pkl")
-        model_path.parent.mkdir(exist_ok=True)
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        model_path = project_root / "models" / "verdict_model_v1.0.pkl"
+        model_path.parent.mkdir(parents=True, exist_ok=True)
         model_path.touch()
+        sample_ml_model.model_path = str(model_path)
+        db_session.commit()
 
         try:
             result = get_active_model_path(db_session, "verdict_classifier")
 
-            # Normalize path separators (Windows vs Unix)
-            expected_path = str(Path("models/verdict_model_v1.0.pkl"))
-            assert (
-                result == expected_path
-                or result.replace("\\", "/") == "models/verdict_model_v1.0.pkl"
-            )
+            assert result is not None
+            assert result == str(model_path) or result == str(model_path.resolve())
         finally:
             if model_path.exists():
                 model_path.unlink()
