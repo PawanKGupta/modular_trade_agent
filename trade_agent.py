@@ -5,14 +5,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
-
 from core.analysis import analyze_multiple_tickers, analyze_ticker
 from core.scrapping import get_stock_list  # TODO Phase 4: Migrate to infrastructure/web_scraping
 from core.telegram import send_telegram  # TODO Phase 4: Migrate to infrastructure/notifications
 
 # Phase 4: Use services instead of core modules
 from services import BacktestService, ScoringService, compute_strength_score
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 # ML verdict service (optional, for testing only)
@@ -322,6 +321,7 @@ async def main_async(
     json_output_path: str | None = None,
     user_id: int | None = None,
     db_session=None,
+    enable_ml: bool = False,
 ):
     """
     Async main function using async batch analysis
@@ -337,6 +337,8 @@ async def main_async(
         json_output_path: Optional path to write results as JSON
         user_id: Optional user ID to load user-specific config
         db_session: Optional database session for loading user config
+        enable_ml: If True and no DB-backed config was loaded, use ``StrategyConfig(ml_enabled=True)``
+            for analysis (same as ``--ml`` / ``--ml-enabled`` on the CLI).
     """
     tickers = get_stocks()
 
@@ -369,6 +371,12 @@ async def main_async(
             logger.warning(
                 f"Failed to load user config for user {user_id}: {e}, using default config"
             )
+
+    if config is None and enable_ml:
+        from config.strategy_config import StrategyConfig
+
+        config = StrategyConfig(ml_enabled=True)
+        logger.info("CLI --ml/--ml-enabled: analysis will use StrategyConfig with ml_enabled=True")
 
     # Use async batch analysis (Phase 2)
     try:
@@ -406,6 +414,7 @@ async def main_async(
             enable_backtest_scoring,
             dip_mode,
             json_output_path=json_output_path,
+            enable_ml=enable_ml,
         )
         return processed_results
 
@@ -416,6 +425,7 @@ def main_sequential(
     enable_backtest_scoring=False,
     dip_mode=False,
     json_output_path: str | None = None,
+    enable_ml: bool = False,
 ):
     """
     Sequential main function (backward compatible)
@@ -432,10 +442,22 @@ def main_sequential(
         f"Starting sequential analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})"
     )
 
+    analysis_config = None
+    if enable_ml:
+        from config.strategy_config import StrategyConfig
+
+        analysis_config = StrategyConfig(ml_enabled=True)
+        logger.info(
+            "CLI --ml/--ml-enabled: sequential path uses StrategyConfig with ml_enabled=True"
+        )
+
     # Use batch analysis with CSV export
     if export_csv:
         results, csv_filepath = analyze_multiple_tickers(
-            tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=True
+            tickers,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=True,
+            config=analysis_config,
         )
         logger.info(f"Analysis results exported to: {csv_filepath}")
     else:
@@ -444,7 +466,10 @@ def main_sequential(
         for t in tickers:
             try:
                 r = analyze_ticker(
-                    t, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=False
+                    t,
+                    enable_multi_timeframe=enable_multi_timeframe,
+                    export_to_csv=False,
+                    config=analysis_config,
                 )
                 results.append(r)
 
@@ -474,6 +499,7 @@ def main(
     json_output_path: str | None = None,
     user_id: int | None = None,
     db_session=None,
+    enable_ml: bool = False,
 ):
     """
     Main function - supports both async and sequential modes
@@ -486,6 +512,7 @@ def main(
         use_async: Use async batch analysis (Phase 2 feature, default: True)
         user_id: Optional user ID to load user-specific config
         db_session: Optional database session for loading user config
+        enable_ml: When no DB-backed config is loaded, use ``StrategyConfig(ml_enabled=True)`` (CLI ``--ml``).
     """
     if use_async:
         # Use async analysis (Phase 2)
@@ -501,6 +528,7 @@ def main(
                     json_output_path=json_output_path,
                     user_id=user_id,
                     db_session=db_session,
+                    enable_ml=enable_ml,
                 )
             )
         except Exception as e:
@@ -511,6 +539,7 @@ def main(
                 enable_backtest_scoring=enable_backtest_scoring,
                 dip_mode=dip_mode,
                 json_output_path=json_output_path,
+                enable_ml=enable_ml,
             )
     else:
         # Use sequential analysis (backward compatible)
@@ -520,6 +549,7 @@ def main(
             enable_backtest_scoring=enable_backtest_scoring,
             dip_mode=dip_mode,
             json_output_path=json_output_path,
+            enable_ml=enable_ml,
         )
 
 
@@ -1113,6 +1143,16 @@ if __name__ == "__main__":
         type=str,
         help="Optional path to write analysis results as JSON for downstream services",
     )
+    parser.add_argument(
+        "--ml",
+        "--ml-enabled",
+        action="store_true",
+        dest="ml_enabled",
+        help=(
+            "Enable verdict ML for this run (StrategyConfig.ml_enabled=True) when not using "
+            "TRADE_AGENT_USER_ID / DB trading config. Requires the verdict model file on disk."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1164,4 +1204,5 @@ if __name__ == "__main__":
         json_output_path=args.json_output,
         user_id=user_id,
         db_session=db_session,
+        enable_ml=getattr(args, "ml_enabled", False),
     )

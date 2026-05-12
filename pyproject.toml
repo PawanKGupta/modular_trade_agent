@@ -38,6 +38,9 @@ ignore = ["S101"] # allow assert in tests
 "services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
 # Dip episode generator is intentionally stateful; refactor later.
 "services/dip_episode_dataset.py" = ["PLR0912", "PLR0915", "PLR2004"]
+# Legacy CLI / core analysis wrappers; refactor tracked separately.
+"trade_agent.py" = ["E501", "F841", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415"]
+"core/analysis.py" = ["E501", "F841", "PLR0911", "PLR0913", "PLR2004", "PLC0415"]
 
 [tool.ruff.format]
 exclude = [

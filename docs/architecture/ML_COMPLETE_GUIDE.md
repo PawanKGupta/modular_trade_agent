@@ -338,10 +338,14 @@ The system automatically:
 ### Usage
 
 ```bash
-# Just run trade_agent.py normally
+# Run with backtest scoring (ML off unless DB user or CLI enables it)
 python trade_agent.py --backtest
 
-# ML verdicts will appear in Telegram if model is available
+# Local CLI: enable verdict ML without TRADE_AGENT_USER_ID / DB trading config
+python trade_agent.py --backtest --ml
+# (equivalent: --ml-enabled)
+
+# ML verdicts in results/Telegram require a loaded model and ml_enabled=True
 ```
 
 ### Telegram Output Example
