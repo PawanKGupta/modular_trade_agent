@@ -142,24 +142,17 @@ def sample_price_model(db_session):
 class TestMLModelResolver:
     """Tests for ML model resolver functions"""
 
-    def test_get_model_path_from_version_success(self, db_session, sample_ml_model):
-        """Test getting model path from version when model exists"""
-        # Use repo-root absolute path so Path(...).is_file() works regardless of pytest cwd.
-        project_root = Path(__file__).resolve().parent.parent.parent.parent
-        model_path = project_root / "models" / "verdict_model_v1.0.pkl"
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        model_path.touch()
+    def test_get_model_path_from_version_success(self, db_session, sample_ml_model, tmp_path):
+        """Test getting model path from version when model exists."""
+        model_path = tmp_path / "verdict_model_v1.0.pkl"
+        model_path.write_bytes(b"")
         sample_ml_model.model_path = str(model_path)
         db_session.commit()
 
-        try:
-            result = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
+        result = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
 
-            assert result is not None
-            assert result == str(model_path) or result == str(model_path.resolve())
-        finally:
-            if model_path.exists():
-                model_path.unlink()
+        assert result is not None
+        assert result == str(model_path) or result == str(model_path.resolve())
 
     def test_get_model_path_from_version_not_found(self, db_session):
         """Test getting model path when version doesn't exist"""
@@ -173,17 +166,16 @@ class TestMLModelResolver:
 
         assert result is None
 
-    def test_get_model_path_from_version_file_not_exists(self, db_session, sample_ml_model):
-        """Test getting model path when file doesn't exist"""
-        # Ensure no residue model file from other tests / CI artifacts.
-        # This test asserts behavior when the DB row exists but the on-disk file does not.
-        model_path = Path("models/verdict_model_v1.0.pkl")
-        if model_path.exists():
-            model_path.unlink()
+    def test_get_model_path_from_version_file_not_exists(
+        self, db_session, sample_ml_model, tmp_path
+    ):
+        """Test getting model path when file doesn't exist (DB row only)."""
+        missing = tmp_path / "missing_verdict_v1.pkl"
+        sample_ml_model.model_path = str(missing)
+        db_session.commit()
 
         result = get_model_path_from_version(db_session, "verdict_classifier", "v1.0")
 
-        # Should return None when file doesn't exist
         assert result is None
 
     def test_get_model_path_from_version_wrong_type(self, db_session, sample_ml_model):
@@ -192,23 +184,17 @@ class TestMLModelResolver:
 
         assert result is None
 
-    def test_get_active_model_path_success(self, db_session, sample_ml_model):
-        """Test getting active model path when active model exists"""
-        project_root = Path(__file__).resolve().parent.parent.parent.parent
-        model_path = project_root / "models" / "verdict_model_v1.0.pkl"
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        model_path.touch()
+    def test_get_active_model_path_success(self, db_session, sample_ml_model, tmp_path):
+        """Test getting active model path when active model exists."""
+        model_path = tmp_path / "verdict_active_v1.pkl"
+        model_path.write_bytes(b"")
         sample_ml_model.model_path = str(model_path)
         db_session.commit()
 
-        try:
-            result = get_active_model_path(db_session, "verdict_classifier")
+        result = get_active_model_path(db_session, "verdict_classifier")
 
-            assert result is not None
-            assert result == str(model_path) or result == str(model_path.resolve())
-        finally:
-            if model_path.exists():
-                model_path.unlink()
+        assert result is not None
+        assert result == str(model_path) or result == str(model_path.resolve())
 
     def test_get_active_model_path_not_found(self, db_session):
         """Test getting active model path when no active model exists"""

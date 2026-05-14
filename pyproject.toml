@@ -23,7 +23,13 @@ select = ["E", "F", "I", "B", "UP", "S", "PL"]
 ignore = ["S101"] # allow assert in tests
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "PLR2004"]
+"tests/**" = ["S", "PLR2004", "PLC0415", "PLR0913", "PLW0108", "F841", "E501"]
+# FastAPI Query/Depends in signatures; large CSV router — refactors tracked separately.
+"server/app/routers/export.py" = ["B008", "PLR0913", "PLR0915", "E501", "PLR2004"]
+# Large monitoring surface; magic thresholds and long log strings.
+"server/app/routers/monitoring.py" = ["PLR0913", "PLR2004", "E501"]
+# list_orders and sync_order_status are intentionally dense.
+"server/app/routers/orders.py" = ["PLR0915", "PLR2004"]
 # Mid-file deprecation imports; NEWS_SENTIMENT block lines.
 "config/settings.py" = ["E402", "I001", "E501"]
 # Lazy optional-import for transformers; legacy typing/time parsing.
@@ -47,6 +53,9 @@ exclude = [
 	"tests/unit/infrastructure/test_database_schema_validation.py",
 	# Formatting clashes with Black on large string sets / line wrapping.
 	"core/news_sentiment.py",
+	# Black and Ruff disagree on wrapping in these large modules; Black is canonical via pre-commit.
+	"server/app/routers/orders.py",
+	"tests/unit/server/jobs/test_scheduler.py",
 ]
 
 [tool.ruff.lint.isort]

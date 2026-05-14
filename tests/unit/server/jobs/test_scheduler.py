@@ -121,6 +121,76 @@ def test_job_mtm_update_sums_results(monkeypatch: pytest.MonkeyPatch):
     mod.job_mtm_update()
 
 
+def test_closed_month_to_bill_rejects_naive_datetime():
+    mod = _import_scheduler_module()
+    with pytest.raises(ValueError, match="timezone-aware"):
+        mod.closed_month_to_bill(datetime(2026, 1, 1, 0, 0, 0))
+
+
+def test_job_billing_reconcile_runs_service(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+    ran = {}
+
+    class _Svc:
+        def run(self):
+            ran["ok"] = True
+            return {"marked": 1}
+
+    class _Ctx:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("src.infrastructure.db.session.SessionLocal", lambda: _Ctx())
+    monkeypatch.setattr(
+        "src.application.services.billing_reconciliation_service.BillingReconciliationService",
+        lambda db: _Svc(),
+    )
+    mod.job_billing_reconcile()
+    assert ran.get("ok") is True
+
+
+def test_job_billing_reconcile_swallows_errors(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+
+    def _bad():
+        raise RuntimeError("no db")
+
+    monkeypatch.setattr("src.infrastructure.db.session.SessionLocal", _bad)
+    mod.job_billing_reconcile()
+
+
+def test_job_performance_bills_month_close_swallows_errors(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+    monkeypatch.setattr(
+        mod,
+        "closed_month_to_bill",
+        lambda _now: (_ for _ in ()).throw(RuntimeError("clock")),
+    )
+    mod.job_performance_bills_month_close()
+
+
+def test_job_mtm_update_swallows_errors(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+    monkeypatch.setattr(
+        mod,
+        "update_mtm_for_all_users",
+        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    mod.job_mtm_update()
+
+
+def test_stop_scheduler_noop_when_not_running(monkeypatch: pytest.MonkeyPatch):
+    mod = _import_scheduler_module()
+    fake = FakeScheduler()
+    fake.running = False
+    monkeypatch.setattr(mod, "scheduler", fake)
+    mod.stop_scheduler()
+    assert fake.running is False
+
+
 def test_closed_month_to_bill_first_of_month():
     mod = _import_scheduler_module()
     # March 1 00:30 IST → bill February of same year

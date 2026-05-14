@@ -4,7 +4,8 @@
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
 from src.application.services.conflict_detection_service import ConflictDetectionService
@@ -84,13 +85,13 @@ def start_service(
     except ValueError as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error starting service: {str(e)}",
         ) from e
 
@@ -120,7 +121,7 @@ def stop_service(
     except Exception as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error stopping service: {str(e)}",
         ) from e
 
@@ -173,7 +174,7 @@ def get_service_status(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting service status: {str(e)}",
         ) from e
 
@@ -243,7 +244,7 @@ def get_individual_services_status(
         return IndividualServicesStatusResponse(services=services)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting individual services status: {str(e)}",
         ) from e
 
@@ -261,12 +262,12 @@ def start_individual_service(
         return StartIndividualServiceResponse(success=success, message=message)
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error starting individual service: {str(e)}",
         ) from e
 
@@ -284,7 +285,7 @@ def stop_individual_service(
         return StopIndividualServiceResponse(success=success, message=message)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error stopping individual service: {str(e)}",
         ) from e
 
@@ -316,12 +317,12 @@ def run_task_once(
         )
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error running task: {str(e)}",
         ) from e
 
@@ -362,7 +363,7 @@ def get_task_history(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting task history: {str(e)}",
         ) from e
 
@@ -420,7 +421,7 @@ def get_service_logs(  # noqa: PLR0913
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting service logs: {str(e)}",
         ) from e
 
@@ -471,7 +472,7 @@ def get_position_creation_metrics(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting position creation metrics: {str(e)}",
         ) from e
 
@@ -515,7 +516,7 @@ def get_positions_without_sell_orders(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting positions without sell orders: {str(e)}",
         ) from e
 
@@ -547,6 +548,6 @@ def get_trading_day_info(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting trading day info: {str(e)}",
         ) from e
