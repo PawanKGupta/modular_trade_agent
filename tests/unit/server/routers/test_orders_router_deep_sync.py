@@ -897,7 +897,12 @@ def test_sync_order_status_mark_executed_raises_recorded(monkeypatch, tmp_path):
 
 
 class _EvilStr(str):
-    """``str`` that raises on ``split`` so sync falls back to ``.lower()`` for trade_mode."""
+    """``str`` that raises on ``rsplit`` so sync uses ``.lower()`` for trade_mode."""
+
+    def rsplit(self, sep=None, maxsplit=-1):
+        if sep == ":" and maxsplit == 1:
+            raise RuntimeError("forced rsplit failure")
+        return str.rsplit(self, sep, maxsplit)
 
     def split(self, sep=None, maxsplit=-1):
         if ":" in self and "'" in self:
@@ -914,7 +919,7 @@ class _TradeModeEvilStr:
 
 
 def test_sync_order_status_trade_mode_repr_parse_split_error_falls_back(monkeypatch, tmp_path):
-    """Covers ``except`` on repr-style trade_mode parsing (lines ~523--526)."""
+    """Covers ``except`` on repr-style trade_mode parsing when ``rsplit`` fails."""
     settings = SimpleNamespace(trade_mode=_TradeModeEvilStr(), broker_creds_encrypted=b"enc")
     orders = [
         SimpleNamespace(
