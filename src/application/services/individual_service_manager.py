@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import signal
 import subprocess
@@ -69,6 +70,40 @@ project_root = Path(__file__).parent.parent.parent.parent
 # references while the OS child remains parented by the API worker — causing
 # zombie accumulation until waitpid runs.
 _INDIVIDUAL_SERVICE_SUBPROCESSES: dict[tuple[int, str], subprocess.Popen] = {}
+
+
+def _sanitize_for_postgres_json(obj):
+    """
+    Recursively replace ``NaN`` and infinities with ``None`` for JSON persistence.
+
+    Python's ``json.dumps`` can emit ``NaN`` / ``Infinity`` for non-finite floats, which
+    PostgreSQL's ``json`` / ``jsonb`` types reject. Call this on execution ``details``
+    payloads before ORM assign or ``json.dumps``.
+
+    Args:
+        obj: Arbitrarily nested dicts, lists, tuples, and scalars.
+
+    Returns:
+        A structure of the same shape with non-finite floats replaced by ``None``.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_postgres_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_postgres_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_for_postgres_json(v) for v in obj)
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if hasattr(obj, "item") and callable(getattr(obj, "item", None)):
+        try:
+            return _sanitize_for_postgres_json(obj.item())
+        except Exception:
+            return obj
+    return obj
 
 
 class IndividualServiceManager:
@@ -535,6 +570,8 @@ class IndividualServiceManager:
         else:
             details_dict = {"result": str(details)}
 
+        details_dict = _sanitize_for_postgres_json(details_dict)
+
         try:
             # Rollback session if it's in a bad state (e.g., from previous errors)
             try:
@@ -569,8 +606,6 @@ class IndividualServiceManager:
                 task_name=task_name,
             )
             try:
-                from sqlalchemy import text  # noqa: PLC0415
-
                 # Rollback and use fresh connection for raw SQL
                 try:
                     db.rollback()
@@ -586,7 +621,7 @@ class IndividualServiceManager:
                     WHERE id = :execution_id
                 """
                 )
-                details_json = json.dumps(details_dict)
+                details_json = json.dumps(details_dict, allow_nan=False)
                 db.execute(
                     update_sql,
                     {

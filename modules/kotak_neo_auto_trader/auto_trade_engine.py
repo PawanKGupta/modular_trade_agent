@@ -21,14 +21,13 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
-from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
-
 # Core market data
 from core.telegram import send_telegram
 from modules.kotak_neo_auto_trader.services import (
     get_indicator_service,
     get_price_service,
 )
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 # Database models
@@ -461,9 +460,7 @@ class AutoTradeEngine:
         if status == "open":
             # Upsert open position
             try:
-                entry_time = datetime.fromisoformat(
-                    trade.get("entry_time", ist_now().isoformat())
-                )
+                entry_time = datetime.fromisoformat(trade.get("entry_time", ist_now().isoformat()))
             except:
                 entry_time = ist_now_naive()
 
@@ -1709,7 +1706,9 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                rest_client = (
+                    self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                )
                 self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
                 if not self.scrip_master.load_scrip_master(force_download=False):
                     raise RuntimeError("Scrip master load failed")
@@ -1745,7 +1744,9 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                rest_client = (
+                    self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                )
                 self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
                 if not self.scrip_master.load_scrip_master(force_download=False):
                     raise RuntimeError("Scrip master load failed")
@@ -2177,7 +2178,7 @@ class AutoTradeEngine:
                     return None
                 # Support Money-like objects
                 if hasattr(raw, "amount"):
-                    raw = getattr(raw, "amount")
+                    raw = raw.amount
                 if isinstance(raw, str):
                     s = raw.replace(",", "").strip()
                     if s.lower().startswith("rs"):
@@ -3689,7 +3690,9 @@ class AutoTradeEngine:
                     has_sufficient, avail_cash, required_cash, shortfall = margin_result
                     margin_api_ok = True
                 else:
-                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = margin_result
+                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = (
+                        margin_result
+                    )
 
                 if not margin_api_ok:
                     logger.error(
@@ -3716,9 +3719,7 @@ class AutoTradeEngine:
 
                     db_order.retry_count = (db_order.retry_count or 0) + 1
                     db_order.last_retry_attempt = ist_now()
-                    db_order.reason = (
-                        f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
-                    )
+                    db_order.reason = f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
                     self.orders_repo.update(db_order)
                     summary["failed"] += 1
                     continue
@@ -3741,15 +3742,16 @@ class AutoTradeEngine:
                         # uq_orders_user_base_symbol_active applying to active BUY rows.
                         # If a stale active row exists for same base_symbol, cancel it and retry once.
                         err_text = str(update_err).lower()
-                        if "uq_orders_user_base_symbol_active" in err_text or "duplicate key value" in err_text:
+                        if (
+                            "uq_orders_user_base_symbol_active" in err_text
+                            or "duplicate key value" in err_text
+                        ):
                             try:
                                 from src.infrastructure.db.timezone_utils import ist_now
 
                                 # Clear failed transaction before further DB work.
                                 self.db.rollback()
-                                base_symbol = (
-                                    (symbol or "").upper().split("-")[0].strip()
-                                )
+                                base_symbol = (symbol or "").upper().split("-")[0].strip()
                                 existing_orders, _ = self.orders_repo.list(self.user_id)
                                 cancelled_conflicts = 0
                                 for existing_order in existing_orders:
@@ -5106,7 +5108,8 @@ class AutoTradeEngine:
                 summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "invalid_price"
-                ticker_attempt["price"] = close
+                # Use null in telemetry — PostgreSQL JSON rejects Python ``NaN`` tokens.
+                ticker_attempt["price"] = None
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             ticker_attempt["price"] = close
@@ -5538,9 +5541,7 @@ class AutoTradeEngine:
         now_time = ist_now().time()
         market_close = dt_time(15, 30)
         use_latest_rsi_after_close = (
-            self.is_trading_weekday()
-            and (not is_market_hours())
-            and now_time >= market_close
+            self.is_trading_weekday() and (not is_market_hours()) and now_time >= market_close
         )
 
         # Get portfolio snapshot for capacity checks
