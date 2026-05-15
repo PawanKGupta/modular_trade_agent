@@ -124,6 +124,10 @@ docker-compose -f docker-compose.yml build api-server
 docker-compose -f docker-compose.yml restart api-server
 ```
 
+### News sentiment (CPU Transformers)
+
+The **`api-server`** image (`Dockerfile.api`) installs **CPU PyTorch** and **`requirements-sentiment.txt`** (`transformers`, `safetensors`) so **`NEWS_SENTIMENT_BACKEND=auto`** can load a HF sentiment pipeline without extra pip on the host. Expect a **larger image** and a **first-run model download** to the Hugging Face cache inside the container. Tune with env vars (`NEWS_SENTIMENT_TRANSFORMER_MODEL`, etc.); see `docs/guides/TRADING_CONFIG.md`.
+
 ### Run Database Migrations Manually
 ```bash
 # If you need to run migrations manually (usually runs automatically on startup)

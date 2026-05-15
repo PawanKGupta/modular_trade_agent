@@ -118,76 +118,13 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
 						Default: {defaultConfig.news_sentiment_enabled ? 'Enabled' : 'Disabled'}
 					</div>
+					{config.news_sentiment_enabled && (
+						<div className="text-xs text-blue-400 mt-1 ml-6 max-w-xl">
+							Advanced tuning (lookback, thresholds, model) uses server environment variables —
+							see docs/guides/TRADING_CONFIG.md.
+						</div>
+					)}
 				</div>
-				{config.news_sentiment_enabled && (
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
-						<div>
-							<label htmlFor="news_sentiment_lookback_days" className="block text-sm mb-1">
-								Lookback Days
-								{!isDefault('news_sentiment_lookback_days') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_lookback_days"
-								type="number"
-								min="1"
-								max="365"
-								value={config.news_sentiment_lookback_days}
-								onChange={(e) => onChange({ news_sentiment_lookback_days: parseInt(e.target.value) || 7 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_lookback_days}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_min_articles" className="block text-sm mb-1">
-								Min Articles
-								{!isDefault('news_sentiment_min_articles') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_min_articles"
-								type="number"
-								min="0"
-								value={config.news_sentiment_min_articles}
-								onChange={(e) => onChange({ news_sentiment_min_articles: parseInt(e.target.value) || 3 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_min_articles}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_pos_threshold" className="block text-sm mb-1">
-								Positive Threshold
-								{!isDefault('news_sentiment_pos_threshold') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_pos_threshold"
-								type="number"
-								step="0.1"
-								min="-1"
-								max="1"
-								value={config.news_sentiment_pos_threshold}
-								onChange={(e) => onChange({ news_sentiment_pos_threshold: parseFloat(e.target.value) || 0.6 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_pos_threshold}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_neg_threshold" className="block text-sm mb-1">
-								Negative Threshold
-								{!isDefault('news_sentiment_neg_threshold') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_neg_threshold"
-								type="number"
-								step="0.1"
-								min="-1"
-								max="1"
-								value={config.news_sentiment_neg_threshold}
-								onChange={(e) => onChange({ news_sentiment_neg_threshold: parseFloat(e.target.value) || -0.4 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_neg_threshold}</div>
-						</div>
-					</div>
-				)}
 			</div>
 
 			{/* ML Configuration */}

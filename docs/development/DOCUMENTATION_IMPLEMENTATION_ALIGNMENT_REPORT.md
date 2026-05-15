@@ -60,7 +60,7 @@ Verified configuration parameters match `TradingConfigResponse` schema:
 - ✅ Risk-Reward Ratios (strong_buy_risk_reward, buy_risk_reward, excellent_risk_reward)
 - ✅ Order Defaults (default_exchange, default_product, default_order_type, default_variety, default_validity)
 - ✅ Behavior Toggles (allow_duplicate_recommendations_same_day, exit_on_ema9_or_rsi50, min_combined_score, enable_premarket_amo_adjustment)
-- ✅ News Sentiment (news_sentiment_enabled, news_sentiment_lookback_days, news_sentiment_min_articles, news_sentiment_pos_threshold, news_sentiment_neg_threshold)
+- ✅ News Sentiment — UI: **`news_sentiment_enabled` only**; API/DB retains legacy sentiment columns; **`NEWS_SENTIMENT_*`** env vars drive headline scoring (`core/news_sentiment.py`)
 - ✅ ML Configuration (ml_enabled, ml_model_version, ml_confidence_threshold, ml_combine_with_rules)
 
 **All configuration parameters in documentation match the implementation.**

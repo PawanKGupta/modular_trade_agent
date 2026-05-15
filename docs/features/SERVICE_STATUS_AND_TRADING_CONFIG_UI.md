@@ -118,7 +118,7 @@ npm run test:e2e -- service-status.spec.ts
 | Capital & Positions | `CapitalConfigSection.tsx` | Capital per trade, max portfolio size with impact banner. |
 | Risk | `RiskConfigSection.tsx` | Optional stop-loss tiers, target percentages, risk-reward ratios. |
 | Orders | `OrderConfigSection.tsx` | Default exchange/product/order type/variety/validity selectors. |
-| Behavior & Advanced | `BehaviorConfigSection.tsx` | Duplicate recommendations, exit rules, news sentiment, ML controls. |
+| Behavior & Advanced | `BehaviorConfigSection.tsx` | Duplicate recommendations, exit rules, news-sentiment enable toggle only (advanced tuning via server env), ML controls. |
 
 ### UX Enhancements
 

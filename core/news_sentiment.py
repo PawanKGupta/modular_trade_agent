@@ -1,6 +1,12 @@
+"""Headline-backed sentiment helpers using Yahoo Finance only.
+
+Fetched via ``yf.Ticker(ticker).news`` (see ``get_recent_news``). Manual verification:
+``tools/yfinance_news_smoke.py`` shares the same field extraction helpers as this module.
+"""
+
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yfinance as yf
 
@@ -116,6 +122,58 @@ def get_recent_news(ticker: str) -> List[dict]:
         return []
 
 
+def yfinance_news_raw_timestamp_and_title(item: Dict[str, Any]) -> Tuple[Any, str]:
+    """Return Yahoo ``.news`` item publish time payload and stripped title.
+
+    Mirrors yfinance payloads where detail may live on ``content`` or the root dict.
+    Used by :func:`analyze_news_sentiment` and ``tools/yfinance_news_smoke.py`` so CLI
+    output matches sentiment filtering semantics for timestamp/title precedence.
+
+    Args:
+        item: One element from ``yf.Ticker(...).news``.
+
+    Returns:
+        ``(timestamp_field, title)`` — ``timestamp_field`` is whatever Yahoo provided
+        (Unix seconds, ms, ISO string); parse with :func:`parse_yfinance_news_timestamp`.
+    """
+    content = item.get("content", item)
+    ts_raw = (
+        item.get("providerPublishTime")
+        or item.get("time")
+        or content.get("publishTime")
+        or content.get("providerPublishTime")
+        or content.get("pubDate")
+        or content.get("displayTime")
+    )
+    title = (content.get("title") or item.get("title") or "").strip()
+    return ts_raw, title
+
+
+def parse_yfinance_news_timestamp(ts_raw: Any) -> Optional[datetime]:
+    """Parse Yahoo news time fields into UTC-naive ``datetime`` for lookback filtering.
+
+    Args:
+        ts_raw: Seconds, milliseconds, or ISO-ish string from
+            :func:`yfinance_news_raw_timestamp_and_title`.
+
+    Returns:
+        Parsed instant, or ``None`` if parsing fails.
+    """
+    try:
+        if isinstance(ts_raw, str):
+            if ts_raw.endswith("Z"):
+                return datetime.strptime(ts_raw[:-1], "%Y-%m-%dT%H:%M:%S")
+            return datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        # bool is a subtype of int; Yahoo never sends booleans — reject if so.
+        if isinstance(ts_raw, (int, float)) and not isinstance(ts_raw, bool) and ts_raw > 1e10:
+            return datetime.utcfromtimestamp(ts_raw / 1000)
+        if isinstance(ts_raw, (int, float)) and not isinstance(ts_raw, bool):
+            return datetime.utcfromtimestamp(int(ts_raw))
+    except Exception:
+        return None
+    return None
+
+
 def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dict:
     """
     Compute sentiment from recent news headlines.
@@ -166,42 +224,17 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     used_titles: List[str] = []
     used_articles: List[dict] = []
     for item in news:
-        # Handle both old and new yfinance API structure
-        content = item.get("content", item)  # New API has nested content
-
-        # Try different timestamp fields (both old numeric and new string formats)
-        ts = (
-            item.get("providerPublishTime")
-            or item.get("time")
-            or content.get("publishTime")
-            or content.get("providerPublishTime")
-            or content.get("pubDate")
-            or content.get("displayTime")
-        )
-
-        if ts is None:
+        ts_raw, title = yfinance_news_raw_timestamp_and_title(item)
+        if ts_raw is None:
             continue
 
-        try:
-            # Handle both numeric timestamps and ISO string timestamps
-            if isinstance(ts, str):
-                # Parse ISO 8601 string format: "2025-09-24T10:58:31Z"
-                if ts.endswith("Z"):
-                    dt = datetime.strptime(ts[:-1], "%Y-%m-%dT%H:%M:%S")
-                else:
-                    dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-            elif ts > 1e10:  # Milliseconds timestamp
-                dt = datetime.utcfromtimestamp(ts / 1000)
-            else:  # Seconds timestamp
-                dt = datetime.utcfromtimestamp(int(ts))
-        except Exception:
+        dt = parse_yfinance_news_timestamp(ts_raw)
+        if dt is None:
             continue
 
         if not (start_dt <= dt <= end_dt):
             continue
 
-        # Get title from content or root level
-        title = content.get("title") or item.get("title", "")
         if not title:
             continue
 

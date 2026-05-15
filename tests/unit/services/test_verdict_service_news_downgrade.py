@@ -25,15 +25,13 @@ def _strong_buy_inputs(config: StrategyConfig):
 
 
 @pytest.fixture
-def config_news_min2() -> StrategyConfig:
-    c = StrategyConfig.default()
-    c.news_sentiment_min_articles = 2
-    return c
+def config_base() -> StrategyConfig:
+    return StrategyConfig.default()
 
 
 @pytest.fixture
-def svc(config_news_min2: StrategyConfig) -> VerdictService:
-    return VerdictService(config_news_min2)
+def svc(config_base: StrategyConfig) -> VerdictService:
+    return VerdictService(config_base)
 
 
 class TestNewsStrongNegativeDowngrade:

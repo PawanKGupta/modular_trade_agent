@@ -207,34 +207,20 @@ Control system behavior and logic.
 
 ### 7. News Sentiment
 
-Configure news sentiment analysis.
+**In the web app (Trading Configuration → Behavior)**
 
-- **News Sentiment Enabled** (default: true)
-  - Enable/disable news sentiment analysis
+- **Enable News Sentiment Analysis** (default matches server DB defaults)
+  - When enabled, Yahoo headlines are fetched and scored for signals/analysis.
+  - When disabled, no news-sentiment attachment runs for this user's workflows that respect trading config.
 
-- **Lookback Days** (default: 30)
-  - Days to look back for news
-  - More days = more data
-  - Recommended: 7-30
+**Server-only tuning (operators)**
 
-- **Min Articles** (default: 2)
-  - Minimum articles required
-  - Filters stocks with insufficient news
-  - Recommended: 1-5
+- Window, labeling thresholds (positive/negative), minimum articles used in confidence aggregation, transformers vs lexicon backend, cache TTL: **`NEWS_SENTIMENT_*`** in `config/settings.py` (`core/news_sentiment.py`).
+- Optional CPU Transformers: `requirements-sentiment.txt` + PyTorch CPU wheels; **`NEWS_SENTIMENT_BACKEND`** (`auto` \| `transformer` \| `lexicon`), **`NEWS_SENTIMENT_TRANSFORMER_MODEL`**, **`NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE`**, **`NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH`**. Payload may include `scorer` and `model` when applicable.
 
-- **Positive Threshold** (default: 0.25)
-  - Sentiment score for positive news
-  - Higher = stricter
-  - Range: 0-1
+The HTTP API still returns legacy DB-backed fields (**lookback/min articles/pos/neg thresholds**); **sentiment computation uses env-driven `config.settings`, not UI-edited overrides.**
 
-- **Negative Threshold** (default: -0.25)
-  - Sentiment score for negative news
-  - Lower = stricter
-  - Range: -1-0
-
-**Server-side headline model (operators):** The API stores the same UI fields; scoring is implemented in `core/news_sentiment.py`. On the server you can install optional **CPU Transformers** deps (`requirements-sentiment.txt` + PyTorch CPU wheels) so headlines use a small Hugging Face model by default (`NEWS_SENTIMENT_BACKEND=auto`). If those packages are missing, the code **falls back** to the legacy word-list heuristic. Relevant env vars: `NEWS_SENTIMENT_BACKEND` (`auto`|`transformer`|`lexicon`), `NEWS_SENTIMENT_TRANSFORMER_MODEL`, `NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE`, `NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH`. The returned payload may include `scorer` (`transformer`|`lexicon`|`none`) and `model` when a transformer was used.
-
-**Rule-based downgrade (operators):** `VerdictService` only downgrades `buy` / `strong_buy` → `watch` when news is **strongly** negative **and** the aggregate is credible: **`used` ≥ `news_sentiment_min_articles`** (from this config), **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), and average **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`, stricter than the UI “negative label” cutoff). Tune via environment on the server; justification tag remains `news_negative`.
+**Rule-based downgrade (operators):** `VerdictService` downgrades `buy` / `strong_buy` → `watch` only when news is strongly negative **and** the aggregate is credible: **`used` ≥ `NEWS_SENTIMENT_MIN_ARTICLES`**, **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`). Justification: `news_negative`.
 
 ### 8. ML Configuration
 
