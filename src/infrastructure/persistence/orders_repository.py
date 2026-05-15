@@ -17,7 +17,7 @@ from src.infrastructure.db.models import (
     SignalStatus,
     TradeMode,
 )
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import IST, ist_now_naive
 from src.infrastructure.persistence.fills_repository import FillsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
@@ -366,7 +366,7 @@ class OrdersRepository:
                 # Default to PAPER if no settings exist
                 trade_mode = TradeMode.PAPER
 
-        now = ist_now()
+        now = ist_now_naive()
         # Compute base_symbol for DB-level uniqueness and normalization
         try:
             if extract_base_symbol is None:
@@ -480,7 +480,7 @@ class OrdersRepository:
             if side == "sell":
                 try:
                     # Retry: run ON CONFLICT probe again to cancel blocking row, then insert.
-                    now_ist = ist_now()
+                    now_ist = ist_now_naive()
                     trade_mode_val = (
                         trade_mode.value
                         if hasattr(trade_mode, "value")
@@ -536,8 +536,8 @@ class OrdersRepository:
                         quantity=quantity,
                         price=price,
                         status=OrderStatus.PENDING,
-                        placed_at=ist_now(),
-                        updated_at=ist_now(),
+                        placed_at=ist_now_naive(),
+                        updated_at=ist_now_naive(),
                         order_id=order_id,
                         entry_type=entry_type,
                         order_metadata=order_metadata,
@@ -713,7 +713,7 @@ class OrdersRepository:
                 setattr(order, k, v)
 
         # Always update updated_at timestamp when order is modified
-        order.updated_at = ist_now()
+        order.updated_at = ist_now_naive()
 
         if auto_commit:
             self.db.commit()
@@ -731,7 +731,7 @@ class OrdersRepository:
         """
         # Mark as cancelled (not closed - closed is for successfully executed + sold trades)
         order.status = OrderStatus.CANCELLED
-        order.closed_at = ist_now()
+        order.closed_at = ist_now_naive()
         if auto_commit:
             self.db.commit()
 
@@ -749,8 +749,8 @@ class OrdersRepository:
         order.status = OrderStatus.FAILED  # Always FAILED (no RETRY_PENDING)
         order.reason = failure_reason  # Use unified reason field
         if not order.first_failed_at:
-            order.first_failed_at = ist_now()
-        order.last_retry_attempt = ist_now()
+            order.first_failed_at = ist_now_naive()
+        order.last_retry_attempt = ist_now_naive()
         # Increment retry_count for monitoring (no max retry limit enforced)
         order.retry_count = (order.retry_count or 0) + 1
         # Note: retry_pending parameter is ignored - all FAILED orders are retriable
@@ -770,10 +770,10 @@ class OrdersRepository:
         order.status = OrderStatus.FAILED  # Changed from REJECTED
         order.reason = f"Broker rejected: {rejection_reason}"  # Use unified reason field
         order.rejection_reason = rejection_reason  # Store detailed reason (Phase 1)
-        order.last_status_check = ist_now()
+        order.last_status_check = ist_now_naive()
         # Set first_failed_at if not already set (for retry logic)
         if not order.first_failed_at:
-            order.first_failed_at = ist_now()
+            order.first_failed_at = ist_now_naive()
 
         # Mark signal as FAILED if it's a buy order
         if order.side == "buy":
@@ -790,8 +790,8 @@ class OrdersRepository:
         """Mark an order as cancelled"""
         order.status = OrderStatus.CANCELLED
         order.reason = cancelled_reason or "Cancelled"  # Use unified reason field
-        order.closed_at = ist_now()
-        order.last_status_check = ist_now()
+        order.closed_at = ist_now_naive()
+        order.last_status_check = ist_now_naive()
 
         # Mark signal as FAILED if it's a buy order
         if order.side == "buy":
@@ -937,7 +937,7 @@ class OrdersRepository:
         # Mark as CLOSED when filled so (user_id, base_symbol) is freed for the unique
         # index uq_orders_user_base_symbol_active; "position ongoing" is tracked in Positions.
         # Capture closed_at at order closer (fill time) so Order lifecycle is independent of Position.
-        fill_time = ist_now()
+        fill_time = ist_now_naive()
         order.status = OrderStatus.CLOSED
         order.execution_time = fill_time
         order.filled_at = fill_time
@@ -955,7 +955,7 @@ class OrdersRepository:
 
     def update_status_check(self, order: Orders) -> Orders:
         """Update the last status check timestamp"""
-        order.last_status_check = ist_now()
+        order.last_status_check = ist_now_naive()
         return self.update(order)
 
     def _mark_signal_as_traded_with_late_fill_detection(self, order: Orders) -> None:
@@ -1153,7 +1153,7 @@ class OrdersRepository:
 
         # Apply expiry filter
         retriable_orders = []
-        now = ist_now()
+        now = ist_now_naive()
 
         for order in all_failed:
             if not order.first_failed_at:
@@ -1164,8 +1164,11 @@ class OrdersRepository:
             # Calculate next trading day market close
             next_trading_day_close = get_next_trading_day_close(order.first_failed_at)
 
+            # Compare in IST-aware space (DB stores naive IST; utils return aware close)
+            now_cmp = now.replace(tzinfo=IST) if now.tzinfo is None else now.astimezone(IST)
+
             # Check if expired
-            if now > next_trading_day_close:
+            if now_cmp > next_trading_day_close:
                 # Order expired - mark as CANCELLED
                 self.mark_cancelled(
                     order,

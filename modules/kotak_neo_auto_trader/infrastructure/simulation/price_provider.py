@@ -194,7 +194,29 @@ class PriceProvider:
         if price is not None:
             return price
 
-        logger.warning(f"[WARN]? Live providers unavailable for {ticker}; falling back to mock")
+        stale = self._stale_cached_price(symbol) or self._stale_cached_price(ticker)
+        if stale is not None:
+            logger.warning(
+                "[WARN]? Live providers unavailable for %s; using stale cached price Rs %.2f",
+                ticker,
+                stale,
+            )
+            return stale
+
+        mock_price = self._fetch_mock_price(symbol)
+        logger.warning(
+            "[WARN]? Live providers unavailable for %s; using mock price Rs %.2f",
+            ticker,
+            mock_price,
+        )
+        return mock_price
+
+    def _stale_cached_price(self, symbol: str) -> float | None:
+        """Return last cached price regardless of TTL (for live-mode fallback)."""
+        with self._lock:
+            entry = self._price_cache.get(symbol)
+            if entry:
+                return entry[0]
         return None
 
     def _fetch_yfinance_price(self, symbol: str) -> float | None:

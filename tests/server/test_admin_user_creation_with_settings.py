@@ -3,21 +3,42 @@ Test that admin user creation automatically creates default UserSettings
 Bug fix: Previously, newly created users didn't have UserSettings until they manually saved settings
 """
 
+from __future__ import annotations
+
 import os
+import sys
 
-os.environ["DB_URL"] = "sqlite:///:memory:"
-
-from fastapi.testclient import TestClient  # noqa: E402
-
-from server.app.main import app  # noqa: E402
-from src.infrastructure.db.models import UserRole, Users, UserSettings  # noqa: E402
-from src.infrastructure.db.session import SessionLocal  # noqa: E402
-from src.infrastructure.persistence.settings_repository import SettingsRepository  # noqa: E402
+import pytest
+from fastapi.testclient import TestClient
 
 
-def _signup_and_promote_admin(email: str) -> tuple[TestClient, dict]:
-    """Helper to create and promote an admin user"""
-    client = TestClient(app)
+def _make_client() -> TestClient:
+    """In-memory DB with explicit schema reset (avoids CI 'no such table: users' flakes)."""
+    os.environ["DB_URL"] = "sqlite:///:memory:"
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if root not in sys.path:
+        sys.path.append(root)
+
+    import src.infrastructure.db.models  # noqa: F401, PLC0415
+    from src.infrastructure.db.base import Base
+    from src.infrastructure.db.session import engine
+
+    try:
+        Base.metadata.drop_all(bind=engine)
+    except Exception:
+        pass
+    Base.metadata.create_all(bind=engine)
+
+    from server.app.main import app  # noqa: PLC0415
+
+    return TestClient(app)
+
+
+def _signup_and_promote_admin(client: TestClient, email: str) -> dict:
+    """Create user via signup and promote to admin; return auth headers."""
+    from src.infrastructure.db.models import UserRole, Users  # noqa: PLC0415
+    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
     response = client.post(
         "/api/v1/auth/signup",
         json={"email": email, "password": "testpass123", "name": "Admin User"},
@@ -25,17 +46,17 @@ def _signup_and_promote_admin(email: str) -> tuple[TestClient, dict]:
     assert response.status_code == 200
     token = response.json()["access_token"]
 
-    # Promote to admin
     with SessionLocal() as db:
         user = db.query(Users).filter(Users.email == email).first()
+        assert user is not None
         user.role = UserRole.ADMIN
         user.is_active = True
         db.commit()
 
-    headers = {"Authorization": f"Bearer {token}"}
-    return client, headers
+    return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.mark.unit
 def test_admin_create_user_creates_default_settings():
     """
     BUG FIX: When admin creates a new user, UserSettings should be automatically created.
@@ -43,9 +64,9 @@ def test_admin_create_user_creates_default_settings():
     Previously: UserSettings was not created → "User settings not found" error when starting service
     Now: UserSettings is auto-created with default paper trading mode
     """
-    client, admin_headers = _signup_and_promote_admin("admin@test.com")
+    client = _make_client()
+    admin_headers = _signup_and_promote_admin(client, "admin@test.com")
 
-    # Admin creates a new user
     response = client.post(
         "/api/v1/admin/users",
         headers=admin_headers,
@@ -60,21 +81,22 @@ def test_admin_create_user_creates_default_settings():
     assert response.status_code == 200
     user_id = response.json()["id"]
 
-    # Verify UserSettings was automatically created (THIS WAS THE BUG - it didn't exist)
+    from src.infrastructure.db.models import UserSettings  # noqa: PLC0415
+    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
     with SessionLocal() as db:
         user_settings = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
         assert user_settings is not None, "BUG: UserSettings should be auto-created for new users!"
-        assert user_settings.trade_mode.value == "paper"  # Default mode
-
-        print(f"✅ Fix verified: UserSettings auto-created for user_id={user_id}")
+        assert user_settings.trade_mode.value == "paper"
 
 
+@pytest.mark.unit
 def test_signup_also_creates_default_settings():
     """
     REGRESSION TEST: Signup flow should continue to create default UserSettings.
     This was already working correctly.
     """
-    client = TestClient(app)
+    client = _make_client()
 
     response = client.post(
         "/api/v1/auth/signup",
@@ -83,7 +105,9 @@ def test_signup_also_creates_default_settings():
 
     assert response.status_code == 200
 
-    # Verify UserSettings was automatically created
+    from src.infrastructure.db.models import Users, UserSettings  # noqa: PLC0415
+    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
     with SessionLocal() as db:
         user = db.query(Users).filter(Users.email == "signupuser@test.com").first()
         assert user is not None
@@ -92,9 +116,8 @@ def test_signup_also_creates_default_settings():
         assert user_settings is not None, "UserSettings should be auto-created during signup"
         assert user_settings.trade_mode.value == "paper"
 
-        print(f"✅ Regression test passed: UserSettings auto-created for user_id={user.id}")
 
-
+@pytest.mark.unit
 def test_service_can_find_settings_for_new_user():
     """
     USER SCENARIO TEST: After admin creates a user, trading service finds their settings.
@@ -102,9 +125,9 @@ def test_service_can_find_settings_for_new_user():
     Before fix: SettingsRepository.get_by_user_id() returned None → ValueError
     After fix: SettingsRepository.get_by_user_id() returns auto-created settings → Success
     """
-    client, admin_headers = _signup_and_promote_admin("admin2@test.com")
+    client = _make_client()
+    admin_headers = _signup_and_promote_admin(client, "admin2@test.com")
 
-    # Admin creates a new user
     response = client.post(
         "/api/v1/admin/users",
         headers=admin_headers,
@@ -119,15 +142,15 @@ def test_service_can_find_settings_for_new_user():
     assert response.status_code == 200
     user_id = response.json()["id"]
 
-    # Simulate what the service does: try to get user settings
+    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+    from src.infrastructure.persistence.settings_repository import (
+        SettingsRepository,  # noqa: PLC0415
+    )
+
     with SessionLocal() as db:
         settings_repo = SettingsRepository(db)
         settings = settings_repo.get_by_user_id(user_id)
 
-        # Before fix: settings would be None here, causing:
-        # "ValueError: User settings not found for user_id=X"
         assert settings is not None, "BUG: Service cannot find settings for newly created user!"
         assert settings.user_id == user_id
         assert settings.trade_mode.value == "paper"
-
-        print(f"✅ User scenario verified: Service can find settings for user_id={user_id}")
