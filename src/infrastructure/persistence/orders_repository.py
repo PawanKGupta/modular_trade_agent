@@ -290,6 +290,30 @@ class OrdersRepository:
         reason: str | None = None,
         trade_mode: TradeMode | None = None,
     ) -> Orders:
+        # Idempotent by broker/internal id (e.g. paper place_order already persisted the row)
+        if broker_order_id:
+            existing_by_broker = self.get_by_broker_order_id(user_id, broker_order_id)
+            if existing_by_broker:
+                logger.warning(
+                    "Duplicate create_amo skipped: broker_order_id=%s already exists "
+                    "(order id=%s, status=%s)",
+                    broker_order_id,
+                    existing_by_broker.id,
+                    existing_by_broker.status,
+                )
+                return existing_by_broker
+        if order_id:
+            existing_by_order = self.get_by_order_id(user_id, order_id)
+            if existing_by_order:
+                logger.warning(
+                    "Duplicate create_amo skipped: order_id=%s already exists "
+                    "(order id=%s, status=%s)",
+                    order_id,
+                    existing_by_order.id,
+                    existing_by_order.status,
+                )
+                return existing_by_order
+
         # Check for existing active order to prevent duplicates
         # First check by exact symbol match (most common case - same symbol format)
         # Then check by base symbol (fallback for different formats like SALSTEEL-BE vs SALSTEEL)

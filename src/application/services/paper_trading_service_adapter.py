@@ -11,6 +11,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
 import pandas as pd
 
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
@@ -18,7 +19,6 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters import (
     PaperTradingBrokerAdapter,
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
-from src.infrastructure.db.models import TradeMode
 from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from src.infrastructure.logging import get_user_logger
 
@@ -868,7 +868,6 @@ class PaperTradingServiceAdapter:
                     self.reporter.print_summary()
 
                     # Export report
-                    from datetime import datetime
 
                     timestamp = ist_now_naive().strftime("%Y%m%d")
                     report_path = f"{self.storage_path}/reports/report_{timestamp}.json"
@@ -933,7 +932,6 @@ class PaperTradingServiceAdapter:
         - Target is FROZEN (never updated)
         - Track in active_sell_orders
         """
-        from datetime import datetime
 
         from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
 
@@ -1658,8 +1656,6 @@ class PaperTradingServiceAdapter:
             return False
 
         try:
-            from datetime import datetime
-
             from modules.kotak_neo_auto_trader.domain import (
                 Money,
                 Order,
@@ -2307,50 +2303,8 @@ class PaperTradingEngineAdapter:
                     # This handles cases where recommendations have both "XYZ" and "XYZ.NS"
                     current_symbols.add(normalized_ticker)
 
-                    # Save to database (similar to place_reentry_orders)
-                    if self.user_id and self.db:
-                        try:
-                            from src.infrastructure.persistence.orders_repository import (
-                                OrdersRepository,
-                            )
-
-                            orders_repo = OrdersRepository(self.db)
-                            # Determine order type string
-                            order_type_str = (
-                                "market" if order.order_type.value == "MARKET" else "limit"
-                            )
-                            # Get order metadata if available
-                            order_metadata = None
-                            if hasattr(order, "metadata") and order.metadata:
-                                order_metadata = order.metadata
-                            elif hasattr(order, "_metadata") and order._metadata:
-                                order_metadata = order._metadata
-
-                            orders_repo.create_amo(
-                                user_id=self.user_id,
-                                symbol=symbol,
-                                side="buy",
-                                order_type=order_type_str,
-                                quantity=qty,
-                                price=price if order.order_type.value == "LIMIT" else None,
-                                broker_order_id=order_id,
-                                order_metadata=order_metadata,
-                                entry_type="fresh",
-                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
-                            )
-                            # Note: create_amo already commits, but we keep commit here for safety
-                            if not self.db.in_transaction():
-                                self.db.commit()
-                            self.logger.debug(
-                                f"Saved order {order_id} to database for {symbol}",
-                                action="place_new_entries",
-                            )
-                        except Exception as db_error:
-                            # Don't fail order placement if database save fails
-                            self.logger.warning(
-                                f"Failed to save order to database for {symbol}: {db_error}",
-                                action="place_new_entries",
-                            )
+                    # DB row is created in PaperTradingBrokerAdapter.place_order(); do not
+                    # call create_amo here (would duplicate rows after fast market fills).
 
                     # Mark signal as TRADED (try base and ticker variants to avoid suffix mismatches)
                     try:
@@ -2443,7 +2397,6 @@ class PaperTradingEngineAdapter:
         Returns:
             Summary dict with monitoring statistics
         """
-        from datetime import datetime
         from math import floor
 
         summary = {"checked": 0, "reentries": 0, "skipped": 0}
@@ -2761,16 +2714,25 @@ class PaperTradingEngineAdapter:
                 action="place_reentry_orders",
             )
 
-            # Get current holdings and pending orders for duplicate checks
-            holdings = self.broker.get_holdings()
+            # Active BUY orders only — re-entry adds to existing holdings (matches live engine).
             pending_orders = self.broker.get_all_orders()
-            current_symbols = {
-                h.symbol.replace(".NS", "").replace(".BO", "").upper() for h in holdings
-            }
-            for order in pending_orders:
-                if order.is_buy_order() and order.is_active():
-                    normalized_symbol = order.symbol.replace(".NS", "").replace(".BO", "").upper()
-                    current_symbols.add(normalized_symbol)
+            orders_repo = None
+            if self.user_id and self.db:
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                orders_repo = OrdersRepository(self.db)
+
+            def _has_active_buy_for_symbol(normalized_symbol: str) -> bool:
+                if orders_repo and orders_repo.has_active_buy_order_by_base_symbol(
+                    self.user_id, normalized_symbol
+                ):
+                    return True
+                for pending in pending_orders:
+                    if pending.is_buy_order() and pending.is_active():
+                        pending_sym = pending.symbol.replace(".NS", "").replace(".BO", "").upper()
+                        if pending_sym == normalized_symbol:
+                            return True
+                return False
 
             for position in open_positions:
                 symbol = position.symbol
@@ -2913,12 +2875,11 @@ class PaperTradingEngineAdapter:
                         action="place_reentry_orders",
                     )
 
-                    # Check for duplicates (holdings or active buy orders)
-                    # Normalize symbol for comparison (remove .NS/.BO suffix)
+                    # Block only duplicate active BUY orders (not existing holdings)
                     normalized_symbol = symbol.replace(".NS", "").replace(".BO", "").upper()
-                    if normalized_symbol in current_symbols:
+                    if _has_active_buy_for_symbol(normalized_symbol):
                         self.logger.info(
-                            f"Skipping {symbol}: already in holdings or pending orders",
+                            f"Skipping {symbol}: active BUY order already exists",
                             action="place_reentry_orders",
                         )
                         summary["skipped_duplicates"] += 1
@@ -2995,29 +2956,7 @@ class PaperTradingEngineAdapter:
                             f"qty: {qty}, level: {next_level})",
                             action="place_reentry_orders",
                         )
-
-                        # Save to database (similar to fresh entries)
-                        if self.user_id and self.db:
-                            from src.infrastructure.persistence.orders_repository import (
-                                OrdersRepository,
-                            )
-
-                            orders_repo = OrdersRepository(self.db)
-                            orders_repo.create_amo(
-                                user_id=self.user_id,
-                                symbol=normalized_symbol,
-                                side="buy",
-                                order_type="limit",
-                                quantity=qty,
-                                price=current_price,
-                                broker_order_id=order_id,
-                                order_metadata=reentry_order._metadata,
-                                entry_type="reentry",
-                                trade_mode=TradeMode.PAPER,  # Phase 0.1: Explicit paper trading mode
-                            )
-                            # Note: create_amo already commits, but we keep commit here for safety
-                            if not self.db.in_transaction():
-                                self.db.commit()
+                        # DB row is created in PaperTradingBrokerAdapter.place_order().
                     else:
                         self.logger.warning(
                             f"Failed to place re-entry order for {symbol}",
