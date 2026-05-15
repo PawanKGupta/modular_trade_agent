@@ -17,7 +17,7 @@ from src.infrastructure.db.models import (
     SignalStatus,
     TradeMode,
 )
-from src.infrastructure.db.timezone_utils import ist_now_naive
+from src.infrastructure.db.timezone_utils import IST, ist_now_naive
 from src.infrastructure.persistence.fills_repository import FillsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
@@ -1164,8 +1164,11 @@ class OrdersRepository:
             # Calculate next trading day market close
             next_trading_day_close = get_next_trading_day_close(order.first_failed_at)
 
+            # Compare in IST-aware space (DB stores naive IST; utils return aware close)
+            now_cmp = now.replace(tzinfo=IST) if now.tzinfo is None else now.astimezone(IST)
+
             # Check if expired
-            if now > next_trading_day_close:
+            if now_cmp > next_trading_day_close:
                 # Order expired - mark as CANCELLED
                 self.mark_cancelled(
                     order,

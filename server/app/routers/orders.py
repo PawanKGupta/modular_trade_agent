@@ -43,6 +43,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def ist_now():
+    """Naive IST wall-clock for order timestamps (patched in unit tests as ``orders.ist_now``)."""
+    return ist_now_naive()
+
+
 def _normalize_repo_list_result(result):
     """Normalize OrdersRepository.list() result across legacy/new call signatures."""
     # Some call sites/tests expect (items, total_count), while the current
@@ -361,11 +366,11 @@ def retry_order(
         _recalculate_order_quantity(order, current.id, db, order_id)
 
         # Update order for retry (keep as FAILED, update retry metadata)
-        prior_reason = (order.reason or order.rejection_reason or "").strip()
+        prior_reason = (order.reason or getattr(order, "rejection_reason", None) or "").strip()
         order.retry_count = (order.retry_count or 0) + 1
-        order.last_retry_attempt = ist_now_naive()
+        order.last_retry_attempt = ist_now()
         if not order.first_failed_at:
-            order.first_failed_at = ist_now_naive()
+            order.first_failed_at = ist_now()
         order.reason = (
             f"manual_retry_queued: {prior_reason}" if prior_reason else "manual_retry_queued"
         )
