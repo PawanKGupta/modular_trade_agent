@@ -126,6 +126,12 @@ python trade_agent.py --backtest
 ```
 Analyzes stocks and generates scored recommendations based on historical performance.
 
+### Run analysis with verdict ML (CLI, no DB user)
+```powershell
+python trade_agent.py --backtest --ml
+```
+Same as `--ml-enabled`. Sets `StrategyConfig.ml_enabled=True` for the batch when you are **not** loading trading config via `TRADE_AGENT_USER_ID` (if a DB user config loads successfully, that config controls `ml_enabled` instead). Requires the verdict model file on disk (see `ML_COMPLETE_GUIDE.md`).
+
 ---
 
 ## Kotak Neo Auto Trader Commands

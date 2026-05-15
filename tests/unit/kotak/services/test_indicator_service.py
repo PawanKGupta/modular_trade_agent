@@ -4,6 +4,7 @@ Unit tests for IndicatorService
 Tests ensure backward compatibility with existing indicator calculation logic.
 """
 
+from math import isnan
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -279,8 +280,32 @@ class TestIndicatorService:
         # Verify all values are floats
         assert all(isinstance(v, float) for v in result.values())
 
+    def test_get_daily_indicators_dict_ffills_trailing_nan_close(self):
+        """When yfinance leaves the last bar's close as NaN, use the prior bar's close."""
+        n = 250
+        closes = [float(i) for i in range(100, 100 + n - 1)] + [float("nan")]
+        mock_df = pd.DataFrame(
+            {
+                "close": closes,
+                "open": closes,
+                "high": closes,
+                "low": closes,
+                "volume": [1_000_000] * n,
+                "date": pd.date_range("2024-01-01", periods=n),
+            }
+        )
 
-class TestIndicatorServiceBackwardCompatibility:
+        mock_price_service = Mock()
+        mock_price_service.get_price.return_value = mock_df
+
+        service = IndicatorService(price_service=mock_price_service, enable_caching=False)
+
+        result = service.get_daily_indicators_dict("TEST.NS")
+
+        assert result is not None
+        assert result["close"] == float(100 + n - 2)
+        assert not isnan(result["close"])
+
     """Tests to ensure IndicatorService maintains backward compatibility"""
 
     def test_calculate_rsi_matches_compute_indicators(self):

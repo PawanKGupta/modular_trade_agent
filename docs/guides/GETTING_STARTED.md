@@ -62,6 +62,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -r server/requirements.txt
 
+# Optional: CPU headline sentiment (Hugging Face Transformers; no paid news API).
+# Recommended on production Linux (e.g. Oracle Cloud) after installing PyTorch CPU wheels:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-sentiment.txt
+#
+# See docs/guides/TRADING_CONFIG.md (News Sentiment) for env vars.
+
 # Install frontend dependencies
 cd web
 npm install

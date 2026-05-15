@@ -293,9 +293,12 @@ Content-Type: application/json
 {
   "rsi_period": 10,
   "ema9_period": 9,
-  "user_capital": 300000.0
+  "user_capital": 300000.0,
+  "ml_price_enabled": false
 }
 ```
+
+Optional fields include `ml_enabled`, `ml_price_enabled`, and other knobs from `TradingConfigUpdateRequest` (`server/app/schemas/trading_config.py`).
 
 ### Broker Credentials
 

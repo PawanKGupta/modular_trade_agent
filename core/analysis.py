@@ -454,7 +454,11 @@ def analyze_ticker(
 
 
 def analyze_multiple_tickers(
-    tickers, enable_multi_timeframe=True, export_to_csv=True, csv_filename=None
+    tickers,
+    enable_multi_timeframe=True,
+    export_to_csv=True,
+    csv_filename=None,
+    config=None,
 ):
     """
     Analyze multiple tickers and export results to CSV
@@ -482,6 +486,7 @@ def analyze_multiple_tickers(
         enable_multi_timeframe: Enable multi-timeframe analysis
         export_to_csv: Export results to CSV
         csv_filename: Custom filename for CSV export
+        config: Optional ``StrategyConfig`` for ``AsyncAnalysisService`` (defaults if None).
 
     Returns:
         List of analysis results and CSV filepath if exported
@@ -504,7 +509,7 @@ def analyze_multiple_tickers(
     logger.info(f"Starting batch analysis for {len(tickers)} tickers (using AsyncAnalysisService)")
 
     try:
-        service = AsyncAnalysisService(max_concurrent=10)
+        service = AsyncAnalysisService(max_concurrent=10, config=config)
 
         async def analyze():
             return await service.analyze_batch_async(

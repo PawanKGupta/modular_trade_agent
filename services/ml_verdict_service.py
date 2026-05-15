@@ -11,9 +11,9 @@ from typing import Any
 import joblib
 import pandas as pd
 
-from src.infrastructure.db.timezone_utils import ist_now_naive
-
+from services.ml_verdict_feature_manifest import load_verdict_feature_manifest
 from services.verdict_service import VerdictService
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 
@@ -38,6 +38,7 @@ class MLVerdictService(VerdictService):
         self.model = None
         self.model_loaded = False
         self.feature_cols = []
+        self._warned_ml_feature_miss = False
 
         # If no model_path provided, try to find model based on configuration
         if model_path is None:
@@ -64,52 +65,94 @@ class MLVerdictService(VerdictService):
                 self.model_loaded = True
                 logger.info(f"? ML verdict model loaded from {model_path}")
 
-                # Load feature columns if available
-                # Try multiple possible filenames for backward compatibility
-                model_stem = Path(model_path).stem
+                resolved_model_path = Path(model_path).resolve()
+                manifest_payload = load_verdict_feature_manifest(resolved_model_path)
 
-                # Extract model type from filename (e.g., "verdict_model_random_forest" -> "random_forest")
-                model_type = None
-                if "random_forest" in model_stem:
-                    model_type = "random_forest"
-                elif "xgboost" in model_stem:
-                    model_type = "xgboost"
+                def _unload_model(reason: str) -> None:
+                    logger.error("%s; disabling ML verdict for %s.", reason, resolved_model_path)
+                    self.model = None
+                    self.model_loaded = False
+                    self.feature_cols = []
 
-                possible_paths = [
-                    # Current format: verdict_model_features_{model_type}.txt (from training service)
-                    (
-                        Path(model_path).parent / f"verdict_model_features_{model_type}.txt"
-                        if model_type
-                        else None
-                    ),
-                    # Alternative format: {stem}_features.txt
-                    Path(model_path).parent / f"{model_stem.replace('model_', '')}_features.txt",
-                    # Legacy format: verdict_model_features_enhanced.txt
-                    Path(model_path).parent / "verdict_model_features_enhanced.txt",
-                ]
+                if manifest_payload:
+                    manifest_cols = manifest_payload["feature_names"]
+                    n_expected = getattr(self.model, "n_features_in_", None)
+                    if n_expected is not None and int(n_expected) != len(manifest_cols):
+                        _unload_model(
+                            f"Verdict manifest lists {len(manifest_cols)} features but estimator "
+                            f"expects {int(n_expected)}"
+                        )
+                    else:
+                        self.feature_cols = manifest_cols
+                        logger.info(
+                            "   Loaded %s feature columns from %s.verdict_features.json "
+                            "(schema v%s)",
+                            len(self.feature_cols),
+                            resolved_model_path.stem,
+                            manifest_payload["feature_schema_version"],
+                        )
+                elif self.model_loaded:
+                    # Legacy discovery when no versioned manifest (older artifacts).
+                    model_stem = Path(model_path).stem
 
-                feature_cols_path = None
-                for path in possible_paths:
-                    if path and path.exists():
-                        feature_cols_path = path
-                        break
+                    model_type = None
+                    if "random_forest" in model_stem.lower():
+                        model_type = "random_forest"
+                    elif "xgboost" in model_stem.lower():
+                        model_type = "xgboost"
+                    elif "logistic" in model_stem.lower():
+                        model_type = "logistic_regression"
 
-                if feature_cols_path:
-                    with open(feature_cols_path) as f:
-                        self.feature_cols = [line.strip() for line in f if line.strip()]
-                    logger.info(
-                        f"   Loaded {len(self.feature_cols)} feature columns from {feature_cols_path.name}"
-                    )
-                # Try to get feature names from the model itself (scikit-learn stores them)
-                elif hasattr(self.model, "feature_names_in_"):
-                    self.feature_cols = list(self.model.feature_names_in_)
-                    logger.info(
-                        f"   Loaded {len(self.feature_cols)} feature columns from model (feature_names_in_)"
-                    )
-                else:
-                    logger.warning(
-                        "Feature columns file not found and model doesn't have feature_names_in_. Will extract features dynamically."
-                    )
+                    possible_paths = [
+                        Path(model_path).parent / f"{model_stem}_features.txt",
+                        (
+                            Path(model_path).parent / f"verdict_model_features_{model_type}.txt"
+                            if model_type
+                            else None
+                        ),
+                        Path(model_path).parent
+                        / f"{model_stem.replace('model_', '')}_features.txt",
+                        Path(model_path).parent / "verdict_model_features_enhanced.txt",
+                    ]
+
+                    feature_cols_path = None
+                    for path in possible_paths:
+                        if path and path.exists():
+                            feature_cols_path = path
+                            break
+
+                    if feature_cols_path:
+                        with open(feature_cols_path, encoding="utf-8") as f:
+                            self.feature_cols = [line.strip() for line in f if line.strip()]
+                        logger.info(
+                            "   Loaded %s feature columns from %s (legacy sidecar)",
+                            len(self.feature_cols),
+                            feature_cols_path.name,
+                        )
+                    elif hasattr(self.model, "feature_names_in_"):
+                        self.feature_cols = list(self.model.feature_names_in_)
+                        logger.info(
+                            "   Loaded %s feature columns from model (feature_names_in_)",
+                            len(self.feature_cols),
+                        )
+                    else:
+                        logger.warning(
+                            "Feature columns file not found and model doesn't have "
+                            "feature_names_in_. Will extract features dynamically (risky)."
+                        )
+
+                    # Validate legacy column count when sklearn exposes expectation.
+                    n_expected_legacy = getattr(self.model, "n_features_in_", None)
+                    if (
+                        self.model_loaded
+                        and n_expected_legacy is not None
+                        and self.feature_cols
+                        and int(n_expected_legacy) != len(self.feature_cols)
+                    ):
+                        _unload_model(
+                            f"Legacy feature column list length {len(self.feature_cols)} does not "
+                            f"match estimator n_features_in_={int(n_expected_legacy)}"
+                        )
 
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load ML model: {e}, using rule-based logic")
@@ -119,6 +162,33 @@ class MLVerdictService(VerdictService):
             logger.warning(f"[WARN]? Model file not found: {model_path}, using rule-based logic")
         else:
             logger.info("i? No ML model path provided, using rule-based logic")
+
+    def _vectorize_ml_features_for_model(self, features: dict[str, Any]) -> list[float]:
+        """
+        Order feature values to match the estimator's training contract.
+
+        Prefer a versioned manifest / ``self.feature_cols``; missing keys use 0.0 and
+        trigger a one-time warning. If no column list is configured, values follow
+        insertion order of ``features`` (legacy, error-prone).
+
+        Args:
+            features: Keyed values from :meth:`_extract_features`.
+
+        Returns:
+            Single row as floats for ``predict_proba``.
+        """
+        if not self.feature_cols:
+            return [float(v) for v in features.values()]
+        missing = [col for col in self.feature_cols if col not in features]
+        if missing and not self._warned_ml_feature_miss:
+            sample = missing[:15] + (["..."] if len(missing) > 15 else [])
+            logger.warning(
+                "ML verdict: %s feature(s) missing from live extraction (filled with 0.0): %s",
+                len(missing),
+                sample,
+            )
+            self._warned_ml_feature_miss = True
+        return [float(features.get(col, 0.0)) for col in self.feature_cols]
 
     def determine_verdict(
         self,
@@ -443,6 +513,9 @@ class MLVerdictService(VerdictService):
             fundamental_assessment=fundamental_assessment,
         )
 
+        if ml_prediction_info is not None and "rule_verdict" not in ml_prediction_info:
+            ml_prediction_info["rule_verdict"] = verdict
+
         # Store ML prediction info for monitoring/telegram (even if not used for verdict)
         if ml_prediction_info:
             ml_prediction_info["verdict_source"] = verdict_source
@@ -464,7 +537,9 @@ class MLVerdictService(VerdictService):
         Get the ML prediction info from the last determine_verdict call.
 
         Returns:
-            Dict with ml_verdict, ml_confidence, ml_probabilities or None
+            Dict with ml_verdict, ml_confidence, ml_probabilities, rule_verdict
+            (rules-only baseline when ML ran), verdict_source, etc., or None if no
+            prediction was stored for the last call.
         """
         if hasattr(self, "_ml_prediction_info"):
             return self._ml_prediction_info
@@ -512,13 +587,7 @@ class MLVerdictService(VerdictService):
 
             logger.debug(f"ML prediction: Extracted {len(features)} features")
 
-            # Create feature vector matching model's expected format
-            if self.feature_cols:
-                # Use saved feature columns order
-                feature_vector = [features.get(col, 0) for col in self.feature_cols]
-            else:
-                # Extract features dynamically (assumes model was trained with same features)
-                feature_vector = list(features.values())
+            feature_vector = self._vectorize_ml_features_for_model(features)
 
             # Predict
             probabilities = self.model.predict_proba([feature_vector])[0]
@@ -1023,10 +1092,7 @@ class MLVerdictService(VerdictService):
                 df,
             )
 
-            if self.feature_cols:
-                feature_vector = [features.get(col, 0) for col in self.feature_cols]
-            else:
-                feature_vector = list(features.values())
+            feature_vector = self._vectorize_ml_features_for_model(features)
 
             probabilities = self.model.predict_proba([feature_vector])[0]
             verdicts = self.model.classes_

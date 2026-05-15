@@ -261,9 +261,7 @@ def list_orders(  # noqa: PLR0912, PLR0913
                         trade_mode_display = "Paper"
                     elif trade_mode_value == "broker":
                         # Use broker name from settings, or fallback to "Broker"
-                        trade_mode_display = (
-                            format_broker_name(broker_name) if broker_name else "Broker"
-                        )
+                        trade_mode_display = format_broker_name(broker_name)
 
                 order_response = OrderResponse(
                     id=o.id,
@@ -521,7 +519,8 @@ def sync_order_status(  # noqa: PLR0912, PLR0915
             if ":" in trade_mode_str and "'" in trade_mode_str:
                 # Extract value from "<TradeMode.BROKER: 'broker'>"
                 try:
-                    trade_mode_value = trade_mode_str.split(":")[-1].strip().strip("'\"")
+                    tail = trade_mode_str.rsplit(":", maxsplit=1)[-1]
+                    trade_mode_value = tail.strip().strip("'\"")
                 except Exception:
                     trade_mode_value = trade_mode_str.lower()
             else:

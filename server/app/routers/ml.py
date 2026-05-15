@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -19,6 +20,8 @@ from server.app.schemas.ml import (
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.session import SessionLocal
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin/ml", tags=["admin-ml"])
 
 
@@ -34,6 +37,8 @@ def _to_config(request: MLTrainingRequest) -> TrainingJobConfig:
         hyperparameters=request.hyperparameters or {},
         notes=request.notes,
         auto_activate=request.auto_activate,
+        incremental_training=request.incremental_training,
+        training_run_end_date=request.training_run_end_date,
     )
 
 
@@ -43,6 +48,12 @@ def _run_training_job_async(job_id: int, config_data: dict[str, Any]) -> None:
     try:
         service = MLTrainingService(db)
         service.run_training_job(job_id=job_id, config=TrainingJobConfig(**config_data))
+    except Exception:
+        logger.exception(
+            "Unhandled error in background ML training job %s "
+            "(job row may remain pending/inaccurate)",
+            job_id,
+        )
     finally:
         db.close()
 
@@ -60,6 +71,17 @@ def start_ml_training(
     Jobs execute asynchronously and will update their status once complete.
     """
     config = _to_config(request)
+    csv_abs = service.resolve_training_csv(config.training_data_path)
+    if not csv_abs.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Training data file not found at {csv_abs}. "
+                "Use a path that exists inside this server container (often /app/...) "
+                "or mount a host directory as a Docker volume."
+            ),
+        )
+
     job = service.start_training_job(started_by=admin.id, config=config)
     background_tasks.add_task(_run_training_job_async, job.id, asdict(config))
     return job

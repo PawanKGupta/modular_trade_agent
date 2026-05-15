@@ -22,6 +22,7 @@ export interface MLModel {
 	model_type: string;
 	version: string;
 	model_path: string;
+	training_data_through_date?: string | null;
 	accuracy: number | null;
 	training_job_id: number;
 	is_active: boolean;
@@ -36,6 +37,10 @@ export interface StartTrainingPayload {
 	hyperparameters?: Record<string, string | number | boolean>;
 	notes?: string | null;
 	auto_activate?: boolean;
+	/** Requires baseline CSV rows unless full refresh toggle is unset. Defaults true server-side. */
+	incremental_training?: boolean;
+	/** ISO yyyy-mm-dd inclusive cap parsed server-side alongside entry/backtest columns. */
+	training_run_end_date?: string | null;
 }
 
 export async function startTrainingJob(payload: StartTrainingPayload): Promise<MLTrainingJob> {

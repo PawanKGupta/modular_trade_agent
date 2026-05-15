@@ -4,17 +4,22 @@ ML Price Service
 ML service for price target and stop loss prediction.
 Falls back to rule-based calculations if ML model is unavailable.
 
+Used in production when ``StrategyConfig.ml_price_enabled`` is True and model files exist;
+``AnalysisService`` applies predictions at or above ``ml_confidence_threshold``.
+
 Phase 3 Feature - ML Integration
 """
 
-import os
-import pandas as pd
-import numpy as np
-from typing import Optional, Dict, Tuple, Any
 from pathlib import Path
+from typing import Any
+
 import joblib
+import pandas as pd
 
 from utils.logger import logger
+
+_RECENT_BAR_LOOKBACK = 20
+_ATR_PERIOD = 14
 
 
 class MLPriceService:
@@ -26,7 +31,7 @@ class MLPriceService:
     """
 
     def __init__(
-        self, target_model_path: Optional[str] = None, stop_loss_model_path: Optional[str] = None
+        self, target_model_path: str | None = None, stop_loss_model_path: str | None = None
     ):
         """
         Initialize ML price service
@@ -48,11 +53,10 @@ class MLPriceService:
                 logger.info(f"? ML price target model loaded from {target_model_path}")
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load price target model: {e}")
+        elif target_model_path:
+            logger.warning(f"[WARN]? Price target model file not found: {target_model_path}")
         else:
-            if target_model_path:
-                logger.warning(f"[WARN]? Price target model file not found: {target_model_path}")
-            else:
-                logger.info("i? No price target model path provided")
+            logger.info("i? No price target model path provided")
 
         # Load stop loss model
         if stop_loss_model_path and Path(stop_loss_model_path).exists():
@@ -62,20 +66,19 @@ class MLPriceService:
                 logger.info(f"? ML stop loss model loaded from {stop_loss_model_path}")
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load stop loss model: {e}")
+        elif stop_loss_model_path:
+            logger.warning(f"[WARN]? Stop loss model file not found: {stop_loss_model_path}")
         else:
-            if stop_loss_model_path:
-                logger.warning(f"[WARN]? Stop loss model file not found: {stop_loss_model_path}")
-            else:
-                logger.info("i? No stop loss model path provided")
+            logger.info("i? No stop loss model path provided")
 
     def predict_target(
         self,
         current_price: float,
-        indicators: Dict[str, Any],
-        timeframe_confirmation: Optional[Dict[str, Any]],
+        indicators: dict[str, Any],
+        timeframe_confirmation: dict[str, Any] | None,
         df: pd.DataFrame,
-        rule_based_target: Optional[float] = None,
-    ) -> Tuple[float, float]:
+        rule_based_target: float | None = None,
+    ) -> tuple[float, float]:
         """
         Predict price target
 
@@ -117,10 +120,10 @@ class MLPriceService:
             else:
                 confidence = 0.7  # Default confidence
 
+            rule_txt = f"{rule_based_target:.2f}" if rule_based_target is not None else "N/A"
             logger.debug(
                 f"ML target prediction: {predicted_target:.2f} "
-                f"(rule-based: {rule_based_target:.2f if rule_based_target else 'N/A'}, "
-                f"confidence: {confidence:.1%})"
+                f"(rule-based: {rule_txt}, confidence: {confidence:.1%})"
             )
 
             return predicted_target, confidence
@@ -132,10 +135,10 @@ class MLPriceService:
     def predict_stop_loss(
         self,
         current_price: float,
-        indicators: Dict[str, Any],
+        indicators: dict[str, Any],
         df: pd.DataFrame,
-        rule_based_stop_loss: Optional[float] = None,
-    ) -> Tuple[float, float]:
+        rule_based_stop_loss: float | None = None,
+    ) -> tuple[float, float]:
         """
         Predict stop loss level
 
@@ -174,10 +177,12 @@ class MLPriceService:
             else:
                 confidence = 0.7
 
+            rule_stop_txt = (
+                f"{rule_based_stop_loss:.2f}" if rule_based_stop_loss is not None else "N/A"
+            )
             logger.debug(
                 f"ML stop loss prediction: {predicted_stop_loss:.2f} "
-                f"(rule-based: {rule_based_stop_loss:.2f if rule_based_stop_loss else 'N/A'}, "
-                f"confidence: {confidence:.1%})"
+                f"(rule-based: {rule_stop_txt}, confidence: {confidence:.1%})"
             )
 
             return predicted_stop_loss, confidence
@@ -189,10 +194,10 @@ class MLPriceService:
     def _extract_target_features(
         self,
         current_price: float,
-        indicators: Dict[str, Any],
-        timeframe_confirmation: Optional[Dict[str, Any]],
+        indicators: dict[str, Any],
+        timeframe_confirmation: dict[str, Any] | None,
         df: pd.DataFrame,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Extract features for price target prediction
 
@@ -201,20 +206,21 @@ class MLPriceService:
         """
         try:
             # Get recent extremes
-            recent_high = float(df["high"].tail(20).max()) if len(df) >= 20 else current_price
-            recent_low = float(df["low"].tail(20).min()) if len(df) >= 20 else current_price
+            lb = _RECENT_BAR_LOOKBACK
+            recent_high = float(df["high"].tail(lb).max()) if len(df) >= lb else current_price
+            recent_low = float(df["low"].tail(lb).min()) if len(df) >= lb else current_price
 
             # Calculate volatility (standard deviation of returns)
-            if len(df) >= 20:
-                returns = df["close"].pct_change().tail(20)
+            if len(df) >= lb:
+                returns = df["close"].pct_change().tail(lb)
                 volatility = float(returns.std() * 100)  # Percentage
             else:
                 volatility = 2.0  # Default
 
             # Calculate momentum (20-day price change)
-            if len(df) >= 20:
+            if len(df) >= lb:
                 momentum = float(
-                    (current_price - df["close"].iloc[-20]) / df["close"].iloc[-20] * 100
+                    (current_price - df["close"].iloc[-lb]) / df["close"].iloc[-lb] * 100
                 )
             else:
                 momentum = 0.0
@@ -226,8 +232,8 @@ class MLPriceService:
                 "recent_high": recent_high,
                 "recent_low": recent_low,
                 "volume_ratio": (
-                    float(df["volume"].iloc[-1] / df["volume"].tail(20).mean())
-                    if len(df) >= 20
+                    float(df["volume"].iloc[-1] / df["volume"].tail(lb).mean())
+                    if len(df) >= lb
                     else 1.0
                 ),
                 "alignment_score": (
@@ -247,8 +253,8 @@ class MLPriceService:
             return {}
 
     def _extract_stop_loss_features(
-        self, current_price: float, indicators: Dict[str, Any], df: pd.DataFrame
-    ) -> Dict[str, float]:
+        self, current_price: float, indicators: dict[str, Any], df: pd.DataFrame
+    ) -> dict[str, float]:
         """
         Extract features for stop loss prediction
 
@@ -257,12 +263,13 @@ class MLPriceService:
         """
         try:
             # Get recent low (support)
-            recent_low = float(df["low"].tail(20).min()) if len(df) >= 20 else current_price
+            lb = _RECENT_BAR_LOOKBACK
+            recent_low = float(df["low"].tail(lb).min()) if len(df) >= lb else current_price
 
             # Calculate ATR (Average True Range) as volatility measure
-            if len(df) >= 14:
+            if len(df) >= _ATR_PERIOD:
                 high_low = df["high"] - df["low"]
-                atr = float(high_low.tail(14).mean())
+                atr = float(high_low.tail(_ATR_PERIOD).mean())
                 atr_pct = (atr / current_price) * 100
             else:
                 atr_pct = 2.0
@@ -274,8 +281,8 @@ class MLPriceService:
                 "atr_pct": atr_pct,
                 "rsi_10": float(indicators.get("rsi", 50.0)),
                 "volume_ratio": (
-                    float(df["volume"].iloc[-1] / df["volume"].tail(20).mean())
-                    if len(df) >= 20
+                    float(df["volume"].iloc[-1] / df["volume"].tail(lb).mean())
+                    if len(df) >= lb
                     else 1.0
                 ),
             }

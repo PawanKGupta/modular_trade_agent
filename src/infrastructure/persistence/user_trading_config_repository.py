@@ -46,9 +46,9 @@ class UserTradingConfigRepository:
         """Update trading config for a user"""
         config = self.get_or_create_default(user_id)
 
-        # Update only provided fields
+        # Apply kwargs; booleans may be False (exclude_unset only omits unset fields).
         for key, value in kwargs.items():
-            if hasattr(config, key) and value is not None:
+            if hasattr(config, key):
                 setattr(config, key, value)
 
         config.updated_at = ist_now()

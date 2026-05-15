@@ -1,6 +1,6 @@
 # ML Integration - Complete Guide
 
-**Last Updated:** 2025-12-14
+**Last Updated:** 2026-05-08
 **Status:** Production Ready
 
 ---
@@ -56,19 +56,57 @@ Integrate AI/ML capabilities into the trading agent system to enhance verdict pr
 ### Training via API
 
 ```bash
-# Start ML training job via API
+# Start ML training job via API (runs real sklearn training on the server filesystem)
 curl -X POST http://localhost:8000/api/v1/admin/ml/train \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model_version": "v4",
-    "force_retrain": false
+    "model_type": "verdict_classifier",
+    "algorithm": "random_forest",
+    "training_data_path": "data/ml/verdict_rows.csv",
+    "incremental_training": true,
+    "training_run_end_date": null,
+    "auto_activate": true
   }'
 ```
+
+`incremental_training` uses the active model's saved **data-through** watermark: the CSV must still contain all historical samples up through that watermark, plus newer rows through `training_run_end_date` (inclusive); omit the date field to cap at server **today IST**. Set `"incremental_training": false` to refit everything in the CSV up to the requested end date regardless of watermark.
+
+The API resolves relative paths against the server's working directory (often `/app` in Docker); the file **must exist** before the job is queued, or you'll get HTTP 400. Mount your dataset into the container (for example `./data/training:/app/data/training:ro`) and point `training_data_path` at that path.
 
 ### Manual Training Data Collection (Advanced)
 
 If you need to collect training data manually:
+
+---
+
+## Dip-buy success model (RSI-based averaging)
+
+This repo supports a dedicated **dip-success** classifier for your RSI-based averaging strategy:
+
+- **Entry**: RSI10 < 30 (daily candles)
+- **Adds**: RSI10 <= 20, RSI10 <= 10, and re-activation (RSI > 30 then back < 30)
+- **Exit**: first EMA9 touch (close >= EMA9) or RSI10 >= 50 **after the last add**
+- **Sizing**: equal capital per add
+- **Target label**: binary `net_win` (PnL% at exit >= +1.0 by default; cost-aware floor)
+
+### Generate training rows
+
+Use `services.dip_episode_dataset.generate_dip_episode_rows` to convert per-ticker OHLCV history into one row per episode.
+Each row contains feature values at the entry day plus outcome labels (`net_win`, `strong_win`) computed from the full episode.
+
+### Train + calibrate
+
+Use `services.ml_training_service.MLTrainingService.train_dip_success_classifier` to fit a pooled binary model and (optionally)
+calibrate probabilities. Artifacts:
+
+- `models/dip_success_model.pkl` (or custom path)
+- `{stem}.dip_features.json` manifest describing feature column order
+
+### Score / rank current candidates
+
+Use `services.ml_dip_success_service.MLDipSuccessService.score_current_setup` to get calibrated `P(net_win)` for a ticker whose
+current RSI10 < 30. To rank a watchlist, use `services.dip_ranking_service.rank_dip_candidates`.
 
 ```bash
 # Get all NSE stocks
@@ -278,6 +316,18 @@ pip install xgboost
 
 ## Integration
 
+### Runtime verdict path (canonical vs legacy)
+
+**Canonical (production):** Live and batch analysis use `services.analysis_service.AnalysisService` (or `AsyncAnalysisService`) with `StrategyConfig.ml_enabled`. When a model loads, verdicts go through `MLVerdictService.determine_verdict` (chart-quality gate, flexible fundamentals, dip indicators, combine/threshold logic). This is the only path you should extend or tune for behaviour parity.
+
+**ML price targets / stops (optional):** When `StrategyConfig.ml_price_enabled` is True (Trading Config UI or env `ML_PRICE_ENABLED`), after rule-based trading parameters are computed `AnalysisService` may override `target` and/or `stop` using `MLPriceService` if `ml_price_model_path` / optional `ML_STOP_LOSS_MODEL_PATH` model files exist and prediction confidence clears `ml_confidence_threshold`. Result fields include `ml_price_target_applied`, `ml_price_stop_applied`, and related confidences.
+
+**Observation fields (`verdict` vs `rule_verdict`):** In `AnalysisService.analyze_ticker` results, `verdict` is the **final actionable** label (after ML/threshold/combine logic inside `MLVerdictService` when enabled, then candle-quality downgrade). **`rule_verdict`** is the **rules-only baseline** aligned with `get_last_ml_prediction()["rule_verdict"]` when ML produced metadata; if ML did not run, `rule_verdict` matches `verdict`. Use `rule_verdict` for monitoring/Telegram “what rules alone said” comparisons, not as a synonym for final.
+
+**Verdict feature contract (train/serve):** `services.ml_training_service.MLTrainingService.train_verdict_classifier` writes **`{stem}.verdict_features.json`** next to the pickled classifier (alongside `{stem}_features.txt`). At load, `MLVerdictService` **prefers this manifest**: ordered `feature_names`, schema version `artifact` / `feature_schema_version`, and a check against sklearn `n_features_in_` when present. Missing or incompatible manifests fall back to legacy sidecars / `feature_names_in_`; mismatch disables ML verdict for that path. Admin jobs record `artifacts.verdict_features_manifest` in `.meta.json` when the file exists.
+
+**Legacy (deprecated):** `services.pipeline_steps.create_analysis_pipeline(..., enable_ml=True)` adds `MLVerdictStep`, which calls `predict_verdict_with_confidence` after a rule-only `DetermineVerdictStep`. It **does not** match `AnalysisService` semantics. Passing `enable_ml=True` emits a `DeprecationWarning`. Prefer `AnalysisService.analyze_ticker(...)` (or async batch) for integration tests and new code.
+
 ### Automatic Integration
 
 The system automatically:
@@ -288,10 +338,14 @@ The system automatically:
 ### Usage
 
 ```bash
-# Just run trade_agent.py normally
+# Run with backtest scoring (ML off unless DB user or CLI enables it)
 python trade_agent.py --backtest
 
-# ML verdicts will appear in Telegram if model is available
+# Local CLI: enable verdict ML without TRADE_AGENT_USER_ID / DB trading config
+python trade_agent.py --backtest --ml
+# (equivalent: --ml-enabled)
+
+# ML verdicts in results/Telegram require a loaded model and ml_enabled=True
 ```
 
 ### Telegram Output Example
