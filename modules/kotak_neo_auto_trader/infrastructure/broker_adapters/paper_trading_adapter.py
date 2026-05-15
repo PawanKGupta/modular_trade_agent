@@ -28,6 +28,18 @@ from ...domain import (
 from ..persistence import PaperTradeStore
 from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
 
+# Execution messages that should keep limit orders pending (not mark DB failed).
+_TRANSIENT_PENDING_FAILURE_PHRASES = (
+    "price not available",
+    "market is closed",
+)
+
+
+def _is_transient_pending_failure(message: str) -> bool:
+    """True when failure is environmental/transient; order should stay pending."""
+    lowered = (message or "").lower()
+    return any(phrase in lowered for phrase in _TRANSIENT_PENDING_FAILURE_PHRASES)
+
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
     def _sync_order_failure_to_db(
@@ -965,10 +977,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             estimated_price = self.price_provider.get_price(price_symbol)
             if estimated_price is None:
-                order.reject(f"Price not available for {order.symbol} (tried {price_symbol})")
-                self._save_order(order)
-                self._sync_order_failure_to_db(
-                    order, "rejected", f"Price not available for {order.symbol}"
+                logger.warning(
+                    "Price not available for %s (tried %s); keeping order pending for next check",
+                    order.symbol,
+                    price_symbol,
                 )
                 return
 
@@ -1031,14 +1043,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 "price below limit" in message.lower() or "price above limit" in message.lower()
             )
 
-            if is_price_limit_message:
-                # This is expected behavior for limit orders - don't mark as failed
-                # Order should remain PENDING/ONGOING and will be checked again
+            if is_price_limit_message or _is_transient_pending_failure(message):
+                # Expected: limit not hit, market closed, or transient price fetch failure
                 logger.debug(
-                    f"Limit order {order.symbol} not yet executable: {message}. "
-                    f"Order remains in {order.status.value} status and will be checked again."
+                    "Order %s not executable yet: %s. Status remains %s.",
+                    order.symbol,
+                    message,
+                    order.status.value,
                 )
-                # Don't sync to DB as failure - order is still valid and pending
             else:
                 # Actual failure (rejection, insufficient funds, etc.)
                 msg = (
@@ -1253,6 +1265,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     # Not yet time to execute AMO order
                     summary["still_pending"] += 1
                     continue
+            elif not self.order_simulator._is_market_open(order):
+                summary["still_pending"] += 1
+                continue
 
             # Try to execute the order
             try:

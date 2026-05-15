@@ -26,7 +26,7 @@ from src.application.services.broker_credentials import (
 from src.application.services.conflict_detection_service import ConflictDetectionService
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
 from src.infrastructure.db.models import Users
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from src.infrastructure.persistence.individual_service_status_repository import (
     IndividualServiceStatusRepository,
 )
@@ -77,12 +77,28 @@ def _is_order_monitoring_active(user_id: int, db: Session) -> bool:
     return False
 
 
+def _format_datetime_ist(dt_value) -> str | None:
+    """Serialize naive DB datetimes as IST wall-clock with +05:30 offset for clients."""
+    if dt_value is None:
+        return None
+    if isinstance(dt_value, str):
+        return dt_value
+    if isinstance(dt_value, datetime):
+        if dt_value.tzinfo is not None:
+            return dt_value.isoformat()
+        return f"{dt_value.isoformat()}+05:30"
+    return str(dt_value)
+
+
 def _recalculate_order_quantity(order, user_id: int, db: Session, order_id: int) -> None:
     """
     Recalculate order quantity based on current price and capital per trade.
 
-    Updates order.quantity and order.price in place.
+    Updates order.quantity and order.price in place. Skipped for sell orders (use position qty).
     """
+    if (getattr(order, "side", None) or "").lower() == "sell":
+        logger.info("Skipping quantity recalculation for sell order %s", order_id)
+        return
     try:
         # Get user's trading config (capital per trade)
         trading_config_repo = UserTradingConfigRepository(db)
@@ -224,16 +240,6 @@ def list_orders(  # noqa: PLR0912, PLR0913
                     detail=f"Invalid date format: {str(e)}. Use ISO format (YYYY-MM-DD)",
                 ) from e
 
-        # Helper function to format datetime fields
-        def format_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if isinstance(dt_value, str):
-                return dt_value
-            if isinstance(dt_value, datetime):
-                return dt_value.isoformat()
-            return str(dt_value)
-
         # Get user settings once for broker name lookup
         settings_repo = SettingsRepository(db)
         user_settings = settings_repo.get_by_user_id(current.id)
@@ -270,18 +276,18 @@ def list_orders(  # noqa: PLR0912, PLR0913
                     quantity=o.quantity,
                     price=o.price,
                     status=o.status.value if o.status else "pending",
-                    created_at=format_datetime(o.placed_at),
-                    updated_at=format_datetime(o.closed_at),
+                    created_at=_format_datetime_ist(o.placed_at),
+                    updated_at=_format_datetime_ist(o.closed_at),
                     # Unified reason field
                     reason=getattr(o, "reason", None),
                     # Order monitoring fields
-                    first_failed_at=format_datetime(getattr(o, "first_failed_at", None)),
-                    last_retry_attempt=format_datetime(getattr(o, "last_retry_attempt", None)),
+                    first_failed_at=_format_datetime_ist(getattr(o, "first_failed_at", None)),
+                    last_retry_attempt=_format_datetime_ist(getattr(o, "last_retry_attempt", None)),
                     retry_count=getattr(o, "retry_count", 0) or 0,
-                    last_status_check=format_datetime(getattr(o, "last_status_check", None)),
+                    last_status_check=_format_datetime_ist(getattr(o, "last_status_check", None)),
                     execution_price=getattr(o, "execution_price", None),
                     execution_qty=getattr(o, "execution_qty", None),
-                    execution_time=format_datetime(getattr(o, "execution_time", None)),
+                    execution_time=_format_datetime_ist(getattr(o, "execution_time", None)),
                     # Entry type and source tracking
                     entry_type=getattr(o, "entry_type", None),
                     is_manual=getattr(o, "orig_source", None) == "manual",
@@ -355,26 +361,16 @@ def retry_order(
         _recalculate_order_quantity(order, current.id, db, order_id)
 
         # Update order for retry (keep as FAILED, update retry metadata)
+        prior_reason = (order.reason or order.rejection_reason or "").strip()
         order.retry_count = (order.retry_count or 0) + 1
-        order.last_retry_attempt = ist_now()
+        order.last_retry_attempt = ist_now_naive()
         if not order.first_failed_at:
-            order.first_failed_at = ist_now()
-        # Reset reason for manual retry request so stale prior failures
-        # (e.g., old insufficient_balance shortfall) are not echoed as
-        # the outcome of this new retry attempt.
-        order.reason = "manual_retry_queued"
+            order.first_failed_at = ist_now_naive()
+        order.reason = (
+            f"manual_retry_queued: {prior_reason}" if prior_reason else "manual_retry_queued"
+        )
 
         updated_order = repo.update(order)
-
-        # Format response
-        def format_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if isinstance(dt_value, str):
-                return dt_value
-            if isinstance(dt_value, datetime):
-                return dt_value.isoformat()
-            return str(dt_value)
 
         return OrderResponse(
             id=updated_order.id,
@@ -383,16 +379,20 @@ def retry_order(
             quantity=updated_order.quantity,
             price=updated_order.price,
             status=updated_order.status.value if updated_order.status else "failed",
-            created_at=format_datetime(updated_order.placed_at),
-            updated_at=format_datetime(updated_order.closed_at),
+            created_at=_format_datetime_ist(updated_order.placed_at),
+            updated_at=_format_datetime_ist(updated_order.closed_at),
             reason=getattr(updated_order, "reason", None),
-            first_failed_at=format_datetime(getattr(updated_order, "first_failed_at", None)),
-            last_retry_attempt=format_datetime(getattr(updated_order, "last_retry_attempt", None)),
+            first_failed_at=_format_datetime_ist(getattr(updated_order, "first_failed_at", None)),
+            last_retry_attempt=_format_datetime_ist(
+                getattr(updated_order, "last_retry_attempt", None)
+            ),
             retry_count=getattr(updated_order, "retry_count", 0) or 0,
-            last_status_check=format_datetime(getattr(updated_order, "last_status_check", None)),
+            last_status_check=_format_datetime_ist(
+                getattr(updated_order, "last_status_check", None)
+            ),
             execution_price=getattr(updated_order, "execution_price", None),
             execution_qty=getattr(updated_order, "execution_qty", None),
-            execution_time=format_datetime(getattr(updated_order, "execution_time", None)),
+            execution_time=_format_datetime_ist(getattr(updated_order, "execution_time", None)),
             entry_type=getattr(updated_order, "entry_type", None),
             is_manual=getattr(updated_order, "orig_source", None) == "manual",
         )

@@ -47,6 +47,20 @@ ignore = ["S101"] # allow assert in tests
 # Legacy CLI / core analysis wrappers; refactor tracked separately.
 "trade_agent.py" = ["E501", "F841", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415"]
 "core/analysis.py" = ["E501", "F841", "PLR0911", "PLR0913", "PLR2004", "PLC0415"]
+# Large paper-trading adapter; sys.path bootstrap and long broker integration paths.
+"modules/kotak_neo_auto_trader/infrastructure/broker_adapters/paper_trading_adapter.py" = [
+	"E402",
+	"E501",
+	"PLC0415",
+	"PLR0912",
+	"PLR0913",
+	"PLR0915",
+	"PLR2004",
+	"B904",
+	"F841",
+]
+"src/infrastructure/persistence/orders_repository.py" = ["E501", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415"]
+"src/infrastructure/db/models.py" = ["UP042"]
 
 [tool.ruff.format]
 exclude = [

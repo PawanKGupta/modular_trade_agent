@@ -126,10 +126,10 @@ class Orders(Base):
     )
     avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     placed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, index=True, nullable=False
+        DateTime, default=ist_now_naive, index=True, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+        DateTime, default=ist_now_naive, onupdate=ist_now_naive, nullable=False
     )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
