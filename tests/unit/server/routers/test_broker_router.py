@@ -198,3 +198,19 @@ def test_test_broker_connection_handles_variants(monkeypatch):
 
     assert response.ok is False
     assert "unsupported" in response.message.lower()
+
+
+def test_symbol_lookup_keys_includes_eq_and_base():
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import symbol_lookup_keys
+
+    keys = symbol_lookup_keys("powergrid-eq")
+    assert keys == ["POWERGRID-EQ", "POWERGRID"]
+
+
+def test_lookup_price_from_map_matches_eq_and_base():
+    from modules.kotak_neo_auto_trader.utils.symbol_utils import lookup_price_from_map
+
+    price_map = {"POWERGRID": 301.2, "IDEA-EQ": 9.5}
+    assert lookup_price_from_map(price_map, "POWERGRID-EQ") == 301.2
+    assert lookup_price_from_map(price_map, "IDEA") == 9.5
+    assert lookup_price_from_map(price_map, "MISSING") is None

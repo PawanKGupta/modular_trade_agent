@@ -12,12 +12,12 @@ import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
-
-from utils.logger import logger
+from typing import Any
 
 from src.infrastructure.db.timezone_utils import ist_now_naive
+from utils.logger import logger
 
 from ...domain import (
     Exchange,
@@ -42,12 +42,16 @@ class BrokerServiceUnavailableError(RuntimeError):
         *,
         original_error: Exception | None = None,
     ) -> None:
-        self.message = message or "Broker service is temporarily unavailable. Please try again later."
+        self.message = (
+            message or "Broker service is temporarily unavailable. Please try again later."
+        )
         self.original_error = original_error
         super().__init__(self.message)
 
 
-def call_with_timeout(func: Callable[..., Any], *args: Any, timeout: float = 30.0, **kwargs: Any) -> Any:
+def call_with_timeout(
+    func: Callable[..., Any], *args: Any, timeout: float = 30.0, **kwargs: Any
+) -> Any:
     """
     Timeout wrapper hook.
 
@@ -146,33 +150,49 @@ def _is_service_unavailable_error(error: Exception) -> bool:
 def is_auth_error(response: Any) -> bool:
     if not isinstance(response, dict):
         return False
-    code = str(response.get("code") or response.get("stCode") or response.get("statusCode") or "").strip()
-    msg = str(response.get("message") or response.get("emsg") or response.get("error") or "").lower()
+    code = str(
+        response.get("code") or response.get("stCode") or response.get("statusCode") or ""
+    ).strip()
+    msg = str(
+        response.get("message") or response.get("emsg") or response.get("error") or ""
+    ).lower()
     if code in {"401", "900901", "1003"}:
         return True
     return any(
         token in msg
-        for token in ("jwt", "token expired", "invalid session", "session expired", "not authenticated", "auth")
+        for token in (
+            "jwt",
+            "token expired",
+            "invalid session",
+            "session expired",
+            "not authenticated",
+            "auth",
+        )
     )
 
 
 def is_auth_exception(error: Exception) -> bool:
     s = str(error).lower()
-    return any(token in s for token in ("jwt", "token expired", "invalid session", "session expired", "unauthorized"))
+    return any(
+        token in s
+        for token in ("jwt", "token expired", "invalid session", "session expired", "unauthorized")
+    )
 
 
-def _check_reauth_failure_rate(auth_handler: Any, window_seconds: int = 60, max_failures: int = 3) -> bool:
+def _check_reauth_failure_rate(
+    auth_handler: Any, window_seconds: int = 60, max_failures: int = 3
+) -> bool:
     now = time.time()
     failures = list(getattr(auth_handler, "_reauth_failures", []))
     failures = [ts for ts in failures if now - ts <= window_seconds]
-    setattr(auth_handler, "_reauth_failures", failures)
+    auth_handler._reauth_failures = failures
     return len(failures) >= max_failures
 
 
 def _record_reauth_failure(auth_handler: Any) -> None:
     failures = list(getattr(auth_handler, "_reauth_failures", []))
     failures.append(time.time())
-    setattr(auth_handler, "_reauth_failures", failures)
+    auth_handler._reauth_failures = failures
 
 
 def _attempt_reauth_thread_safe(auth_handler: Any) -> bool:
@@ -181,7 +201,7 @@ def _attempt_reauth_thread_safe(auth_handler: Any) -> bool:
     lock = getattr(auth_handler, "_reauth_lock", None)
     if lock is None:
         lock = threading.Lock()
-        setattr(auth_handler, "_reauth_lock", lock)
+        auth_handler._reauth_lock = lock
 
     with lock:
         relogin = getattr(auth_handler, "force_relogin", None)
@@ -219,7 +239,10 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         try:
             if not self.auth_handler or not self.auth_handler.login():
                 return False
-            if hasattr(self.auth_handler, "is_authenticated") and not self.auth_handler.is_authenticated():
+            if (
+                hasattr(self.auth_handler, "is_authenticated")
+                and not self.auth_handler.is_authenticated()
+            ):
                 return False
             self._ensure_fresh_client()
             self._connected = True
@@ -368,7 +391,9 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                     "amo": jdata["am"],
                     "disclosed_quantity": jdata["dq"],
                 }
-                return self._invoke_first(client, ["place_order", "order_place", "placeorder"], **sdk_payload)
+                return self._invoke_first(
+                    client, ["place_order", "order_place", "placeorder"], **sdk_payload
+                )
 
         resp = self._with_auth_retry(_call_place, default_result=None, operation_name="place_order")
         if resp is _REAUTH_BLOCKED:
@@ -392,12 +417,16 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             client = self._ensure_fresh_client()
             # REST shape first
             try:
-                return self._invoke_first(client, ["cancel_order", "order_cancel", "cancelOrder"], order_id)
+                return self._invoke_first(
+                    client, ["cancel_order", "order_cancel", "cancelOrder"], order_id
+                )
             except TypeError:
                 return self._invoke_first(client, ["cancel_order"], order_no=order_id, amo="NO")
 
         try:
-            resp = self._with_auth_retry(_call_cancel, default_result=False, operation_name="cancel_order")
+            resp = self._with_auth_retry(
+                _call_cancel, default_result=False, operation_name="cancel_order"
+            )
         except BrokerServiceUnavailableError:
             return False
         if resp is _REAUTH_BLOCKED:
@@ -426,7 +455,9 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             )
 
         try:
-            resp = self._with_auth_retry(_call_orders, default_result=[], operation_name="get_all_orders")
+            resp = self._with_auth_retry(
+                _call_orders, default_result=[], operation_name="get_all_orders"
+            )
         except BrokerServiceUnavailableError:
             return []
         if resp is _REAUTH_BLOCKED:
@@ -443,7 +474,9 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
             return self._invoke_first(client, ["holdings", "get_holdings"])
 
         try:
-            resp = self._with_auth_retry(_call_holdings, default_result=[], operation_name="get_holdings")
+            resp = self._with_auth_retry(
+                _call_holdings, default_result=[], operation_name="get_holdings"
+            )
         except BrokerServiceUnavailableError:
             return []
         if resp is _REAUTH_BLOCKED:
@@ -466,15 +499,21 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         def _call_limits():
             client = self._ensure_fresh_client()
             try:
-                return self._invoke_first(client, ["limits"], segment="ALL", exchange="ALL", product="ALL")
+                return self._invoke_first(
+                    client, ["limits"], segment="ALL", exchange="ALL", product="ALL"
+                )
             except Exception:
                 try:
-                    return self._invoke_first(client, ["limits", "get_limits"], seg="ALL", exch="ALL", prod="ALL")
+                    return self._invoke_first(
+                        client, ["limits", "get_limits"], seg="ALL", exch="ALL", prod="ALL"
+                    )
                 except Exception:
                     return self._invoke_first(client, ["limits", "get_limits"])
 
         try:
-            resp = self._with_auth_retry(_call_limits, default_result={}, operation_name="get_account_limits")
+            resp = self._with_auth_retry(
+                _call_limits, default_result={}, operation_name="get_account_limits"
+            )
         except BrokerServiceUnavailableError:
             return {}
         if resp is _REAUTH_BLOCKED:
@@ -586,9 +625,15 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 if qty_int <= 0:
                     continue
 
-                order_id = str(item.get("nOrdNo") or item.get("neoOrdNo") or item.get("orderId") or "")
-                order_type_raw = str(item.get("prcTp") or item.get("orderType") or item.get("pt") or "MKT")
-                trn_raw = str(item.get("trnsTp") or item.get("transactionType") or item.get("tt") or "B")
+                order_id = str(
+                    item.get("nOrdNo") or item.get("neoOrdNo") or item.get("orderId") or ""
+                )
+                order_type_raw = str(
+                    item.get("prcTp") or item.get("orderType") or item.get("pt") or "MKT"
+                )
+                trn_raw = str(
+                    item.get("trnsTp") or item.get("transactionType") or item.get("tt") or "B"
+                )
                 status_raw = str(
                     item.get("ordSt")
                     or item.get("orderStatus")
@@ -605,14 +650,20 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                         price_value = Money.from_float(prc_f)
 
                 executed_price = None
-                avg_prc = item.get("avgPrc") if item.get("avgPrc") is not None else item.get("executedPrice")
+                avg_prc = (
+                    item.get("avgPrc")
+                    if item.get("avgPrc") is not None
+                    else item.get("executedPrice")
+                )
                 if avg_prc is not None:
                     avg_f = _to_float(avg_prc, 0.0)
                     if avg_f > 0:
                         executed_price = Money.from_float(avg_f)
 
                 executed_quantity = 0
-                fld = item.get("fldQty") if item.get("fldQty") is not None else item.get("filledQty")
+                fld = (
+                    item.get("fldQty") if item.get("fldQty") is not None else item.get("filledQty")
+                )
                 if fld is not None:
                     try:
                         executed_quantity = int(float(str(fld)))
@@ -669,10 +720,27 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
                 if not symbol:
                     continue
 
-                qty_raw = item.get("quantity") if item.get("quantity") is not None else item.get("qty")
+                qty_raw = (
+                    item.get("quantity") if item.get("quantity") is not None else item.get("qty")
+                )
                 qty = int(float(str(qty_raw or 0)))
-                avg = _to_float(item.get("averagePrice") if item.get("averagePrice") is not None else item.get("avgPrice"), 0.0)
-                ltp = _to_float(item.get("closingPrice") if item.get("closingPrice") is not None else item.get("ltp"), 0.0)
+                avg = _to_float(
+                    (
+                        item.get("averagePrice")
+                        if item.get("averagePrice") is not None
+                        else item.get("avgPrice")
+                    ),
+                    0.0,
+                )
+                close_px = _to_float(item.get("closingPrice"), 0.0)
+                live_ltp = _to_float(item.get("ltp"), 0.0)
+                # Prefer live LTP; closingPrice in holdings is often previous close.
+                if live_ltp > 0:
+                    ltp = live_ltp
+                elif close_px > 0:
+                    ltp = close_px
+                else:
+                    ltp = 0.0
 
                 if ltp <= 0 and qty > 0:
                     mkt_value = _to_float(item.get("mktValue"), 0.0)
@@ -708,4 +776,3 @@ class KotakNeoBrokerAdapter(IBrokerGateway):
         if "pending" in s or "trigger" in s or "received" in s:
             return OrderStatus.PENDING
         return OrderStatus.PENDING
-

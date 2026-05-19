@@ -1086,8 +1086,15 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
                 ),
             )
 
+        from modules.kotak_neo_auto_trader.services import get_price_service
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+            extract_base_symbol,
+            get_ticker_from_full_symbol,
+            symbol_lookup_keys,
+        )
         from src.infrastructure.persistence.positions_repository import PositionsRepository
 
+        price_service = get_price_service(enable_caching=True)
         positions_repo = PositionsRepository(db)
         all_positions = positions_repo.list(current.id)
         open_positions = [p for p in all_positions if p.closed_at is None]
@@ -1113,17 +1120,15 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
                             sym = holding.symbol.upper().replace(".NS", "").replace(".BO", "")
                             if "-" not in sym:
                                 sym = f"{sym}-EQ"
-                            broker_price_by_symbol[sym] = float(holding.current_price.amount)
-                            # Also map base symbol for positions that use full symbol
-                            base = (
-                                sym.replace("-EQ", "")
-                                .replace("-BE", "")
-                                .replace("-BL", "")
-                                .replace("-BZ", "")
-                            )
-                            broker_price_by_symbol[base] = float(holding.current_price.amount)
+                            ltp = float(holding.current_price.amount)
+                            for key in symbol_lookup_keys(sym):
+                                broker_price_by_symbol[key] = ltp
                 except Exception as e:
-                    logger.debug(f"Could not fetch broker prices for system holdings: {e}")
+                    logger.warning(
+                        "Could not fetch broker prices for system holdings (user %s): %s",
+                        current.id,
+                        e,
+                    )
                 finally:
                     try:
                         Path(temp_env_file).unlink(missing_ok=True)
@@ -1135,17 +1140,23 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
         unrealized_pnl_total = 0.0
 
         for pos in open_positions:
-            current_price = (
-                broker_price_by_symbol.get(pos.symbol.upper())
-                or broker_price_by_symbol.get(
-                    pos.symbol.upper()
-                    .replace("-EQ", "")
-                    .replace("-BE", "")
-                    .replace("-BL", "")
-                    .replace("-BZ", "")
-                )
-                or pos.avg_price
+            full_symbol = pos.symbol.upper()
+            base_symbol = extract_base_symbol(full_symbol)
+            ticker = get_ticker_from_full_symbol(full_symbol)
+            resolved = price_service.get_realtime_price(
+                symbol=base_symbol,
+                ticker=ticker,
+                broker_symbol=full_symbol,
+                broker_price_map=broker_price_by_symbol or None,
             )
+            if resolved is not None:
+                current_price = resolved
+            else:
+                logger.warning(
+                    "No live price for %s in system holdings; using avg_price",
+                    pos.symbol,
+                )
+                current_price = float(pos.avg_price)
             qty = int(pos.quantity)
             avg_price = float(pos.avg_price)
             cost_basis = avg_price * qty

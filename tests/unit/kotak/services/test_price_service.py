@@ -4,15 +4,14 @@ Unit tests for PriceService
 Tests ensure backward compatibility with existing price fetching logic.
 """
 
-from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pandas as pd
 
 from modules.kotak_neo_auto_trader.services.price_service import PriceCache, PriceService
+from tests.ist_clock import ist_now_naive
 
 
-from tests.ist_clock import IST, ist_now, ist_now_naive
 class TestPriceCache:
     """Tests for PriceCache"""
 
@@ -155,6 +154,55 @@ class TestPriceService:
 
             assert result == 2500.50
             mock_get_ltp.assert_called_once()
+
+    def test_get_realtime_price_from_broker_map(self):
+        """Test broker holdings map fallback before yfinance."""
+        service = PriceService(live_price_manager=None, enable_caching=False)
+        broker_map = {"POWERGRID-EQ": 301.2, "POWERGRID": 301.2}
+
+        result = service.get_realtime_price(
+            "POWERGRID",
+            "POWERGRID.NS",
+            "POWERGRID-EQ",
+            broker_price_map=broker_map,
+        )
+
+        assert result == 301.2
+
+    def test_get_realtime_price_live_manager_preferred_over_broker_map(self):
+        """Kotak quotes cache must win over holdings snapshot for sell-monitor parity."""
+        mock_manager = Mock()
+        service = PriceService(live_price_manager=mock_manager, enable_caching=False)
+
+        with patch(
+            "modules.kotak_neo_auto_trader.services.price_service.get_ltp_from_manager"
+        ) as mock_get_ltp:
+            mock_get_ltp.return_value = 2550.0
+            result = service.get_realtime_price(
+                "RELIANCE",
+                "RELIANCE.NS",
+                "RELIANCE-EQ",
+                broker_price_map={"RELIANCE-EQ": 2400.0},
+            )
+
+        assert result == 2550.0
+
+    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
+    def test_get_realtime_price_skips_zero_broker_map_and_uses_yfinance(self, mock_fetch):
+        """Zero/invalid broker map entries must not block yfinance fallback."""
+        mock_df = pd.DataFrame({"close": [2500.50], "date": [ist_now_naive()]})
+        mock_fetch.return_value = mock_df
+
+        service = PriceService(live_price_manager=None, enable_caching=False)
+        result = service.get_realtime_price(
+            "RELIANCE",
+            "RELIANCE.NS",
+            "RELIANCE-EQ",
+            broker_price_map={"RELIANCE-EQ": 0.0, "RELIANCE": 0},
+        )
+
+        assert result == 2500.50
+        mock_fetch.assert_called_once()
 
     @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
     def test_get_realtime_price_fallback_to_yfinance(self, mock_fetch):
