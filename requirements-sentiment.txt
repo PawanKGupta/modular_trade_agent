@@ -1,10 +1,13 @@
 # Optional: CPU headline sentiment via Hugging Face Transformers (no paid news API).
-# Install alongside requirements.txt on production Ubuntu / Oracle Cloud:
+#
+# Local / VM install:
 #
 #   pip install --upgrade pip
 #   pip install -r requirements.txt
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r requirements-sentiment.txt
+#
+# Docker: the FastAPI image (docker/Dockerfile.api) installs CPU torch + this file automatically.
 #
 # Env (defaults): NEWS_SENTIMENT_BACKEND=auto
 # Override model: NEWS_SENTIMENT_TRANSFORMER_MODEL=ProsusAI/finbert

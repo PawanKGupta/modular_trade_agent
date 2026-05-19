@@ -161,8 +161,9 @@ test.describe('Trading Configuration Page', () => {
 			await expect(newsSentimentCheckbox).not.toBeChecked();
 		} else {
 			await expect(newsSentimentCheckbox).toBeChecked();
-			// If enabled, should show additional fields
-			await expect(authenticatedPage.locator('#news_sentiment_lookback_days')).toBeVisible({ timeout: 5000 });
+			await expect(
+				authenticatedPage.getByText(/server environment variables/i),
+			).toBeVisible({ timeout: 5000 });
 		}
 	});
 

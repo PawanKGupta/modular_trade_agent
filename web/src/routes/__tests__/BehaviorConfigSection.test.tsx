@@ -59,45 +59,34 @@ describe('BehaviorConfigSection', () => {
 
 	it('hides news sentiment fields when disabled', () => {
 		const onChange = vi.fn();
-		render(<BehaviorConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+		const cfg = { ...mockConfig, news_sentiment_enabled: false };
+		render(<BehaviorConfigSection config={cfg} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		const newsCheckbox = screen.getByLabelText(/Enable News Sentiment Analysis/i) as HTMLInputElement;
 		expect(newsCheckbox.checked).toBe(false);
 
-		// News sentiment fields should not be visible when disabled
-		expect(screen.queryByLabelText(/Lookback Days/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/server environment/i)).not.toBeInTheDocument();
 	});
 
-	it('shows news sentiment fields when enabled', () => {
+	it('shows server-tuned news sentiment hint when enabled', () => {
 		const onChange = vi.fn();
 		const configWithNews = { ...mockConfig, news_sentiment_enabled: true };
 		render(<BehaviorConfigSection config={configWithNews} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByLabelText(/Lookback Days/i)).toBeInTheDocument();
-		expect(screen.getByLabelText(/Min Articles/i)).toBeInTheDocument();
-		expect(screen.getByLabelText(/Positive Threshold/i)).toBeInTheDocument();
-		expect(screen.getByLabelText(/Negative Threshold/i)).toBeInTheDocument();
+		expect(screen.getByText(/server environment/i)).toBeInTheDocument();
+		expect(screen.queryByLabelText(/Lookback Days/i)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Min Articles/i)).not.toBeInTheDocument();
 	});
 
 	it('calls onChange when news sentiment is toggled', () => {
 		const onChange = vi.fn();
-		render(<BehaviorConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+		const cfg = { ...mockConfig, news_sentiment_enabled: false };
+		render(<BehaviorConfigSection config={cfg} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		const newsCheckbox = screen.getByLabelText(/Enable News Sentiment Analysis/i);
 		fireEvent.click(newsCheckbox);
 
 		expect(onChange).toHaveBeenCalledWith({ news_sentiment_enabled: true });
-	});
-
-	it('calls onChange when news sentiment fields are changed', () => {
-		const onChange = vi.fn();
-		const configWithNews = { ...mockConfig, news_sentiment_enabled: true };
-		render(<BehaviorConfigSection config={configWithNews} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
-
-		const lookbackInput = screen.getByLabelText(/Lookback Days/i);
-		fireEvent.change(lookbackInput, { target: { value: '14' } });
-
-		expect(onChange).toHaveBeenCalledWith({ news_sentiment_lookback_days: 14 });
 	});
 
 	it('shows ML configuration section', () => {

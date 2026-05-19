@@ -20,6 +20,7 @@ from config.settings import (
     CIRCUITBREAKER_RECOVERY_TIMEOUT,
     NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE,
     NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD,
+    NEWS_SENTIMENT_MIN_ARTICLES,
     RETRY_BACKOFF_MULTIPLIER,
     RETRY_BASE_DELAY,
     RETRY_MAX_ATTEMPTS,
@@ -540,7 +541,7 @@ class VerdictService:
             sc = float(news_sentiment.get("score", 0.0))
             used = int(news_sentiment.get("used", 0))
             conf = float(news_sentiment.get("confidence", 0.0))
-            min_used = max(1, int(self.config.news_sentiment_min_articles))
+            min_used = max(1, int(NEWS_SENTIMENT_MIN_ARTICLES))
             if (
                 used >= min_used
                 and conf >= NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE

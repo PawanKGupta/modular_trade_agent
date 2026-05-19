@@ -369,10 +369,8 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Enable Premarket AMO Adjustment
 
 **7. News Sentiment:**
-- News Sentiment Enabled
-- Lookback Days (default: 30)
-- Min Articles
-- Positive/Negative Thresholds
+- Enable News Sentiment Analysis (advanced tuning uses server env; see Trading Config guide)
+
 
 **8. ML Configuration:**
 - ML Enabled

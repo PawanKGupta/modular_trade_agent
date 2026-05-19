@@ -59,7 +59,28 @@ ignore = ["S101"] # allow assert in tests
 	"B904",
 	"F841",
 ]
-"src/infrastructure/persistence/orders_repository.py" = ["E501", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415"]
+"src/infrastructure/persistence/orders_repository.py" = [
+	"E501",
+	"PLR0911",
+	"PLR0912",
+	"PLR0913",
+	"PLR0915",
+	"PLR2004",
+	"PLC0415",
+]
+# Large paper engine adapter; mirrors kotak paper_trading_adapter lint policy.
+"src/application/services/paper_trading_service_adapter.py" = [
+	"E501",
+	"F841",
+	"PLC0415",
+	"PLR0911",
+	"PLR0912",
+	"PLR0913",
+	"PLR0915",
+	"PLR2004",
+	"PLW2901",
+	"S110",
+]
 "src/infrastructure/db/models.py" = ["UP042"]
 
 [tool.ruff.format]
@@ -70,6 +91,7 @@ exclude = [
 	# Black and Ruff disagree on wrapping in these large modules; Black is canonical via pre-commit.
 	"server/app/routers/orders.py",
 	"tests/unit/server/jobs/test_scheduler.py",
+	"tests/unit/application/test_paper_trading_buy_orders_reentry.py",
 ]
 
 [tool.ruff.lint.isort]

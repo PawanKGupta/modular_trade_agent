@@ -47,7 +47,7 @@ export interface TradingConfig {
 	min_combined_score: number;
 	enable_premarket_amo_adjustment: boolean;
 
-	// News Sentiment
+	// News Sentiment (only `news_sentiment_enabled` is edited in the UI; other fields are persisted for API/DB compatibility.)
 	news_sentiment_enabled: boolean;
 	news_sentiment_lookback_days: number;
 	news_sentiment_min_articles: number;
@@ -165,11 +165,11 @@ export const DEFAULT_CONFIG: TradingConfig = {
 	exit_on_ema9_or_rsi50: true,
 	min_combined_score: 50,
 	enable_premarket_amo_adjustment: true,
-	news_sentiment_enabled: false,
-	news_sentiment_lookback_days: 7,
-	news_sentiment_min_articles: 3,
-	news_sentiment_pos_threshold: 0.6,
-	news_sentiment_neg_threshold: -0.4,
+	news_sentiment_enabled: true,
+	news_sentiment_lookback_days: 30,
+	news_sentiment_min_articles: 2,
+	news_sentiment_pos_threshold: 0.25,
+	news_sentiment_neg_threshold: -0.25,
 	ml_enabled: false,
 	ml_price_enabled: false,
 	ml_model_version: null,
