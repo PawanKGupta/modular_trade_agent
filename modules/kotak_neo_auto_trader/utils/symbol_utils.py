@@ -99,3 +99,38 @@ def get_ticker_from_full_symbol(full_symbol: str, exchange: str = "NS") -> str:
     """
     base_symbol = extract_base_symbol(full_symbol)
     return f"{base_symbol}.{exchange}"
+
+
+def symbol_lookup_keys(symbol: str) -> list[str]:
+    """
+    Return normalized symbol keys for broker or price maps.
+
+    Examples:
+        'powergrid-eq' -> ['POWERGRID-EQ', 'POWERGRID']
+    """
+    s = normalize_symbol(symbol)
+    keys = [s]
+    base = (
+        s.replace(".NS", "")
+        .replace(".BO", "")
+        .replace("-EQ", "")
+        .replace("-BE", "")
+        .replace("-BL", "")
+        .replace("-BZ", "")
+    )
+    if base and base not in keys:
+        keys.append(base)
+    if "-EQ" not in s and base:
+        eq_key = f"{base}-EQ"
+        if eq_key not in keys:
+            keys.append(eq_key)
+    return keys
+
+
+def lookup_price_from_map(price_map: dict[str, float], symbol: str) -> float | None:
+    """Return the first positive price for symbol using normalized lookup keys."""
+    for key in symbol_lookup_keys(symbol):
+        price = price_map.get(key)
+        if price is not None and price > 0:
+            return float(price)
+    return None

@@ -119,7 +119,24 @@ class TestParseHoldingsResponse:
         assert holding.quantity == 35
         # Money.from_float() rounds to 2 decimal places, so 9.5699 becomes 9.57
         assert float(holding.average_price.amount) == pytest.approx(9.57, abs=0.001)
-        assert float(holding.current_price.amount) == 9.36  # Uses closingPrice
+        assert float(holding.current_price.amount) == 9.36  # closingPrice when ltp absent
+
+    def test_parse_holding_prefers_ltp_over_closing_price(self, adapter):
+        """Live LTP should win over previous close in holdings payload."""
+        data = [
+            {
+                "displaySymbol": "POWERGRID",
+                "averagePrice": 296.45,
+                "quantity": 1,
+                "closingPrice": 296.45,
+                "ltp": 301.20,
+            }
+        ]
+
+        holdings = adapter._parse_holdings_response(data)
+
+        assert len(holdings) == 1
+        assert float(holdings[0].current_price.amount) == pytest.approx(301.20)
 
     def test_parse_holding_with_fallback_symbol(self, adapter):
         """Test parsing holding when displaySymbol is missing, uses symbol"""

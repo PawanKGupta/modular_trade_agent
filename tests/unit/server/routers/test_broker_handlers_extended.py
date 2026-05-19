@@ -336,6 +336,59 @@ def test_get_broker_system_holdings_paths(monkeypatch, broker_settings_broker_mo
     assert out.holdings[0].reentries == [{"x": 1}]
 
 
+def test_get_broker_system_holdings_ltp_via_price_service(monkeypatch, broker_settings_broker_mode):
+    """System holdings must use PriceService LTP and fall back to avg_price when unavailable."""
+    pos = SimpleNamespace(
+        symbol="POWERGRID-EQ",
+        quantity=1.0,
+        avg_price=296.45,
+        closed_at=None,
+        reentry_count=0,
+        reentries=None,
+        entry_rsi=None,
+        initial_entry_price=None,
+    )
+    broker_settings_broker_mode.broker_creds_encrypted = None
+
+    class _PR:
+        def __init__(self, _db):
+            pass
+
+        def list(self, _uid):
+            return [pos]
+
+    monkeypatch.setattr(
+        br,
+        "SettingsRepository",
+        lambda _db: _FakeSettingsRepo(broker_settings_broker_mode),
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.positions_repository.PositionsRepository", _PR
+    )
+
+    mock_price_service = MagicMock()
+    mock_price_service.get_realtime_price.return_value = 301.2
+    monkeypatch.setattr(
+        "modules.kotak_neo_auto_trader.services.get_price_service",
+        lambda **kwargs: mock_price_service,
+    )
+
+    out = br.get_broker_system_holdings(db=object(), current=SimpleNamespace(id=4))
+    assert out.holdings[0].current_price == 301.2
+    assert out.holdings[0].pnl != 0.0
+    mock_price_service.get_realtime_price.assert_called_once()
+    call_kw = mock_price_service.get_realtime_price.call_args.kwargs
+    assert call_kw["symbol"] == "POWERGRID"
+    assert call_kw["broker_symbol"] == "POWERGRID-EQ"
+    assert call_kw["ticker"] == "POWERGRID.NS"
+
+    mock_price_service.get_realtime_price.return_value = None
+    mock_price_service.get_realtime_price.reset_mock()
+    out_fallback = br.get_broker_system_holdings(db=object(), current=SimpleNamespace(id=4))
+    assert out_fallback.holdings[0].current_price == 296.45
+    assert out_fallback.holdings[0].pnl == 0.0
+
+
 def test_get_broker_orders_success(monkeypatch, tmp_path, broker_settings_broker_mode):
     env_file = str(tmp_path / "k3.env")
     tmp_path.joinpath("k3.env").write_text("z", encoding="utf-8")
