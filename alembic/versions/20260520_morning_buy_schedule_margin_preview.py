@@ -5,11 +5,10 @@ Revises: 20260510_ml_price_enabled
 Create Date: 2026-05-20
 """
 
-from datetime import datetime
-
 from sqlalchemy import inspect, text
 
 from alembic import op
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 revision = "20260520_morning_buy"
 down_revision = "20260510_ml_price_enabled"
@@ -49,7 +48,7 @@ def upgrade() -> None:
         text("SELECT task_name FROM service_schedules WHERE task_name = 'buy_margin_preview'")
     ).fetchone()
     if not existing:
-        now = datetime.utcnow()
+        now = ist_now_naive()
         conn.execute(
             text(
                 """
