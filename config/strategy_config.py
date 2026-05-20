@@ -143,7 +143,9 @@ class StrategyConfig:
     exit_on_ema9_or_rsi50: bool = True  # Exit when price >= EMA9 or RSI > 50
     allow_duplicate_recommendations_same_day: bool = False  # Allow duplicate recommendations
     min_combined_score: int = 25  # Minimum combined score for recommendations
-    enable_premarket_amo_adjustment: bool = True  # Adjust AMO quantities based on pre-market prices
+    enable_premarket_amo_adjustment: bool = (
+        True  # Adjust pending buy qty at 9:05 from pre-market prices
+    )
 
     @classmethod
     def from_env(cls) -> "StrategyConfig":

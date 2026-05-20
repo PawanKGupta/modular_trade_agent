@@ -149,6 +149,7 @@ class TradingService:
         self.tasks_completed = {
             "analysis": False,
             "buy_orders": False,
+            "buy_margin_preview": False,
             "eod_cleanup": False,
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
@@ -599,7 +600,7 @@ class TradingService:
             logger.info("Pre-market retry completed")
 
     def run_premarket_amo_adjustment(self):
-        """9:05 AM - Adjust AMO order quantities based on pre-market prices"""
+        """9:05 AM IST - Adjust pending buy order quantities using pre-market prices."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -611,7 +612,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM)")
+            logger.info("TASK: PRE-MARKET PENDING BUY ADJUSTMENT (9:05 AM IST)")
             logger.info("=" * 80)
 
             # Check if engine is initialized
@@ -952,8 +953,48 @@ class TradingService:
             self.tasks_completed["analysis"] = True
             raise Exception("Market analysis failed after all retry attempts")
 
+    def run_buy_margin_preview(self):
+        """16:05 IST - Evening margin preview for next-morning buys (no placement)."""
+        from src.application.services.task_execution_wrapper import execute_task
+
+        summary: dict = {
+            "attempted": 0,
+            "preview_sufficient": 0,
+            "failed_balance": 0,
+            "dry_run": True,
+        }
+
+        with execute_task(
+            self.user_id,
+            self.db,
+            "buy_margin_preview",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
+            self.logger.info("=" * 80, action="run_buy_margin_preview")
+            self.logger.info(
+                "TASK: EVENING BUY MARGIN PREVIEW (16:05 IST)",
+                action="run_buy_margin_preview",
+            )
+            self.logger.info("=" * 80, action="run_buy_margin_preview")
+
+            if not self.engine:
+                raise RuntimeError("Trading engine not initialized. Call initialize() first.")
+
+            summary = self.engine.preview_evening_buy_margins()
+            self.logger.info(
+                f"Margin preview: sufficient={summary.get('preview_sufficient', 0)}, "
+                f"shortfall={summary.get('failed_balance', 0)}, "
+                f"attempted={summary.get('attempted', 0)}",
+                action="run_buy_margin_preview",
+            )
+            task_context["summary"] = summary
+
+        self.tasks_completed["buy_margin_preview"] = True
+        return summary
+
     def run_buy_orders(self):
-        """4:05 PM - Place AMO buy orders for next day"""
+        """09:01 IST - Place REGULAR buy orders at market open (after prior-day analysis)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         # Log entry point to verify method is being called
@@ -983,7 +1024,7 @@ class TradingService:
             self.logger.info("Inside execute_task context", action="run_buy_orders")
             self.logger.info("", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
-            self.logger.info("TASK: PLACE BUY ORDERS (4:05 PM)", action="run_buy_orders")
+            self.logger.info("TASK: PLACE BUY ORDERS (9:01 AM IST)", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
 
             # Check if engine is initialized
@@ -1170,6 +1211,7 @@ class TradingService:
             logger.info("EOD cleanup completed - resetting for next trading day")
             self.tasks_completed["analysis"] = False
             self.tasks_completed["buy_orders"] = False
+            self.tasks_completed["buy_margin_preview"] = False
             self.tasks_completed["eod_cleanup"] = False
             self.tasks_completed["premarket_retry"] = False
             self.tasks_completed["premarket_amo_adjustment"] = False
@@ -1590,7 +1632,7 @@ class TradingService:
                                         timeout_seconds=300,  # 5 minutes
                                     )
 
-                            # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry) - 2 minute timeout
+                            # Pre-market pending buy quantity adjustment (9:05 AM IST) - 2 minute timeout
                             if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
                                 self._execute_task_async(
                                     self.run_premarket_amo_adjustment,
@@ -1637,6 +1679,22 @@ class TradingService:
                                     )
                             elif not analysis_schedule:
                                 logger.debug("Analysis schedule not found in DB")
+
+                            # Evening buy margin preview (uses DB schedule) - 10 minute timeout
+                            margin_preview_schedule = self._schedule_manager.get_schedule(
+                                "buy_margin_preview"
+                            )
+                            if margin_preview_schedule and margin_preview_schedule.enabled:
+                                preview_time = margin_preview_schedule.schedule_time
+                                if self.should_run_task(
+                                    "buy_margin_preview",
+                                    dt_time(preview_time.hour, preview_time.minute),
+                                ):
+                                    self._execute_task_async(
+                                        self.run_buy_margin_preview,
+                                        "buy_margin_preview",
+                                        timeout_seconds=600,
+                                    )
 
                             # Buy orders (uses DB schedule) - 10 minute timeout
                             buy_schedule = self._schedule_manager.get_schedule("buy_orders")

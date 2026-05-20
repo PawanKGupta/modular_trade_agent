@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime
 from datetime import time as dt_time
 from typing import Any
 
@@ -593,11 +592,11 @@ class MultiUserTradingService:
                                         action="scheduler",
                                     )
 
-                    # 9:05 AM - Pre-market AMO adjustment
+                    # 9:05 AM - Pre-market pending buy adjustment
                     if dt_time(9, 5) <= current_time < dt_time(9, 6):
                         if not service.tasks_completed.get("premarket_amo_adjustment"):
                             try:
-                                service.adjust_amo_quantities_premarket()
+                                service.run_premarket_amo_adjustment()
                                 service.tasks_completed["premarket_amo_adjustment"] = True
                             except Exception as e:
                                 user_logger.error(
@@ -720,6 +719,27 @@ class MultiUserTradingService:
                                 except Exception as e:
                                     user_logger.error(
                                         f"Analysis failed: {e}", exc_info=True, action="scheduler"
+                                    )
+
+                    # Evening buy margin preview (uses DB schedule)
+                    margin_preview_schedule = thread_schedule_manager.get_schedule(
+                        "buy_margin_preview"
+                    )
+                    if margin_preview_schedule and margin_preview_schedule.enabled:
+                        preview_time = margin_preview_schedule.schedule_time
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        preview_minutes = preview_time.hour * 60 + preview_time.minute
+                        preview_diff = current_minutes - preview_minutes
+                        if 0 <= preview_diff < 2:
+                            if not service.tasks_completed.get("buy_margin_preview"):
+                                try:
+                                    service.run_buy_margin_preview()
+                                    service.tasks_completed["buy_margin_preview"] = True
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Buy margin preview failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
                                     )
 
                     # Buy orders (uses DB schedule)
