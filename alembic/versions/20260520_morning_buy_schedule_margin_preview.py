@@ -5,6 +5,8 @@ Revises: 20260510_ml_price_enabled
 Create Date: 2026-05-20
 """
 
+from datetime import datetime
+
 from sqlalchemy import inspect, text
 
 from alembic import op
@@ -47,15 +49,16 @@ def upgrade() -> None:
         text("SELECT task_name FROM service_schedules WHERE task_name = 'buy_margin_preview'")
     ).fetchone()
     if not existing:
+        now = datetime.utcnow()
         conn.execute(
             text(
                 """
                 INSERT INTO service_schedules (
                     task_name, schedule_time, enabled, is_hourly, is_continuous,
-                    schedule_type, description
+                    schedule_type, description, created_at, updated_at
                 ) VALUES (
                     :task_name, :schedule_time, :enabled, :is_hourly, :is_continuous,
-                    :schedule_type, :description
+                    :schedule_type, :description, :created_at, :updated_at
                 )
                 """
             ),
@@ -67,6 +70,8 @@ def upgrade() -> None:
                 "is_continuous": False,
                 "schedule_type": "daily",
                 "description": "Evening margin preview for next-morning buys (notify only)",
+                "created_at": now,
+                "updated_at": now,
             },
         )
 
