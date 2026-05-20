@@ -195,3 +195,32 @@ class OrderFieldExtractor:
         """
         txn_type = OrderFieldExtractor.get_transaction_type(order)
         return txn_type in ["S", "SELL"]
+
+    @staticmethod
+    def is_pending_open_buy_order(order: dict[str, Any]) -> bool:
+        """
+        True if broker order is an open/pending BUY eligible for pre-market adjustment.
+
+        Includes AMO and REGULAR pending buys (DAY validity). Excludes IOC and sells.
+        """
+        if not OrderFieldExtractor.is_buy_order(order):
+            return False
+
+        status = OrderFieldExtractor.get_status(order)
+        if not any(
+            token in status
+            for token in ("open", "pending", "trigger", "req received", "reqreceived")
+        ):
+            return False
+
+        validity = str(
+            order.get("orderValidity")
+            or order.get("ordValidity")
+            or order.get("validity")
+            or order.get("rt")
+            or "DAY"
+        ).upper()
+        if validity == "IOC":
+            return False
+
+        return True

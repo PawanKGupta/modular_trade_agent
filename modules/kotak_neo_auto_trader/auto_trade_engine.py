@@ -3857,10 +3857,10 @@ class AutoTradeEngine:
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
-        Pre-market AMO quantity adjuster (runs at 9:05 AM)
+        Pre-market pending buy quantity adjuster (runs at 9:05 AM by default).
 
-        Adjusts AMO order quantities based on pre-market prices
-        to keep capital constant (user_capital per trade).
+        When ``enable_premarket_amo_adjustment`` is on, adjusts open/pending BUY orders
+        at the broker (AMO or REGULAR) using pre-market prices to keep capital constant.
 
         Handles gaps up (reduce qty) and gaps down (increase qty)
         to prevent order rejections due to insufficient funds.
@@ -3880,11 +3880,11 @@ class AutoTradeEngine:
 
         # Check if feature is enabled
         if not self.strategy_config.enable_premarket_amo_adjustment:
-            logger.info("Pre-market AMO adjustment is disabled in config - skipping")
+            logger.info("Pre-market pending buy adjustment is disabled in config - skipping")
             summary["skipped_not_enabled"] = 1
             return summary
 
-        logger.info("🔄 Starting pre-market AMO quantity adjustment...")
+        logger.info("🔄 Starting pre-market pending buy quantity adjustment...")
 
         # Check authentication
         if not self.auth or not self.auth.is_authenticated():
@@ -3900,17 +3900,17 @@ class AutoTradeEngine:
                 return summary
 
         try:
-            # 1. Get all pending orders from broker
-            logger.info("Fetching pending AMO orders from broker...")
+            from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+                OrderFieldExtractor,
+            )
+
+            logger.info("Fetching pending buy orders from broker...")
             pending_orders = self.orders.get_pending_orders() or []
 
-            # Filter only AMO/pending orders (including re-entry orders)
-            amo_orders = [
+            pending_buy_orders = [
                 order
                 for order in pending_orders
-                if order.get("orderValidity", "").upper() == "DAY"  # AMO orders
-                and order.get("orderStatus", "").upper() in ["PENDING", "OPEN", "TRIGGER_PENDING"]
-                and order.get("transactionType", "").upper() == "BUY"
+                if OrderFieldExtractor.is_pending_open_buy_order(order)
             ]
 
             # Also get re-entry orders from database (if available)
@@ -4011,15 +4011,12 @@ class AutoTradeEngine:
                                 matching_broker_order = broker_order
                                 break
                     if matching_broker_order:
-                        # Only add if not already in amo_orders (avoid duplicates)
-                        # Re-entry orders might already be in amo_orders from initial broker filter
                         already_in_list = any(
-                            order.get("nOrdNo", order.get("orderId", ""))
-                            == db_order.broker_order_id
-                            for order in amo_orders
+                            OrderFieldExtractor.get_order_id(order) == db_order.broker_order_id
+                            for order in pending_buy_orders
                         )
                         if not already_in_list:
-                            amo_orders.append(matching_broker_order)
+                            pending_buy_orders.append(matching_broker_order)
                 else:
                     # Order not found at broker - likely cancelled by broker at EOD
                     # Order not found at broker - likely cancelled by broker at EOD
@@ -4095,7 +4092,7 @@ class AutoTradeEngine:
                             f"may have been executed or cancelled (status: {db_order.status})"
                         )
 
-            summary["total_orders"] = len(amo_orders)
+            summary["total_orders"] = len(pending_buy_orders)
 
             # PERFORMANCE FIX: Pre-fetch prices and calculate EMA9 for all orders in parallel
             # This reduces total time from N*3-4s to ~3-4s for all orders
@@ -4107,10 +4104,10 @@ class AutoTradeEngine:
 
             # Prepare order data for parallel processing
             order_data = []
-            for order in amo_orders:
-                symbol = order.get("symbol", order.get("tradingSymbol", ""))
-                original_qty = int(order.get("quantity", 0))
-                order_id = order.get("nOrdNo", order.get("orderId", ""))
+            for order in pending_buy_orders:
+                symbol = OrderFieldExtractor.get_symbol(order)
+                original_qty = OrderFieldExtractor.get_quantity(order)
+                order_id = OrderFieldExtractor.get_order_id(order)
 
                 if not symbol or not original_qty or not order_id:
                     logger.warning(f"Incomplete order data - skipping: {order}")
@@ -4406,12 +4403,40 @@ class AutoTradeEngine:
             return summary
 
     # ---------------------- New entries ----------------------
-    def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int | list]:
+    def preview_evening_buy_margins(self) -> dict[str, int | list]:
+        """
+        Evening margin preview (no broker placement).
+
+        Loads buy recommendations and runs the same checks as ``place_new_entries``
+        with ``dry_run=True``, sending notifications for insufficient margin.
+        """
+        recs = self.load_latest_recommendations()
+        if not recs:
+            logger.info("No recommendations for evening margin preview")
+            return {
+                "attempted": 0,
+                "placed": 0,
+                "preview_sufficient": 0,
+                "failed_balance": 0,
+                "skipped": 0,
+                "dry_run": True,
+                "ticker_attempts": [],
+            }
+        return self.place_new_entries(recs, dry_run=True)
+
+    def place_new_entries(
+        self,
+        recommendations: list[Recommendation],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, int | list]:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "preview_sufficient": 0,
             "failed_balance": 0,
             "skipped": 0,  # Total skipped (for backward compatibility with tests)
+            "dry_run": dry_run,
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -5312,17 +5337,27 @@ class AutoTradeEngine:
                 continue
 
             if not has_sufficient_balance:
-                # Telegram message with emojis
                 timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
-                telegram_msg = (
-                    f"💰 *Insufficient Balance - AMO BUY*\n\n"
-                    f"Symbol: `{broker_symbol}`\n"
-                    f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                    f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                    f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                    f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
-                    f"_Time: {timestamp}_"
-                )
+                if dry_run:
+                    telegram_msg = (
+                        f"💰 *Insufficient Margin (Evening Preview)*\n\n"
+                        f"Symbol: `{broker_symbol}`\n"
+                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
+                        f"No order placed. Fund account before morning buy run (9:01 AM IST).\n\n"
+                        f"_Time: {timestamp}_"
+                    )
+                else:
+                    telegram_msg = (
+                        f"💰 *Insufficient Balance - BUY*\n\n"
+                        f"Symbol: `{broker_symbol}`\n"
+                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
+                        f"Order saved for retry at premarket_retry or manually.\n\n"
+                        f"_Time: {timestamp}_"
+                    )
                 # Use TelegramNotifier to respect notification preferences
                 if self.telegram_notifier and self.telegram_notifier.enabled:
                     try:
@@ -5341,29 +5376,34 @@ class AutoTradeEngine:
                     send_telegram(telegram_msg)
 
                 # Logger message without emojis
+                log_suffix = (
+                    "Evening preview only — no DB order created."
+                    if dry_run
+                    else "Saved for premarket_retry or manual retry."
+                )
                 logger.warning(
-                    f"Insufficient balance for {broker_symbol} AMO BUY. "
+                    f"Insufficient balance for {broker_symbol} BUY. "
                     f"Needed: Rs.{required_cash:,.0f} for {qty} @ Rs.{close:.2f}. "
                     f"Available: Rs.{(avail_cash or 0.0):,.0f}. Shortfall: Rs.{shortfall:,.0f}. "
-                    f"Order status updated in database. Will be retried at scheduled time or manually."
+                    f"{log_suffix}"
                 )
 
-                # Create order in DB with FAILED status for scheduled retry
-                failed_order_info = {
-                    "symbol": broker_symbol,
-                    "ticker": rec.ticker,
-                    "close": close,
-                    "qty": qty,
-                    "required_cash": required_cash,
-                    "shortfall": shortfall,
-                    "reason": "insufficient_balance",
-                    "verdict": rec.verdict,
-                    "rsi10": ind.get("rsi10"),
-                    "ema9": ind.get("ema9"),
-                    "ema200": ind.get("ema200"),
-                    "execution_capital": execution_capital,  # Phase 11: Save execution_capital for retry
-                }
-                self._add_failed_order(failed_order_info)
+                if not dry_run:
+                    failed_order_info = {
+                        "symbol": broker_symbol,
+                        "ticker": rec.ticker,
+                        "close": close,
+                        "qty": qty,
+                        "required_cash": required_cash,
+                        "shortfall": shortfall,
+                        "reason": "insufficient_balance",
+                        "verdict": rec.verdict,
+                        "rsi10": ind.get("rsi10"),
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "execution_capital": execution_capital,
+                    }
+                    self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
                 summary["skipped"] += 1  # Increment general counter
@@ -5374,6 +5414,17 @@ class AutoTradeEngine:
                 ticker_attempt["required_cash"] = required_cash
                 ticker_attempt["available_cash"] = avail_cash
                 ticker_attempt["shortfall"] = shortfall
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
+            if dry_run:
+                summary["preview_sufficient"] += 1
+                ticker_attempt["status"] = "preview_ok"
+                ticker_attempt["reason"] = "sufficient_margin"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                ticker_attempt["required_cash"] = required_cash
+                ticker_attempt["available_cash"] = avail_cash
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
 

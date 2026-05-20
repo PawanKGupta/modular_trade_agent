@@ -65,7 +65,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 							className="rounded"
 						/>
 						<span className="text-sm">
-							Enable Pre-Market AMO Adjustment (9:05 AM)
+							Enable Pre-Market Pending Buy Adjustment (9:05 AM)
 							{!isDefault('enable_premarket_amo_adjustment') && <span className="text-yellow-400 ml-1">*</span>}
 						</span>
 					</label>
@@ -73,7 +73,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 						Default: {defaultConfig.enable_premarket_amo_adjustment ? 'Enabled' : 'Disabled'}
 					</div>
 					<div className="text-xs text-blue-400 mt-1 ml-6">
-						Automatically adjust AMO order quantities at 9:05 AM based on pre-market prices to keep capital constant
+						Adjust open pending buy orders (AMO or REGULAR) at 9:05 AM using pre-market prices to keep capital constant
 					</div>
 				</div>
 

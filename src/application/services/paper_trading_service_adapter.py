@@ -76,6 +76,7 @@ class PaperTradingServiceAdapter:
         # Task execution flags
         self.tasks_completed = {
             "buy_orders": False,
+            "buy_margin_preview": False,
             "eod_cleanup": False,
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
@@ -258,8 +259,30 @@ class PaperTradingServiceAdapter:
         except Exception as e:
             self.logger.warning(f"Could not display portfolio status: {e}", action="initialize")
 
+    def run_buy_margin_preview(self):
+        """16:05 IST - Evening margin preview (paper: informational only)."""
+        from src.application.services.task_execution_wrapper import execute_task
+
+        summary = {"dry_run": True, "attempted": 0, "preview_sufficient": 0, "failed_balance": 0}
+
+        with execute_task(
+            self.user_id,
+            self.db,
+            "buy_margin_preview",
+            self.logger,
+            track_execution=not self.skip_execution_tracking,
+        ) as task_context:
+            self.logger.info(
+                "Evening margin preview skipped for paper mode (checks run at buy_orders)",
+                action="run_buy_margin_preview",
+            )
+            task_context["summary"] = summary
+
+        self.tasks_completed["buy_margin_preview"] = True
+        return summary
+
     def run_buy_orders(self):
-        """4:05 PM - Place AMO buy orders for next day (paper trading)"""
+        """09:01 IST - Place buy orders at market open (paper trading)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         summary_result = {}

@@ -100,8 +100,8 @@ def test_no_pending_orders(mock_auto_trade_engine):
         assert summary["adjusted"] == 0
 
 
-def test_filter_only_amo_buy_orders(mock_auto_trade_engine):
-    """Test that only AMO buy orders are processed"""
+def test_filter_pending_buy_orders(mock_auto_trade_engine):
+    """Test that only open/pending BUY orders (not SELL/IOC) are processed"""
     orders = [
         {
             "symbol": "RELIANCE-EQ",
@@ -150,7 +150,43 @@ def test_filter_only_amo_buy_orders(mock_auto_trade_engine):
 
             summary = engine.adjust_amo_quantities_premarket()
 
-            # Only 1 order (RELIANCE) should be processed (BUY + AMO)
+            assert summary["total_orders"] == 1
+
+
+def test_filter_pending_buy_orders_kotak_field_names(mock_auto_trade_engine):
+    """Kotak broker field names (trdSym, trnsTp, ordSt, rt) qualify as pending buy."""
+    orders = [
+        {
+            "trdSym": "POWERGRID-EQ",
+            "qty": "100",
+            "nOrdNo": "ORDK1",
+            "rt": "DAY",
+            "ordSt": "open",
+            "trnsTp": "B",
+        },
+    ]
+
+    with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        engine = AutoTradeEngine()
+        engine.strategy_config = mock_auto_trade_engine.strategy_config
+        engine.auth = mock_auto_trade_engine.auth
+        engine.orders = Mock()
+        engine.orders.get_pending_orders = Mock(return_value=orders)
+        engine.portfolio = mock_auto_trade_engine.portfolio
+        engine.login = mock_auto_trade_engine.login
+        engine.db = None
+        engine.orders_repo = None
+        engine.telegram_notifier = None
+
+        with patch(
+            "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+        ) as mock_market_data:
+            mock_md_instance = Mock()
+            mock_md_instance.get_ltp = Mock(return_value=None)
+            mock_market_data.return_value = mock_md_instance
+
+            summary = engine.adjust_amo_quantities_premarket()
+
             assert summary["total_orders"] == 1
 
 

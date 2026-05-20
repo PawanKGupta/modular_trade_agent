@@ -943,6 +943,12 @@ class IndividualServiceManager:
             elif task_name == "sell_monitor":
                 service.run_sell_monitor()
                 return {"task": "sell_monitor", "status": "completed"}
+            elif task_name == "buy_margin_preview":
+                summary = service.run_buy_margin_preview()
+                result = {"task": "buy_margin_preview", "status": "completed"}
+                if summary:
+                    result["summary"] = summary
+                return result
             elif task_name == "buy_orders":
                 logger.info(
                     "About to call service.run_buy_orders()",
@@ -1698,12 +1704,12 @@ class IndividualServiceManager:
         default_schedules = [
             {
                 "task_name": "premarket_retry",
-                "schedule_time": time(9, 0),
+                "schedule_time": time(9, 3),
                 "enabled": True,
                 "is_hourly": False,
                 "is_continuous": False,
                 "schedule_type": "daily",
-                "description": "Retry failed orders from previous day",
+                "description": "Retry failed buy orders (runs after morning buy placement)",
             },
             {
                 "task_name": "sell_monitor",
@@ -1726,12 +1732,21 @@ class IndividualServiceManager:
             },
             {
                 "task_name": "buy_orders",
+                "schedule_time": time(9, 1),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Place REGULAR buy orders at market open (after prior-day analysis)",
+            },
+            {
+                "task_name": "buy_margin_preview",
                 "schedule_time": time(16, 5),
                 "enabled": True,
                 "is_hourly": False,
                 "is_continuous": False,
                 "schedule_type": "daily",
-                "description": "Place AMO buy orders for next day",
+                "description": "Evening margin preview for morning buys (notify only)",
             },
             {
                 "task_name": "eod_cleanup",
