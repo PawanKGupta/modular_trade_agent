@@ -605,18 +605,8 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
-                    # 9:15 AM - Execute AMO orders at market open
-                    if dt_time(9, 15) <= current_time < dt_time(9, 16):
-                        if not service.tasks_completed.get("amo_orders_executed"):
-                            try:
-                                service.execute_amo_orders_at_market_open()
-                                service.tasks_completed["amo_orders_executed"] = True
-                            except Exception as e:
-                                user_logger.error(
-                                    f"AMO order execution failed: {e}",
-                                    exc_info=True,
-                                    action="scheduler",
-                                )
+                    # Morning buys use 9:01 REGULAR (buy_orders); do not auto-execute legacy
+                    # pending AMO at 9:15 — see PaperTradingServiceAdapter.execute_amo_orders_at_market_open.
 
                     # Sell monitoring (continuous during market hours, uses DB schedule)
                     sell_schedule = thread_schedule_manager.get_schedule("sell_monitor")

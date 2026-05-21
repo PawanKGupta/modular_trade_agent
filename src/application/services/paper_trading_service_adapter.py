@@ -297,7 +297,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
             self.logger.info(
-                "TASK: PLACE BUY ORDERS (4:05 PM) - PAPER TRADING", action="run_buy_orders"
+                "TASK: PLACE BUY ORDERS (9:01 AM IST) - PAPER TRADING", action="run_buy_orders"
             )
             self.logger.info("=" * 80, action="run_buy_orders")
 
@@ -312,6 +312,20 @@ class PaperTradingServiceAdapter:
                 self.logger.warning(error_msg, action="run_buy_orders")
                 if self.broker and not self.broker.connect():
                     raise RuntimeError("Failed to connect to paper trading broker")
+
+            pending_amo_buys = [
+                order
+                for order in self.broker.get_pending_orders()
+                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+            ]
+            if pending_amo_buys:
+                symbols = ", ".join(o.symbol for o in pending_amo_buys)
+                self.logger.warning(
+                    f"Legacy pending AMO buy orders ({len(pending_amo_buys)}): {symbols}. "
+                    "Scheduler no longer executes these at 9:15; morning entry uses 9:01 REGULAR. "
+                    "Cancel or call execute_amo_orders_at_market_open() manually if still needed.",
+                    action="run_buy_orders",
+                )
 
             # Load recommendations using the same logic as real trading
             recs = self.engine.load_latest_recommendations()
@@ -697,13 +711,13 @@ class PaperTradingServiceAdapter:
 
     def execute_amo_orders_at_market_open(self) -> dict[str, int]:
         """
-        9:15 AM - Execute pending AMO orders at market open (paper trading)
+        Execute pending AMO buy orders in the paper simulator (manual / tests only).
 
-        Executes all pending AMO buy orders that were placed during off-market hours.
-        This matches the real broker behavior where AMO orders execute at market open.
+        Not scheduled: morning ``buy_orders`` at 9:01 IST uses REGULAR variety when the
+        session is open. Legacy evening AMO pending orders are not auto-filled at 9:15.
 
         Returns:
-            Summary dict with execution statistics
+            Summary dict with execution statistics.
         """
         from src.application.services.task_execution_wrapper import execute_task
 

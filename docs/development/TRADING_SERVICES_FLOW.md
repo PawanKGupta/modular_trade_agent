@@ -99,3 +99,5 @@ Places EMA9 limit sells at first run, then monitors RSI exit / fills.
 ## AMO deprecation note
 
 Evening **16:05 `buy_orders` (AMO)** is replaced by **`buy_margin_preview`**. Morning **`buy_orders` at 9:01** uses **REGULAR** variety when `is_market_hours()` is true. Kotak AMO at 16:05 is no longer the default path.
+
+**Paper trading:** The multi-user paper scheduler does **not** call `execute_amo_orders_at_market_open()` at 9:15. Stale simulator AMO buys from the old evening path are logged at 9:01 and must be cancelled or executed manually; unit tests may still call `execute_amo_orders_at_market_open()` directly.

@@ -161,6 +161,58 @@ class TestPaperTradingServiceAdapter:
         mock_adjust.assert_called_once_with()
         assert result == expected_summary
 
+    def test_run_buy_orders_warns_on_legacy_pending_amo(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """9:01 buy_orders warns on stale AMO; does not call execute_amo_orders_at_market_open."""
+        from modules.kotak_neo_auto_trader.domain import (
+            Order,
+            OrderStatus,
+            OrderType,
+            OrderVariety,
+            TransactionType,
+        )
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+        )
+        adapter.broker = mock_paper_broker
+        adapter.logger = MagicMock()
+        adapter.engine = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=None,
+            logger=adapter.logger,
+        )
+
+        pending_amo = Order(
+            symbol="DMART",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+            order_id="LEGACY_AMO_1",
+            status=OrderStatus.OPEN,
+        )
+        mock_paper_broker.get_pending_orders.return_value = [pending_amo]
+
+        with (
+            patch.object(adapter.engine, "load_latest_recommendations", return_value=[]),
+            patch.object(adapter, "execute_amo_orders_at_market_open") as mock_execute_amo,
+        ):
+            adapter.run_buy_orders()
+
+        legacy_warnings = [
+            call
+            for call in adapter.logger.warning.call_args_list
+            if call.args and "Legacy pending AMO" in call.args[0]
+        ]
+        assert len(legacy_warnings) == 1
+        assert "DMART" in legacy_warnings[0].args[0]
+        mock_execute_amo.assert_not_called()
+
     def test_run_buy_orders_calls_place_reentry_orders(
         self, db_session, test_user, mock_paper_broker
     ):
