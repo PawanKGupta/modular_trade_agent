@@ -828,13 +828,12 @@ class TestPaperTradingSellMonitoring:
         assert tcs_order.quantity == 30
 
     def test_sell_orders_not_duplicated(self, db_session, test_user, adapter_with_holdings):
-        """Test that sell orders are not duplicated if already active"""
-        from unittest.mock import patch
+        """Morning placement cancels prior pending sells and places fresh EMA9 limits."""
+        from unittest.mock import MagicMock, patch
 
         from src.infrastructure.db.models import Orders, OrderStatus, TradeMode
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
-        # Pre-populate active sell order in database
         existing_order = Orders(
             user_id=test_user.id,
             symbol="RELIANCE-EQ",
@@ -849,9 +848,14 @@ class TestPaperTradingSellMonitoring:
         db_session.add(existing_order)
         db_session.commit()
 
-        # PaperTradingServiceAdapter prevents duplicates based on in-memory tracking and
-        # broker pending orders (not DB). Seed in-memory state to reflect a previously
-        # tracked sell order.
+        mock_pending = MagicMock()
+        mock_pending.symbol = "RELIANCE-EQ"
+        mock_pending.is_sell_order.return_value = True
+        mock_pending.is_active.return_value = True
+        mock_pending.order_id = "EXISTING_ORDER"
+        adapter_with_holdings.broker.get_pending_orders.return_value = [mock_pending]
+        adapter_with_holdings.broker.cancel_order.return_value = True
+
         adapter_with_holdings.active_sell_orders = {
             "RELIANCE": {
                 "order_id": "EXISTING_ORDER",
@@ -864,12 +868,11 @@ class TestPaperTradingSellMonitoring:
 
         def mock_calculate_ema9(ticker):
             if "RELIANCE" in ticker:
-                return 2650.0  # Different EMA9 (should NOT update)
+                return 2650.0
             elif "TCS" in ticker:
                 return 3600.0
             return None
 
-        # Mock broker.place_order to save orders to database
         def mock_place_order(order):
             from src.infrastructure.db.models import Orders
 
@@ -897,20 +900,21 @@ class TestPaperTradingSellMonitoring:
         ):
             adapter_with_holdings._place_sell_orders()
 
-        # Verify RELIANCE order still has original frozen target (not duplicated)
+        adapter_with_holdings.broker.cancel_order.assert_called_with("EXISTING_ORDER")
+
         orders_repo = OrdersRepository(db_session)
         db_orders, _ = orders_repo.list(test_user.id)
-        reliance_orders = [
+        reliance_pending = [
             o
             for o in db_orders
-            if o.side == "sell" and "RELIANCE" in o.symbol and o.trade_mode == TradeMode.PAPER
+            if o.side == "sell"
+            and "RELIANCE" in o.symbol
+            and o.trade_mode == TradeMode.PAPER
+            and o.status == OrderStatus.PENDING
         ]
-        # Should have only one RELIANCE order (the existing one)
-        assert len(reliance_orders) == 1
-        assert reliance_orders[0].price == 2600.0
-        assert reliance_orders[0].broker_order_id == "EXISTING_ORDER"
+        assert any(o.price == 2650.0 for o in reliance_pending)
+        assert adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["target_price"] == 2650.0
 
-        # TCS should have new order
         tcs_orders = [
             o
             for o in db_orders
@@ -1468,7 +1472,7 @@ class TestPaperTradingSellMonitoring:
     def test_place_sell_orders_skips_loaded_orders(
         self, db_session, test_user, adapter_with_holdings, tmp_path
     ):
-        """Test that _place_sell_orders skips orders loaded from file"""
+        """Morning placement replaces in-memory tracking with fresh EMA9 sells."""
         from unittest.mock import patch
 
         # Set storage path
@@ -1486,9 +1490,11 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
+        adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
+
         def mock_calculate_ema9(ticker):
             if "RELIANCE" in ticker:
-                return 2650.0  # Different EMA9 (should NOT place new order)
+                return 2650.0
             elif "TCS" in ticker:
                 return 3600.0
             return None
@@ -1500,20 +1506,18 @@ class TestPaperTradingSellMonitoring:
         ):
             adapter_with_holdings._place_sell_orders()
 
-        # RELIANCE should still have loaded order (not replaced)
         assert (
-            adapter_with_holdings.active_sell_orders["RELIANCE"]["order_id"] == "LOADED_ORDER_123"
+            adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["order_id"]
+            == "NEW_RELIANCE_SELL"
         )
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
-
-        # TCS should have new order
+        assert adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["target_price"] == 2650.0
         assert "TCS-EQ" in adapter_with_holdings.active_sell_orders
         assert adapter_with_holdings.active_sell_orders["TCS-EQ"]["target_price"] == 3600.0
 
     def test_place_sell_orders_skips_pending_broker_orders(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that _place_sell_orders skips symbols with pending orders in broker"""
+        """Stale broker pending sells are cancelled and replaced at latest EMA9."""
         from unittest.mock import MagicMock, patch
 
         # Create mock pending sell order in broker
@@ -1525,13 +1529,13 @@ class TestPaperTradingSellMonitoring:
         mock_pending_order.order_id = "BROKER_ORDER_123"
 
         adapter_with_holdings.broker.get_pending_orders.return_value = [mock_pending_order]
-
-        # Clear active_sell_orders (simulating service restart without file)
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
         adapter_with_holdings.active_sell_orders = {}
 
         def mock_calculate_ema9(ticker):
             if "RELIANCE" in ticker:
-                return 2650.0  # Would place new order if not skipped
+                return 2650.0
             elif "TCS" in ticker:
                 return 3600.0
             return None
@@ -1543,13 +1547,35 @@ class TestPaperTradingSellMonitoring:
         ):
             adapter_with_holdings._place_sell_orders()
 
-        # RELIANCE should be skipped (has pending order in broker)
-        # But should be restored to active_sell_orders from broker
-        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == 2600.0
-
-        # TCS should have new order
+        adapter_with_holdings.broker.cancel_order.assert_called_with("BROKER_ORDER_123")
+        assert "RELIANCE-EQ" in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["target_price"] == 2650.0
         assert "TCS-EQ" in adapter_with_holdings.active_sell_orders
+
+    def test_eod_cleanup_cancels_pending_sell_orders(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """EOD cleanup cancels unexecuted sell limits and clears tracking."""
+        from unittest.mock import MagicMock, patch
+
+        mock_pending = MagicMock()
+        mock_pending.symbol = "RELIANCE-EQ"
+        mock_pending.is_sell_order.return_value = True
+        mock_pending.is_active.return_value = True
+        mock_pending.order_id = "EOD_SELL_1"
+
+        adapter_with_holdings.broker.get_pending_orders.return_value = [mock_pending]
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE-EQ": {"order_id": "EOD_SELL_1", "target_price": 2600.0, "qty": 40}
+        }
+        adapter_with_holdings.reporter = None
+
+        with patch.object(adapter_with_holdings, "_save_sell_orders_to_file"):
+            adapter_with_holdings.run_eod_cleanup()
+
+        adapter_with_holdings.broker.cancel_order.assert_called_with("EOD_SELL_1")
+        assert adapter_with_holdings.active_sell_orders == {}
 
     @pytest.mark.skip(
         reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
@@ -1663,54 +1689,46 @@ class TestPaperTradingSellMonitoring:
     def test_place_sell_orders_updates_quantity_on_reentry(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that _place_sell_orders detects and updates quantity when holdings increased"""
-        from unittest.mock import MagicMock
+        """Morning placement replaces stale sells using current holdings qty and EMA9."""
+        from unittest.mock import MagicMock, patch
 
-        # Set up existing sell order with old quantity
         adapter_with_holdings.active_sell_orders = {
             "RELIANCE": {
                 "order_id": "EXISTING_ORDER",
                 "target_price": 2600.0,
-                "qty": 40,  # Old quantity
+                "qty": 40,
                 "ticker": "RELIANCE.NS",
                 "entry_date": "2024-01-01",
             }
         }
 
-        # Mock holdings with increased quantity (re-entry happened)
         mock_holding = MagicMock()
-        mock_holding.symbol = "RELIANCE-EQ"  # Full symbol after migration
-        mock_holding.quantity = 60  # Increased from 40
+        mock_holding.symbol = "RELIANCE-EQ"
+        mock_holding.quantity = 60
         adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
 
-        # Mock pending orders (existing sell order)
         mock_pending_order = MagicMock()
-        mock_pending_order.symbol = "RELIANCE"
+        mock_pending_order.symbol = "RELIANCE-EQ"
         mock_pending_order.is_sell_order.return_value = True
         mock_pending_order.is_active.return_value = True
+        mock_pending_order.order_id = "EXISTING_ORDER"
         adapter_with_holdings.broker.get_pending_orders.return_value = [mock_pending_order]
-
-        # Mock cancel and place order
         adapter_with_holdings.broker.cancel_order.return_value = True
         adapter_with_holdings.broker.place_order.return_value = "UPDATED_ORDER"
 
-        # Mock EMA9 calculation to return new target
-        from unittest.mock import patch
-
-        new_target = 2650.0  # New EMA9 target after re-entry
-        with patch.object(adapter_with_holdings, "_calculate_ema9", return_value=new_target):
-            # Call _place_sell_orders (should detect quantity mismatch and update)
+        new_target = 2650.0
+        with (
+            patch.object(adapter_with_holdings, "_calculate_ema9", return_value=new_target),
+            patch.object(adapter_with_holdings, "_initialize_rsi10_cache_paper", return_value=None),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file", return_value=None),
+        ):
             adapter_with_holdings._place_sell_orders()
 
-        # Verify quantity and target were updated
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["qty"] == 60
-        assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] == new_target
-
-        # Verify order was cancelled and new one placed
+        assert adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["qty"] == 60
+        assert adapter_with_holdings.active_sell_orders["RELIANCE-EQ"]["target_price"] == new_target
         adapter_with_holdings.broker.cancel_order.assert_called_with("EXISTING_ORDER")
         adapter_with_holdings.broker.place_order.assert_called_once()
 
-        # Verify new order was placed with recalculated target
         new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
         assert float(new_order.price.amount) == new_target
 

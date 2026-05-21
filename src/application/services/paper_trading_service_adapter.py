@@ -950,6 +950,18 @@ class PaperTradingServiceAdapter:
                     action="run_eod_cleanup",
                 )
 
+            try:
+                cancel_summary = self._cancel_unexecuted_sell_orders(
+                    "EOD cleanup — unexecuted DAY sell limits expire after session"
+                )
+                task_context["sell_orders_cancelled"] = cancel_summary.get("cancelled", 0)
+            except Exception as e:
+                self.logger.warning(
+                    f"EOD sell-order cancellation failed: {e}",
+                    action="run_eod_cleanup",
+                    exc_info=True,
+                )
+
             # Reset ALL flags for next day (including eod_cleanup — otherwise it
             # stays True forever and never runs again on subsequent days)
             self.logger.info(
@@ -968,18 +980,87 @@ class PaperTradingServiceAdapter:
 
             self.logger.info("Service ready for next trading day", action="run_eod_cleanup")
 
+    def _cancel_unexecuted_sell_orders(self, reason: str) -> dict[str, int]:
+        """
+        Cancel open/pending sell orders (broker + in-memory tracking).
+
+        NSE DAY limit sells do not carry overnight; next ``run_sell_monitor`` places
+        fresh limits at the latest EMA9 target.
+        """
+        summary = {"cancelled": 0, "failed": 0}
+        if not self.broker:
+            return summary
+
+        self.logger.info(
+            f"Cancelling unexecuted sell orders: {reason}",
+            action="_cancel_unexecuted_sell_orders",
+        )
+
+        try:
+            pending_orders = self.broker.get_pending_orders() or []
+        except Exception as e:
+            self.logger.warning(
+                f"Could not list pending orders for sell cancellation: {e}",
+                action="_cancel_unexecuted_sell_orders",
+            )
+            pending_orders = []
+
+        for order in pending_orders:
+            if not order.is_sell_order() or not order.is_active():
+                continue
+            order_id = getattr(order, "order_id", None)
+            if not order_id:
+                continue
+            try:
+                if self.broker.cancel_order(order_id):
+                    summary["cancelled"] += 1
+                    self.logger.info(
+                        f"Cancelled pending sell {order.symbol} (#{order_id})",
+                        action="_cancel_unexecuted_sell_orders",
+                    )
+                else:
+                    summary["failed"] += 1
+            except Exception as cancel_err:
+                summary["failed"] += 1
+                self.logger.warning(
+                    f"Failed to cancel sell order {order_id}: {cancel_err}",
+                    action="_cancel_unexecuted_sell_orders",
+                )
+
+        if self.active_sell_orders:
+            cleared = len(self.active_sell_orders)
+            self.active_sell_orders.clear()
+            self.logger.info(
+                f"Cleared {cleared} tracked sell order(s) from memory",
+                action="_cancel_unexecuted_sell_orders",
+            )
+            try:
+                self._save_sell_orders_to_file()
+            except Exception as save_err:
+                self.logger.debug(
+                    f"Could not save cleared sell orders file: {save_err}",
+                    action="_cancel_unexecuted_sell_orders",
+                )
+
+        if summary["cancelled"] or summary["failed"]:
+            self.logger.info(
+                f"Sell cancellation summary: cancelled={summary['cancelled']}, "
+                f"failed={summary['failed']}",
+                action="_cancel_unexecuted_sell_orders",
+            )
+        return summary
+
     def _place_sell_orders(self):
         """
-        Place sell orders for all holdings at frozen EMA9 target.
+        Place sell orders for all holdings at current EMA9 target.
 
-        Strategy: Frozen EMA9 (matches 10-year backtest with 76% success rate)
-        - Calculate current EMA9 for each holding
-        - Place limit sell order at EMA9 price
-        - Target is FROZEN (never updated)
-        - Track in active_sell_orders
+        Cancels any prior-session pending sells first so each morning gets a fresh
+        limit at the latest EMA9. Intraday target updates (e.g. re-entry) use
+        ``_update_sell_order_quantity``.
         """
 
         from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
         holdings = self.broker.get_holdings()
 
@@ -987,24 +1068,11 @@ class PaperTradingServiceAdapter:
             self.logger.info("No holdings to place sell orders for", action="_place_sell_orders")
             return
 
+        self._cancel_unexecuted_sell_orders("Morning sell monitor — refresh limits at latest EMA9")
+
         self.logger.info(
             f"Placing sell orders for {len(holdings)} holdings...", action="_place_sell_orders"
         )
-
-        # Get pending sell orders from broker to avoid duplicates
-        pending_orders = self.broker.get_pending_orders() if self.broker else []
-        # Normalize pending order symbols for comparison (extract base symbols)
-        from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
-
-        pending_sell_base_symbols = {
-            extract_base_symbol(o.symbol).upper()
-            for o in pending_orders
-            if o.is_sell_order() and o.is_active()
-        }
-        # Also create a map of base symbol -> full symbol for active_sell_orders lookup
-        active_sell_base_symbols = {
-            extract_base_symbol(s).upper(): s for s in self.active_sell_orders.keys()
-        }
 
         for holding in holdings:
             if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
@@ -1025,72 +1093,7 @@ class PaperTradingServiceAdapter:
                     action="_place_sell_orders",
                 )
 
-                # Skip if already have active sell order (in memory or broker)
-                # Compare using base symbols since active_sell_orders might have base symbols
-                if (
-                    symbol_base in active_sell_base_symbols
-                    or symbol_base in pending_sell_base_symbols
-                ):
-                    self.logger.info(
-                        f"Skipping {symbol} - already has active sell order "
-                        f"(in memory: {symbol_base in active_sell_base_symbols}, "
-                        f"in broker: {symbol_base in pending_sell_base_symbols})",
-                        action="_place_sell_orders",
-                    )
-                    # If it's in broker but not in memory, add it to memory for tracking
-                    if (
-                        symbol_base in pending_sell_base_symbols
-                        and symbol_base not in active_sell_base_symbols
-                    ):
-                        # Try to find the order details from broker
-                        for order in pending_orders:
-                            order_base = extract_base_symbol(order.symbol).upper()
-                            if (
-                                order_base == symbol_base
-                                and order.is_sell_order()
-                                and order.is_active()
-                            ):
-                                # Estimate target price from order price if available
-                                target_price = (
-                                    float(order.price.amount)
-                                    if hasattr(order, "price") and hasattr(order.price, "amount")
-                                    else None
-                                )
-                                if target_price:
-                                    # Use base symbol as key to match existing convention
-                                    self.active_sell_orders[symbol_base] = {
-                                        "order_id": (
-                                            order.order_id
-                                            if hasattr(order, "order_id")
-                                            else "unknown"
-                                        ),
-                                        "target_price": target_price,
-                                        "qty": quantity,
-                                        "ticker": ticker,
-                                        "entry_date": ist_now_naive().strftime("%Y-%m-%d"),
-                                    }
-                                    self.logger.info(
-                                        f"Restored sell order tracking for {symbol_base} from broker",
-                                        action="_place_sell_orders",
-                                    )
-                    # Check if holdings quantity has increased (re-entry happened)
-                    # and update sell order quantity and target to match
-                    # Use base symbol to find the order in active_sell_orders
-                    if symbol_base in active_sell_base_symbols:
-                        order_key = active_sell_base_symbols[symbol_base]
-                        current_order_qty = self.active_sell_orders[order_key].get("qty", 0)
-                        if quantity > current_order_qty:
-                            self.logger.info(
-                                f"Holdings increased for {symbol_base} ({current_order_qty} -> {quantity}), "
-                                f"updating sell order quantity and target",
-                                action="_place_sell_orders",
-                            )
-                            # Recalculate EMA9 target (matches backtest behavior)
-                            new_target = self._calculate_ema9(ticker)
-                            self._update_sell_order_quantity(order_key, quantity, new_target)
-                    continue
-
-                # Calculate EMA9 target (initial entry - will be updated on re-entry)
+                # Calculate EMA9 target for today's limit sell
                 ema9_target = self._calculate_ema9(ticker)
 
                 self.logger.info(
@@ -1175,6 +1178,7 @@ class PaperTradingServiceAdapter:
         2. RSI > 50 - 10% of exits, 37% profitable (falling knives)
 
         NOTE: Target price is recalculated as EMA9 when re-entry happens (matches backtest).
+        Unexecuted sell limits are cancelled at EOD (18:00), not here; see ``run_eod_cleanup``.
         """
         # First, check and execute any pending limit orders
         try:
