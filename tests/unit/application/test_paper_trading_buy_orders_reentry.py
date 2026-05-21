@@ -353,6 +353,34 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["skipped_invalid_qty"] == 1
         assert summary["placed"] == 0
 
+    def test_place_reentry_metadata_uses_update_reentry_cycle_metadata(
+        self, paper_engine_with_positions, db_session
+    ):
+        """Cycle metadata save must not go through full position upsert."""
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        engine = paper_engine_with_positions
+        mock_indicators = {
+            "close": 2450.0,
+            "rsi10": 35.0,
+            "ema9": 2500.0,
+            "avg_volume": 5000000,
+        }
+
+        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+            with patch.object(
+                PositionsRepository,
+                "update_reentry_cycle_metadata",
+                wraps=PositionsRepository.update_reentry_cycle_metadata,
+            ) as mock_update_meta:
+                with patch.object(PositionsRepository, "upsert") as mock_upsert:
+                    summary = engine.place_reentry_orders()
+
+        assert summary["placed"] == 0
+        mock_update_meta.assert_called()
+        assert mock_update_meta.call_args.kwargs["reentries"] is not None
+        mock_upsert.assert_not_called()
+
     def test_place_reentry_orders_no_reentry_opportunity(
         self, paper_engine_with_positions, db_session
     ):

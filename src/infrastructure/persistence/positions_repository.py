@@ -204,6 +204,44 @@ class PositionsRepository:
 
         return pos
 
+    def update_reentry_cycle_metadata(
+        self,
+        *,
+        user_id: int,
+        symbol: str,
+        reentries: dict,
+        auto_commit: bool = True,
+    ) -> Positions | None:
+        """Persist re-entry cycle metadata without changing quantity or avg_price.
+
+        Used during re-entry scans when only the ``reentries`` JSON (cycle / RSI
+        tracking) changed. Does not run signal TRADED sync (unlike ``upsert``).
+
+        Args:
+            user_id: User ID.
+            symbol: Open position symbol.
+            reentries: Updated reentries payload (includes ``_cycle_metadata``).
+            auto_commit: Commit when True; otherwise flush for same-session reads.
+
+        Returns:
+            Updated position, or None if no open position exists for the symbol.
+        """
+        pos = self.get_by_symbol_for_update(user_id, symbol)
+        if not pos:
+            logger.warning(
+                f"Cannot update re-entry metadata: open position not found for {symbol} "
+                f"(user_id={user_id})"
+            )
+            return None
+
+        pos.reentries = reentries
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
+        else:
+            self.db.flush()
+        return pos
+
     def count_open(self, user_id: int) -> int:
         """Count open positions for a user"""
         stmt = select(Positions).where(Positions.user_id == user_id, Positions.closed_at.is_(None))

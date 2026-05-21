@@ -4,16 +4,14 @@ Tests for reentry tracking in Positions table.
 Tests the new reentry_count, reentries, initial_entry_price, and last_reentry_price fields.
 """
 
-from datetime import datetime
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.infrastructure.persistence.positions_repository import PositionsRepository
+from tests.ist_clock import ist_now_naive
 
 
-from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def db_session():
     """Create in-memory SQLite database for testing"""
@@ -181,3 +179,43 @@ class TestReentryTrackingInPositions:
         # initial_entry_price should not be updated if position exists
         # (Only set for new positions)
         assert position.initial_entry_price == original_initial_price
+
+    def test_update_reentry_cycle_metadata_preserves_quantity_and_avg_price(
+        self, positions_repo, user_id, db_session
+    ):
+        """Metadata-only update must not change holdings fields."""
+        positions_repo.upsert(
+            user_id=user_id,
+            symbol="RELIANCE-EQ",
+            quantity=10,
+            avg_price=2500.0,
+            opened_at=ist_now_naive(),
+        )
+        cycle_payload = {
+            "_cycle_metadata": {
+                "current_cycle": 1,
+                "last_rsi_above_30": None,
+                "last_rsi_value": 35.0,
+            },
+            "reentries": [],
+        }
+        updated = positions_repo.update_reentry_cycle_metadata(
+            user_id=user_id,
+            symbol="RELIANCE-EQ",
+            reentries=cycle_payload,
+        )
+        assert updated is not None
+        assert updated.quantity == 10
+        assert updated.avg_price == 2500.0
+        assert updated.reentries["_cycle_metadata"]["current_cycle"] == 1
+
+    def test_update_reentry_cycle_metadata_missing_position_returns_none(
+        self, positions_repo, user_id
+    ):
+        """No open position → None without creating a row."""
+        result = positions_repo.update_reentry_cycle_metadata(
+            user_id=user_id,
+            symbol="MISSING-EQ",
+            reentries={"_cycle_metadata": {"current_cycle": 0}, "reentries": []},
+        )
+        assert result is None

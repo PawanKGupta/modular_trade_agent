@@ -5580,7 +5580,10 @@ class AutoTradeEngine:
             logger.info("No open positions for re-entry check")
             return summary
 
-        logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+        logger.info(
+            f"Evaluating re-entry for {len(open_positions)} open position(s) "
+            f"(orders placed only when RSI level rules qualify)..."
+        )
         from datetime import time as dt_time
 
         from core.volume_analysis import is_market_hours
@@ -5733,12 +5736,10 @@ class AutoTradeEngine:
                             last_rsi_value=metadata_updates.get("last_rsi_value"),
                         )
 
-                        # Update position in database
-                        self.positions_repo.upsert(
+                        # Update cycle metadata only (do not rewrite quantity/avg_price).
+                        self.positions_repo.update_reentry_cycle_metadata(
                             user_id=self.user_id,
                             symbol=symbol,
-                            quantity=position.quantity,
-                            avg_price=position.avg_price,
                             reentries=updated_reentries,
                             auto_commit=True,
                         )
@@ -5762,8 +5763,8 @@ class AutoTradeEngine:
                         )
 
                 if next_level is None:
-                    logger.debug(
-                        f"No re-entry opportunity for {symbol} "
+                    logger.info(
+                        f"No re-entry for {symbol}: RSI level rules not met "
                         f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
                     )
                     summary["skipped_invalid_rsi"] += 1
@@ -5941,18 +5942,9 @@ class AutoTradeEngine:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
                 continue
 
-        skipped_total = (
-            summary["skipped_no_position"]
-            + summary["skipped_duplicates"]
-            + summary["skipped_invalid_rsi"]
-            + summary["skipped_missing_data"]
-            + summary["skipped_invalid_qty"]
-        )
-        logger.info(
-            f"Re-entry check complete: attempted={summary['attempted']}, "
-            f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-            f"skipped={skipped_total}"
-        )
+        from modules.kotak_neo_auto_trader.reentry_logging import format_reentry_check_complete
+
+        logger.info(format_reentry_check_complete(summary))
 
         return summary
 

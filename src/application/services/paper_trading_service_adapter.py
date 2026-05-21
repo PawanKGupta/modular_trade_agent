@@ -350,14 +350,18 @@ class PaperTradingServiceAdapter:
 
             # Check and place re-entry orders (same as real trading)
             # Re-entry should be checked regardless of whether there are fresh entry recommendations
-            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            from modules.kotak_neo_auto_trader.reentry_logging import (
+                format_reentry_run_buy_orders_detail,
+            )
+
+            self.logger.info(
+                "Evaluating re-entry for open positions (see re-entry summary below)...",
+                action="run_buy_orders",
+            )
             reentry_summary = self.engine.place_reentry_orders()
             self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
             self.logger.info(
-                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                f"Placed: {reentry_summary.get('placed', 0)}, "
-                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
                 action="run_buy_orders",
             )
 
@@ -2733,7 +2737,8 @@ class PaperTradingEngineAdapter:
                 return summary
 
             self.logger.info(
-                f"Checking re-entry conditions for {len(open_positions)} open positions...",
+                f"Evaluating re-entry for {len(open_positions)} open position(s) "
+                f"(orders placed only when RSI level rules qualify)...",
                 action="place_reentry_orders",
             )
 
@@ -2838,7 +2843,7 @@ class PaperTradingEngineAdapter:
                             )
 
                             positions_repo = PositionsRepository(self.db)
-                            positions_repo.upsert(
+                            positions_repo.update_reentry_cycle_metadata(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 reentries=updated_reentries,
@@ -2867,8 +2872,8 @@ class PaperTradingEngineAdapter:
                         current_cycle = 0  # Default to cycle 0 if metadata update fails
 
                     if next_level is None:
-                        self.logger.debug(
-                            f"No re-entry opportunity for {symbol} "
+                        self.logger.info(
+                            f"No re-entry for {symbol}: RSI level rules not met "
                             f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})",
                             action="place_reentry_orders",
                         )
@@ -2994,10 +2999,10 @@ class PaperTradingEngineAdapter:
                     )
                     continue
 
+            from modules.kotak_neo_auto_trader.reentry_logging import format_reentry_check_complete
+
             self.logger.info(
-                f"Re-entry check complete: attempted={summary['attempted']}, "
-                f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-                f"skipped={summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}",
+                format_reentry_check_complete(summary),
                 action="place_reentry_orders",
             )
 

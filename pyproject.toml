@@ -141,6 +141,11 @@ ignore = ["S101"] # allow assert in tests
 	"PLR2004",
 	"PLC0415",
 ]
+"src/infrastructure/persistence/positions_repository.py" = [
+	"E501",
+	"PLR0913",
+	"PLC0415",
+]
 # Large paper engine adapter; mirrors kotak paper_trading_adapter lint policy.
 "src/application/services/paper_trading_service_adapter.py" = [
 	"E501",
