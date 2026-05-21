@@ -410,6 +410,10 @@ class PaperTradingServiceAdapter:
             self.tasks_completed["premarket_retry"] = True
             self.logger.info("Pre-market retry completed", action="run_premarket_retry")
 
+    def run_premarket_amo_adjustment(self) -> dict[str, int]:
+        """9:05 AM IST - Scheduler entrypoint for pending buy quantity adjustment (paper)."""
+        return self.adjust_amo_quantities_premarket()
+
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
         9:05 AM - Pre-market AMO quantity adjustment (paper trading)
@@ -442,7 +446,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="adjust_amo_quantities_premarket")
             self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
             self.logger.info(
-                "TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM) - PAPER TRADING",
+                "TASK: PRE-MARKET PENDING BUY ADJUSTMENT (9:05 AM IST) - PAPER TRADING",
                 action="adjust_amo_quantities_premarket",
             )
             self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
