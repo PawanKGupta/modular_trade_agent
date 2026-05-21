@@ -1507,15 +1507,42 @@ class TestPaperTradingSellMonitoring:
         # File-based tracking removed - orders are now tracked in database only
         pass
 
-    @pytest.mark.skip(
-        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
-    )
     def test_update_sell_order_quantity_after_reentry(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that sell order quantity is updated when re-entry increases holdings - NEEDS REFACTORING"""
-        # Method renamed to _update_sell_order_quantity_by_db_order and requires database order object
-        pass
+        """After re-entry, _update_sell_order_quantity cancels the old sell and places updated qty/limit."""
+        from unittest.mock import patch
+
+        adapter = adapter_with_holdings
+        new_target = 2650.0
+        adapter.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_OLD",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+            }
+        }
+        adapter.broker.cancel_order.return_value = True
+        adapter.broker.place_order.return_value = "SELL_ORDER_NEW"
+
+        with (
+            patch.object(adapter, "_calculate_ema9", return_value=new_target),
+            patch.object(adapter, "_save_sell_orders_to_file"),
+        ):
+            updated = adapter._update_sell_order_quantity("RELIANCE", 60, new_target)
+
+        assert updated is True
+        adapter.broker.cancel_order.assert_called_once_with("SELL_ORDER_OLD")
+        adapter.broker.place_order.assert_called_once()
+        new_order = adapter.broker.place_order.call_args[0][0]
+        assert new_order.quantity == 60
+        assert new_order.transaction_type.value == "SELL"
+        assert float(new_order.price.amount) == new_target
+        assert adapter.active_sell_orders["RELIANCE"]["qty"] == 60
+        assert adapter.active_sell_orders["RELIANCE"]["target_price"] == new_target
+        assert adapter.active_sell_orders["RELIANCE"]["order_id"] == "SELL_ORDER_NEW"
 
     def test_sync_sell_order_quantities_with_holdings(
         self, db_session, test_user, adapter_with_holdings
@@ -1581,16 +1608,6 @@ class TestPaperTradingSellMonitoring:
         )
         assert adapter_with_holdings.active_sell_orders["TCS"]["qty"] == 30  # Unchanged
 
-    @pytest.mark.skip(
-        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
-    )
-    def test_update_sell_order_quantity_recalculates_target(
-        self, db_session, test_user, adapter_with_holdings
-    ):
-        """Test that target price is recalculated as EMA9 when quantity is updated - NEEDS REFACTORING"""
-        # Method renamed to _update_sell_order_quantity_by_db_order and requires database order object
-        pass
-
     def test_place_sell_orders_updates_quantity_on_reentry(
         self, db_session, test_user, adapter_with_holdings
     ):
@@ -1644,26 +1661,6 @@ class TestPaperTradingSellMonitoring:
         # Verify new order was placed with recalculated target
         new_order = adapter_with_holdings.broker.place_order.call_args[0][0]
         assert float(new_order.price.amount) == new_target
-
-    @pytest.mark.skip(
-        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
-    )
-    def test_update_sell_order_quantity_no_update_if_quantity_same(
-        self, db_session, test_user, adapter_with_holdings
-    ):
-        """Test that quantity is not updated if holdings quantity hasn't increased - NEEDS REFACTORING"""
-        # Method renamed to _update_sell_order_quantity_by_db_order and requires database order object
-        pass
-
-    @pytest.mark.skip(
-        reason="_update_sell_order_quantity renamed to _update_sell_order_quantity_by_db_order and requires database order object. Needs significant refactoring."
-    )
-    def test_update_sell_order_quantity_no_update_if_quantity_decreased(
-        self, db_session, test_user, adapter_with_holdings
-    ):
-        """Test that quantity is not updated if new quantity is less than current - NEEDS REFACTORING"""
-        # Method renamed to _update_sell_order_quantity_by_db_order and requires database order object
-        pass
 
 
 class TestSignalStatusFiltering:
