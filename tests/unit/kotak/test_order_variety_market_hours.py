@@ -80,9 +80,12 @@ class TestOrderVarietyMarketHours:
                 variety = engine._get_order_variety_for_market_hours()
                 assert variety == "AMO"
 
+    @patch("core.volume_analysis.is_pre_open_session", return_value=False)
     @patch("core.volume_analysis.is_market_hours")
-    def test_attempt_place_order_uses_regular_during_market(self, mock_is_market_hours):
-        """Test that _attempt_place_order uses REGULAR variety during market hours"""
+    def test_attempt_place_order_uses_regular_during_market(
+        self, mock_is_market_hours, _mock_pre_open
+    ):
+        """Test that _attempt_place_order uses REGULAR MARKET during regular session (after 9:15)."""
         from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 
         mock_is_market_hours.return_value = True
@@ -116,12 +119,57 @@ class TestOrderVarietyMarketHours:
                 )
 
                 # Verify that place_market_buy was called with REGULAR variety
-                if engine.orders.place_market_buy.called:
-                    call_args = engine.orders.place_market_buy.call_args
-                    assert call_args[1]["variety"] == "REGULAR"
+                assert engine.orders.place_market_buy.called
+                assert not engine.orders.place_limit_buy.called
+                call_args = engine.orders.place_market_buy.call_args
+                assert call_args[1]["variety"] == "REGULAR"
 
+    @patch("core.volume_analysis.is_pre_open_session", return_value=True)
+    @patch("core.volume_analysis.is_market_hours", return_value=True)
+    def test_attempt_place_order_uses_limit_during_pre_open(self, _mock_mh, _mock_pre):
+        """Pre-open (9:01/9:03) uses REGULAR LIMIT at indicator close — avoids Kotak 1041."""
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+        with patch.object(AutoTradeEngine, "__init__", lambda self: None):
+            engine = AutoTradeEngine()
+            engine.orders = Mock()
+            engine.orders.place_market_buy = Mock(return_value={"stat": "ok", "nOrdNo": "99999"})
+            engine.orders.place_limit_buy = Mock(return_value={"stat": "ok", "nOrdNo": "12345"})
+            engine.scrip_master = None
+            engine.orders_repo = Mock()
+            engine.telegram_notifier = None
+            engine.db = None
+            engine.user_id = 1
+            engine.portfolio = Mock()
+            engine.strategy_config = Mock()
+            engine.strategy_config.default_variety = "AMO"
+
+            with (
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"),
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"),
+                patch(
+                    "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+                    return_value="12345",
+                ),
+            ):
+                success, order_id = engine._attempt_place_order(
+                    broker_symbol="RELIANCE-EQ",
+                    ticker="RELIANCE.NS",
+                    qty=10,
+                    close=2500.0,
+                    ind={},
+                )
+
+                assert success is True
+                assert order_id == "12345"
+                assert engine.orders.place_limit_buy.called
+                assert not engine.orders.place_market_buy.called
+                assert engine.orders.place_limit_buy.call_args[1]["variety"] == "REGULAR"
+                assert engine.orders.place_limit_buy.call_args[1]["price"] == 2500.0
+
+    @patch("core.volume_analysis.is_pre_open_session", return_value=False)
     @patch("core.volume_analysis.is_market_hours")
-    def test_attempt_place_order_uses_amo_after_market(self, mock_is_market_hours):
+    def test_attempt_place_order_uses_amo_after_market(self, mock_is_market_hours, _mock_pre):
         """Test that _attempt_place_order uses AMO variety when market is closed"""
         from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
 

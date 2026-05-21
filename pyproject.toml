@@ -47,6 +47,7 @@ ignore = ["S101"] # allow assert in tests
 # Legacy CLI / core analysis wrappers; refactor tracked separately.
 "trade_agent.py" = ["E501", "F841", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "PLC0415"]
 "core/analysis.py" = ["E501", "F841", "PLR0911", "PLR0913", "PLR2004", "PLC0415"]
+"core/volume_analysis.py" = ["E501", "PLR0912", "PLR0913", "PLR0915", "PLR2004"]
 # Kotak Neo REST adapter; large integration surface (aligned with paper_trading_adapter policy).
 "modules/kotak_neo_auto_trader/infrastructure/broker_adapters/kotak_neo_adapter.py" = [
 	"E402",
@@ -139,6 +140,11 @@ ignore = ["S101"] # allow assert in tests
 	"PLR0913",
 	"PLR0915",
 	"PLR2004",
+	"PLC0415",
+]
+"src/infrastructure/persistence/positions_repository.py" = [
+	"E501",
+	"PLR0913",
 	"PLC0415",
 ]
 # Large paper engine adapter; mirrors kotak paper_trading_adapter lint policy.

@@ -297,7 +297,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
             self.logger.info(
-                "TASK: PLACE BUY ORDERS (4:05 PM) - PAPER TRADING", action="run_buy_orders"
+                "TASK: PLACE BUY ORDERS (9:01 AM IST) - PAPER TRADING", action="run_buy_orders"
             )
             self.logger.info("=" * 80, action="run_buy_orders")
 
@@ -312,6 +312,20 @@ class PaperTradingServiceAdapter:
                 self.logger.warning(error_msg, action="run_buy_orders")
                 if self.broker and not self.broker.connect():
                     raise RuntimeError("Failed to connect to paper trading broker")
+
+            pending_amo_buys = [
+                order
+                for order in self.broker.get_pending_orders()
+                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+            ]
+            if pending_amo_buys:
+                symbols = ", ".join(o.symbol for o in pending_amo_buys)
+                self.logger.warning(
+                    f"Legacy pending AMO buy orders ({len(pending_amo_buys)}): {symbols}. "
+                    "Scheduler no longer executes these at 9:15; morning entry uses 9:01 REGULAR. "
+                    "Cancel or call execute_amo_orders_at_market_open() manually if still needed.",
+                    action="run_buy_orders",
+                )
 
             # Load recommendations using the same logic as real trading
             recs = self.engine.load_latest_recommendations()
@@ -350,14 +364,18 @@ class PaperTradingServiceAdapter:
 
             # Check and place re-entry orders (same as real trading)
             # Re-entry should be checked regardless of whether there are fresh entry recommendations
-            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+            from modules.kotak_neo_auto_trader.reentry_logging import (
+                format_reentry_run_buy_orders_detail,
+            )
+
+            self.logger.info(
+                "Evaluating re-entry for open positions (see re-entry summary below)...",
+                action="run_buy_orders",
+            )
             reentry_summary = self.engine.place_reentry_orders()
             self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
             self.logger.info(
-                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                f"Placed: {reentry_summary.get('placed', 0)}, "
-                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
                 action="run_buy_orders",
             )
 
@@ -368,7 +386,7 @@ class PaperTradingServiceAdapter:
         return summary_result
 
     def run_premarket_retry(self):
-        """9:00 AM - Retry failed orders from previous day (paper trading)"""
+        """9:03 AM IST (default) - Retry failed orders from previous day (paper trading)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -381,7 +399,8 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_premarket_retry")
             self.logger.info("=" * 80, action="run_premarket_retry")
             self.logger.info(
-                "TASK: PREMARKET RETRY (9:00 AM) - PAPER TRADING", action="run_premarket_retry"
+                "TASK: PREMARKET RETRY (9:03 AM IST) - PAPER TRADING",
+                action="run_premarket_retry",
             )
             self.logger.info("=" * 80, action="run_premarket_retry")
 
@@ -405,6 +424,10 @@ class PaperTradingServiceAdapter:
 
             self.tasks_completed["premarket_retry"] = True
             self.logger.info("Pre-market retry completed", action="run_premarket_retry")
+
+    def run_premarket_amo_adjustment(self) -> dict[str, int]:
+        """9:05 AM IST - Scheduler entrypoint for pending buy quantity adjustment (paper)."""
+        return self.adjust_amo_quantities_premarket()
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
@@ -438,7 +461,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="adjust_amo_quantities_premarket")
             self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
             self.logger.info(
-                "TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM) - PAPER TRADING",
+                "TASK: PRE-MARKET PENDING BUY ADJUSTMENT (9:05 AM IST) - PAPER TRADING",
                 action="adjust_amo_quantities_premarket",
             )
             self.logger.info("=" * 80, action="adjust_amo_quantities_premarket")
@@ -689,13 +712,13 @@ class PaperTradingServiceAdapter:
 
     def execute_amo_orders_at_market_open(self) -> dict[str, int]:
         """
-        9:15 AM - Execute pending AMO orders at market open (paper trading)
+        Execute pending AMO buy orders in the paper simulator (manual / tests only).
 
-        Executes all pending AMO buy orders that were placed during off-market hours.
-        This matches the real broker behavior where AMO orders execute at market open.
+        Not scheduled: morning ``buy_orders`` at 9:01 IST uses REGULAR variety when the
+        session is open. Legacy evening AMO pending orders are not auto-filled at 9:15.
 
         Returns:
-            Summary dict with execution statistics
+            Summary dict with execution statistics.
         """
         from src.application.services.task_execution_wrapper import execute_task
 
@@ -716,7 +739,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="execute_amo_orders_at_market_open")
             self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
             self.logger.info(
-                "TASK: EXECUTE AMO ORDERS AT MARKET OPEN (9:15 AM) - PAPER TRADING",
+                "TASK: EXECUTE AMO ORDERS (legacy/manual, not scheduled) - PAPER TRADING",
                 action="execute_amo_orders_at_market_open",
             )
             self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
@@ -867,7 +890,7 @@ class PaperTradingServiceAdapter:
             )
 
     def run_eod_cleanup(self):
-        """6:00 PM - End-of-day cleanup (paper trading)"""
+        """18:00 IST (default) - End-of-day cleanup (paper trading)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -880,7 +903,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_eod_cleanup")
             self.logger.info("=" * 80, action="run_eod_cleanup")
             self.logger.info(
-                "TASK: EOD CLEANUP (6:00 PM) - PAPER TRADING", action="run_eod_cleanup"
+                "TASK: EOD CLEANUP (18:00 IST) - PAPER TRADING", action="run_eod_cleanup"
             )
             self.logger.info("=" * 80, action="run_eod_cleanup")
 
@@ -2692,7 +2715,7 @@ class PaperTradingEngineAdapter:
         """
         Check re-entry conditions and place AMO orders for re-entries (paper trading).
 
-        Called at 4:05 PM (with buy orders), same as real trading.
+        Called from ``run_buy_orders`` (default 9:01 IST), same as live trading.
 
         Returns:
             Summary dict with placement statistics
@@ -2733,7 +2756,8 @@ class PaperTradingEngineAdapter:
                 return summary
 
             self.logger.info(
-                f"Checking re-entry conditions for {len(open_positions)} open positions...",
+                f"Evaluating re-entry for {len(open_positions)} open position(s) "
+                f"(orders placed only when RSI level rules qualify)...",
                 action="place_reentry_orders",
             )
 
@@ -2838,7 +2862,7 @@ class PaperTradingEngineAdapter:
                             )
 
                             positions_repo = PositionsRepository(self.db)
-                            positions_repo.upsert(
+                            positions_repo.update_reentry_cycle_metadata(
                                 user_id=self.user_id,
                                 symbol=symbol,
                                 reentries=updated_reentries,
@@ -2867,8 +2891,8 @@ class PaperTradingEngineAdapter:
                         current_cycle = 0  # Default to cycle 0 if metadata update fails
 
                     if next_level is None:
-                        self.logger.debug(
-                            f"No re-entry opportunity for {symbol} "
+                        self.logger.info(
+                            f"No re-entry for {symbol}: RSI level rules not met "
                             f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})",
                             action="place_reentry_orders",
                         )
@@ -2994,10 +3018,10 @@ class PaperTradingEngineAdapter:
                     )
                     continue
 
+            from modules.kotak_neo_auto_trader.reentry_logging import format_reentry_check_complete
+
             self.logger.info(
-                f"Re-entry check complete: attempted={summary['attempted']}, "
-                f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-                f"skipped={summary['skipped_duplicates'] + summary['skipped_invalid_rsi'] + summary['skipped_missing_data'] + summary['skipped_invalid_qty']}",
+                format_reentry_check_complete(summary),
                 action="place_reentry_orders",
             )
 

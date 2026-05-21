@@ -16,9 +16,8 @@ from config.settings import (
     VOLUME_QUALITY_FAIR,
     VOLUME_QUALITY_GOOD,
 )
-from utils.logger import logger
-
 from src.infrastructure.db.timezone_utils import ist_now
+from utils.logger import logger
 
 
 def get_current_market_time() -> float:
@@ -36,11 +35,22 @@ def get_current_market_hour() -> int:
 
 
 def is_market_hours() -> bool:
-    """Check if current time is during market hours (9:00 AM to 3:30 PM IST, including pre-market)"""
+    """True during NSE cash session window (9:00–15:30 IST), including pre-open."""
     current_time = get_current_market_time()
     # Market hours include pre-market: 9:00 AM (9.0) to 3:30 PM (15.5) IST
     # Pre-market: 9:00 AM - 9:15 AM, Regular market: 9:15 AM - 3:30 PM
     return 9.0 <= current_time <= 15.5
+
+
+def is_pre_open_session() -> bool:
+    """
+    NSE pre-open window (9:00–9:15 IST) before regular session LTP is reliable for MARKET orders.
+
+    Morning buy_orders (9:01) and premarket_retry (9:03) use REGULAR LIMIT here.
+    9:05 premarket_amo_adjustment recalculates qty from pre-market price (MKT modify).
+    """
+    current_time = get_current_market_time()
+    return 9.0 <= current_time < 9.25
 
 
 def get_intraday_volume_factor(current_time: float | None = None) -> float:

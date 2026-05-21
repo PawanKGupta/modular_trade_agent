@@ -940,6 +940,12 @@ class IndividualServiceManager:
             if task_name == "premarket_retry":
                 service.run_premarket_retry()
                 return {"task": "premarket_retry", "status": "completed"}
+            elif task_name == "premarket_amo_adjustment":
+                summary = service.run_premarket_amo_adjustment()
+                result = {"task": "premarket_amo_adjustment", "status": "completed"}
+                if summary:
+                    result["summary"] = summary
+                return result
             elif task_name == "sell_monitor":
                 service.run_sell_monitor()
                 return {"task": "sell_monitor", "status": "completed"}
@@ -1710,6 +1716,15 @@ class IndividualServiceManager:
                 "is_continuous": False,
                 "schedule_type": "daily",
                 "description": "Retry failed buy orders (runs after morning buy placement)",
+            },
+            {
+                "task_name": "premarket_amo_adjustment",
+                "schedule_time": time(9, 5),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Adjust pending buy quantities before market open (if enabled)",
             },
             {
                 "task_name": "sell_monitor",

@@ -51,14 +51,14 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify schedules were created
         schedules = schedule_repo.get_all()
-        # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
-        # (position_monitor removed in Phase 3)
-        assert len(schedules) == 6
+        # Default daily tasks (position_monitor removed in Phase 3)
+        assert len(schedules) == 7
 
         # Verify specific schedules exist
         task_names = {s.task_name for s in schedules}
         expected_tasks = {
             "premarket_retry",
+            "premarket_amo_adjustment",
             "sell_monitor",
             "analysis",
             "buy_orders",
@@ -77,6 +77,11 @@ class TestIndividualServiceManagerSchedules:
         assert buy_orders is not None
         assert buy_orders.schedule_time.hour == 9
         assert buy_orders.schedule_time.minute == 1
+
+        amo_adjust = schedule_repo.get_by_task_name("premarket_amo_adjustment")
+        assert amo_adjust is not None
+        assert amo_adjust.schedule_time.hour == 9
+        assert amo_adjust.schedule_time.minute == 5
 
         margin_preview = schedule_repo.get_by_task_name("buy_margin_preview")
         assert margin_preview is not None
@@ -122,7 +127,7 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify other schedules were still created
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 6  # 1 existing + 5 new (position_monitor removed in Phase 3)
+        assert len(schedules) == 7  # 1 existing + 6 new (position_monitor removed in Phase 3)
 
     def test_get_status_returns_services_when_schedules_exist(self, db_session, sample_user):
         """Test that get_status returns service status for all scheduled tasks"""
@@ -133,7 +138,7 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify status contains all scheduled tasks
         assert isinstance(status, dict)
-        assert len(status) == 6  # All default schedules (position_monitor removed in Phase 3)
+        assert len(status) == 7  # All default schedules (position_monitor removed in Phase 3)
 
         # Verify each task has required fields
         for _task_name, info in status.items():
@@ -159,9 +164,9 @@ class TestIndividualServiceManagerSchedules:
 
         # Should still return status for all default schedules
         assert isinstance(status, dict)
-        assert len(status) == 6  # position_monitor removed in Phase 3
+        assert len(status) == 7  # position_monitor removed in Phase 3
 
         # Verify schedules were created in database
         schedule_repo = ServiceScheduleRepository(db_session)
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 6  # position_monitor removed in Phase 3
+        assert len(schedules) == 7  # position_monitor removed in Phase 3

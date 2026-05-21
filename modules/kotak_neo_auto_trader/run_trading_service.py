@@ -566,7 +566,7 @@ class TradingService:
         return should_run
 
     def run_premarket_retry(self):
-        """8:00 AM - Retry orders with RETRY_PENDING status from database"""
+        """9:03 AM IST (default) - Retry failed orders from database."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -578,7 +578,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: PRE-MARKET RETRY (8:00 AM)")
+            logger.info("TASK: PRE-MARKET RETRY (9:03 AM IST)")
             logger.info("=" * 80)
 
             # Check if engine is initialized
@@ -1118,16 +1118,20 @@ class TradingService:
 
                 # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
                 # Re-entry should be checked independently of fresh entry orders
-                self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
+                from modules.kotak_neo_auto_trader.reentry_logging import (
+                    format_reentry_run_buy_orders_detail,
+                )
+
+                self.logger.info(
+                    "Evaluating re-entry for open positions (see re-entry summary below)...",
+                    action="run_buy_orders",
+                )
                 reentry_summary = self.engine.place_reentry_orders()
                 self.logger.info(
                     f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
                 )
                 self.logger.info(
-                    f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                    f"Placed: {reentry_summary.get('placed', 0)}, "
-                    f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                    f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
+                    f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
                     action="run_buy_orders",
                 )
 
@@ -1137,7 +1141,7 @@ class TradingService:
         return summary
 
     def run_eod_cleanup(self):
-        """6:00 PM - End-of-day cleanup"""
+        """18:00 IST (default) - End-of-day cleanup."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -1149,7 +1153,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: END-OF-DAY CLEANUP (6:00 PM)")
+            logger.info("TASK: END-OF-DAY CLEANUP (18:00 IST)")
             logger.info("=" * 80)
 
             # Clean up expired failed orders
