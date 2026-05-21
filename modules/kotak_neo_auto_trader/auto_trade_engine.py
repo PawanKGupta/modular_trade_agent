@@ -2,7 +2,7 @@
 """
 Auto Trade Engine for Kotak Neo
 - Reads recommendations (from analysis_results CSV)
-- Places AMO buy orders within portfolio constraints
+- Places buy orders (REGULAR at open, AMO when market closed) within portfolio constraints
 - Tracks positions and executes re-entry and exit based on RSI/EMA
 """
 
@@ -5507,7 +5507,7 @@ class AutoTradeEngine:
         """
         Check re-entry conditions and place AMO orders for re-entries.
 
-        Called at 4:05 PM (with buy orders).
+        Called from ``run_buy_orders`` (default 9:01 IST morning placement).
 
         Re-entry logic based on entry RSI level:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset

@@ -386,7 +386,7 @@ class PaperTradingServiceAdapter:
         return summary_result
 
     def run_premarket_retry(self):
-        """9:00 AM - Retry failed orders from previous day (paper trading)"""
+        """9:03 AM IST (default) - Retry failed orders from previous day (paper trading)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -399,7 +399,8 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_premarket_retry")
             self.logger.info("=" * 80, action="run_premarket_retry")
             self.logger.info(
-                "TASK: PREMARKET RETRY (9:00 AM) - PAPER TRADING", action="run_premarket_retry"
+                "TASK: PREMARKET RETRY (9:03 AM IST) - PAPER TRADING",
+                action="run_premarket_retry",
             )
             self.logger.info("=" * 80, action="run_premarket_retry")
 
@@ -738,7 +739,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="execute_amo_orders_at_market_open")
             self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
             self.logger.info(
-                "TASK: EXECUTE AMO ORDERS AT MARKET OPEN (9:15 AM) - PAPER TRADING",
+                "TASK: EXECUTE AMO ORDERS (legacy/manual, not scheduled) - PAPER TRADING",
                 action="execute_amo_orders_at_market_open",
             )
             self.logger.info("=" * 80, action="execute_amo_orders_at_market_open")
@@ -889,7 +890,7 @@ class PaperTradingServiceAdapter:
             )
 
     def run_eod_cleanup(self):
-        """6:00 PM - End-of-day cleanup (paper trading)"""
+        """18:00 IST (default) - End-of-day cleanup (paper trading)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -902,7 +903,7 @@ class PaperTradingServiceAdapter:
             self.logger.info("", action="run_eod_cleanup")
             self.logger.info("=" * 80, action="run_eod_cleanup")
             self.logger.info(
-                "TASK: EOD CLEANUP (6:00 PM) - PAPER TRADING", action="run_eod_cleanup"
+                "TASK: EOD CLEANUP (18:00 IST) - PAPER TRADING", action="run_eod_cleanup"
             )
             self.logger.info("=" * 80, action="run_eod_cleanup")
 
@@ -2714,7 +2715,7 @@ class PaperTradingEngineAdapter:
         """
         Check re-entry conditions and place AMO orders for re-entries (paper trading).
 
-        Called at 4:05 PM (with buy orders), same as real trading.
+        Called from ``run_buy_orders`` (default 9:01 IST), same as live trading.
 
         Returns:
             Summary dict with placement statistics
