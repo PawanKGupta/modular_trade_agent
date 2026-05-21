@@ -2746,19 +2746,19 @@ class AutoTradeEngine:
         placed_symbol = None
         placement_time = ist_now().isoformat()
 
-        # Determine order variety based on market hours
-        # AMO orders should only be used when market is closed
-        # During market hours, use REGULAR orders
-        from core.volume_analysis import is_market_hours
+        from core.volume_analysis import is_market_hours, is_pre_open_session
 
-        if is_market_hours():
-            order_variety = "REGULAR"
-            logger.debug(f"Market is open - using REGULAR order variety for {broker_symbol}")
-        else:
-            order_variety = config.DEFAULT_VARIETY  # Default to AMO when market is closed
-            logger.debug(
-                f"Market is closed - using {order_variety} order variety for {broker_symbol}"
+        order_variety = self._get_order_variety_for_market_hours()
+        use_limit_pre_open = is_pre_open_session()
+        if use_limit_pre_open:
+            logger.info(
+                f"Pre-open session - placing REGULAR LIMIT buy for {broker_symbol} "
+                f"@ Rs {close:.2f} (avoids MARKET LTP requirement)"
             )
+        elif is_market_hours():
+            logger.debug(f"Market is open - using REGULAR MARKET buy for {broker_symbol}")
+        else:
+            logger.debug(f"Market is closed - using {order_variety} MARKET buy for {broker_symbol}")
 
         # Symbol should already be resolved from place_new_entries() via scrip master
         # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
@@ -2776,14 +2776,24 @@ class AutoTradeEngine:
             )
             return (False, None)
 
-        # Place order with scrip master resolved symbol (all MARKET orders - T2T support removed)
-        trial = self.orders.place_market_buy(
-            symbol=place_symbol,
-            quantity=qty,
-            variety=order_variety,
-            exchange=config.DEFAULT_EXCHANGE,
-            product=config.DEFAULT_PRODUCT,
-        )
+        limit_price = round(float(close), 2)
+        if use_limit_pre_open:
+            trial = self.orders.place_limit_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                price=limit_price,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+        else:
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
 
         # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
         if isinstance(trial, dict) and "error" not in trial:
@@ -2918,7 +2928,7 @@ class AutoTradeEngine:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
-        order_type = "MARKET"  # All buy orders are MARKET orders (T2T support removed)
+        order_type = "LIMIT" if use_limit_pre_open else "MARKET"
 
         # Phase 9: Send notification for order placed successfully
         if self.telegram_notifier and self.telegram_notifier.enabled:
@@ -2928,7 +2938,7 @@ class AutoTradeEngine:
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
-                    price=None,  # MARKET orders don't have prices
+                    price=limit_price if use_limit_pre_open else None,
                     user_id=self.user_id,
                 )
             except Exception as e:
@@ -2970,8 +2980,8 @@ class AutoTradeEngine:
                 ticker=ticker,
                 qty=qty,
                 order_type=order_type,
-                variety=config.DEFAULT_VARIETY,
-                price=0.0,  # MARKET orders use price=0
+                variety=order_variety,
+                price=limit_price if use_limit_pre_open else 0.0,
                 entry_type=entry_type,
                 order_metadata=order_metadata,
             )
@@ -4315,9 +4325,6 @@ class AutoTradeEngine:
                     / (target_capital / original_qty)
                 ) * 100
 
-                # 6. Modify the AMO order
-                # For MARKET orders, only quantity needs to be updated
-                # Price is logged for tracking but not passed to modify_order (not needed for MARKET)
                 original_price = float(
                     order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
                 )
@@ -5237,11 +5244,11 @@ class AutoTradeEngine:
                         # Continue to place new order with updated quantity/price
                         # (has_db_order will be ignored, we've already cancelled the old one)
                     else:
-                        # Quantity and price unchanged, skip placing new order
                         logger.info(
                             f"Skipping {broker_symbol}: already has active buy order in database "
                             f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
-                            f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
+                            f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f}). "
+                            f"FAILED rows are retried at premarket_retry (9:03)."
                         )
                         summary["skipped_duplicates"] += 1
                         summary["skipped"] += 1  # Increment general counter

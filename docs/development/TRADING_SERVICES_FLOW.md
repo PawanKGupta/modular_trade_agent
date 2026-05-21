@@ -68,6 +68,8 @@ Generates recommendations in `signals` for the next trading day.
 
 Retries **FAILED** / insufficient-balance orders from the database (after morning placement).
 
+**Live Kotak (9:00–9:15 IST):** Retries use **REGULAR LIMIT** at the signal close price (no broker LTP required). At **9:05**, `premarket_amo_adjustment` recalculates qty from pre-market price and modifies with **`order_type=MKT`** (qty only; limit price not changed on modify). After **9:15**, new placements use **REGULAR MARKET**.
+
 #### Pre-market pending buy adjustment (9:05)
 **Task**: `run_premarket_amo_adjustment()`
 
