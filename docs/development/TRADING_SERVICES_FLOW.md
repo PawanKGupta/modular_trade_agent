@@ -88,6 +88,8 @@ Retries **FAILED** / insufficient-balance orders from the database (after mornin
 
 Places EMA9 limit sells at first run, then monitors RSI exit / fills.
 
+**Paper trading:** Unexecuted DAY sell limits are cancelled at **EOD (18:00)**. The next **9:15** `sell_monitor` run cancels any leftovers and places fresh limits at the **latest EMA9** for each holding (re-entry qty updates during the session use `_update_sell_order_quantity`).
+
 ---
 
 ## Configuration
