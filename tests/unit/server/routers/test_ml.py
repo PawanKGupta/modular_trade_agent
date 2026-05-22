@@ -125,6 +125,9 @@ class DummyMLTrainingService:
             return candidate.resolve()
         return (Path.cwd() / candidate).resolve()
 
+    def validate_training_csv_for_ml(self, csv_path: Path) -> None:
+        """No-op in router unit tests; production service rejects bulk screener CSVs."""
+
     def start_training_job(self, started_by, config):
         self.start_training_job_called.append({"started_by": started_by, "config": config})
         return self.job_repo.create(
