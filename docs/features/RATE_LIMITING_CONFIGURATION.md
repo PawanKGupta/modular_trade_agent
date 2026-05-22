@@ -58,11 +58,11 @@ For large `trade_agent.py --backtest` runs, use the **reliability profile** in
 [`config/bulk_reliability.env.example`](../../config/bulk_reliability.env.example) and
 [`docs/guides/BULK_ANALYSIS_RELIABILITY.md`](../guides/BULK_ANALYSIS_RELIABILITY.md).
 
-**Recommended for bulk:**
+**Required for bulk** (see `config/bulk_reliability.env.example`; only these differ from defaults):
 
 ```bash
-API_RATE_LIMIT_DELAY=2.0
 MAX_CONCURRENT_ANALYSES=1
+API_RATE_LIMIT_DELAY=2.0
 ```
 
 Output CSV includes per-symbol **`backtest_mode`** (`integrated`, `simple`, `simple_fallback`, `failed`).

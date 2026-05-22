@@ -12,14 +12,14 @@ Speed is controlled only via **environment** (concurrency, delays), not by skipp
 
 ## Reliability profile
 
-Copy settings from [`config/bulk_reliability.env.example`](../../config/bulk_reliability.env.example) into your project `.env`:
+Copy the **two required** lines from [`config/bulk_reliability.env.example`](../../config/bulk_reliability.env.example) into your project `.env`:
 
-| Variable | Bulk recommendation | Purpose |
-|----------|---------------------|---------|
-| `MAX_CONCURRENT_ANALYSES` | `1` | Fewer parallel Yahoo calls |
-| `API_RATE_LIMIT_DELAY` | `2.0` | Seconds between OHLCV/fundamental fetches |
-| `CIRCUITBREAKER_FAILURE_THRESHOLD` | `5` | More tolerance before circuit opens |
-| `CIRCUITBREAKER_RECOVERY_TIMEOUT` | `120` | Longer recovery window |
+| Variable | Bulk value | App default | Purpose |
+|----------|------------|-------------|---------|
+| `MAX_CONCURRENT_ANALYSES` | `1` | `5` | Fewer parallel Yahoo calls |
+| `API_RATE_LIMIT_DELAY` | `2.0` | `1.0` | Seconds between OHLCV/fundamental fetches |
+
+Optional (commented in the example file): looser circuit breaker if long runs trip Yahoo; `BULK_BACKTEST_FALLBACK_TO_SIMPLE`, validator strictness, ML training path guard.
 
 See also [Rate limiting configuration](../features/RATE_LIMITING_CONFIGURATION.md).
 
