@@ -34,6 +34,41 @@ def test_calculate_backtest_score_zero_trades():
     assert service.calculate_backtest_score({"total_trades": 0}) == 0.0
 
 
+def test_calculate_backtest_score_simple_mode_total_trades_only():
+    """Regression: simple backtest supplies total_trades but not total_positions."""
+    powergrid_like = {
+        "total_return_pct": 8.0,
+        "win_rate": 100.0,
+        "total_trades": 1,
+        "vs_buy_hold": 0,
+    }
+    core_score = bts.calculate_backtest_score(powergrid_like)
+    service_score = BacktestService().calculate_backtest_score(powergrid_like)
+    assert core_score > 0
+    assert abs(service_score - core_score) < 1e-6
+
+
+def test_run_stock_backtest_simple_mode_nonzero_score_without_total_positions(monkeypatch):
+    """run_stock_backtest must score trades when simple backtest omits total_positions."""
+    monkeypatch.setattr(bts, "BACKTEST_MODE", "simple", raising=False)
+
+    def fake_run_simple_backtest(stock_symbol, years_back=2, dip_mode=False, config=None):
+        return {
+            "symbol": stock_symbol,
+            "total_return_pct": 8.0,
+            "win_rate": 100.0,
+            "total_trades": 1,
+            "vs_buy_hold": 0,
+            "execution_rate": 100.0,
+            "avg_return": 8.0,
+        }
+
+    monkeypatch.setattr(bts, "run_simple_backtest", fake_run_simple_backtest)
+
+    out = bts.run_stock_backtest("POWERGRID.NS", years_back=1)
+    assert out["backtest_score"] > 0
+
+
 def test_calculate_wilder_rsi_values():
     prices = pd.Series(np.linspace(100, 110, 50))
     rsi = bts.calculate_wilder_rsi(prices, period=10)
