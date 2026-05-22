@@ -83,6 +83,40 @@ def is_trading_day(check_date: date) -> bool:
     return True
 
 
+def iter_trading_days(start_date: date, end_date: date):
+    """
+    Yield each NSE trading day from start_date through end_date inclusive.
+
+    Args:
+        start_date: Range start (inclusive).
+        end_date: Range end (inclusive).
+
+    Yields:
+        date: Trading days only (weekends and NSE holidays excluded).
+    """
+    current = start_date
+    while current <= end_date:
+        if is_trading_day(current):
+            yield current
+        current += timedelta(days=1)
+
+
+def get_previous_trading_day(start_date: date) -> date:
+    """
+    Return the most recent NSE trading day strictly before start_date.
+
+    Args:
+        start_date: Reference date (non-trading days step backward from here).
+
+    Returns:
+        date: Previous trading day.
+    """
+    current = start_date - timedelta(days=1)
+    while not is_trading_day(current):
+        current -= timedelta(days=1)
+    return current
+
+
 def get_next_trading_day(start_date: date) -> date:
     """
     Get the next trading day from a given date, skipping weekends and holidays.

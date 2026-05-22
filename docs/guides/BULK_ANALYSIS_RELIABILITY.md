@@ -71,6 +71,30 @@ set BULK_EXPECT_INTEGRATED_BACKTEST=true
 python trade_agent.py --backtest
 ```
 
-## Later phases
+## Postgres / SQLite OHLCV cache
 
-Phase 1+ adds Postgres OHLCV cache, gap-fill, and chunked resumable jobs. This document stays the operator entry point for bulk reliability settings.
+Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only for **gaps** and **tail refresh** (last ~10 trading days). Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `OHLCV_CACHE_ENABLED` | `true` when `DB_URL` set | Toggle read-through cache in `fetch_ohlcv_yf` |
+| `OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS` | `10` | Tail refresh window |
+| `OHLCV_CACHE_MIN_COVERAGE_PCT` | `85` | Health gate coverage threshold |
+
+**Admin CLI** (health, gap-fill, invalidate, preload):
+
+```bash
+.venv\Scripts\python.exe tools\ohlcv_cache_admin.py health RELIANCE.NS
+.venv\Scripts\python.exe tools\ohlcv_cache_admin.py gap-fill RELIANCE.NS --days 400
+```
+
+**Chunked overnight job** (DB checkpoint + resume):
+
+```bash
+.venv\Scripts\python.exe tools\bulk_analysis_job.py --chunk-size 25 --chartink
+.venv\Scripts\python.exe tools\bulk_analysis_job.py --resume 3 --repair-cache
+```
+
+Optional CSV columns (ops only, excluded from ML features): `cache_health_status`, `yahoo_calls`.
+
+Apply schema: `alembic upgrade head` (revision `20260522_ohlcv`).

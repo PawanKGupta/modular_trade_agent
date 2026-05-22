@@ -126,3 +126,13 @@ MAX_CONCURRENT_ANALYSES = int(os.getenv("MAX_CONCURRENT_ANALYSES", "5"))  # conc
 # Telegram API config (put real tokens in .env)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "xxxxxx")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "xxxx")
+
+# Postgres/SQLite OHLCV cache (bulk analysis + integrated backtest)
+_db_url_present = bool(os.getenv("DB_URL", "sqlite:///./data/app.db"))
+_ohlcv_cache_env = os.getenv("OHLCV_CACHE_ENABLED", "true" if _db_url_present else "false")
+OHLCV_CACHE_ENABLED = _ohlcv_cache_env.lower() in ("1", "true", "yes", "on")
+OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS = int(
+    os.getenv("OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS", "10")
+)
+OHLCV_CACHE_MIN_COVERAGE_PCT = float(os.getenv("OHLCV_CACHE_MIN_COVERAGE_PCT", "85.0"))
+CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))

@@ -642,6 +642,8 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 "timeframe_analysis",
                 "backtest",
                 "backtest_mode",
+                "cache_health_status",
+                "yahoo_calls",
                 "execution_capital",
                 "max_capital",
                 "capital_adjusted",

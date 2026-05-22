@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from src.application.services.ohlcv_cache_service import _dataframe_to_upsert_rows
 from src.infrastructure.persistence.price_cache_repository import PriceCacheRepository
 
 try:
@@ -65,7 +66,6 @@ def get_price_from_cache_or_fetch(
 
             # Find the row for target_date
             result.index = pd.to_datetime(result.index)
-            target_datetime = pd.Timestamp(target_date)
 
             # Find closest date (exact match or previous trading day)
             matching_rows = result[result.index.date == target_date]
@@ -82,11 +82,27 @@ def get_price_from_cache_or_fetch(
             cache_repo.create_or_update(
                 symbol=symbol,
                 date=target_date,
-                open=float(row.get("Open", row.get("open", 0))) if pd.notna(row.get("Open", row.get("open"))) else None,
-                high=float(row.get("High", row.get("high", 0))) if pd.notna(row.get("High", row.get("high"))) else None,
-                low=float(row.get("Low", row.get("low", 0))) if pd.notna(row.get("Low", row.get("low"))) else None,
+                open=(
+                    float(row.get("Open", row.get("open", 0)))
+                    if pd.notna(row.get("Open", row.get("open")))
+                    else None
+                ),
+                high=(
+                    float(row.get("High", row.get("high", 0)))
+                    if pd.notna(row.get("High", row.get("high")))
+                    else None
+                ),
+                low=(
+                    float(row.get("Low", row.get("low", 0)))
+                    if pd.notna(row.get("Low", row.get("low")))
+                    else None
+                ),
                 close=float(row.get("Close", row.get("close", 0))),
-                volume=int(row.get("Volume", row.get("volume", 0))) if pd.notna(row.get("Volume", row.get("volume"))) else None,
+                volume=(
+                    int(row.get("Volume", row.get("volume", 0)))
+                    if pd.notna(row.get("Volume", row.get("volume")))
+                    else None
+                ),
                 source="yfinance",
             )
 
@@ -144,7 +160,6 @@ def get_prices_from_cache_or_fetch(
 
     # Get cached prices for the date range
     cached_prices = cache_repo.get_range(symbol, start_date, end_date)
-    cached_dates = {cache.date for cache in cached_prices}
 
     # Find missing dates
     missing_dates = cache_repo.get_missing_dates(symbol, start_date, end_date)
@@ -172,21 +187,12 @@ def get_prices_from_cache_or_fetch(
                 return _cached_prices_to_dataframe(cached_prices)
             return None
 
-        # Cache newly fetched data
         fetched_df.index = pd.to_datetime(fetched_df.index)
-        for idx, row in fetched_df.iterrows():
-            row_date = idx.date() if hasattr(idx, "date") else pd.Timestamp(idx).date()
-            if start_date <= row_date <= end_date and row_date not in cached_dates:
-                cache_repo.create_or_update(
-                    symbol=symbol,
-                    date=row_date,
-                    open=float(row.get("Open", row.get("open", 0))) if pd.notna(row.get("Open", row.get("open"))) else None,
-                    high=float(row.get("High", row.get("high", 0))) if pd.notna(row.get("High", row.get("high"))) else None,
-                    low=float(row.get("Low", row.get("low", 0))) if pd.notna(row.get("Low", row.get("low"))) else None,
-                    close=float(row.get("Close", row.get("close", 0))),
-                    volume=int(row.get("Volume", row.get("volume", 0))) if pd.notna(row.get("Volume", row.get("volume"))) else None,
-                    source="yfinance",
-                )
+        upsert_rows = _dataframe_to_upsert_rows(symbol, fetched_df)
+        batch = [r for r in upsert_rows if start_date <= r["date"] <= end_date]
+        if batch:
+            cache_repo.upsert_many(batch)
+            cache_repo.refresh_symbol_meta(symbol)
 
         # Combine cached and fetched data
         # Filter fetched data to date range
@@ -197,9 +203,9 @@ def get_prices_from_cache_or_fetch(
         # Convert cached prices to DataFrame and combine
         if cached_prices:
             cached_df = _cached_prices_to_dataframe(cached_prices)
-            # Combine and deduplicate (cached takes precedence for overlapping dates)
+            # Incremental merge: Yahoo wins on overlap (tail refresh / gap-fill intent)
             combined_df = pd.concat([cached_df, fetched_df_filtered])
-            combined_df = combined_df[~combined_df.index.duplicated(keep="first")]
+            combined_df = combined_df[~combined_df.index.duplicated(keep="last")]
             combined_df = combined_df.sort_index()
             return combined_df
         else:
@@ -209,9 +215,7 @@ def get_prices_from_cache_or_fetch(
         logger.error(f"Error fetching prices for {symbol} from {start_date} to {end_date}: {e}")
         # Return cached data if available
         if cached_prices:
-            logger.warning(
-                f"Fetch failed, returning {len(cached_prices)} cached prices"
-            )
+            logger.warning(f"Fetch failed, returning {len(cached_prices)} cached prices")
             return _cached_prices_to_dataframe(cached_prices)
         return None
 
@@ -237,4 +241,3 @@ def _cached_prices_to_dataframe(cached_prices: list) -> pd.DataFrame:
     df.index = pd.to_datetime([cache.date for cache in cached_prices])
     df = df.sort_index()
     return df
-
