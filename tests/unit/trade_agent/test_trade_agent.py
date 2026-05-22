@@ -122,6 +122,15 @@ def test_get_stocks_returns_normalized_symbols(monkeypatch):
     assert trade_agent.get_stocks() == ["RELIANCE.NS", "TCS.NS"]
 
 
+def test_get_stocks_excludes_bharat_bond(monkeypatch):
+    monkeypatch.setattr(
+        trade_agent,
+        "get_stock_list",
+        lambda: "BHARATBOND-APR31, POWERGRID, BHARATBOND-APR30, KSB",
+    )
+    assert trade_agent.get_stocks() == ["POWERGRID.NS", "KSB.NS"]
+
+
 def test_get_stocks_handles_failure(monkeypatch):
     monkeypatch.setattr(trade_agent, "get_stock_list", lambda: "")
     assert trade_agent.get_stocks() == []

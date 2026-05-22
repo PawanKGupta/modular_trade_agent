@@ -36,6 +36,33 @@ import pandas as pd
 import yfinance as yf
 
 
+def _normalize_trade_count(value) -> int:
+    """Coerce total_trades / total_positions values to a non-negative int."""
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        try:
+            return max(int(value), 0)
+        except (ValueError, TypeError):
+            return 0
+    if isinstance(value, (int, float)):
+        return max(int(value), 0)
+    return 0
+
+
+def backtest_has_trade_activity(backtest_results: dict | None) -> bool:
+    """
+    True when the backtest produced at least one trade/position.
+
+    Simple mode sets ``total_trades``; integrated mode sets ``total_positions``.
+    """
+    if not backtest_results:
+        return False
+    positions = _normalize_trade_count(backtest_results.get("total_positions"))
+    trades = _normalize_trade_count(backtest_results.get("total_trades"))
+    return positions > 0 or trades > 0
+
+
 def calculate_backtest_score(backtest_results: dict, dip_mode: bool = False) -> float:
     """
     Calculate a backtest score based on performance metrics.
@@ -54,7 +81,7 @@ def calculate_backtest_score(backtest_results: dict, dip_mode: bool = False) -> 
         Float score between 0-100
     """
 
-    if not backtest_results or backtest_results.get("total_positions", 0) == 0:
+    if not backtest_has_trade_activity(backtest_results):
         return 0.0
 
     try:
@@ -97,7 +124,9 @@ def calculate_backtest_score(backtest_results: dict, dip_mode: bool = False) -> 
         win_score = win_rate * 0.4
 
         # Component 3: Strategy vs Buy & Hold (20% weight)
-        vs_buyhold = backtest_results.get("strategy_vs_buy_hold", 0)
+        vs_buyhold = backtest_results.get("strategy_vs_buy_hold")
+        if vs_buyhold is None:
+            vs_buyhold = backtest_results.get("vs_buy_hold", 0)
         alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2
 
         # No trade frequency component - quality over quantity for reversal strategy
@@ -403,6 +432,7 @@ def run_simple_backtest(
             "total_return_pct_legacy": total_return_pct,  # Sum of percentage returns (legacy)
             "win_rate": win_rate,
             "total_trades": total_trades,
+            "total_positions": total_trades,
             "vs_buy_hold": vs_buy_hold,
             "execution_rate": 100.0,
             "avg_return": avg_return,
