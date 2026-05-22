@@ -10,8 +10,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.infrastructure.db.base import Base
-from src.infrastructure.persistence.price_cache_repository import PriceCacheRepository
-from src.infrastructure.utils.holiday_calendar import iter_trading_days
+from src.infrastructure.persistence.price_cache_repository import (
+    DEFAULT_INTERVAL,
+    WEEKLY_INTERVAL,
+    PriceCacheRepository,
+)
+from src.infrastructure.utils.holiday_calendar import (
+    iter_expected_weekly_bar_dates,
+    iter_trading_days,
+)
 
 
 @pytest.fixture
@@ -79,6 +86,60 @@ def test_missing_trading_dates_skips_weekend(db_session):
     trading = list(iter_trading_days(date(2024, 6, 3), date(2024, 6, 7)))
     assert date(2024, 6, 3) not in missing
     assert all(d in trading for d in missing)
+
+
+def test_weekly_missing_uses_week_endings_not_daily(db_session):
+    repo = PriceCacheRepository(db_session)
+    start = date(2024, 6, 3)
+    end = date(2024, 6, 28)
+    for week_end in iter_expected_weekly_bar_dates(start, end):
+        repo.create_or_update("W.NS", week_end, close=1.0, interval=WEEKLY_INTERVAL)
+
+    missing = repo.get_missing_trading_dates("W.NS", start, end, interval=WEEKLY_INTERVAL)
+    assert missing == []
+
+    daily_missing = repo.get_missing_trading_dates("W.NS", start, end, interval=DEFAULT_INTERVAL)
+    assert len(daily_missing) > len(missing)
+
+
+def test_dates_needing_gap_fill_ignores_interior_gaps_when_coverage_ok(db_session):
+    repo = PriceCacheRepository(db_session)
+    start = date(2024, 6, 3)
+    end = date(2024, 6, 14)
+    for td in iter_trading_days(start, end):
+        if td != date(2024, 6, 5):
+            repo.create_or_update("Y.NS", td, close=1.0)
+
+    assert repo.get_coverage_pct("Y.NS", start, end) >= 85.0
+    assert repo.get_dates_needing_gap_fill("Y.NS", start, end, tail_trading_days=3) == []
+
+
+def test_weekly_gap_fill_skips_when_yahoo_date_offset_in_same_week(db_session):
+    """Yahoo weekly stamp may differ from ISO week-ending — tail should still hit cache."""
+    repo = PriceCacheRepository(db_session)
+    start = date(2024, 6, 3)
+    end = date(2024, 6, 28)
+    expected_ends = list(iter_expected_weekly_bar_dates(start, end))
+    assert expected_ends
+    # Store bar on Wednesday; expected tail references Friday week-end.
+    repo.create_or_update("W2.NS", date(2024, 6, 26), close=1.0, interval=WEEKLY_INTERVAL)
+    for week_end in expected_ends[:-1]:
+        repo.create_or_update("W2.NS", week_end, close=1.0, interval=WEEKLY_INTERVAL)
+
+    assert repo.get_dates_needing_gap_fill("W2.NS", start, end, interval=WEEKLY_INTERVAL) == []
+
+
+def test_dates_needing_gap_fill_detects_tail_gap(db_session):
+    repo = PriceCacheRepository(db_session)
+    start = date(2024, 6, 3)
+    end = date(2024, 6, 14)
+    for td in iter_trading_days(start, end):
+        if td < date(2024, 6, 12):
+            repo.create_or_update("Z.NS", td, close=1.0)
+
+    gaps = repo.get_dates_needing_gap_fill("Z.NS", start, end, tail_trading_days=5)
+    assert gaps
+    assert max(gaps) >= date(2024, 6, 12)
 
 
 def test_invalidate_symbol(db_session):

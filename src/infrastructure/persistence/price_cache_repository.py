@@ -9,10 +9,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT, OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
 from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import CorporateAction, OhlcvSymbolMeta, PriceCache
 from src.infrastructure.db.timezone_utils import ist_now_naive
-from src.infrastructure.utils.holiday_calendar import iter_trading_days
+from src.infrastructure.utils.holiday_calendar import (
+    iter_expected_weekly_bar_dates,
+    iter_trading_days,
+)
 
 try:
     from utils.logger import logger
@@ -22,7 +26,32 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL = "1d"
+WEEKLY_INTERVAL = "1wk"
 DEFAULT_PRICE_BASIS = "unadjusted"
+DEFAULT_WEEKLY_TAIL_WEEKS = 3
+# Yahoo weekly bar dates may fall a few days from ISO week-ending trading day.
+WEEKLY_BAR_DATE_TOLERANCE_DAYS = 4
+
+
+def _iso_week_key(bar_date: date) -> tuple[int, int]:
+    return bar_date.isocalendar()[:2]
+
+
+def week_has_cached_bar(
+    cached_dates: set[date],
+    week_ref: date,
+    *,
+    tolerance_days: int = WEEKLY_BAR_DATE_TOLERANCE_DAYS,
+) -> bool:
+    """
+    True if cache contains a weekly bar for the ISO week of ``week_ref``.
+
+    Uses ISO week match first, then proximity to ``week_ref`` (Yahoo dating).
+    """
+    target = _iso_week_key(week_ref)
+    if any(_iso_week_key(d) == target for d in cached_dates):
+        return True
+    return any(abs((d - week_ref).days) <= tolerance_days for d in cached_dates)
 
 
 class PriceCacheRepository:
@@ -206,15 +235,15 @@ class PriceCacheRepository:
         )
         return list(self.db.execute(stmt).scalars().all())
 
-    def get_missing_trading_dates(
+    def _cached_dates_in_range(
         self,
         symbol: str,
         start_date: date,
         end_date: date,
-        interval: str = DEFAULT_INTERVAL,
-    ) -> list[date]:
-        """Trading days in range that are absent from cache for symbol/interval."""
-        cached_dates = {
+        interval: str,
+    ) -> set[date]:
+        """Dates present in price_cache for symbol/interval within range."""
+        return {
             row[0]
             for row in self.db.execute(
                 select(PriceCache.date).where(
@@ -227,7 +256,106 @@ class PriceCacheRepository:
                 )
             ).all()
         }
-        return [d for d in iter_trading_days(start_date, end_date) if d not in cached_dates]
+
+    def _expected_bar_dates(
+        self,
+        start_date: date,
+        end_date: date,
+        interval: str,
+    ) -> list[date]:
+        if interval == WEEKLY_INTERVAL:
+            return list(iter_expected_weekly_bar_dates(start_date, end_date))
+        return list(iter_trading_days(start_date, end_date))
+
+    def get_coverage_pct(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str = DEFAULT_INTERVAL,
+    ) -> float:
+        """Percent of expected bars in range present in cache (interval-aware)."""
+        expected = self._expected_bar_dates(start_date, end_date, interval)
+        if not expected:
+            return 100.0
+        cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
+        if interval == WEEKLY_INTERVAL:
+            hits = sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
+            return 100.0 * hits / len(expected)
+        hits = sum(1 for d in expected if d in cached_dates)
+        return 100.0 * hits / len(expected)
+
+    def get_dates_needing_gap_fill(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str = DEFAULT_INTERVAL,
+        *,
+        tail_trading_days: int | None = None,
+        min_coverage_pct: float | None = None,
+        weekly_tail_weeks: int = DEFAULT_WEEKLY_TAIL_WEEKS,
+    ) -> list[date]:
+        """
+        Bar dates that should trigger a Yahoo gap-fill (read-through cache).
+
+        Daily (``1d``): refill when coverage is below threshold or the tail window
+        lacks bars (Yahoo often omits exchange holidays — interior gaps are ignored
+        when coverage is adequate).
+
+        Weekly (``1wk``): ISO week coverage plus tail weeks matched by week bucket
+        (not exact bar date — Yahoo week stamps differ slightly).
+        """
+        tail_n = (
+            tail_trading_days
+            if tail_trading_days is not None
+            else OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
+        )
+        min_cov = min_coverage_pct if min_coverage_pct is not None else OHLCV_CACHE_MIN_COVERAGE_PCT
+
+        cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
+        if not cached_dates:
+            return [start_date]
+
+        expected = self._expected_bar_dates(start_date, end_date, interval)
+        if not expected:
+            return []
+
+        if interval == WEEKLY_INTERVAL:
+            coverage_pct = (
+                100.0
+                * sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
+                / len(expected)
+            )
+        else:
+            coverage_pct = 100.0 * sum(1 for d in expected if d in cached_dates) / len(expected)
+
+        if interval == WEEKLY_INTERVAL:
+            tail_expected = (
+                expected[-weekly_tail_weeks:] if len(expected) > weekly_tail_weeks else expected
+            )
+            missing_tail = [d for d in tail_expected if not week_has_cached_bar(cached_dates, d)]
+        else:
+            tail_expected = expected[-tail_n:] if len(expected) > tail_n else expected
+            missing_tail = [d for d in tail_expected if d not in cached_dates]
+
+        if coverage_pct < min_cov:
+            return missing_tail if missing_tail else [start_date]
+        return missing_tail
+
+    def get_missing_trading_dates(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str = DEFAULT_INTERVAL,
+    ) -> list[date]:
+        """Expected bar dates in range absent from cache (interval-aware)."""
+        cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
+        expected = self._expected_bar_dates(start_date, end_date, interval)
+        if interval == WEEKLY_INTERVAL:
+            return [d for d in expected if not week_has_cached_bar(cached_dates, d)]
+        return [d for d in expected if d not in cached_dates]
 
     def get_missing_dates(
         self,

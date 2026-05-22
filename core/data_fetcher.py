@@ -250,7 +250,7 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
             finally:
                 db.close()
     except Exception as exc:
-        logger.debug("OHLCV cache unavailable for %s, using Yahoo: %s", ticker, exc)
+        logger.debug("fetch_ohlcv_yf cache bypass for %s [%s]: %s", ticker, interval, exc)
 
     return fetch_ohlcv_yf_raw(
         ticker,

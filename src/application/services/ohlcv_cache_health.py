@@ -14,9 +14,14 @@ from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT, OHLCV_CACHE_TAIL_OVERL
 from src.application.services.ohlcv_cache_service import OhlcvCacheService, _bars_to_dataframe
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
+    WEEKLY_INTERVAL,
     PriceCacheRepository,
 )
-from src.infrastructure.utils.holiday_calendar import get_previous_trading_day, iter_trading_days
+from src.infrastructure.utils.holiday_calendar import (
+    get_previous_trading_day,
+    iter_expected_weekly_bar_dates,
+    iter_trading_days,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +106,10 @@ def assess_price_cache_health(
         else OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
     )
 
-    expected_days = list(iter_trading_days(start_date, end_date))
+    if interval == WEEKLY_INTERVAL:
+        expected_days = list(iter_expected_weekly_bar_dates(start_date, end_date))
+    else:
+        expected_days = list(iter_trading_days(start_date, end_date))
     if not expected_days:
         return PriceCacheHealthReport(
             symbol=symbol,
@@ -116,7 +124,10 @@ def assess_price_cache_health(
 
     bars = repo.get_range(symbol, start_date, end_date, interval=interval)
     cached_dates = {b.date for b in bars}
-    coverage_pct = 100.0 * len(cached_dates & set(expected_days)) / len(expected_days)
+    if interval == WEEKLY_INTERVAL:
+        coverage_pct = repo.get_coverage_pct(symbol, start_date, end_date, interval=interval)
+    else:
+        coverage_pct = 100.0 * len(cached_dates & set(expected_days)) / len(expected_days)
 
     if not bars:
         return PriceCacheHealthReport(

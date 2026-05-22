@@ -456,40 +456,14 @@ def _with_backtest_mode(result: dict, mode: str) -> dict:
     return result
 
 
-def run_stock_backtest(
+def _run_stock_backtest_impl(
     stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
-    Run backtest for a stock using available method (integrated or simple).
+    Run backtest for a stock using integrated or simple engine (implementation).
 
-    [WARN]? DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
-
-    For new code, prefer using BacktestService:
-        from services import BacktestService
-        service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
-        results = service.run_stock_backtest(stock_symbol)
-
-    Migration guide: See utils.deprecation.get_migration_guide("run_stock_backtest")
-
-    Args:
-        stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
-        years_back: Number of years to backtest (default: 5)
-        dip_mode: Enable dip-buying mode
-        config: Strategy configuration
-
-    Returns:
-        Dict with backtest results and score
+    Called by ``BacktestService.run_stock_backtest``; do not deprecate this helper.
     """
-    # Phase 4.5: Issue deprecation warning
-    from utils.deprecation import deprecation_notice
-
-    deprecation_notice(
-        module="core.backtest_scoring",
-        function="run_stock_backtest",
-        replacement="services.BacktestService.run_stock_backtest()",
-        version="Phase 4",
-    )
-
     import os
 
     fallback_to_simple = os.getenv("BULK_BACKTEST_FALLBACK_TO_SIMPLE", "true").lower() in (
@@ -585,6 +559,27 @@ def run_stock_backtest(
             return _with_backtest_mode(backtest_results, "simple_fallback")
 
 
+def run_stock_backtest(
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
+) -> dict:
+    """
+    Run backtest for a stock using available method (integrated or simple).
+
+    [WARN]? DEPRECATED in Phase 4: Use ``services.BacktestService.run_stock_backtest()`` instead.
+
+    Migration guide: See utils.deprecation.get_migration_guide("run_stock_backtest")
+    """
+    from utils.deprecation import deprecation_notice
+
+    deprecation_notice(
+        module="core.backtest_scoring",
+        function="run_stock_backtest",
+        replacement="services.BacktestService.run_stock_backtest()",
+        version="Phase 4",
+    )
+    return _run_stock_backtest_impl(stock_symbol, years_back, dip_mode, config)
+
+
 def add_backtest_scores_to_results(
     stock_results: list, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> list:
@@ -628,7 +623,7 @@ def add_backtest_scores_to_results(
             logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
 
             # Run backtest for this stock
-            backtest_data = run_stock_backtest(ticker, years_back, dip_mode, config)
+            backtest_data = _run_stock_backtest_impl(ticker, years_back, dip_mode, config)
 
             # Add backtest data to stock result
             stock_result["backtest"] = {
@@ -887,5 +882,5 @@ def add_backtest_scores_to_results(
 if __name__ == "__main__":
     # Test with a single stock
     test_symbol = "RELIANCE.NS"
-    result = run_stock_backtest(test_symbol)
+    result = _run_stock_backtest_impl(test_symbol)
     print(f"Backtest score for {test_symbol}: {result['backtest_score']:.1f}")

@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from config.settings import OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
+from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT, OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     DEFAULT_PRICE_BASIS,
     PriceCacheRepository,
 )
 from src.infrastructure.utils.holiday_calendar import get_previous_trading_day
-
-logger = logging.getLogger(__name__)
+from utils.logger import logger
 
 # Observability counters (reset per process; bulk job may read via get_stats)
 _yahoo_fetch_count = 0
@@ -188,8 +186,25 @@ class OhlcvCacheService:
         end_d = _parse_end_date(end_date)
         start_d = end_d - timedelta(days=days + 5)
 
-        missing = self.repo.get_missing_trading_dates(symbol, start_d, end_d, interval=interval)
+        bars_before = self.repo.get_range(symbol, start_d, end_d, interval=interval)
+        missing = self.repo.get_dates_needing_gap_fill(
+            symbol,
+            start_d,
+            end_d,
+            interval=interval,
+            tail_trading_days=self.tail_overlap_trading_days,
+            min_coverage_pct=OHLCV_CACHE_MIN_COVERAGE_PCT,
+        )
         if missing:
+            logger.debug(
+                "OHLCV gap_fill %s [%s]: cached=%s tail_or_coverage_gaps=%s range=%s..%s",
+                symbol,
+                interval,
+                len(bars_before),
+                len(missing),
+                start_d,
+                end_d,
+            )
             self.gap_fill(
                 symbol,
                 start_d,
@@ -198,6 +213,14 @@ class OhlcvCacheService:
                 days=days,
                 yf_end_date=end_date,
                 add_current_day=add_current_day,
+            )
+        else:
+            logger.debug(
+                "OHLCV cache_hit %s [%s]: %s bars (yahoo_calls=%s)",
+                symbol,
+                interval,
+                len(bars_before),
+                get_ohlcv_cache_stats()["yahoo_calls"],
             )
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
@@ -245,11 +268,11 @@ class OhlcvCacheService:
 
         count = self.repo.upsert_many(filtered)
         self.repo.refresh_symbol_meta(symbol, interval=interval)
-        logger.info(
-            "gap_fill %s [%s]: upserted %s rows (%s to %s)",
+        logger.debug(
+            "OHLCV gap_fill upserted %s rows for %s [%s] (%s to %s)",
+            count,
             symbol,
             interval,
-            count,
             start_date,
             end_date,
         )

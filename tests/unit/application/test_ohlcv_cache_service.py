@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import pytest
@@ -12,6 +12,8 @@ from sqlalchemy.pool import StaticPool
 
 from src.application.services.ohlcv_cache_service import OhlcvCacheService, reset_ohlcv_cache_stats
 from src.infrastructure.db.base import Base
+from src.infrastructure.persistence.price_cache_repository import PriceCacheRepository
+from src.infrastructure.utils.holiday_calendar import iter_trading_days
 
 
 @pytest.fixture
@@ -75,3 +77,26 @@ def test_get_ohlcv_uses_fetch_on_empty(db_session):
     assert not df.empty
     df2 = svc.get_ohlcv("B.NS", days=30, end_date="2024-01-31", add_current_day=False)
     assert len(df2) == len(df)
+
+
+def test_get_ohlcv_cache_hit_skips_yahoo_when_warm(db_session):
+    reset_ohlcv_cache_stats()
+    calls = {"n": 0}
+
+    def counting_fetch(*args, **kwargs):
+        calls["n"] += 1
+        return _fake_yahoo(*args, **kwargs)
+
+    end = date(2024, 1, 31)
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end):
+        repo.create_or_update("C.NS", td, close=10.0)
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_fetch)
+    df = svc.get_ohlcv("C.NS", days=60, end_date="2024-01-31", add_current_day=False)
+    assert df is not None
+    assert calls["n"] == 0
+
+    svc.get_ohlcv("C.NS", days=60, end_date="2024-01-31", add_current_day=False)
+    assert calls["n"] == 0

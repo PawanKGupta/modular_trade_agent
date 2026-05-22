@@ -73,7 +73,15 @@ python trade_agent.py --backtest
 
 ## Postgres / SQLite OHLCV cache
 
-Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only for **gaps** and **tail refresh** (last ~10 trading days). Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
+Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). Interior holiday holes that Yahoo never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
+
+**Correctness check** (field-by-field O/H/L/C/V on every bar vs Yahoo):
+
+```bash
+.venv\Scripts\python.exe tools\compare_yahoo_cache_ohlcv.py PFOCUS.NS --days 400
+```
+
+The tool compares **open, high, low, close, volume** on each common bar date (`dates × 5` scalar checks) for Yahoo vs Postgres and vs `fetch_ohlcv_yf()` return values.
 
 | Setting | Default | Purpose |
 |---------|---------|---------|

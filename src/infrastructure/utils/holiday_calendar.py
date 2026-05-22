@@ -101,6 +101,30 @@ def iter_trading_days(start_date: date, end_date: date):
         current += timedelta(days=1)
 
 
+def iter_expected_weekly_bar_dates(start_date: date, end_date: date):
+    """
+    Yield the last NSE trading day of each ISO week intersecting the range.
+
+    Matches Yahoo ``interval=1wk`` bar dating (week-ending trading day).
+    """
+    if start_date > end_date:
+        return
+
+    week_cursor = start_date - timedelta(days=start_date.weekday())
+    while week_cursor <= end_date:
+        week_start = max(week_cursor, start_date)
+        week_end = min(week_cursor + timedelta(days=6), end_date)
+        last_trading: date | None = None
+        current = week_start
+        while current <= week_end:
+            if is_trading_day(current):
+                last_trading = current
+            current += timedelta(days=1)
+        if last_trading is not None:
+            yield last_trading
+        week_cursor += timedelta(days=7)
+
+
 def get_previous_trading_day(start_date: date) -> date:
     """
     Return the most recent NSE trading day strictly before start_date.
