@@ -450,6 +450,12 @@ def run_simple_backtest(
         return {"symbol": stock_symbol, "backtest_score": 0.0, "error": str(e)}
 
 
+def _with_backtest_mode(result: dict, mode: str) -> dict:
+    """Attach engine label for bulk CSV / ops (integrated, simple, simple_fallback, failed)."""
+    result["backtest_mode"] = mode
+    return result
+
+
 def run_stock_backtest(
     stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
@@ -484,12 +490,20 @@ def run_stock_backtest(
         version="Phase 4",
     )
 
+    import os
+
+    fallback_to_simple = os.getenv("BULK_BACKTEST_FALLBACK_TO_SIMPLE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
     if BACKTEST_MODE == "simple":
         # Use simple backtest
         backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
         backtest_score = calculate_backtest_score(backtest_results, dip_mode)
         backtest_results["backtest_score"] = backtest_score
-        return backtest_results
+        return _with_backtest_mode(backtest_results, "simple")
 
     else:
         # Use integrated backtest
@@ -525,26 +539,42 @@ def run_stock_backtest(
                     avg_return = np.mean(return_pcts)
 
             # Return summary with score
-            return {
-                "symbol": stock_symbol,
-                "period": f"{date_range[0]} to {date_range[1]}",
-                "backtest_score": backtest_score,
-                "total_return_pct": backtest_results.get("total_return_pct", 0),
-                "win_rate": backtest_results.get("win_rate", 0),
-                "total_trades": backtest_results.get("executed_trades", 0),
-                "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
-                "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
-                "avg_return": avg_return,  # Calculate from positions
-                "backtest_ml_verdict": backtest_results.get(
-                    "backtest_ml_verdict"
-                ),  # Best ML from backtest
-                "backtest_ml_confidence": backtest_results.get(
-                    "backtest_ml_confidence"
-                ),  # Best ML confidence
-                "full_results": backtest_results,
-            }
+            return _with_backtest_mode(
+                {
+                    "symbol": stock_symbol,
+                    "period": f"{date_range[0]} to {date_range[1]}",
+                    "backtest_score": backtest_score,
+                    "total_return_pct": backtest_results.get("total_return_pct", 0),
+                    "win_rate": backtest_results.get("win_rate", 0),
+                    "total_trades": backtest_results.get("executed_trades", 0),
+                    "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
+                    "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
+                    "avg_return": avg_return,  # Calculate from positions
+                    "backtest_ml_verdict": backtest_results.get(
+                        "backtest_ml_verdict"
+                    ),  # Best ML from backtest
+                    "backtest_ml_confidence": backtest_results.get(
+                        "backtest_ml_confidence"
+                    ),  # Best ML confidence
+                    "full_results": backtest_results,
+                },
+                "integrated",
+            )
 
         except Exception as e:
+            if not fallback_to_simple:
+                logger.error(
+                    f"Integrated backtest failed for {stock_symbol}: {e} "
+                    "(BULK_BACKTEST_FALLBACK_TO_SIMPLE=false)"
+                )
+                return _with_backtest_mode(
+                    {
+                        "symbol": stock_symbol,
+                        "backtest_score": 0.0,
+                        "error": str(e),
+                    },
+                    "failed",
+                )
             logger.error(
                 f"Integrated backtest failed for {stock_symbol}: {e}, falling back to simple"
             )
@@ -552,7 +582,7 @@ def run_stock_backtest(
             backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
             backtest_score = calculate_backtest_score(backtest_results, dip_mode)
             backtest_results["backtest_score"] = backtest_score
-            return backtest_results
+            return _with_backtest_mode(backtest_results, "simple_fallback")
 
 
 def add_backtest_scores_to_results(

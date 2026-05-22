@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from services.ml_training_metadata import bulk_analysis_training_path_error
 from src.application.services.ml_incremental_training import subset_for_incremental_training
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.ml_model_repository import MLModelRepository
@@ -71,6 +72,17 @@ class MLTrainingService:
             return candidate.resolve()
         return (Path.cwd() / candidate).resolve()
 
+    def validate_training_csv_for_ml(self, csv_path: Path) -> None:
+        """
+        Reject trade_agent bulk screener exports mistaken for ML training files.
+
+        Raises:
+            ValueError: When ``csv_path`` matches bulk export patterns or headers.
+        """
+        message = bulk_analysis_training_path_error(csv_path)
+        if message:
+            raise ValueError(message)
+
     def start_training_job(self, *, started_by: int, config: TrainingJobConfig):
         """Persist a new training job in pending state."""
         return self.job_repo.create(
@@ -89,6 +101,7 @@ class MLTrainingService:
             csv_path = self.resolve_training_csv(config.training_data_path)
             if not csv_path.is_file():
                 raise FileNotFoundError(f"Training CSV not found at {csv_path}")
+            self.validate_training_csv_for_ml(csv_path)
 
             raw_frame = pd.read_csv(csv_path)
             version = self._next_semantic_version(config.model_type)

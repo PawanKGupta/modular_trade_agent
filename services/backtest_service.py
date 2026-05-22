@@ -160,6 +160,8 @@ class BacktestService:
                 )
 
                 # Add backtest data to stock result
+                backtest_mode = backtest_data.get("backtest_mode", BACKTEST_MODE)
+                stock_result["backtest_mode"] = backtest_mode
                 stock_result["backtest"] = {
                     "score": backtest_data.get("backtest_score", 0),
                     "total_return_pct": backtest_data.get("total_return_pct", 0),
@@ -171,6 +173,7 @@ class BacktestService:
                     "backtest_ml_verdict": backtest_data.get(
                         "backtest_ml_verdict"
                     ),  # Store for filtering logic
+                    "backtest_mode": backtest_mode,
                 }
 
                 # Calculate combined score (50% current analysis + 50% backtest)

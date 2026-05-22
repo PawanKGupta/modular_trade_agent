@@ -81,6 +81,13 @@ def start_ml_training(
                 "or mount a host directory as a Docker volume."
             ),
         )
+    try:
+        service.validate_training_csv_for_ml(csv_abs)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     job = service.start_training_job(started_by=admin.id, config=config)
     background_tasks.add_task(_run_training_job_async, job.id, asdict(config))

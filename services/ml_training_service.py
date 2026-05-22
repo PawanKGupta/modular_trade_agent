@@ -11,8 +11,14 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
 from services.ml_dip_feature_manifest import write_dip_feature_manifest
+from services.ml_training_metadata import (
+    dip_classifier_exclude_columns,
+    price_regressor_exclude_columns,
+    select_training_feature_columns,
+    verdict_classifier_exclude_columns,
+)
+from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
 from utils.logger import logger
 
 try:
@@ -107,27 +113,8 @@ class MLTrainingService:
         df = cast(pd.DataFrame, frame)
         logger.info(f"Loaded {len(df)} training examples")
 
-        # Feature columns (exclude labels and metadata)
-        # PHASE 5: Added position_id, sample_weight, fill_quantity for re-entry support
-        exclude_cols = [
-            "ticker",
-            "entry_date",
-            "exit_date",
-            "label",
-            "actual_pnl_pct",
-            "holding_days",
-            "backtest_date",
-            "position_id",
-            "sample_weight",
-            "fill_quantity",
-            "initial_entry_date",
-            "initial_entry_price",
-            "fill_price",
-            "exit_reason",
-            "max_drawdown_pct",
-        ]
-
-        feature_cols = [col for col in df.columns if col not in exclude_cols]
+        exclude_cols = verdict_classifier_exclude_columns()
+        feature_cols = select_training_feature_columns(df, exclude_cols)
 
         # Extract features and labels
         X = df[feature_cols].copy()
@@ -361,18 +348,8 @@ class MLTrainingService:
         df = cast(pd.DataFrame, frame)
         logger.info("Loaded %s dip episode rows", len(df))
 
-        exclude_cols = [
-            "ticker",
-            "entry_date",
-            "exit_date",
-            "n_adds",
-            "pnl_pct",
-            "net_win",
-            "strong_win",
-        ]
-        feature_cols = [c for c in df.columns if c not in exclude_cols]
-        if not feature_cols:
-            raise ValueError("No feature columns found for dip training")
+        exclude_cols = dip_classifier_exclude_columns()
+        feature_cols = select_training_feature_columns(df, exclude_cols)
 
         X = df[feature_cols].copy().fillna(0.0)
         y = df[label_column].astype(int).values
@@ -469,28 +446,8 @@ class MLTrainingService:
 
         df = cast(pd.DataFrame, frame)
 
-        # Feature columns (exclude labels and metadata)
-        # PHASE 5: Added re-entry support columns
-        exclude_cols = [
-            "ticker",
-            "entry_date",
-            "exit_date",
-            "label",
-            "actual_pnl_pct",
-            "holding_days",
-            "backtest_date",
-            "position_id",
-            "sample_weight",
-            "fill_quantity",
-            "initial_entry_date",
-            "initial_entry_price",
-            "fill_price",
-            "exit_reason",
-            "max_drawdown_pct",
-            target_column,
-        ]
-
-        feature_cols = [col for col in df.columns if col not in exclude_cols]
+        exclude_cols = price_regressor_exclude_columns(target_column=target_column)
+        feature_cols = select_training_feature_columns(df, exclude_cols)
 
         # Extract features and target
         X = df[feature_cols].copy()

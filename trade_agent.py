@@ -597,7 +597,21 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Add backtest scoring if enabled (Phase 4: Use BacktestService)
     if enable_backtest_scoring:
         mode_info = " (DIP MODE)" if dip_mode else ""
-        logger.info(f"Running backtest scoring analysis{mode_info}...")
+        try:
+            from config.settings import API_RATE_LIMIT_DELAY, MAX_CONCURRENT_ANALYSES
+            from services.backtest_service import BACKTEST_MODE as available_backtest_engine
+
+            logger.info(
+                "Bulk backtest scoring%s: available_engine=%s, "
+                "MAX_CONCURRENT_ANALYSES=%s, API_RATE_LIMIT_DELAY=%s "
+                "(reliability profile: config/bulk_reliability.env.example)",
+                mode_info,
+                available_backtest_engine,
+                MAX_CONCURRENT_ANALYSES,
+                API_RATE_LIMIT_DELAY,
+            )
+        except Exception:
+            logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
         # Config is already extracted above
 
@@ -627,6 +641,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 "stop",
                 "timeframe_analysis",
                 "backtest",
+                "backtest_mode",
                 "execution_capital",
                 "max_capital",
                 "capital_adjusted",
