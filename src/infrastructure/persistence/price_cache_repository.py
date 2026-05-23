@@ -452,6 +452,29 @@ class PriceCacheRepository:
         self.db.refresh(meta)
         return meta
 
+    def record_fetch_validation(
+        self,
+        symbol: str,
+        interval: str,
+        *,
+        fetch_status: str,
+        coverage_pct: float | None,
+        message: str,
+    ) -> OhlcvSymbolMeta:
+        """Persist Yahoo ingest validation outcome on ohlcv_symbol_meta."""
+        meta = self.get_symbol_meta(symbol, interval=interval)
+        if meta is None:
+            meta = OhlcvSymbolMeta(symbol=symbol, interval=interval, row_count=0)
+            self.db.add(meta)
+        meta.fetch_status = fetch_status
+        meta.coverage_pct = coverage_pct
+        meta.last_validation_message = message[:2000] if message else None
+        meta.last_fetch_at = ist_now_naive()
+        meta.updated_at = ist_now_naive()
+        self.db.commit()
+        self.db.refresh(meta)
+        return meta
+
     def get_symbol_meta(
         self, symbol: str, interval: str = DEFAULT_INTERVAL
     ) -> OhlcvSymbolMeta | None:

@@ -8,7 +8,17 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT, OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
+from config.settings import (
+    OHLCV_CACHE_MIN_COVERAGE_PCT,
+    OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS,
+    OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
+    OHLCV_REJECT_INVALID_FETCH,
+)
+from src.application.services.ohlcv_cache_logging import log_ohlcv_cache
+from src.application.services.ohlcv_fetch_validation import (
+    validate_cached_symbol,
+    validate_yahoo_ohlcv_frame,
+)
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     DEFAULT_PRICE_BASIS,
@@ -195,13 +205,16 @@ class OhlcvCacheService:
             tail_trading_days=self.tail_overlap_trading_days,
             min_coverage_pct=OHLCV_CACHE_MIN_COVERAGE_PCT,
         )
+        coverage = self.repo.get_coverage_pct(symbol, start_d, end_d, interval=interval)
         if missing:
-            logger.debug(
-                "OHLCV gap_fill %s [%s]: cached=%s tail_or_coverage_gaps=%s range=%s..%s",
+            log_ohlcv_cache(
+                logger,
+                "OHLCV gap_fill %s [%s]: cached=%s gaps=%s coverage=%.1f%% range=%s..%s",
                 symbol,
                 interval,
                 len(bars_before),
                 len(missing),
+                coverage,
                 start_d,
                 end_d,
             )
@@ -215,17 +228,43 @@ class OhlcvCacheService:
                 add_current_day=add_current_day,
             )
         else:
-            logger.debug(
-                "OHLCV cache_hit %s [%s]: %s bars (yahoo_calls=%s)",
+            log_ohlcv_cache(
+                logger,
+                "OHLCV cache_hit %s [%s]: %s bars coverage=%.1f%% (yahoo_calls=%s)",
                 symbol,
                 interval,
                 len(bars_before),
+                coverage,
                 get_ohlcv_cache_stats()["yahoo_calls"],
             )
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         if not bars:
             return None
+
+        meta = self.repo.get_symbol_meta(symbol, interval=interval)
+        if meta and meta.fetch_status == "failed":
+            logger.error(
+                "OHLCV cache unusable for %s [%s]: last fetch failed — %s",
+                symbol,
+                interval,
+                meta.last_validation_message or "unknown",
+            )
+            return None
+        if (
+            interval == DEFAULT_INTERVAL
+            and meta
+            and meta.fetch_status == "partial"
+            and (meta.row_count or 0) < OHLCV_MIN_DAILY_BARS_FOR_INDICATORS
+        ):
+            logger.warning(
+                "OHLCV partial history for %s [%s]: %s bars (<%s for EMA200) — %s",
+                symbol,
+                interval,
+                meta.row_count,
+                OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
+                meta.last_validation_message or "",
+            )
 
         df = _bars_to_dataframe(bars)
         if not add_current_day and not df.empty:
@@ -250,31 +289,74 @@ class OhlcvCacheService:
             Number of rows upserted.
         """
         lookback = days if days is not None else (end_date - start_date).days + 30
-        fetched = self._yahoo_fetch(
-            symbol,
-            days=lookback,
+        try:
+            fetched = self._yahoo_fetch(
+                symbol,
+                days=lookback,
+                interval=interval,
+                end_date=yf_end_date,
+                add_current_day=add_current_day,
+            )
+        except Exception as exc:
+            self.repo.record_fetch_validation(
+                symbol,
+                interval,
+                fetch_status="failed",
+                coverage_pct=None,
+                message=f"Yahoo API error: {exc}",
+            )
+            logger.error("gap_fill Yahoo API failed for %s [%s]: %s", symbol, interval, exc)
+            return 0
+
+        validation = validate_yahoo_ohlcv_frame(
+            fetched,
+            symbol=symbol,
             interval=interval,
-            end_date=yf_end_date,
-            add_current_day=add_current_day,
+            start_date=start_date,
+            end_date=end_date,
         )
-        if fetched is None or fetched.empty:
-            logger.warning("gap_fill: no data for %s [%s]", symbol, interval)
+        if validation.status == "failed" and OHLCV_REJECT_INVALID_FETCH:
+            self.repo.record_fetch_validation(
+                symbol,
+                interval,
+                fetch_status="failed",
+                coverage_pct=validation.coverage_pct,
+                message=validation.message,
+            )
+            logger.error("gap_fill rejected for %s [%s]: %s", symbol, interval, validation.message)
             return 0
 
         rows = _dataframe_to_upsert_rows(symbol, fetched, interval=interval)
         filtered = [r for r in rows if start_date <= r["date"] <= end_date]
         if not filtered:
+            self.repo.record_fetch_validation(
+                symbol,
+                interval,
+                fetch_status="failed",
+                coverage_pct=0.0,
+                message="Yahoo returned no rows in requested window",
+            )
             return 0
 
         count = self.repo.upsert_many(filtered)
         self.repo.refresh_symbol_meta(symbol, interval=interval)
-        logger.debug(
-            "OHLCV gap_fill upserted %s rows for %s [%s] (%s to %s)",
+        post = validate_cached_symbol(self.repo, symbol, start_date, end_date, interval=interval)
+        self.repo.record_fetch_validation(
+            symbol,
+            interval,
+            fetch_status=post.status,
+            coverage_pct=post.coverage_pct,
+            message=post.message,
+        )
+        log_ohlcv_cache(
+            logger,
+            "OHLCV gap_fill upserted %s rows for %s [%s] (%s to %s, yahoo_calls=%s)",
             count,
             symbol,
             interval,
             start_date,
             end_date,
+            get_ohlcv_cache_stats()["yahoo_calls"],
         )
         return count
 

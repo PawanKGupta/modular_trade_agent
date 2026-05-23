@@ -246,11 +246,26 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
                         add_current_day=add_current_day,
                     )
                     if df is not None and not df.empty:
+                        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+                            log_ohlcv_cache,
+                        )
+
+                        log_ohlcv_cache(
+                            logger,
+                            "fetch_ohlcv_yf %s [%s]: %s rows via cache",
+                            ticker,
+                            interval,
+                            len(df),
+                        )
                         return df
             finally:
                 db.close()
     except Exception as exc:
-        logger.debug("fetch_ohlcv_yf cache bypass for %s [%s]: %s", ticker, interval, exc)
+        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+            log_ohlcv_cache,
+        )
+
+        log_ohlcv_cache(logger, "fetch_ohlcv_yf %s [%s]: cache bypass (%s)", ticker, interval, exc)
 
     return fetch_ohlcv_yf_raw(
         ticker,

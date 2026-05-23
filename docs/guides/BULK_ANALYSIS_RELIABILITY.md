@@ -88,6 +88,11 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 | `OHLCV_CACHE_ENABLED` | `true` when `DB_URL` set | Toggle read-through cache in `fetch_ohlcv_yf` |
 | `OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS` | `10` | Tail refresh window |
 | `OHLCV_CACHE_MIN_COVERAGE_PCT` | `85` | Health gate coverage threshold |
+| `OHLCV_CACHE_DEBUG` | `false` | INFO logs for `cache_hit` / `gap_fill` (or `trade_agent --ohlcv-cache-debug`) |
+| `OHLCV_REJECT_INVALID_FETCH` | `true` | Do not upsert Yahoo data when ingest validation fails |
+| `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` | `250` | Warn when `partial` cache has fewer daily bars (EMA200 safety) |
+
+**Ingest validation:** Each `gap_fill` validates the Yahoo frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data.
 
 **Admin CLI** (health, gap-fill, invalidate, preload):
 

@@ -434,6 +434,10 @@ class OhlcvSymbolMeta(Base):
     last_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    fetch_status: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    coverage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_validation_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("symbol", "interval", name="uq_ohlcv_symbol_meta_symbol_interval"),

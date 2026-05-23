@@ -135,4 +135,13 @@ OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS = int(
     os.getenv("OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS", "10")
 )
 OHLCV_CACHE_MIN_COVERAGE_PCT = float(os.getenv("OHLCV_CACHE_MIN_COVERAGE_PCT", "85.0"))
+# Reject Yahoo ingest when validation fails (do not upsert corrupt/empty fetches).
+OHLCV_REJECT_INVALID_FETCH = os.getenv("OHLCV_REJECT_INVALID_FETCH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# Minimum daily bars required for indicator-heavy paths (EMA200); partial cache below this warns.
+OHLCV_MIN_DAILY_BARS_FOR_INDICATORS = int(os.getenv("OHLCV_MIN_DAILY_BARS_FOR_INDICATORS", "250"))
 CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))

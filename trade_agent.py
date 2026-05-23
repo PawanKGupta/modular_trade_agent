@@ -1172,8 +1172,21 @@ if __name__ == "__main__":
             "TRADE_AGENT_USER_ID / DB trading config. Requires the verdict model file on disk."
         ),
     )
+    parser.add_argument(
+        "--ohlcv-cache-debug",
+        action="store_true",
+        help=(
+            "Log OHLCV cache_hit/gap_fill lines at INFO (also set OHLCV_CACHE_DEBUG=true in env)"
+        ),
+    )
 
     args = parser.parse_args()
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_logging import enable_ohlcv_cache_debug
+
+        enable_ohlcv_cache_debug()
+        logger.info("OHLCV cache debug logging enabled (gap_fill / cache_hit / fetch_ohlcv_yf)")
 
     # Load user config if user_id is provided via environment variable
     user_id = None
@@ -1225,3 +1238,8 @@ if __name__ == "__main__":
         db_session=db_session,
         enable_ml=getattr(args, "ml_enabled", False),
     )
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_service import get_ohlcv_cache_stats
+
+        logger.info("OHLCV cache run summary: %s", get_ohlcv_cache_stats())
