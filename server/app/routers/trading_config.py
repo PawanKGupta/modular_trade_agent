@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Users
 from src.infrastructure.persistence import UserTradingConfigRepository
+from utils.ml_price_availability import (
+    DEFAULT_ML_PRICE_TARGET_PATH,
+    ml_price_target_model_available,
+)
 
 from ..core.deps import get_current_user, get_db
 from ..schemas.trading_config import TradingConfigResponse, TradingConfigUpdateRequest
@@ -13,7 +17,11 @@ from ..schemas.trading_config import TradingConfigResponse, TradingConfigUpdateR
 router = APIRouter()
 
 
-def _config_to_response(config) -> TradingConfigResponse:
+def _ml_price_models_available(db: Session) -> bool:
+    return ml_price_target_model_available(db_session=db)
+
+
+def _config_to_response(config, *, db: Session) -> TradingConfigResponse:
     """Convert UserTradingConfig to response model"""
     return TradingConfigResponse(
         # RSI Configuration
@@ -64,13 +72,16 @@ def _config_to_response(config) -> TradingConfigResponse:
         # ML Configuration
         ml_enabled=config.ml_enabled,
         ml_price_enabled=getattr(config, "ml_price_enabled", False),
+        ml_price_models_available=_ml_price_models_available(db),
         ml_model_version=config.ml_model_version,
         ml_confidence_threshold=config.ml_confidence_threshold,
         ml_combine_with_rules=config.ml_combine_with_rules,
     )
 
 
-def _validate_config_update(update: TradingConfigUpdateRequest, current_config) -> None:
+def _validate_config_update(
+    update: TradingConfigUpdateRequest, current_config, *, db: Session
+) -> None:
     """Validate configuration update values"""
     # Get current values for comparison
     extreme = (
@@ -108,6 +119,19 @@ def _validate_config_update(update: TradingConfigUpdateRequest, current_config) 
                 detail="Stop loss percentages must be in order: min < tight < default",
             )
 
+    # ML price models must exist on the API host before enabling the toggle.
+    enabling_price_ml = update.ml_price_enabled is True
+    if enabling_price_ml and not _ml_price_models_available(db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot enable ML price targets: no price model file on this server. "
+                f"Deploy {DEFAULT_ML_PRICE_TARGET_PATH} (or register an active "
+                "price_regressor in ML models), or train via ML training. "
+                "Analysis already falls back to rule-based targets when the file is missing."
+            ),
+        )
+
 
 @router.get("/trading-config", response_model=TradingConfigResponse)
 def get_trading_config(
@@ -117,7 +141,7 @@ def get_trading_config(
     """Get user's trading configuration"""
     repo = UserTradingConfigRepository(db)
     config = repo.get_or_create_default(current.id)
-    return _config_to_response(config)
+    return _config_to_response(config, db=db)
 
 
 @router.put("/trading-config", response_model=TradingConfigResponse)
@@ -132,7 +156,7 @@ def update_trading_config(
     current_config = repo.get_or_create_default(current.id)
 
     # Validate the update
-    _validate_config_update(payload, current_config)
+    _validate_config_update(payload, current_config, db=db)
 
     # Convert payload to dict, excluding None values
     update_dict = payload.model_dump(exclude_none=True)
@@ -140,7 +164,7 @@ def update_trading_config(
     # Update configuration
     config = repo.update(current.id, **update_dict)
 
-    return _config_to_response(config)
+    return _config_to_response(config, db=db)
 
 
 @router.post("/trading-config/reset", response_model=TradingConfigResponse)
@@ -151,4 +175,4 @@ def reset_trading_config(
     """Reset user's trading configuration to defaults"""
     repo = UserTradingConfigRepository(db)
     config = repo.reset_to_defaults(current.id)
-    return _config_to_response(config)
+    return _config_to_response(config, db=db)

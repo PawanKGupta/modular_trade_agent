@@ -58,6 +58,8 @@ export interface TradingConfig {
 	ml_enabled: boolean;
 	/** When true, analysis may override rule target/stop via ML price models (if present on server). */
 	ml_price_enabled: boolean;
+	/** False when ml_price_enabled is on but no price-target .pkl exists on the API host. */
+	ml_price_models_available: boolean;
 	ml_model_version: string | null;
 	ml_confidence_threshold: number;
 	ml_combine_with_rules: boolean;
@@ -172,6 +174,7 @@ export const DEFAULT_CONFIG: TradingConfig = {
 	news_sentiment_neg_threshold: -0.25,
 	ml_enabled: false,
 	ml_price_enabled: false,
+	ml_price_models_available: false,
 	ml_model_version: null,
 	ml_confidence_threshold: 0.7,
 	ml_combine_with_rules: true,

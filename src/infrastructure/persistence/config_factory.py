@@ -2,6 +2,7 @@
 
 from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
+from utils.ml_price_availability import resolve_ml_price_target_path_str
 
 
 def create_default_user_config(user_id: int) -> UserTradingConfig:
@@ -124,7 +125,7 @@ def db_config_to_strategy_config(db_config: UserTradingConfig) -> StrategyConfig
         ml_enabled=db_config.ml_enabled,  # Use user's ML enabled setting
         # Default; can be resolved from ml_model_version if needed
         ml_verdict_model_path="models/verdict_model_random_forest.pkl",
-        ml_price_model_path="models/price_model_random_forest.pkl",
+        ml_price_model_path=resolve_ml_price_target_path_str(),
         ml_confidence_threshold=db_config.ml_confidence_threshold,
         ml_combine_with_rules=db_config.ml_combine_with_rules,
         ml_price_enabled=db_config.ml_price_enabled,

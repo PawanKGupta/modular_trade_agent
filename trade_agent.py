@@ -467,12 +467,19 @@ def main_sequential(
         results = []
         for t in tickers:
             try:
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    record_analysis_yahoo_calls,
+                    reset_symbol_yahoo_counter,
+                )
+
+                reset_symbol_yahoo_counter()
                 r = analyze_ticker(
                     t,
                     enable_multi_timeframe=enable_multi_timeframe,
                     export_to_csv=False,
                     config=analysis_config,
                 )
+                record_analysis_yahoo_calls(r)
                 results.append(r)
 
                 # Log based on analysis status

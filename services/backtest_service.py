@@ -131,6 +131,13 @@ class BacktestService:
                 ticker = stock_result.get("ticker", "Unknown")
                 logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
 
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    apply_ohlcv_ops_fields,
+                    reset_symbol_yahoo_counter,
+                )
+
+                reset_symbol_yahoo_counter()
+
                 # Preserve initial ML predictions (2025-11-11)
                 # Backtest may overwrite these, so save them first
                 # Use dict access to preserve even if None/empty (vs .get() which might lose them)
@@ -193,6 +200,8 @@ class BacktestService:
 
                 stock_result["combined_score"] = combined_score
                 stock_result["backtest_score"] = backtest_score
+
+                apply_ohlcv_ops_fields(stock_result, ticker)
 
                 # Re-classify based on combined score and key metrics
                 self._reclassify_with_backtest(stock_result, backtest_score, combined_score)
@@ -361,9 +370,13 @@ class BacktestService:
                 enhanced_results.append(stock_result)
 
             except Exception as e:
-                logger.error(
-                    f"Error adding backtest score for {stock_result.get('ticker', 'Unknown')}: {e}"
+                ticker = stock_result.get("ticker", "Unknown")
+                logger.error(f"Error adding backtest score for {ticker}: {e}")
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    apply_ohlcv_ops_fields,
                 )
+
+                apply_ohlcv_ops_fields(stock_result, ticker)
                 # Add stock without backtest score
                 stock_result["backtest"] = {"score": 0, "error": str(e)}
                 # Restore initial ML predictions even on error (2025-11-11)

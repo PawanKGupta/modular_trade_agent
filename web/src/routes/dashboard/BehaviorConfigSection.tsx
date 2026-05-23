@@ -147,6 +147,13 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
 						Separate from verdict ML. Uses confidence threshold when either ML option is enabled.
 					</div>
+					{config.ml_price_enabled && config.ml_price_models_available === false && (
+						<p className="text-xs text-amber-400 mt-2 ml-6" role="status">
+							ML price is enabled but no price model file is on the server (e.g.{' '}
+							<code className="text-amber-200">models/price_model_random_forest.pkl</code>
+							). Targets and stops use rule-based values until an operator deploys a trained model.
+						</p>
+					)}
 				</div>
 				<div className="mb-4">
 					<label htmlFor="ml_enabled" className="flex items-center gap-2">

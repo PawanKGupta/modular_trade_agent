@@ -71,6 +71,18 @@ set BULK_EXPECT_INTEGRATED_BACKTEST=true
 python trade_agent.py --backtest
 ```
 
+## Web UI analysis
+
+Dashboard **Analysis** (individual service `run_once` / scheduler) runs the same subprocess as CLI:
+
+```text
+python trade_agent.py --backtest --json-output analysis_results/latest_results.json
+```
+
+with `TRADE_AGENT_USER_ID` set to the logged-in user. Trading settings from the DB drive analysis (`ml_enabled`, thresholds, chart quality, etc.); the job does **not** pass CLI `--ml`. See [COMMANDS.md](../reference/COMMANDS.md) for CLI `--ml` vs user config.
+
+**Server requirement:** The API process must use the same `DB_URL` (and `alembic upgrade head`) as your OHLCV cache. The subprocess inherits the server environment; if the server still uses default SQLite while you warm Postgres from a manual shell, UI runs will not share that cache.
+
 ## Postgres / SQLite OHLCV cache
 
 Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). **Listing-aware coverage:** expected bars are counted from `max(requested_start, first cached bar in range)` (and `ohlcv_symbol_meta.first_date` when the window is empty), so young listings are not treated as permanently incomplete versus a 5y lookback. Interior holiday holes that Yahoo never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
@@ -115,6 +127,20 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 .venv\Scripts\python.exe tools\bulk_analysis_job.py --resume 3 --repair-cache
 ```
 
-Optional CSV columns (ops only, excluded from ML features): `cache_health_status`, `yahoo_calls`.
+Optional CSV columns (ops only, excluded from ML features): `cache_health_status`, `yahoo_calls`. Set by `src/application/services/ohlcv_bulk_ops.py` on `trade_agent.py --backtest`, async/sequential analysis + backtest, and `tools/bulk_analysis_job.py`.
 
-Apply schema: `alembic upgrade head` (revision `20260522_ohlcv`).
+| Column | Meaning |
+|--------|---------|
+| `cache_health_status` | `assess_price_cache_health` over ~5y (`healthy`, `partial`, `empty`, `disabled`, `unknown`), or bulk job override `skipped` when `--repair-cache` is off |
+| `yahoo_calls` | Per-symbol Yahoo fetches: analysis phase + backtest phase (since last per-symbol counter reset), not a run-wide cumulative total |
+
+**ML on/off** does not change caching: OHLCV still flows through `fetch_ohlcv_yf` read-through cache. ML only affects verdict/backtest scoring and buyable filtering (user `ml_enabled` from Trading config, or CLI `--ml` when no `TRADE_AGENT_USER_ID` config loads).
+
+Apply schema (both revisions):
+
+```bash
+alembic upgrade head
+```
+
+- `20260522_ohlcv` — `price_cache`, `ohlcv_symbol_meta`, `corporate_actions`, bulk job tables
+- `20260523_ohlcv_meta` — `fetch_status` / ingest metadata on `ohlcv_symbol_meta`

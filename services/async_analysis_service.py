@@ -6,17 +6,15 @@ Expected to reduce analysis time by 80% for batch operations.
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional
-from src.infrastructure.db.timezone_utils import ist_now_naive
+from typing import Any
 
+from config.strategy_config import StrategyConfig
+from core.csv_exporter import CSVExporter
 from services.analysis_service import AnalysisService
 from services.async_data_service import AsyncDataService
-from services.data_service import DataService
 from services.cache_service import CacheService
-from services.models import AnalysisResult
-from core.csv_exporter import CSVExporter
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
-from config.strategy_config import StrategyConfig
 
 
 class AsyncAnalysisService:
@@ -32,25 +30,29 @@ class AsyncAnalysisService:
 
     def __init__(
         self,
-        analysis_service: Optional[AnalysisService] = None,
-        async_data_service: Optional[AsyncDataService] = None,
-        cache_service: Optional[CacheService] = None,
+        analysis_service: AnalysisService | None = None,
+        async_data_service: AsyncDataService | None = None,
+        cache_service: CacheService | None = None,
         max_concurrent: int = 10,
-        config: Optional[StrategyConfig] = None,
+        config: StrategyConfig | None = None,
     ):
         """
         Initialize async analysis service
 
         Args:
             analysis_service: Underlying AnalysisService (creates default if None)
-            async_data_service: AsyncDataService for parallel data fetching (creates default if None)
+            async_data_service: AsyncDataService for parallel fetching (default if None)
             cache_service: CacheService for caching (creates default if None)
             max_concurrent: Maximum concurrent analyses
             config: Strategy configuration (uses default if None)
         """
         self.config = config or StrategyConfig.default()
         # Debug logging to trace config
-        logger.debug(f"AsyncAnalysisService init: ml_enabled={self.config.ml_enabled}, config type={type(self.config)}")
+        logger.debug(
+            "AsyncAnalysisService init: ml_enabled=%s, config type=%s",
+            self.config.ml_enabled,
+            type(self.config),
+        )
         self.analysis_service = analysis_service or AnalysisService(config=self.config)
         self.cache_service = cache_service or CacheService()
         self.async_data_service = async_data_service or AsyncDataService(
@@ -64,9 +66,9 @@ class AsyncAnalysisService:
         ticker: str,
         enable_multi_timeframe: bool = True,
         export_to_csv: bool = False,
-        csv_exporter: Optional[CSVExporter] = None,
-        as_of_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        csv_exporter: CSVExporter | None = None,
+        as_of_date: str | None = None,
+    ) -> dict[str, Any]:
         """
         Async analyze a single ticker
 
@@ -87,6 +89,12 @@ class AsyncAnalysisService:
             loop = asyncio.get_event_loop()
 
             try:
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    record_analysis_yahoo_calls,
+                    reset_symbol_yahoo_counter,
+                )
+
+                reset_symbol_yahoo_counter()
                 # Run blocking analysis in executor
                 result = await loop.run_in_executor(
                     None,
@@ -98,6 +106,7 @@ class AsyncAnalysisService:
                     as_of_date,
                 )
 
+                record_analysis_yahoo_calls(result)
                 logger.debug(
                     f"Async analysis completed for {ticker}: {result.get('verdict', 'unknown')}"
                 )
@@ -108,11 +117,11 @@ class AsyncAnalysisService:
 
     async def analyze_batch_async(
         self,
-        tickers: List[str],
+        tickers: list[str],
         enable_multi_timeframe: bool = True,
         export_to_csv: bool = False,
-        as_of_date: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        as_of_date: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Analyze multiple tickers in parallel
 
@@ -154,7 +163,7 @@ class AsyncAnalysisService:
 
         # Process results and handle exceptions
         processed_results = []
-        for ticker, result in zip(tickers, results):
+        for ticker, result in zip(tickers, results, strict=True):
             if isinstance(result, Exception):
                 logger.error(f"Exception in async analysis for {ticker}: {result}")
                 processed_results.append(
@@ -182,18 +191,18 @@ class AsyncAnalysisService:
         logger.info(
             f"Async batch analysis complete: {successful}/{len(tickers)} successful, "
             f"{buyable} buyable, took {duration:.2f}s "
-            f"({duration/len(tickers):.2f}s per ticker on average)"
+            f"({duration / len(tickers):.2f}s per ticker on average)"
         )
 
         return processed_results
 
     async def analyze_batch_with_data_prefetch(
         self,
-        tickers: List[str],
+        tickers: list[str],
         enable_multi_timeframe: bool = True,
         export_to_csv: bool = False,
-        as_of_date: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        as_of_date: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Analyze multiple tickers with data prefetching
 

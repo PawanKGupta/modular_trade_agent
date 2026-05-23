@@ -54,6 +54,7 @@ const mockConfig: tradingConfigApi.TradingConfig = {
 	news_sentiment_neg_threshold: -0.25,
 	ml_enabled: false,
 	ml_price_enabled: false,
+	ml_price_models_available: false,
 	ml_model_version: null,
 	ml_confidence_threshold: 0.7,
 	ml_combine_with_rules: true,

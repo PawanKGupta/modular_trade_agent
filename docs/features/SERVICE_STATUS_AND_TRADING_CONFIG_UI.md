@@ -204,7 +204,7 @@ Implementation lives in:
 3. Backend creates `MLTrainingJob` row, subsets rows (`entry_date` / `backtest_date`) according to watermark + incremental rules, invokes sklearn trainers in `services/ml_training_service.py`, writes **`{algorithm}-{vN}.pkl`** + paired `{stem}_features.txt` + **`{stem}.meta.json`**, persists `accuracy`/R², and stamps `training_data_through_date`.
 4. Jobs + models queries auto-refresh so the UI reflects completion.
 5. Admin can activate any inactive model; first model of each type auto-activates.
-6. Users select `ml_model_version` (or default to active) via Trading Config.
+6. Users select `ml_model_version` via Trading Config, or leave **NULL** to use the **active** `ml_models` row (else `models/verdict_model_random_forest.pkl`). Register models via admin training + activate; see [ML_COMPLETE_GUIDE.md](../architecture/ML_COMPLETE_GUIDE.md) (*ML model versioning*).
 
 ### Tests
 | Layer | Files |
