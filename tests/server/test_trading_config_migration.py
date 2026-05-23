@@ -1,11 +1,15 @@
 """Test trading config API with missing fields (migration scenarios)"""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from server.app.routers.trading_config import _config_to_response
 
 
-def test_config_to_response_handles_missing_paper_capital():
+@patch(
+    "server.app.routers.trading_config.ml_price_target_model_available",
+    return_value=False,
+)
+def test_config_to_response_handles_missing_paper_capital(_mock_ml_price_avail):
     """Test that _config_to_response handles configs without paper_trading_initial_capital
 
     This simulates the scenario where:
@@ -67,14 +71,19 @@ def test_config_to_response_handles_missing_paper_capital():
     old_config = OldConfig()
 
     # This should NOT raise ValidationError
-    response = _config_to_response(old_config)
+    response = _config_to_response(old_config, db=MagicMock())
 
     # Should use default value
     assert response.paper_trading_initial_capital == 1000000.0
     assert response.user_capital == 100000.0
+    assert response.ml_price_models_available is False
 
 
-def test_config_to_response_uses_existing_paper_capital():
+@patch(
+    "server.app.routers.trading_config.ml_price_target_model_available",
+    return_value=False,
+)
+def test_config_to_response_uses_existing_paper_capital(_mock_ml_price_avail):
     """Test that _config_to_response uses the value when it exists"""
     # Create a mock config object WITH paper_trading_initial_capital
     mock_config = MagicMock()
@@ -119,8 +128,9 @@ def test_config_to_response_uses_existing_paper_capital():
     mock_config.ml_confidence_threshold = 0.7
     mock_config.ml_combine_with_rules = True
 
-    response = _config_to_response(mock_config)
+    response = _config_to_response(mock_config, db=MagicMock())
 
     # Should use the actual value
     assert response.paper_trading_initial_capital == 500000.0
     assert response.user_capital == 100000.0
+    assert response.ml_price_models_available is False
