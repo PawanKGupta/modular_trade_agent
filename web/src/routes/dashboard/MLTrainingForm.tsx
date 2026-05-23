@@ -8,10 +8,15 @@ interface Props {
 	serverError?: string | null;
 }
 
+const DEFAULT_TRAINING_PATH: Record<StartTrainingPayload['model_type'], string> = {
+	verdict_classifier: 'data/training/verdict_classifier.csv',
+	price_regressor: 'data/ml_training_data_price.csv',
+};
+
 export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 	const [modelType, setModelType] = useState<StartTrainingPayload['model_type']>('verdict_classifier');
 	const [algorithm, setAlgorithm] = useState<StartTrainingPayload['algorithm']>('xgboost');
-	const [trainingDataPath, setTrainingDataPath] = useState('data/training/verdict_classifier.csv');
+	const [trainingDataPath, setTrainingDataPath] = useState(DEFAULT_TRAINING_PATH.verdict_classifier);
 	const [hyperparametersText, setHyperparametersText] = useState('{"max_depth": 6, "learning_rate": 0.1}');
 	const [notes, setNotes] = useState<string>('');
 	const [autoActivate, setAutoActivate] = useState(true);
@@ -68,7 +73,14 @@ export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 					<span className="text-[var(--muted)]">Model Type</span>
 					<select
 						value={modelType}
-						onChange={(e) => setModelType(e.target.value as StartTrainingPayload['model_type'])}
+						onChange={(e) => {
+							const next = e.target.value as StartTrainingPayload['model_type'];
+							setModelType(next);
+							setTrainingDataPath(DEFAULT_TRAINING_PATH[next]);
+							if (next === 'price_regressor' && algorithm === 'logistic_regression') {
+								setAlgorithm('xgboost');
+							}
+						}}
 						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="verdict_classifier">Verdict Classifier</option>
@@ -85,7 +97,9 @@ export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 					>
 						<option value="xgboost">XGBoost</option>
 						<option value="random_forest">Random Forest</option>
-						<option value="logistic_regression">Logistic Regression</option>
+						{modelType === 'verdict_classifier' && (
+							<option value="logistic_regression">Logistic Regression</option>
+						)}
 					</select>
 				</label>
 			</div>
@@ -96,10 +110,15 @@ export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 					type="text"
 					value={trainingDataPath}
 					onChange={(e) => setTrainingDataPath(e.target.value)}
-					placeholder="data/training/verdict_classifier.csv"
+					placeholder={DEFAULT_TRAINING_PATH[modelType]}
 					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
 				/>
 			</label>
+			<p className="text-xs text-[var(--muted)]">
+				{modelType === 'price_regressor'
+					? 'Price regressor needs actual_pnl_pct and entry_date (use data/ml_training_data_price.csv).'
+					: 'Verdict classifier needs a label column (use data/training/verdict_classifier.csv).'}
+			</p>
 
 			<label className="text-xs sm:text-sm flex flex-col gap-1">
 				<span className="text-[var(--muted)]">Hyperparameters (JSON)</span>

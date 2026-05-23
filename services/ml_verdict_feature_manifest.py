@@ -23,7 +23,12 @@ def verdict_feature_manifest_path(model_path: Path | str) -> Path:
     return p.with_name(f"{p.stem}.verdict_features.json")
 
 
-def write_verdict_feature_manifest(model_path: Path | str, feature_names: list[str]) -> Path:
+def write_verdict_feature_manifest(
+    model_path: Path | str,
+    feature_names: list[str],
+    *,
+    label_classes: list[str] | None = None,
+) -> Path:
     """
     Write a versioned manifest listing exact training column order for serve-time alignment.
 
@@ -46,6 +51,10 @@ def write_verdict_feature_manifest(model_path: Path | str, feature_names: list[s
         "feature_schema_version": VERDICT_FEATURE_SCHEMA_VERSION,
         "feature_names": list(feature_names),
     }
+    if label_classes is not None:
+        if not label_classes or not all(isinstance(c, str) and c.strip() for c in label_classes):
+            raise ValueError("label_classes must be a non-empty list of non-empty strings")
+        payload["label_classes"] = list(label_classes)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     logger.info(
@@ -107,7 +116,21 @@ def load_verdict_feature_manifest(model_path: Path | str) -> dict[str, Any] | No
         )
         return None
 
-    return {
+    out: dict[str, Any] = {
         "feature_names": names,
         "feature_schema_version": int(schema),
     }
+    raw_labels = data.get("label_classes")
+    if raw_labels is not None:
+        if (
+            isinstance(raw_labels, list)
+            and len(raw_labels) > 0
+            and all(isinstance(x, str) and x.strip() for x in raw_labels)
+        ):
+            out["label_classes"] = [str(x) for x in raw_labels]
+        else:
+            logger.warning(
+                "Invalid label_classes in manifest %s (expected non-empty list of strings)",
+                path.name,
+            )
+    return out

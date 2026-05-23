@@ -25,6 +25,7 @@ try:
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
     from sklearn.metrics import accuracy_score, classification_report, mean_squared_error, r2_score
     from sklearn.model_selection import GroupKFold, train_test_split
+    from sklearn.preprocessing import LabelEncoder
 
     SKLEARN_AVAILABLE = True
 except ImportError:
@@ -237,6 +238,7 @@ class MLTrainingService:
         elif model_type == "logistic_regression":
             from sklearn.linear_model import LogisticRegression
 
+            # sklearn >= 1.8 removed multi_class; lbfgs handles multiclass by default.
             model = LogisticRegression(
                 C=_coerce_hp(hp, "C", float, 1.0),
                 max_iter=_coerce_hp(hp, "max_iter", int, 500),
@@ -244,27 +246,42 @@ class MLTrainingService:
                 solver="lbfgs",
                 random_state=random_state,
                 n_jobs=-1,
-                multi_class="auto",
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
+
+        # XGBoost requires integer class labels; RF/logistic accept strings.
+        label_encoder: LabelEncoder | None = None
+        label_classes: list[str] | None = None
+        y_train_fit = y_train
+        y_test_fit = y_test
+        if model_type == "xgboost":
+            label_encoder = LabelEncoder()
+            label_encoder.fit(np.concatenate([y_train, y_test]))
+            label_classes = [str(c) for c in label_encoder.classes_]
+            y_train_fit = label_encoder.transform(y_train)
+            y_test_fit = label_encoder.transform(y_test)
+            logger.info("   Encoded string labels for XGBoost: %s", label_classes)
 
         logger.info(f"Training {model_type} model...")
 
         # PHASE 5: Use sample weights if available (quantity-based weighting)
         if sample_weights_train is not None:
             logger.info("   Applying quantity-based sample weights to training")
-            model.fit(X_train, y_train, sample_weight=sample_weights_train)
+            model.fit(X_train, y_train_fit, sample_weight=sample_weights_train)
         else:
-            model.fit(X_train, y_train)
+            model.fit(X_train, y_train_fit)
 
         # Evaluate
         y_pred = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
+        accuracy = accuracy_score(y_test_fit, y_pred)
+        report_labels = label_classes if label_classes else None
 
         logger.info("\n? Model Evaluation:")
         logger.info(f"   Accuracy: {accuracy:.2%}")
-        logger.info(f"\n{classification_report(y_test, y_pred)}")
+        logger.info(
+            f"\n{classification_report(y_test_fit, y_pred, target_names=report_labels, zero_division=0)}"
+        )
 
         # Feature importance
         if hasattr(model, "feature_importances_"):
@@ -290,7 +307,9 @@ class MLTrainingService:
         feature_cols_path.write_text("\n".join(feature_cols), encoding="utf-8")
         logger.info(f"   Feature columns saved to: {feature_cols_path}")
 
-        write_verdict_feature_manifest(model_path, feature_cols)
+        write_verdict_feature_manifest(
+            model_path, feature_cols, label_classes=label_classes
+        )
 
         return str(model_path), float(accuracy)
 
@@ -445,6 +464,12 @@ class MLTrainingService:
             raise ValueError("Training data is empty")
 
         df = cast(pd.DataFrame, frame)
+
+        if target_column not in df.columns:
+            raise ValueError(
+                f"Target column '{target_column}' not found in training data. "
+                f"Columns: {list(df.columns)}. For price models use data/ml_training_data_price.csv."
+            )
 
         exclude_cols = price_regressor_exclude_columns(target_column=target_column)
         feature_cols = select_training_feature_columns(df, exclude_cols)
