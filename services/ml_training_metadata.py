@@ -49,6 +49,7 @@ BULK_ANALYSIS_CSV_METADATA: frozenset[str] = frozenset(
         "signals",
         "cache_health_status",
         "yahoo_calls",
+        "_yahoo_calls_analysis",
         "analysis_duration_sec",
         "cache_hit_pct",
         "ml_verdict",

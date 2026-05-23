@@ -115,6 +115,6 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 .venv\Scripts\python.exe tools\bulk_analysis_job.py --resume 3 --repair-cache
 ```
 
-Optional CSV columns (ops only, excluded from ML features): `cache_health_status`, `yahoo_calls`.
+Optional CSV columns (ops only, excluded from ML features): `cache_health_status`, `yahoo_calls`. Populated on `trade_agent.py --backtest` (analysis + backtest Yahoo counts per symbol) and `tools/bulk_analysis_job.py`.
 
 Apply schema: `alembic upgrade head` (revision `20260522_ohlcv`).

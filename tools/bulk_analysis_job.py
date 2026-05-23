@@ -55,10 +55,16 @@ def _run_symbol(symbol: str, *, dip_mode: bool) -> dict:
     from config.strategy_config import StrategyConfig  # noqa: PLC0415
     from services.analysis_service import AnalysisService  # noqa: PLC0415
     from services.backtest_service import BacktestService  # noqa: PLC0415
+    from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+        record_analysis_yahoo_calls,
+        reset_symbol_yahoo_counter,
+    )
 
     config = StrategyConfig.default()
+    reset_symbol_yahoo_counter()
     service = AnalysisService(config=config)
     result = service.analyze_ticker(ticker=symbol, enable_multi_timeframe=True, export_to_csv=False)
+    record_analysis_yahoo_calls(result)
     if not isinstance(result, dict):
         return {"ticker": symbol, "status": "failed"}
 
@@ -121,6 +127,10 @@ def run_job(
                 t0 = time.perf_counter()
                 cache_health = "skipped"
                 try:
+                    from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                        apply_ohlcv_ops_fields,
+                    )
+
                     if repair_cache:
                         sync_corporate_actions(symbol, db)
                         report = assess_price_cache_health(symbol, start_d, end_d, db)
@@ -129,12 +139,7 @@ def run_job(
                             repair_from_health_report(report, db)
 
                     row = _run_symbol(symbol, dip_mode=dip_mode)
-                    row["cache_health_status"] = cache_health
-                    from src.application.services.ohlcv_cache_service import (  # noqa: PLC0415
-                        get_ohlcv_cache_stats,
-                    )
-
-                    row["yahoo_calls"] = get_ohlcv_cache_stats().get("yahoo_calls", 0)
+                    apply_ohlcv_ops_fields(row, symbol, cache_health_override=cache_health)
                     rows.append(row)
                     repo.upsert_symbol_status(
                         job_id,
