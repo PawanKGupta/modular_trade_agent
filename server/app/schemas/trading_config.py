@@ -65,6 +65,8 @@ class TradingConfigResponse(BaseModel):
     ml_enabled: bool
     #: When True, analysis may override target/stop via ``MLPriceService`` if models exist.
     ml_price_enabled: bool = False
+    #: Server-side: price-target ``.pkl`` on disk (``utils.ml_price_availability``).
+    ml_price_models_available: bool = False
     ml_model_version: str | None = None
     ml_confidence_threshold: float
     ml_combine_with_rules: bool

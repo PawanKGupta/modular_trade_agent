@@ -10,6 +10,7 @@ from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
 from utils.logger import logger
 from utils.ml_model_resolver import get_model_path_from_version
+from utils.ml_price_availability import resolve_ml_price_target_path_str
 
 
 def _resolve_ml_model_path(
@@ -138,8 +139,7 @@ def user_config_to_strategy_config(
         ml_verdict_model_path=_resolve_ml_model_path(
             user_config.ml_model_version, "verdict_classifier", db_session
         ),
-        # TODO: Add price model version support
-        ml_price_model_path="models/price_model_random_forest.pkl",
+        ml_price_model_path=resolve_ml_price_target_path_str(db_session=db_session),
         ml_confidence_threshold=user_config.ml_confidence_threshold,
         ml_combine_with_rules=user_config.ml_combine_with_rules,
         # Order Defaults

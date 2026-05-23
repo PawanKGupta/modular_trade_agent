@@ -84,16 +84,39 @@ class TestTradingConfigAPI:
         assert data["max_portfolio_size"] == 6
         assert data["chart_quality_enabled"] is True
         assert data.get("ml_price_enabled") is False
+        assert data.get("ml_price_models_available") is False
 
-    def test_update_ml_price_enabled(self, client, test_user_with_config, auth_token):
-        """PUT persists ml_price_enabled (boolean)."""
+    def test_update_ml_price_enabled_without_model_rejected(
+        self, client, test_user_with_config, auth_token
+    ):
+        """PUT cannot enable ml_price when no price model file exists on server."""
+        response = client.put(
+            "/api/v1/user/trading-config",
+            headers={"Authorization": f"Bearer {auth_token}"},
+            json={"ml_price_enabled": True},
+        )
+        assert response.status_code == 400
+        assert "price model" in response.json()["detail"].lower()
+
+    def test_update_ml_price_enabled_with_model(
+        self, client, test_user_with_config, auth_token, tmp_path, monkeypatch
+    ):
+        """PUT persists ml_price_enabled when a price model file is present."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "price_model_random_forest.pkl"
+        model_file.write_bytes(b"stub")
+
+        monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
         response = client.put(
             "/api/v1/user/trading-config",
             headers={"Authorization": f"Bearer {auth_token}"},
             json={"ml_price_enabled": True},
         )
         assert response.status_code == 200
-        assert response.json()["ml_price_enabled"] is True
+        body = response.json()
+        assert body["ml_price_enabled"] is True
+        assert body["ml_price_models_available"] is True
 
     def test_get_trading_config_returns_existing(
         self, client, db_session, test_user_with_config, auth_token

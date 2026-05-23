@@ -123,8 +123,11 @@ class AnalysisService:
         try:
             from services.ml_price_service import MLPriceService
 
+            from utils.ml_price_availability import discover_ml_price_target_path
+
             raw_tgt = getattr(self.config, "ml_price_model_path", None) or ""
-            tgt = raw_tgt.strip() or None
+            discovered = discover_ml_price_target_path(configured_path=raw_tgt or None)
+            tgt = str(discovered) if discovered is not None else (raw_tgt.strip() or None)
             raw_stp = getattr(self.config, "ml_stop_loss_model_path", None)
             stp = (raw_stp.strip() or None) if isinstance(raw_stp, str) else raw_stp
 
@@ -137,8 +140,11 @@ class AnalysisService:
                     svc.stop_loss_model_loaded,
                 )
             else:
-                logger.info(
-                    "ml_price_enabled=True but no price/stop ML models loaded; using rule-only targets"
+                expected = getattr(self.config, "ml_price_model_path", None) or "models/"
+                logger.warning(
+                    "ml_price_enabled=True but no price/stop ML models on disk (expected e.g. %s); "
+                    "using rule-only targets",
+                    expected,
                 )
         except Exception as e:
             logger.warning("Could not initialize MLPriceService: %s", e)
