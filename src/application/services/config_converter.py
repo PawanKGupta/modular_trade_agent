@@ -9,7 +9,7 @@ from __future__ import annotations
 from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
 from utils.logger import logger
-from utils.ml_model_resolver import get_model_path_from_version
+from utils.ml_model_resolver import get_active_model_path, get_model_path_from_version
 from utils.ml_price_availability import resolve_ml_price_target_path_str
 
 
@@ -31,22 +31,32 @@ def _resolve_ml_model_path(
     """
     default_path = "models/verdict_model_random_forest.pkl"
 
-    if not ml_model_version or not db_session:
+    if not db_session:
         return default_path
 
     try:
-        resolved_path = get_model_path_from_version(db_session, model_type, ml_model_version)
-        if resolved_path:
-            return resolved_path
-        else:
-            # If version specified but not found, log warning but use default
+        if ml_model_version:
+            resolved_path = get_model_path_from_version(db_session, model_type, ml_model_version)
+            if resolved_path:
+                return resolved_path
             logger.warning(
-                f"ML model version {ml_model_version} not found in database, using default model"
+                "ML model version %s not found for %s, using default path",
+                ml_model_version,
+                model_type,
             )
             return default_path
+
+        active_path = get_active_model_path(db_session, model_type)
+        if active_path:
+            return active_path
     except Exception as e:
-        logger.warning(f"Error resolving ML model path from version {ml_model_version}: {e}")
-        return default_path
+        logger.warning(
+            "Error resolving ML model path (version=%s, type=%s): %s",
+            ml_model_version,
+            model_type,
+            e,
+        )
+    return default_path
 
 
 def user_config_to_strategy_config(
