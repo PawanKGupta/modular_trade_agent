@@ -126,3 +126,43 @@ MAX_CONCURRENT_ANALYSES = int(os.getenv("MAX_CONCURRENT_ANALYSES", "5"))  # conc
 # Telegram API config (put real tokens in .env)
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "xxxxxx")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "xxxx")
+
+# Postgres/SQLite OHLCV cache (bulk analysis + integrated backtest)
+_db_url_present = bool(os.getenv("DB_URL", "sqlite:///./data/app.db"))
+_ohlcv_cache_env = os.getenv("OHLCV_CACHE_ENABLED", "true" if _db_url_present else "false")
+OHLCV_CACHE_ENABLED = _ohlcv_cache_env.lower() in ("1", "true", "yes", "on")
+OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS = int(
+    os.getenv("OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS", "10")
+)
+OHLCV_CACHE_MIN_COVERAGE_PCT = float(os.getenv("OHLCV_CACHE_MIN_COVERAGE_PCT", "85.0"))
+# Reject Yahoo ingest when validation fails (do not upsert corrupt/empty fetches).
+OHLCV_REJECT_INVALID_FETCH = os.getenv("OHLCV_REJECT_INVALID_FETCH", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# Minimum daily bars required for indicator-heavy paths (EMA200); partial cache below this warns.
+OHLCV_MIN_DAILY_BARS_FOR_INDICATORS = int(os.getenv("OHLCV_MIN_DAILY_BARS_FOR_INDICATORS", "250"))
+# Alternative: at least this many years of listing history (trading days / 252).
+OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS = float(
+    os.getenv("OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS", "1.0")
+)
+# When true, get_ohlcv returns None for daily fetches that fail bar-count / listing-age gates.
+OHLCV_ENFORCE_INDICATOR_MIN_BARS = os.getenv(
+    "OHLCV_ENFORCE_INDICATOR_MIN_BARS", "true"
+).lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# Listing-window interior gap: refetch once when coverage in [MIN, MAX) and start window has holes.
+OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT = float(
+    os.getenv("OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT", "95.0")
+)
+OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS = int(
+    os.getenv("OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS", "60")
+)
+OHLCV_LISTING_START_GAP_MIN_MISSING = int(os.getenv("OHLCV_LISTING_START_GAP_MIN_MISSING", "5"))
+CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))

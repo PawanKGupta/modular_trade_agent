@@ -15,6 +15,7 @@ from sqlalchemy import (
     LargeBinary,
     Numeric,
     String,
+    Text,
     Time,
     UniqueConstraint,
 )
@@ -396,30 +397,107 @@ class PnlCalculationAudit(Base):
 
 
 class PriceCache(Base):
-    """Historical price cache for symbols (Phase 0.6)"""
+    """Historical OHLCV cache for symbols (Postgres-backed, Phase 0.6 + OHLCV plan)."""
 
     __tablename__ = "price_cache"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    interval: Mapped[str] = mapped_column(String(8), default="1d", nullable=False)
+    price_basis: Mapped[str] = mapped_column(String(16), default="unadjusted", nullable=False)
 
-    # Price data
     open: Mapped[float | None] = mapped_column(Float, nullable=True)
     high: Mapped[float | None] = mapped_column(Float, nullable=True)
     low: Mapped[float | None] = mapped_column(Float, nullable=True)
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Metadata
-    source: Mapped[str] = mapped_column(
-        String(32), default="yfinance", nullable=False
-    )  # 'yfinance', 'broker', 'manual'
+    source: Mapped[str] = mapped_column(String(32), default="yfinance", nullable=False)
     cached_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("symbol", "date", name="uq_price_cache_symbol_date"),
-        Index("ix_price_cache_symbol_date", "symbol", "date"),
+        UniqueConstraint("symbol", "date", "interval", name="uq_price_cache_symbol_date_interval"),
+        Index("ix_price_cache_symbol_date_interval", "symbol", "date", "interval"),
+    )
+
+
+class OhlcvSymbolMeta(Base):
+    """Per-symbol OHLCV cache coverage summary."""
+
+    __tablename__ = "ohlcv_symbol_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(8), nullable=False)
+    first_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    fetch_status: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    coverage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_validation_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "interval", name="uq_ohlcv_symbol_meta_symbol_interval"),
+    )
+
+
+class CorporateAction(Base):
+    """Stock splits and similar events for cache health checks."""
+
+    __tablename__ = "corporate_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    ex_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(16), default="split", nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="yfinance", nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "ex_date", "action_type", name="uq_corporate_actions_symbol_ex_type"
+        ),
+    )
+
+
+class BulkAnalysisJob(Base):
+    """Chunked bulk analysis run (trade_agent --backtest orchestration)."""
+
+    __tablename__ = "bulk_analysis_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    chunk_size: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    symbols_json: Mapped[str] = mapped_column(Text, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    output_csv: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    env_snapshot_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+
+
+class BulkAnalysisSymbolStatus(Base):
+    """Per-symbol outcome for a bulk analysis job."""
+
+    __tablename__ = "bulk_analysis_symbol_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("bulk_analysis_jobs.id"), index=True, nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backtest_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cache_health: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "symbol", name="uq_bulk_analysis_symbol_status_job_symbol"),
     )
 
 

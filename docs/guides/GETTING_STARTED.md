@@ -175,6 +175,21 @@ Before live trading, test with paper trading:
 
 1. Navigate to **Buying Zone** to see trading signals
 2. Signals are generated based on your strategy configuration
+
+### 5. Bulk backtest (CLI, optional)
+
+For ChartInk list analysis with integrated backtest scoring:
+
+```bash
+# Merge config/bulk_reliability.env.example into .env (MAX_CONCURRENT_ANALYSES=1, etc.)
+python trade_agent.py --backtest
+```
+
+See [Bulk analysis reliability](BULK_ANALYSIS_RELIABILITY.md) for engine labels (`backtest_mode` in CSV) and validation.
+
+```bash
+.venv\Scripts\python.exe tools/validate_bulk_analysis_final.py
+```
 3. Review and approve/reject signals as needed
 
 ## Common Issues

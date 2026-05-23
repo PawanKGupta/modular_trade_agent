@@ -15,8 +15,8 @@ from config.settings import (
     RETRY_MAX_ATTEMPTS,
     RETRY_MAX_DELAY,
 )
-from utils.circuit_breaker import CircuitBreaker
 from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+from utils.circuit_breaker import CircuitBreaker
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
 
@@ -219,9 +219,66 @@ def _append_current_day_data(df, live_data):
         return df  # Return original df if append fails
 
 
+def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
+    """
+    Fetch OHLCV via Postgres/SQLite cache when enabled, else direct Yahoo.
+
+    See ``fetch_ohlcv_yf_raw`` for the underlying Yahoo implementation.
+    """
+    try:
+        from config.settings import OHLCV_CACHE_ENABLED  # noqa: PLC0415
+
+        if OHLCV_CACHE_ENABLED:
+            from src.application.services.ohlcv_cache_service import (  # noqa: PLC0415
+                create_ohlcv_cache_service,
+            )
+            from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
+            db = SessionLocal()
+            try:
+                svc = create_ohlcv_cache_service(db, fetch_func=fetch_ohlcv_yf_raw)
+                if svc is not None:
+                    df = svc.get_ohlcv(
+                        ticker,
+                        days=days,
+                        interval=interval,
+                        end_date=end_date,
+                        add_current_day=add_current_day,
+                    )
+                    if df is not None and not df.empty:
+                        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+                            log_ohlcv_cache,
+                        )
+
+                        log_ohlcv_cache(
+                            logger,
+                            "fetch_ohlcv_yf %s [%s]: %s rows via cache",
+                            ticker,
+                            interval,
+                            len(df),
+                        )
+                        return df
+            finally:
+                db.close()
+    except Exception as exc:
+        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+            log_ohlcv_cache,
+        )
+
+        log_ohlcv_cache(logger, "fetch_ohlcv_yf %s [%s]: cache bypass (%s)", ticker, interval, exc)
+
+    return fetch_ohlcv_yf_raw(
+        ticker,
+        days=days,
+        interval=interval,
+        end_date=end_date,
+        add_current_day=add_current_day,
+    )
+
+
 @yfinance_circuit_breaker
 @api_retry_configured
-def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
+def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
     # Determine end date (exclusive in yfinance); include the requested day by adding 1 day
     if end_date is None:
         end = ist_now_naive()

@@ -597,7 +597,21 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Add backtest scoring if enabled (Phase 4: Use BacktestService)
     if enable_backtest_scoring:
         mode_info = " (DIP MODE)" if dip_mode else ""
-        logger.info(f"Running backtest scoring analysis{mode_info}...")
+        try:
+            from config.settings import API_RATE_LIMIT_DELAY, MAX_CONCURRENT_ANALYSES
+            from services.backtest_service import BACKTEST_MODE as available_backtest_engine
+
+            logger.info(
+                "Bulk backtest scoring%s: available_engine=%s, "
+                "MAX_CONCURRENT_ANALYSES=%s, API_RATE_LIMIT_DELAY=%s "
+                "(reliability profile: config/bulk_reliability.env.example)",
+                mode_info,
+                available_backtest_engine,
+                MAX_CONCURRENT_ANALYSES,
+                API_RATE_LIMIT_DELAY,
+            )
+        except Exception:
+            logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
         # Config is already extracted above
 
@@ -627,6 +641,9 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 "stop",
                 "timeframe_analysis",
                 "backtest",
+                "backtest_mode",
+                "cache_health_status",
+                "yahoo_calls",
                 "execution_capital",
                 "max_capital",
                 "capital_adjusted",
@@ -1155,8 +1172,21 @@ if __name__ == "__main__":
             "TRADE_AGENT_USER_ID / DB trading config. Requires the verdict model file on disk."
         ),
     )
+    parser.add_argument(
+        "--ohlcv-cache-debug",
+        action="store_true",
+        help=(
+            "Log OHLCV cache_hit/gap_fill lines at INFO (also set OHLCV_CACHE_DEBUG=true in env)"
+        ),
+    )
 
     args = parser.parse_args()
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_logging import enable_ohlcv_cache_debug
+
+        enable_ohlcv_cache_debug()
+        logger.info("OHLCV cache debug logging enabled (gap_fill / cache_hit / fetch_ohlcv_yf)")
 
     # Load user config if user_id is provided via environment variable
     user_id = None
@@ -1208,3 +1238,8 @@ if __name__ == "__main__":
         db_session=db_session,
         enable_ml=getattr(args, "ml_enabled", False),
     )
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_service import get_ohlcv_cache_stats
+
+        logger.info("OHLCV cache run summary: %s", get_ohlcv_cache_stats())

@@ -121,6 +121,35 @@ class TestMLTrainingAPI:
         assert response.status_code == 400
         assert "not found" in response.json()["detail"].lower()
 
+    def test_admin_train_rejected_for_bulk_analysis_final_csv(
+        self, client: TestClient, admin_user, ml_service, tmp_path: Path
+    ):
+        """bulk_analysis_final exports are screener snapshots, not ML training rows."""
+        token = login(client, admin_user.email, "Admin@123")
+        bulk = tmp_path / "bulk_analysis_final_20260522_013532.csv"
+        pd.DataFrame(
+            {
+                "ticker": ["POWERGRID.NS"],
+                "status": ["success"],
+                "final_verdict": ["buy"],
+                "combined_score": [37.7],
+                "backtest_mode": ["integrated"],
+            }
+        ).to_csv(bulk, index=False)
+        response = client.post(
+            "/api/v1/admin/ml/train",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "model_type": "verdict_classifier",
+                "algorithm": "random_forest",
+                "training_data_path": str(bulk),
+            },
+        )
+        assert response.status_code == 400
+        detail = response.json()["detail"].lower()
+        assert "bulk" in detail
+        assert "ml_training" in detail or "training" in detail
+
     def test_non_admin_cannot_start_training(self, client: TestClient, normal_user, ml_service):
         token = login(client, normal_user.email, "User@123")
         csv_path = ml_service._fixture_training_csv

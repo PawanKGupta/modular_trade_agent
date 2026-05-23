@@ -26,7 +26,7 @@ except ImportError as e:
 
 # Import helper functions from core (temporary, will be migrated)
 # Phase 4.8: calculate_backtest_score moved to BacktestService method
-from core.backtest_scoring import run_stock_backtest
+from core.backtest_scoring import _run_stock_backtest_impl
 
 
 class BacktestService:
@@ -78,8 +78,7 @@ class BacktestService:
         """
         Run backtest for a stock using available method (integrated or simple).
 
-        This method delegates to core.backtest_scoring.run_stock_backtest()
-        while providing a service interface.
+        Uses ``core.backtest_scoring._run_stock_backtest_impl`` (no deprecated wrapper).
 
         Args:
             stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
@@ -95,7 +94,7 @@ class BacktestService:
         if dip_mode is None:
             dip_mode = self.dip_mode
 
-        return run_stock_backtest(stock_symbol, years_back, dip_mode, config)
+        return _run_stock_backtest_impl(stock_symbol, years_back, dip_mode, config)
 
     def add_backtest_scores_to_results(
         self,
@@ -160,6 +159,8 @@ class BacktestService:
                 )
 
                 # Add backtest data to stock result
+                backtest_mode = backtest_data.get("backtest_mode", BACKTEST_MODE)
+                stock_result["backtest_mode"] = backtest_mode
                 stock_result["backtest"] = {
                     "score": backtest_data.get("backtest_score", 0),
                     "total_return_pct": backtest_data.get("total_return_pct", 0),
@@ -171,6 +172,7 @@ class BacktestService:
                     "backtest_ml_verdict": backtest_data.get(
                         "backtest_ml_verdict"
                     ),  # Store for filtering logic
+                    "backtest_mode": backtest_mode,
                 }
 
                 # Calculate combined score (50% current analysis + 50% backtest)

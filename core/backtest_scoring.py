@@ -450,38 +450,26 @@ def run_simple_backtest(
         return {"symbol": stock_symbol, "backtest_score": 0.0, "error": str(e)}
 
 
-def run_stock_backtest(
+def _with_backtest_mode(result: dict, mode: str) -> dict:
+    """Attach engine label for bulk CSV / ops (integrated, simple, simple_fallback, failed)."""
+    result["backtest_mode"] = mode
+    return result
+
+
+def _run_stock_backtest_impl(
     stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
 ) -> dict:
     """
-    Run backtest for a stock using available method (integrated or simple).
+    Run backtest for a stock using integrated or simple engine (implementation).
 
-    [WARN]? DEPRECATED in Phase 4: This function is deprecated and will be removed in a future version.
-
-    For new code, prefer using BacktestService:
-        from services import BacktestService
-        service = BacktestService(default_years_back=years_back, dip_mode=dip_mode)
-        results = service.run_stock_backtest(stock_symbol)
-
-    Migration guide: See utils.deprecation.get_migration_guide("run_stock_backtest")
-
-    Args:
-        stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
-        years_back: Number of years to backtest (default: 5)
-        dip_mode: Enable dip-buying mode
-        config: Strategy configuration
-
-    Returns:
-        Dict with backtest results and score
+    Called by ``BacktestService.run_stock_backtest``; do not deprecate this helper.
     """
-    # Phase 4.5: Issue deprecation warning
-    from utils.deprecation import deprecation_notice
+    import os
 
-    deprecation_notice(
-        module="core.backtest_scoring",
-        function="run_stock_backtest",
-        replacement="services.BacktestService.run_stock_backtest()",
-        version="Phase 4",
+    fallback_to_simple = os.getenv("BULK_BACKTEST_FALLBACK_TO_SIMPLE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
     )
 
     if BACKTEST_MODE == "simple":
@@ -489,7 +477,7 @@ def run_stock_backtest(
         backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
         backtest_score = calculate_backtest_score(backtest_results, dip_mode)
         backtest_results["backtest_score"] = backtest_score
-        return backtest_results
+        return _with_backtest_mode(backtest_results, "simple")
 
     else:
         # Use integrated backtest
@@ -525,26 +513,42 @@ def run_stock_backtest(
                     avg_return = np.mean(return_pcts)
 
             # Return summary with score
-            return {
-                "symbol": stock_symbol,
-                "period": f"{date_range[0]} to {date_range[1]}",
-                "backtest_score": backtest_score,
-                "total_return_pct": backtest_results.get("total_return_pct", 0),
-                "win_rate": backtest_results.get("win_rate", 0),
-                "total_trades": backtest_results.get("executed_trades", 0),
-                "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
-                "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
-                "avg_return": avg_return,  # Calculate from positions
-                "backtest_ml_verdict": backtest_results.get(
-                    "backtest_ml_verdict"
-                ),  # Best ML from backtest
-                "backtest_ml_confidence": backtest_results.get(
-                    "backtest_ml_confidence"
-                ),  # Best ML confidence
-                "full_results": backtest_results,
-            }
+            return _with_backtest_mode(
+                {
+                    "symbol": stock_symbol,
+                    "period": f"{date_range[0]} to {date_range[1]}",
+                    "backtest_score": backtest_score,
+                    "total_return_pct": backtest_results.get("total_return_pct", 0),
+                    "win_rate": backtest_results.get("win_rate", 0),
+                    "total_trades": backtest_results.get("executed_trades", 0),
+                    "vs_buy_hold": backtest_results.get("strategy_vs_buy_hold", 0),
+                    "execution_rate": backtest_results.get("trade_agent_accuracy", 0),
+                    "avg_return": avg_return,  # Calculate from positions
+                    "backtest_ml_verdict": backtest_results.get(
+                        "backtest_ml_verdict"
+                    ),  # Best ML from backtest
+                    "backtest_ml_confidence": backtest_results.get(
+                        "backtest_ml_confidence"
+                    ),  # Best ML confidence
+                    "full_results": backtest_results,
+                },
+                "integrated",
+            )
 
         except Exception as e:
+            if not fallback_to_simple:
+                logger.error(
+                    f"Integrated backtest failed for {stock_symbol}: {e} "
+                    "(BULK_BACKTEST_FALLBACK_TO_SIMPLE=false)"
+                )
+                return _with_backtest_mode(
+                    {
+                        "symbol": stock_symbol,
+                        "backtest_score": 0.0,
+                        "error": str(e),
+                    },
+                    "failed",
+                )
             logger.error(
                 f"Integrated backtest failed for {stock_symbol}: {e}, falling back to simple"
             )
@@ -552,7 +556,28 @@ def run_stock_backtest(
             backtest_results = run_simple_backtest(stock_symbol, years_back, dip_mode, config)
             backtest_score = calculate_backtest_score(backtest_results, dip_mode)
             backtest_results["backtest_score"] = backtest_score
-            return backtest_results
+            return _with_backtest_mode(backtest_results, "simple_fallback")
+
+
+def run_stock_backtest(
+    stock_symbol: str, years_back: int = 5, dip_mode: bool = False, config=None
+) -> dict:
+    """
+    Run backtest for a stock using available method (integrated or simple).
+
+    [WARN]? DEPRECATED in Phase 4: Use ``services.BacktestService.run_stock_backtest()`` instead.
+
+    Migration guide: See utils.deprecation.get_migration_guide("run_stock_backtest")
+    """
+    from utils.deprecation import deprecation_notice
+
+    deprecation_notice(
+        module="core.backtest_scoring",
+        function="run_stock_backtest",
+        replacement="services.BacktestService.run_stock_backtest()",
+        version="Phase 4",
+    )
+    return _run_stock_backtest_impl(stock_symbol, years_back, dip_mode, config)
 
 
 def add_backtest_scores_to_results(
@@ -598,7 +623,7 @@ def add_backtest_scores_to_results(
             logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
 
             # Run backtest for this stock
-            backtest_data = run_stock_backtest(ticker, years_back, dip_mode, config)
+            backtest_data = _run_stock_backtest_impl(ticker, years_back, dip_mode, config)
 
             # Add backtest data to stock result
             stock_result["backtest"] = {
@@ -857,5 +882,5 @@ def add_backtest_scores_to_results(
 if __name__ == "__main__":
     # Test with a single stock
     test_symbol = "RELIANCE.NS"
-    result = run_stock_backtest(test_symbol)
+    result = _run_stock_backtest_impl(test_symbol)
     print(f"Backtest score for {test_symbol}: {result['backtest_score']:.1f}")

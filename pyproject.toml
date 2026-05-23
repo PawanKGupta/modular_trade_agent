@@ -42,6 +42,8 @@ ignore = ["S101"] # allow assert in tests
 "services/pipeline_steps.py" = ["E501"]
 # Large verdict module; refactor tracked separately (line length / complexity).
 "services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
+# Admin training orchestrator; large try/except job runner.
+"src/application/services/ml_training_service.py" = ["PLR0915"]
 # Dip episode generator is intentionally stateful; refactor later.
 "services/dip_episode_dataset.py" = ["PLR0912", "PLR0915", "PLR2004"]
 # Legacy CLI / core analysis wrappers; refactor tracked separately.
@@ -164,9 +166,42 @@ ignore = ["S101"] # allow assert in tests
 	"S110",
 ]
 "src/infrastructure/db/models.py" = ["UP042"]
+# yfinance OHLCV + cache wrapper; legacy complexity.
+"core/data_fetcher.py" = [
+	"E501",
+	"S110",
+	"PLR2004",
+	"PLW0603",
+	"PLR0912",
+	"PLR0915",
+	"PLR0911",
+	"PLC0415",
+]
+"integrated_backtest.py" = [
+	"E501",
+	"E402",
+	"F841",
+	"PLR0915",
+	"PLR0911",
+	"PLR0912",
+	"PLR0913",
+	"PLR2004",
+	"PLC0415",
+]
+"src/infrastructure/persistence/bulk_analysis_job_repository.py" = ["PLR0913"]
+"services/data_service.py" = ["E501", "PLC0415", "B904", "PLR2004"]
+"alembic/versions/20260522_ohlcv_cache_and_bulk_jobs.py" = ["S110"]
+"src/application/services/ohlcv_cache_health.py" = ["PLR0912", "PLR0913", "PLR0911", "PLR2004"]
+"src/application/services/ohlcv_cache_service.py" = ["PLR0913"]
+"src/application/services/ohlcv_fetch_validation.py" = ["PLR0912", "PLR0913"]
+"src/infrastructure/persistence/price_cache_helper.py" = ["PLR0911", "PLC0415"]
+"src/infrastructure/persistence/price_cache_repository.py" = ["PLR0913"]
+"tools/bulk_analysis_job.py" = ["PLR0915", "E501", "PLC0415"]
+"tools/ohlcv_cache_admin.py" = ["E501"]
 
 [tool.ruff.format]
 exclude = [
+	"integrated_backtest.py",
 	"src/application/services/individual_service_manager.py",
 	"tests/unit/infrastructure/test_database_schema_validation.py",
 	# Formatting clashes with Black on large string sets / line wrapping.
