@@ -73,7 +73,7 @@ python trade_agent.py --backtest
 
 ## Postgres / SQLite OHLCV cache
 
-Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). Interior holiday holes that Yahoo never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
+Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). **Listing-aware coverage:** expected bars are counted from `max(requested_start, first cached bar in range)` (and `ohlcv_symbol_meta.first_date` when the window is empty), so young listings are not treated as permanently incomplete versus a 5y lookback. Interior holiday holes that Yahoo never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
 
 **Correctness check** (field-by-field O/H/L/C/V on every bar vs Yahoo):
 
@@ -93,6 +93,13 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 | `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` | `250` | Warn when `partial` cache has fewer daily bars (EMA200 safety) |
 
 **Ingest validation:** Each `gap_fill` validates the Yahoo frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data.
+
+**Hardening (post listing-aware coverage):**
+
+- `invalidate_symbol` resets `ohlcv_symbol_meta` (`fetch_status=unknown`, zero counts).
+- On `cache_hit`, stale `partial` meta is re-validated when listing-aware coverage ≥ `OHLCV_CACHE_MIN_COVERAGE_PCT`.
+- Daily `get_ohlcv` returns nothing when `OHLCV_ENFORCE_INDICATOR_MIN_BARS=true` and the window has fewer than `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` bars **and** listing age &lt; `OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS` years.
+- If ≥ `OHLCV_LISTING_START_GAP_MIN_MISSING` trading days are missing between `ohlcv_symbol_meta.first_date` and the earliest cached bar (first N days of the listing window), one gap-fill is triggered. Uses calendar coverage 85–95% **or** listing-aware coverage already ≥ threshold.
 
 **Admin CLI** (health, gap-fill, invalidate, preload):
 

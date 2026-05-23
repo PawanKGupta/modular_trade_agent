@@ -11,11 +11,13 @@ from sqlalchemy.orm import Session
 from config.settings import (
     OHLCV_CACHE_MIN_COVERAGE_PCT,
     OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS,
+    OHLCV_ENFORCE_INDICATOR_MIN_BARS,
     OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
     OHLCV_REJECT_INVALID_FETCH,
 )
 from src.application.services.ohlcv_cache_logging import log_ohlcv_cache
 from src.application.services.ohlcv_fetch_validation import (
+    meets_indicator_history_requirement,
     validate_cached_symbol,
     validate_yahoo_ohlcv_frame,
 )
@@ -237,6 +239,9 @@ class OhlcvCacheService:
                 coverage,
                 get_ohlcv_cache_stats()["yahoo_calls"],
             )
+            self._maybe_revalidate_partial_meta_on_cache_hit(
+                symbol, start_d, end_d, interval, coverage
+            )
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         if not bars:
@@ -251,18 +256,38 @@ class OhlcvCacheService:
                 meta.last_validation_message or "unknown",
             )
             return None
+
+        effective_start = self.repo.listing_aware_effective_start(symbol, start_d, end_d, interval)
+        ok_history, history_msg = meets_indicator_history_requirement(
+            interval=interval,
+            bars_in_window=len(bars),
+            effective_start=effective_start,
+            end_date=end_d,
+        )
+        enforce_history = (
+            interval == DEFAULT_INTERVAL
+            and OHLCV_ENFORCE_INDICATOR_MIN_BARS
+            and days >= OHLCV_MIN_DAILY_BARS_FOR_INDICATORS
+        )
+        if enforce_history and not ok_history:
+            logger.error(
+                "OHLCV insufficient history for %s [%s]: %s",
+                symbol,
+                interval,
+                history_msg,
+            )
+            return None
         if (
             interval == DEFAULT_INTERVAL
             and meta
             and meta.fetch_status == "partial"
-            and (meta.row_count or 0) < OHLCV_MIN_DAILY_BARS_FOR_INDICATORS
+            and not ok_history
         ):
             logger.warning(
-                "OHLCV partial history for %s [%s]: %s bars (<%s for EMA200) — %s",
+                "OHLCV partial history for %s [%s]: %s — %s",
                 symbol,
                 interval,
-                meta.row_count,
-                OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
+                history_msg,
                 meta.last_validation_message or "",
             )
 
@@ -270,6 +295,45 @@ class OhlcvCacheService:
         if not add_current_day and not df.empty:
             df = df[df["date"].dt.date <= end_d]
         return df
+
+    def _maybe_revalidate_partial_meta_on_cache_hit(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str,
+        coverage_pct: float,
+    ) -> None:
+        """Upgrade stale ``partial`` meta when listing-aware coverage is now adequate."""
+        meta = self.repo.get_symbol_meta(symbol, interval=interval)
+        if meta is None or meta.fetch_status != "partial":
+            return
+        if coverage_pct < OHLCV_CACHE_MIN_COVERAGE_PCT:
+            return
+        post = validate_cached_symbol(self.repo, symbol, start_date, end_date, interval=interval)
+        if post.status == "failed":
+            logger.debug(
+                "OHLCV meta revalidate skipped for %s [%s]: %s",
+                symbol,
+                interval,
+                post.message,
+            )
+            return
+        self.repo.record_fetch_validation(
+            symbol,
+            interval,
+            fetch_status=post.status,
+            coverage_pct=post.coverage_pct,
+            message=post.message,
+        )
+        if post.status == "ok":
+            log_ohlcv_cache(
+                logger,
+                "OHLCV meta revalidated %s [%s]: partial -> ok (coverage=%.1f%%)",
+                symbol,
+                interval,
+                post.coverage_pct,
+            )
 
     def gap_fill(
         self,
@@ -405,20 +469,8 @@ class OhlcvCacheService:
         return self.upsert_bars(symbol, fetched, interval=interval)
 
     def invalidate_symbol(self, symbol: str, interval: str | None = None) -> int:
-        """Delete cached bars for symbol (delegates to repository)."""
-        deleted = self.repo.invalidate_symbol(symbol, interval=interval)
-        if interval:
-            meta = self.repo.get_symbol_meta(symbol, interval=interval)
-            if meta:
-                self.db.delete(meta)
-                self.db.commit()
-        else:
-            for iv in ("1d", "1wk"):
-                meta = self.repo.get_symbol_meta(symbol, interval=iv)
-                if meta:
-                    self.db.delete(meta)
-            self.db.commit()
-        return deleted
+        """Delete cached bars and reset symbol meta (delegates to repository)."""
+        return self.repo.invalidate_symbol(symbol, interval=interval)
 
     def merge_cached_and_fetched(
         self,

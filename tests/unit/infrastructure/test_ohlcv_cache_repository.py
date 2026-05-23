@@ -14,6 +14,7 @@ from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     WEEKLY_INTERVAL,
     PriceCacheRepository,
+    listing_aware_coverage_start,
 )
 from src.infrastructure.utils.holiday_calendar import (
     iter_expected_weekly_bar_dates,
@@ -140,6 +141,81 @@ def test_dates_needing_gap_fill_detects_tail_gap(db_session):
     gaps = repo.get_dates_needing_gap_fill("Z.NS", start, end, tail_trading_days=5)
     assert gaps
     assert max(gaps) >= date(2024, 6, 12)
+
+
+def test_listing_aware_coverage_short_history_in_long_window(db_session):
+    """Young listing: full bars since IPO should not force gap-fill on 5y window."""
+    repo = PriceCacheRepository(db_session)
+    requested_start = date(2019, 1, 1)
+    end = date(2024, 6, 14)
+    listing_start = date(2023, 6, 1)
+    for td in iter_trading_days(listing_start, end):
+        repo.create_or_update("IPO.NS", td, close=1.0)
+    repo.refresh_symbol_meta("IPO.NS")
+
+    calendar_expected = len(list(iter_trading_days(requested_start, end)))
+    listing_expected = len(list(iter_trading_days(listing_start, end)))
+    assert listing_expected < calendar_expected * 0.5
+
+    calendar_cov = listing_expected / calendar_expected * 100.0
+    assert calendar_cov < 85.0
+
+    assert repo.get_coverage_pct("IPO.NS", requested_start, end) >= 99.0
+    assert (
+        repo.get_dates_needing_gap_fill("IPO.NS", requested_start, end, tail_trading_days=3) == []
+    )
+
+
+def test_listing_aware_coverage_start_helper():
+    start = date(2019, 1, 1)
+    end = date(2024, 6, 14)
+    cached = {date(2023, 6, 5), date(2023, 6, 6)}
+    effective = listing_aware_coverage_start(start, end, cached)
+    assert effective == date(2023, 6, 5)
+    assert listing_aware_coverage_start(start, end, set()) == start
+
+
+def test_invalidate_symbol_resets_meta(db_session):
+    repo = PriceCacheRepository(db_session)
+    repo.create_or_update("Z.NS", date(2024, 1, 2), close=1.0)
+    repo.refresh_symbol_meta("Z.NS")
+    repo.record_fetch_validation(
+        "Z.NS",
+        DEFAULT_INTERVAL,
+        fetch_status="ok",
+        coverage_pct=99.0,
+        message="test",
+    )
+    deleted = repo.invalidate_symbol("Z.NS")
+    assert deleted >= 1
+    assert repo.get("Z.NS", date(2024, 1, 2)) is None
+    meta = repo.get_symbol_meta("Z.NS")
+    assert meta is not None
+    assert meta.row_count == 0
+    assert meta.fetch_status == "unknown"
+    assert meta.first_date is None
+
+
+def test_listing_start_gap_triggers_gap_fill_in_mid_coverage_band(db_session):
+    """85–95% coverage with holes at listing start should still gap-fill once."""
+    repo = PriceCacheRepository(db_session)
+    requested_start = date(2023, 1, 1)
+    end = date(2024, 6, 14)
+    listing_start = date(2023, 6, 1)
+    trading_days = list(iter_trading_days(listing_start, end))
+    # Skip first 20 trading days after listing (~92% listing-aware coverage).
+    for td in trading_days[20:]:
+        repo.create_or_update("GAP.NS", td, close=1.0)
+    repo.refresh_symbol_meta("GAP.NS")
+    meta = repo.get_symbol_meta("GAP.NS")
+    meta.first_date = listing_start
+    db_session.commit()
+
+    listing_cov = repo.get_coverage_pct("GAP.NS", requested_start, end)
+    assert listing_cov >= 99.0
+
+    gaps = repo.get_dates_needing_gap_fill("GAP.NS", requested_start, end, tail_trading_days=3)
+    assert gaps == [requested_start]
 
 
 def test_invalidate_symbol(db_session):

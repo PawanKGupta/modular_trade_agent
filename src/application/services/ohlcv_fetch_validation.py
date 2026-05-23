@@ -14,11 +14,16 @@ from typing import Literal
 
 import pandas as pd
 
-from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT
+from config.settings import (
+    OHLCV_CACHE_MIN_COVERAGE_PCT,
+    OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
+    OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS,
+)
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     WEEKLY_INTERVAL,
     PriceCacheRepository,
+    listing_aware_coverage_start,
     week_has_cached_bar,
 )
 from src.infrastructure.utils.holiday_calendar import (
@@ -29,6 +34,7 @@ from src.infrastructure.utils.holiday_calendar import (
 FetchStatus = Literal["ok", "partial", "failed"]
 
 OHLCV_FIELDS = ("open", "high", "low", "close", "volume")
+TRADING_DAYS_PER_YEAR = 252
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,46 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
         if col not in out.columns:
             raise ValueError(f"DataFrame missing {col}")
     return out.sort_values("date").reset_index(drop=True)
+
+
+def meets_indicator_history_requirement(
+    *,
+    interval: str,
+    bars_in_window: int,
+    effective_start: date | None,
+    end_date: date,
+    min_daily_bars: int | None = None,
+    min_listing_years: float | None = None,
+) -> tuple[bool, str]:
+    """
+    Whether cached daily history is sufficient for EMA200-style indicator paths.
+
+    Passes when bar count in the requested window meets ``min_daily_bars`` or
+    listing span (trading days from effective start) meets ``min_listing_years``.
+    """
+    if interval != DEFAULT_INTERVAL:
+        return True, ""
+
+    min_bars = min_daily_bars if min_daily_bars is not None else OHLCV_MIN_DAILY_BARS_FOR_INDICATORS
+    min_years = (
+        min_listing_years
+        if min_listing_years is not None
+        else OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS
+    )
+
+    if bars_in_window >= min_bars:
+        return True, ""
+
+    if effective_start is not None and effective_start <= end_date:
+        listing_days = len(list(iter_trading_days(effective_start, end_date)))
+        listing_years = listing_days / TRADING_DAYS_PER_YEAR
+        if listing_years >= min_years:
+            return True, ""
+
+    return (
+        False,
+        f"{bars_in_window} bars in window (need >={min_bars} or >={min_years:.1f}y listing)",
+    )
 
 
 def _is_missing_price(value) -> bool:
@@ -169,16 +215,17 @@ def _coverage_for_frame(
     end_date: date,
     interval: str,
 ) -> float:
-    """Approximate coverage for the fetched frame (matches cache repo logic)."""
+    """Approximate listing-aware coverage for a fetched frame (matches cache repo)."""
     cached_dates = {d.date() for d in frame["date"]}
+    effective_start = listing_aware_coverage_start(start_date, end_date, cached_dates)
     if interval == WEEKLY_INTERVAL:
-        expected = list(iter_expected_weekly_bar_dates(start_date, end_date))
+        expected = list(iter_expected_weekly_bar_dates(effective_start, end_date))
         if not expected:
             return 100.0
         hits = sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
         return 100.0 * hits / len(expected)
 
-    expected = list(iter_trading_days(start_date, end_date))
+    expected = list(iter_trading_days(effective_start, end_date))
     if not expected:
         return 100.0
     hits = sum(1 for d in expected if d in cached_dates)

@@ -134,7 +134,7 @@ def test_add_backtest_scores_to_results(monkeypatch):
             "execution_rate": 100.0,
         }
 
-    monkeypatch.setattr(bts, "run_stock_backtest", fake_run_stock_backtest)
+    monkeypatch.setattr(bts, "_run_stock_backtest_impl", fake_run_stock_backtest)
 
     stocks = [
         {

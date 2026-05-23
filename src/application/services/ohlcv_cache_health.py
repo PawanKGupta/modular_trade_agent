@@ -123,11 +123,7 @@ def assess_price_cache_health(
         )
 
     bars = repo.get_range(symbol, start_date, end_date, interval=interval)
-    cached_dates = {b.date for b in bars}
-    if interval == WEEKLY_INTERVAL:
-        coverage_pct = repo.get_coverage_pct(symbol, start_date, end_date, interval=interval)
-    else:
-        coverage_pct = 100.0 * len(cached_dates & set(expected_days)) / len(expected_days)
+    coverage_pct = repo.get_coverage_pct(symbol, start_date, end_date, interval=interval)
 
     if not bars:
         return PriceCacheHealthReport(

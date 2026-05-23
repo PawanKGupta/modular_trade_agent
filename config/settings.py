@@ -144,4 +144,25 @@ OHLCV_REJECT_INVALID_FETCH = os.getenv("OHLCV_REJECT_INVALID_FETCH", "true").low
 )
 # Minimum daily bars required for indicator-heavy paths (EMA200); partial cache below this warns.
 OHLCV_MIN_DAILY_BARS_FOR_INDICATORS = int(os.getenv("OHLCV_MIN_DAILY_BARS_FOR_INDICATORS", "250"))
+# Alternative: at least this many years of listing history (trading days / 252).
+OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS = float(
+    os.getenv("OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS", "1.0")
+)
+# When true, get_ohlcv returns None for daily fetches that fail bar-count / listing-age gates.
+OHLCV_ENFORCE_INDICATOR_MIN_BARS = os.getenv(
+    "OHLCV_ENFORCE_INDICATOR_MIN_BARS", "true"
+).lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# Listing-window interior gap: refetch once when coverage in [MIN, MAX) and start window has holes.
+OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT = float(
+    os.getenv("OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT", "95.0")
+)
+OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS = int(
+    os.getenv("OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS", "60")
+)
+OHLCV_LISTING_START_GAP_MIN_MISSING = int(os.getenv("OHLCV_LISTING_START_GAP_MIN_MISSING", "5"))
 CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))

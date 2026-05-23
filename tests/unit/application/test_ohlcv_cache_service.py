@@ -100,3 +100,60 @@ def test_get_ohlcv_cache_hit_skips_yahoo_when_warm(db_session):
 
     svc.get_ohlcv("C.NS", days=60, end_date="2024-01-31", add_current_day=False)
     assert calls["n"] == 0
+
+
+def test_invalidate_symbol_resets_meta_via_repo(db_session):
+    repo = PriceCacheRepository(db_session)
+    repo.create_or_update("D.NS", date(2024, 1, 2), close=1.0)
+    repo.record_fetch_validation(
+        "D.NS",
+        "1d",
+        fetch_status="ok",
+        coverage_pct=100.0,
+        message="ok",
+    )
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    svc.invalidate_symbol("D.NS")
+    meta = repo.get_symbol_meta("D.NS")
+    assert meta.fetch_status == "unknown"
+    assert meta.row_count == 0
+
+
+def test_cache_hit_revalidates_stale_partial_meta(db_session, monkeypatch):
+    reset_ohlcv_cache_stats()
+    end = date(2024, 1, 31)
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end):
+        repo.create_or_update("E.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+    repo.record_fetch_validation(
+        "E.NS",
+        "1d",
+        fetch_status="partial",
+        coverage_pct=70.0,
+        message="stale partial",
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    df = svc.get_ohlcv("E.NS", days=60, end_date="2024-01-31", add_current_day=False)
+    assert df is not None
+    meta = repo.get_symbol_meta("E.NS")
+    assert meta.fetch_status == "ok"
+
+
+def test_get_ohlcv_blocks_short_daily_history_on_long_lookback(db_session, monkeypatch):
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.OHLCV_ENFORCE_INDICATOR_MIN_BARS",
+        True,
+    )
+    end = date(2024, 1, 31)
+    start = date(2024, 1, 2)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end):
+        repo.create_or_update("SHORT.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    df_short = svc.get_ohlcv("SHORT.NS", days=30, end_date="2024-01-31", add_current_day=False)
+    assert df_short is not None
+    df_long = svc.get_ohlcv("SHORT.NS", days=400, end_date="2024-01-31", add_current_day=False)
+    assert df_long is None

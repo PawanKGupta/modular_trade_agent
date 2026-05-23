@@ -9,7 +9,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from config.settings import OHLCV_CACHE_MIN_COVERAGE_PCT, OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS
+from config.settings import (
+    OHLCV_CACHE_MIN_COVERAGE_PCT,
+    OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS,
+    OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT,
+    OHLCV_LISTING_START_GAP_MIN_MISSING,
+    OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS,
+)
 from src.infrastructure.db.dialect import is_postgresql
 from src.infrastructure.db.models import CorporateAction, OhlcvSymbolMeta, PriceCache
 from src.infrastructure.db.timezone_utils import ist_now_naive
@@ -35,6 +41,35 @@ WEEKLY_BAR_DATE_TOLERANCE_DAYS = 4
 
 def _iso_week_key(bar_date: date) -> tuple[int, int]:
     return bar_date.isocalendar()[:2]
+
+
+def listing_aware_coverage_start(
+    requested_start: date,
+    end_date: date,
+    cached_dates: set[date],
+    *,
+    meta_first_date: date | None = None,
+) -> date:
+    """
+    Effective start for coverage denominators: max(requested_start, first available bar).
+
+    Pre-listing trading days are excluded from expected-bar counts so young listings
+    are not treated as permanently incomplete versus a multi-year lookback window.
+    """
+    if end_date < requested_start:
+        return requested_start
+
+    first_bar: date | None = None
+    if cached_dates:
+        in_window = [d for d in cached_dates if requested_start <= d <= end_date]
+        if in_window:
+            first_bar = min(in_window)
+    if first_bar is None and meta_first_date is not None and meta_first_date <= end_date:
+        first_bar = max(requested_start, meta_first_date)
+
+    if first_bar is None:
+        return requested_start
+    return max(requested_start, first_bar)
 
 
 def week_has_cached_bar(
@@ -267,6 +302,40 @@ class PriceCacheRepository:
             return list(iter_expected_weekly_bar_dates(start_date, end_date))
         return list(iter_trading_days(start_date, end_date))
 
+    def _listing_aware_start(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str,
+        cached_dates: set[date],
+    ) -> date:
+        meta = self.get_symbol_meta(symbol, interval=interval)
+        meta_first = meta.first_date if meta else None
+        return listing_aware_coverage_start(
+            start_date,
+            end_date,
+            cached_dates,
+            meta_first_date=meta_first,
+        )
+
+    def _coverage_pct_for_cached(
+        self,
+        cached_dates: set[date],
+        effective_start: date,
+        end_date: date,
+        interval: str,
+    ) -> float:
+        """Hit rate over expected bars from effective_start through end_date."""
+        expected = self._expected_bar_dates(effective_start, end_date, interval)
+        if not expected:
+            return 100.0
+        if interval == WEEKLY_INTERVAL:
+            hits = sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
+        else:
+            hits = sum(1 for d in expected if d in cached_dates)
+        return 100.0 * hits / len(expected)
+
     def get_coverage_pct(
         self,
         symbol: str,
@@ -274,16 +343,63 @@ class PriceCacheRepository:
         end_date: date,
         interval: str = DEFAULT_INTERVAL,
     ) -> float:
-        """Percent of expected bars in range present in cache (interval-aware)."""
-        expected = self._expected_bar_dates(start_date, end_date, interval)
-        if not expected:
-            return 100.0
+        """Percent of expected bars present in cache (listing-aware, interval-aware)."""
         cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
-        if interval == WEEKLY_INTERVAL:
-            hits = sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
-            return 100.0 * hits / len(expected)
-        hits = sum(1 for d in expected if d in cached_dates)
-        return 100.0 * hits / len(expected)
+        if not cached_dates:
+            return 0.0
+        effective_start = self._listing_aware_start(
+            symbol, start_date, end_date, interval, cached_dates
+        )
+        return self._coverage_pct_for_cached(cached_dates, effective_start, end_date, interval)
+
+    def listing_aware_effective_start(
+        self,
+        symbol: str,
+        start_date: date,
+        end_date: date,
+        interval: str,
+    ) -> date:
+        """Effective coverage start for symbol/window (uses cached bars in range)."""
+        cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
+        if not cached_dates:
+            return start_date
+        return self._listing_aware_start(symbol, start_date, end_date, interval, cached_dates)
+
+    def missing_before_first_cached_bar(
+        self,
+        symbol: str,
+        cached_dates: set[date],
+        requested_start: date,
+        end_date: date,
+        interval: str,
+        *,
+        window_trading_days: int | None = None,
+    ) -> list[date]:
+        """
+        Trading days after listing anchor and before the earliest cached bar.
+
+        Uses ``ohlcv_symbol_meta.first_date`` when set so a 5y requested window does not
+        treat pre-listing calendar days as refill triggers.
+        """
+        if interval != DEFAULT_INTERVAL or not cached_dates:
+            return []
+        window_n = (
+            window_trading_days
+            if window_trading_days is not None
+            else OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS
+        )
+        first_cached = min(cached_dates)
+        meta = self.get_symbol_meta(symbol, interval=interval)
+        listing_anchor = requested_start
+        if meta and meta.first_date:
+            listing_anchor = max(requested_start, meta.first_date)
+        if first_cached <= listing_anchor:
+            return []
+        listing_window = self._expected_bar_dates(listing_anchor, end_date, interval)
+        if not listing_window:
+            return []
+        start_window = listing_window[:window_n]
+        return [d for d in start_window if d < first_cached]
 
     def get_dates_needing_gap_fill(
         self,
@@ -317,18 +433,16 @@ class PriceCacheRepository:
         if not cached_dates:
             return [start_date]
 
-        expected = self._expected_bar_dates(start_date, end_date, interval)
+        effective_start = self._listing_aware_start(
+            symbol, start_date, end_date, interval, cached_dates
+        )
+        expected = self._expected_bar_dates(effective_start, end_date, interval)
         if not expected:
             return []
 
-        if interval == WEEKLY_INTERVAL:
-            coverage_pct = (
-                100.0
-                * sum(1 for d in expected if week_has_cached_bar(cached_dates, d))
-                / len(expected)
-            )
-        else:
-            coverage_pct = 100.0 * sum(1 for d in expected if d in cached_dates) / len(expected)
+        coverage_pct = self._coverage_pct_for_cached(
+            cached_dates, effective_start, end_date, interval
+        )
 
         if interval == WEEKLY_INTERVAL:
             tail_expected = (
@@ -341,6 +455,23 @@ class PriceCacheRepository:
 
         if coverage_pct < min_cov:
             return missing_tail if missing_tail else [start_date]
+
+        if interval == DEFAULT_INTERVAL:
+            calendar_coverage = self._coverage_pct_for_cached(
+                cached_dates, start_date, end_date, interval
+            )
+            start_gaps = self.missing_before_first_cached_bar(
+                symbol, cached_dates, start_date, end_date, interval
+            )
+            listing_ok = coverage_pct >= min_cov
+            calendar_mid_band = (
+                min_cov <= calendar_coverage < OHLCV_LISTING_START_GAP_MAX_COVERAGE_PCT
+            )
+            if len(start_gaps) >= OHLCV_LISTING_START_GAP_MIN_MISSING and (
+                calendar_mid_band or listing_ok
+            ):
+                return [start_date]
+
         return missing_tail
 
     def get_missing_trading_dates(
@@ -350,9 +481,14 @@ class PriceCacheRepository:
         end_date: date,
         interval: str = DEFAULT_INTERVAL,
     ) -> list[date]:
-        """Expected bar dates in range absent from cache (interval-aware)."""
+        """Expected bar dates in range absent from cache (listing-aware, interval-aware)."""
         cached_dates = self._cached_dates_in_range(symbol, start_date, end_date, interval)
-        expected = self._expected_bar_dates(start_date, end_date, interval)
+        if not cached_dates:
+            return self._expected_bar_dates(start_date, end_date, interval)
+        effective_start = self._listing_aware_start(
+            symbol, start_date, end_date, interval, cached_dates
+        )
+        expected = self._expected_bar_dates(effective_start, end_date, interval)
         if interval == WEEKLY_INTERVAL:
             return [d for d in expected if not week_has_cached_bar(cached_dates, d)]
         return [d for d in expected if d not in cached_dates]
@@ -413,7 +549,32 @@ class PriceCacheRepository:
             symbol,
             interval or "all",
         )
+        intervals = [DEFAULT_INTERVAL, WEEKLY_INTERVAL] if interval is None else [interval]
+        for iv in intervals:
+            self.reset_symbol_meta(symbol, iv)
         return deleted_count
+
+    def reset_symbol_meta(self, symbol: str, interval: str = DEFAULT_INTERVAL) -> OhlcvSymbolMeta:
+        """
+        Clear cache summary and validation fields after invalidate or empty cache.
+
+        Keeps the meta row but resets counts and ``fetch_status`` to ``unknown``.
+        """
+        meta = self.get_symbol_meta(symbol, interval=interval)
+        if meta is None:
+            meta = OhlcvSymbolMeta(symbol=symbol, interval=interval, row_count=0)
+            self.db.add(meta)
+        meta.first_date = None
+        meta.last_date = None
+        meta.row_count = 0
+        meta.fetch_status = "unknown"
+        meta.coverage_pct = None
+        meta.last_validation_message = None
+        meta.last_fetch_at = None
+        meta.updated_at = ist_now_naive()
+        self.db.commit()
+        self.db.refresh(meta)
+        return meta
 
     def refresh_symbol_meta(self, symbol: str, interval: str = DEFAULT_INTERVAL) -> OhlcvSymbolMeta:
         """Recompute ohlcv_symbol_meta from price_cache rows."""
