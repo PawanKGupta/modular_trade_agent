@@ -38,6 +38,7 @@ class MLVerdictService(VerdictService):
         self.model = None
         self.model_loaded = False
         self.feature_cols = []
+        self._verdict_classes: list[str] | None = None
         self._warned_ml_feature_miss = False
 
         # If no model_path provided, try to find model based on configuration
@@ -84,6 +85,9 @@ class MLVerdictService(VerdictService):
                         )
                     else:
                         self.feature_cols = manifest_cols
+                        raw_labels = manifest_payload.get("label_classes")
+                        if raw_labels:
+                            self._verdict_classes = list(raw_labels)
                         logger.info(
                             "   Loaded %s feature columns from %s.verdict_features.json "
                             "(schema v%s)",
@@ -91,6 +95,11 @@ class MLVerdictService(VerdictService):
                             resolved_model_path.stem,
                             manifest_payload["feature_schema_version"],
                         )
+                        if self._verdict_classes:
+                            logger.info(
+                                "   Verdict label classes from manifest: %s",
+                                self._verdict_classes,
+                            )
                 elif self.model_loaded:
                     # Legacy discovery when no versioned manifest (older artifacts).
                     model_stem = Path(model_path).stem
@@ -153,6 +162,9 @@ class MLVerdictService(VerdictService):
                             f"Legacy feature column list length {len(self.feature_cols)} does not "
                             f"match estimator n_features_in_={int(n_expected_legacy)}"
                         )
+
+                if self.model_loaded and self._verdict_classes is None:
+                    self._verdict_classes = self._resolve_verdict_class_names()
 
             except Exception as e:
                 logger.warning(f"[WARN]? Failed to load ML model: {e}, using rule-based logic")
@@ -545,6 +557,22 @@ class MLVerdictService(VerdictService):
             return self._ml_prediction_info
         return None
 
+    def _resolve_verdict_class_names(self) -> list[str]:
+        """Map ``predict_proba`` indices to verdict strings (XGBoost uses numeric classes_)."""
+        if not self.model_loaded or self.model is None:
+            return []
+        raw = list(getattr(self.model, "classes_", []))
+        if not raw:
+            return []
+        if isinstance(raw[0], str):
+            return [str(c) for c in raw]
+        logger.warning(
+            "Verdict model classes_ are numeric (%s) but no label_classes in manifest; "
+            "using string forms (retrain with current MLTrainingService for XGBoost).",
+            raw,
+        )
+        return [str(c) for c in raw]
+
     def _predict_with_ml(
         self,
         signals: list[str],
@@ -591,7 +619,7 @@ class MLVerdictService(VerdictService):
 
             # Predict
             probabilities = self.model.predict_proba([feature_vector])[0]
-            verdicts = self.model.classes_  # ['strong_buy', 'buy', 'watch', 'avoid']
+            verdicts = self._verdict_classes or self._resolve_verdict_class_names()
 
             # Get verdict with highest probability
             verdict_idx = probabilities.argmax()
@@ -1095,7 +1123,7 @@ class MLVerdictService(VerdictService):
             feature_vector = self._vectorize_ml_features_for_model(features)
 
             probabilities = self.model.predict_proba([feature_vector])[0]
-            verdicts = self.model.classes_
+            verdicts = self._verdict_classes or self._resolve_verdict_class_names()
 
             verdict_idx = probabilities.argmax()
             verdict = verdicts[verdict_idx]

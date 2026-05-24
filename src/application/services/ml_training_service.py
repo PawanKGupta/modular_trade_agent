@@ -11,7 +11,10 @@ from typing import Any
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from services.ml_training_metadata import bulk_analysis_training_path_error
+from services.ml_training_metadata import (
+    bulk_analysis_training_path_error,
+    validate_training_csv_for_model_type,
+)
 from src.application.services.ml_incremental_training import subset_for_incremental_training
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.ml_model_repository import MLModelRepository
@@ -104,6 +107,12 @@ class MLTrainingService:
             self.validate_training_csv_for_ml(csv_path)
 
             raw_frame = pd.read_csv(csv_path)
+            target_column = str(config.hyperparameters.get("target_column", "actual_pnl_pct"))
+            validate_training_csv_for_model_type(
+                raw_frame,
+                config.model_type,
+                target_column=target_column,
+            )
             version = self._next_semantic_version(config.model_type)
             run_through = config.training_run_end_date or ist_now().date()
 

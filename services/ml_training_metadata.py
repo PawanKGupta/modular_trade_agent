@@ -176,6 +176,43 @@ def bulk_analysis_training_path_error(csv_path: Path | str) -> str | None:
     return None
 
 
+def validate_training_csv_for_model_type(
+    frame: pd.DataFrame,
+    model_type: str,
+    *,
+    target_column: str = "actual_pnl_pct",
+) -> None:
+    """
+    Ensure a training CSV has columns required for the selected admin model type.
+
+    Raises:
+        ValueError: When required label/target columns are missing.
+    """
+    columns = set(frame.columns)
+    if model_type == "verdict_classifier":
+        if "label" not in columns:
+            raise ValueError(
+                "Verdict classifier training requires a 'label' column "
+                f"(e.g. strong_buy, buy, watch, avoid). Columns present: {sorted(columns)[:12]}"
+            )
+        return
+    if model_type == "price_regressor":
+        if target_column not in columns:
+            raise ValueError(
+                f"Price regressor training requires target column '{target_column}'. "
+                "Use position-level data (e.g. data/ml_training_data_price.csv), not "
+                "verdict_classifier.csv. "
+                f"Columns present: {sorted(columns)[:12]}"
+            )
+        if "entry_date" not in columns and "backtest_date" not in columns:
+            raise ValueError(
+                "Price regressor training requires 'entry_date' or 'backtest_date' for "
+                "incremental windows and watermarks."
+            )
+        return
+    raise ValueError(f"Unsupported model_type for training CSV validation: {model_type}")
+
+
 def select_training_feature_columns(
     df: pd.DataFrame,
     exclude_cols: Iterable[str],

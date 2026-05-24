@@ -50,6 +50,19 @@ def test_incremental_requires_history_and_delta(tmp_path: Path):
     assert len(incremental_frame) == len(df)
 
 
+def test_incremental_same_day_watermark_uses_full_window(tmp_path: Path):
+    """When watermark >= train_through, retrain on full CSV instead of failing."""
+    df = pd.read_csv(_fixture_csv(tmp_path))
+    subset, diag = subset_for_incremental_training(
+        df,
+        train_through=date(2026, 1, 15),
+        incremental=True,
+        prior_through_inclusive=date(2026, 1, 15),
+    )
+    assert diag["mode"] == "full_window_caught_up"
+    assert len(subset) == len(df)
+
+
 def test_incremental_errors_when_prior_missing(tmp_path: Path):
     df = pd.read_csv(_fixture_csv(tmp_path))
     df_recent = df[df["entry_date"] >= "2026-01-11"].reset_index(drop=True)

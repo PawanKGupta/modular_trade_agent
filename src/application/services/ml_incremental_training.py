@@ -99,6 +99,25 @@ def subset_for_incremental_training(
             "incremental_requested": incremental,
         }
 
+    # Watermark already at/after the run end date: no calendar window for strictly newer rows.
+    if prior_through_inclusive >= train_through:
+        max_obs = pd.Timestamp(row_dates.max()).date()
+        return working, {
+            "mode": "full_window_caught_up",
+            "date_column": column,
+            "row_count": len(working),
+            "prior_row_count": len(working),
+            "incremental_row_count": len(working),
+            "min_date": pd.Timestamp(row_dates.min()).date().isoformat(),
+            "max_date": max_obs.isoformat(),
+            "prior_through_inclusive": prior_through_inclusive.isoformat(),
+            "incremental_requested": incremental,
+            "note": (
+                "Active model watermark is on/after train_through; using full CSV window "
+                '(uncheck incremental or add rows with dates after the watermark).'
+            ),
+        }
+
     prior_anchor = pd.Timestamp(datetime.combine(prior_through_inclusive, datetime.min.time()))
     prior_mask = row_dates <= prior_anchor
     new_mask = row_dates > prior_anchor
