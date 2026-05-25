@@ -33,6 +33,8 @@ except ImportError:
 
 DEFAULT_INTERVAL = "1d"
 WEEKLY_INTERVAL = "1wk"
+# Intraday intervals are not stored in price_cache (Date column, one row per day).
+MINUTE_INTERVAL = "1m"
 DEFAULT_PRICE_BASIS = "unadjusted"
 DEFAULT_WEEKLY_TAIL_WEEKS = 3
 # Yahoo weekly bar dates may fall a few days from ISO week-ending trading day.

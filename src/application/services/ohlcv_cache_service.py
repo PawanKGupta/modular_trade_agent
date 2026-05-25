@@ -24,6 +24,7 @@ from src.application.services.ohlcv_fetch_validation import (
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     DEFAULT_PRICE_BASIS,
+    MINUTE_INTERVAL,
     PriceCacheRepository,
 )
 from src.infrastructure.utils.holiday_calendar import get_previous_trading_day
@@ -195,6 +196,14 @@ class OhlcvCacheService:
         Returns:
             DataFrame with lowercase OHLCV + date column, or None if unavailable.
         """
+        if interval == MINUTE_INTERVAL:
+            logger.debug(
+                "OHLCV DB cache skipped for %s [%s] (intraday; use in-process/Yahoo LTP path)",
+                symbol,
+                interval,
+            )
+            return None
+
         end_d = _parse_end_date(end_date)
         start_d = end_d - timedelta(days=days + 5)
 
@@ -352,6 +361,14 @@ class OhlcvCacheService:
         Returns:
             Number of rows upserted.
         """
+        if interval == MINUTE_INTERVAL:
+            logger.debug(
+                "gap_fill skipped for %s [%s] (intraday not stored in price_cache)",
+                symbol,
+                interval,
+            )
+            return 0
+
         lookback = days if days is not None else (end_date - start_date).days + 30
         try:
             fetched = self._yahoo_fetch(

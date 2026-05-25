@@ -422,11 +422,14 @@ class PriceService:
                     self._cache.set_realtime(cache_key, broker_ltp)
                 return broker_ltp
 
-        # Fallback to yfinance (delayed ~15-20 min)
+        # Fallback to yfinance (delayed ~15-20 min) via in-process OHLCV cache (not Postgres)
         if ticker:
             try:
-                # Use 1-minute interval for most recent price
-                df = fetch_ohlcv_yf(ticker, days=1, interval="1m", add_current_day=True)
+                from core.data_fetcher import get_cached_ohlcv
+
+                df = get_cached_ohlcv(
+                    ticker=ticker, days=1, interval="1m", add_current_day=True
+                )
 
                 if df is None or df.empty:
                     logger.warning(f"No LTP data for {ticker} from yfinance")
