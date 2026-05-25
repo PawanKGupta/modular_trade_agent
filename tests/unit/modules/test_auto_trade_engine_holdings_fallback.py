@@ -236,3 +236,35 @@ class TestHoldingsAPIRetryAndFallback:
             # Should abort due to invalid response
             assert result["attempted"] == 0
             assert result["placed"] == 0
+
+    def test_holdings_api_error_payload_triggers_relogin(
+        self, engine, mock_portfolio, recommendations, mock_auth
+    ):
+        """Error dict from broker (no 'data') should trigger re-login and retry."""
+        mock_portfolio.get_holdings.side_effect = [
+            {"error": "Invalid session token"},
+            {"data": []},
+            {"data": []},
+        ]
+        mock_auth.force_relogin.return_value = True
+        engine.auth = mock_auth
+
+        engine.portfolio_service.get_current_positions = Mock(return_value=[])
+        engine.portfolio_service.get_portfolio_count = Mock(return_value=0)
+        engine.portfolio_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.portfolio_service.has_position = Mock(return_value=False)
+
+        engine.order_validation_service.check_balance = Mock(return_value=(True, 200000.0, 100))
+        engine.order_validation_service.check_portfolio_capacity = Mock(return_value=(True, 0, 10))
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.order_validation_service.check_volume_ratio = Mock(return_value=(True, 0.01, None))
+        engine.order_validation_service.get_available_cash = Mock(return_value=200000.0)
+
+        with (
+            patch.object(engine, "_get_failed_orders", return_value=[]),
+            patch.object(engine, "_attempt_place_order", return_value=(False, None)),
+        ):
+            engine.place_new_entries(recommendations)
+
+        mock_auth.force_relogin.assert_called()
+        assert mock_portfolio.get_holdings.call_count >= 2
