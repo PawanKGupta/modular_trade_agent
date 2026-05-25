@@ -205,14 +205,25 @@ class TestAutoTradeEngineSignalStatusFiltering:
 
         caplog.set_level(logging.WARNING, logger="modules.kotak_neo_auto_trader.auto_trade_engine")
 
-        with patch.object(
-            auto_trade_engine_with_db,
-            "load_latest_recommendations_from_csv",
-            return_value=[],
-        ) as mock_csv:
+        fake_csv = "analysis_results/bulk_analysis_final_test.csv"
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.auto_trade_engine.glob.glob",
+                return_value=[fake_csv],
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.auto_trade_engine.os.path.getmtime",
+                return_value=0.0,
+            ),
+            patch.object(
+                auto_trade_engine_with_db,
+                "load_latest_recommendations_from_csv",
+                return_value=[],
+            ) as mock_csv,
+        ):
             recs = auto_trade_engine_with_db.load_latest_recommendations()
 
-        mock_csv.assert_called_once()
+        mock_csv.assert_called_once_with(fake_csv)
         assert recs == []
         assert "Failed to load recommendations from database" not in caplog.text
 
