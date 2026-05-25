@@ -1639,6 +1639,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         account = self.store.get_account()
         return Money(account["available_cash"])
 
+    def get_portfolio(self) -> dict[str, Any]:
+        """
+        Cash summary for re-entry balance checks.
+
+        Matches the shape expected by PaperTradingEngineAdapter.place_reentry_orders().
+        """
+        limits = self.get_account_limits()
+        available = limits["available_cash"]
+        cash = float(available.amount) if isinstance(available, Money) else float(available)
+        return {"availableCash": cash, "cash": cash}
+
     # ===== UTILITY METHODS =====
 
     def search_orders_by_symbol(self, symbol: str) -> list[Order]:

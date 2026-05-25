@@ -4566,14 +4566,44 @@ class AutoTradeEngine:
                     self.portfolio_service._cache.set("holdings", test_holdings)
                     logger.debug("Updated PortfolioService cache with holdings after 2FA re-login")
 
+        # Broker may return {"error": ...} without raising (e.g. expired session)
+        if (
+            isinstance(test_holdings, dict)
+            and "error" in test_holdings
+            and "data" not in test_holdings
+            and hasattr(self.auth, "force_relogin")
+        ):
+            logger.warning(
+                "Holdings API returned error payload (%r) - attempting re-login...",
+                test_holdings.get("error"),
+            )
+            if self.auth.force_relogin():
+                test_holdings = self.portfolio.get_holdings()
+                if (
+                    self.portfolio_service
+                    and self.portfolio_service.enable_caching
+                    and self.portfolio_service._cache
+                    and isinstance(test_holdings, dict)
+                    and "data" in test_holdings
+                ):
+                    self.portfolio_service._cache.set("holdings", test_holdings)
+                    logger.debug(
+                        "Updated PortfolioService cache with holdings after error re-login"
+                    )
+
         # Verify holdings has 'data' field (successful response structure)
         if not isinstance(test_holdings, dict) or "data" not in test_holdings:
             logger.error(
                 "Holdings API returned invalid response - aborting order placement to prevent duplicates"
             )
-            logger.error(
-                f"Holdings response type: {type(test_holdings)}, keys: {list(test_holdings.keys()) if isinstance(test_holdings, dict) else 'N/A'}"
-            )
+            if isinstance(test_holdings, dict):
+                logger.error(
+                    "Holdings response keys: %s; error=%r",
+                    list(test_holdings.keys()),
+                    test_holdings.get("error"),
+                )
+            else:
+                logger.error("Holdings response type: %s", type(test_holdings))
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
