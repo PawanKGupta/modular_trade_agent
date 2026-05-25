@@ -402,7 +402,10 @@ class PriceService:
                 ltp = get_ltp_from_manager(self.live_price_manager, lookup_symbol, ticker)
 
                 if ltp is not None and ltp > 0:
-                    logger.debug(f"{symbol} LTP from WebSocket: Rs {ltp:.2f}")
+                    logger.info(
+                        f"{symbol} LTP Rs {ltp:.2f} source=kotak_live "
+                        f"(lookup={lookup_symbol})"
+                    )
 
                     # Cache the result
                     if self._cache:
@@ -410,14 +413,18 @@ class PriceService:
 
                     return ltp
             except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {symbol}: {e}")
+                lookup = get_lookup_symbol(broker_symbol, symbol or "")
+                logger.debug(f"Kotak live LTP failed for {symbol} ({lookup}): {e}")
 
         # Optional broker-provided prices (e.g. holdings snapshot for UI)
         if broker_price_map:
             lookup_sym = broker_symbol or symbol
             broker_ltp = lookup_price_from_map(broker_price_map, lookup_sym)
             if broker_ltp is not None and broker_ltp > 0:
-                logger.debug(f"{symbol} LTP from broker map: Rs {broker_ltp:.2f}")
+                logger.info(
+                    f"{symbol} LTP Rs {broker_ltp:.2f} source=broker_map "
+                    f"(lookup={lookup_sym})"
+                )
                 if self._cache:
                     self._cache.set_realtime(cache_key, broker_ltp)
                 return broker_ltp
@@ -436,7 +443,9 @@ class PriceService:
                     return None
 
                 ltp = float(df["close"].iloc[-1])
-                logger.debug(f"{symbol} LTP from yfinance (delayed ~15min): Rs {ltp:.2f}")
+                logger.info(
+                    f"{symbol} LTP Rs {ltp:.2f} source=yahoo_1m (delayed, ticker={ticker})"
+                )
 
                 # Cache the result
                 if self._cache:
@@ -497,9 +506,8 @@ class PriceService:
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
                     )
                 elif hasattr(self.live_price_manager, "subscribe"):
-                    # LivePriceCache interface
-                    for symbol in symbols_to_subscribe:
-                        self.live_price_manager.subscribe(symbol)
+                    # LivePriceCache.subscribe expects a list of symbols
+                    self.live_price_manager.subscribe(symbols_to_subscribe)
                     logger.debug(
                         f"Subscribed to {len(symbols_to_subscribe)} new symbols via LivePriceCache "
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
@@ -567,8 +575,8 @@ class PriceService:
                     )
                     return True
                 elif hasattr(self.live_price_manager, "unsubscribe"):
-                    for symbol in symbols_to_unsubscribe:
-                        self.live_price_manager.unsubscribe(symbol)
+                    # LivePriceCache.unsubscribe expects a list of symbols
+                    self.live_price_manager.unsubscribe(symbols_to_unsubscribe)
                     logger.debug(
                         f"Unsubscribed from {len(symbols_to_unsubscribe)} symbols "
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols)})"
