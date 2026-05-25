@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation
 from src.infrastructure.db.models import Signals, SignalStatus, Users, UserSignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
 
@@ -389,3 +389,37 @@ class TestAutoTradeEngineSignalStatusFiltering:
             recs2 = engine2.load_latest_recommendations()
             assert len(recs2) == 1
             assert recs2[0].ticker == "RELIANCE.NS"
+
+    def test_load_recommendations_no_active_signals_csv_fallback_without_db_error(
+        self, auto_trade_engine_with_db, db_session, test_user
+    ):
+        """When DB has signals but none ACTIVE, fall back to CSV without returning early."""
+        signal = Signals(
+            symbol="RELIANCE",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=2500.0,
+            status=SignalStatus.TRADED,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        csv_recs = [
+            Recommendation(
+                ticker="TCS.NS",
+                verdict="buy",
+                last_close=3500.0,
+            )
+        ]
+
+        with patch("glob.glob", return_value=["/tmp/bulk_analysis_final_test.csv"]):
+            with patch.object(
+                auto_trade_engine_with_db,
+                "load_latest_recommendations_from_csv",
+                return_value=csv_recs,
+            ) as mock_csv:
+                recs = auto_trade_engine_with_db.load_latest_recommendations()
+
+        mock_csv.assert_called_once_with("/tmp/bulk_analysis_final_test.csv")
+        assert recs == csv_recs
