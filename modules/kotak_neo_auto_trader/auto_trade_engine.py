@@ -1342,14 +1342,14 @@ class AutoTradeEngine:
                             )
                             recommendations.append(rec)
 
-                    # Sort by priority_score (descending) - higher priority stocks placed first
-                    recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+                        # Sort by priority_score (descending) - higher priority stocks placed first
+                        recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
 
-                    logger.info(
-                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
-                        f"(sorted by priority_score)"
-                    )
-                    return recommendations
+                        logger.info(
+                            f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
+                            f"(sorted by priority_score)"
+                        )
+                        return recommendations
 
             except Exception as e:
                 logger.warning(
