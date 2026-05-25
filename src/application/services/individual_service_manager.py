@@ -899,6 +899,8 @@ class IndividualServiceManager:
 
             # Create TradingService instance (same as unified service) for broker-dependent tasks
             # Skip execution tracking since individual services track separately
+            # Only sell_monitor needs Kotak LTP polling; other tasks skip scrip-master init for speed.
+            enable_live_ltp = task_name == "sell_monitor"
             service = trading_service_module.TradingService(
                 user_id=user_id,
                 db_session=db,
@@ -906,6 +908,7 @@ class IndividualServiceManager:
                 strategy_config=strategy_config,
                 env_file=None,
                 skip_execution_tracking=True,
+                enable_live_price_cache=enable_live_ltp,
             )
 
             # Initialize service

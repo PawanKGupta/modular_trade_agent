@@ -81,6 +81,7 @@ class TradingService:
         strategy_config=None,  # StrategyConfig instance
         env_file: str | None = None,  # Deprecated: kept for backward compatibility
         skip_execution_tracking: bool = False,  # Set to True when called from individual services
+        enable_live_price_cache: bool = True,  # False for short broker tasks (e.g. buy_orders)
     ):
         """
         Initialize trading service with user context.
@@ -91,11 +92,15 @@ class TradingService:
             broker_creds: Decrypted broker credentials dict (None for paper trading mode)
             strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
             env_file: Deprecated - kept for backward compatibility only
+            skip_execution_tracking: Set to True when called from individual services
+            enable_live_price_cache: Start Kotak REST LTP polling when True (scheduler/sell_monitor).
+                Set False for per-task runs that do not need live LTP (e.g. buy_orders).
         """
         self.user_id = user_id
         self.db = db_session  # Initial session (for setup only)
         self.broker_creds = broker_creds
         self.skip_execution_tracking = skip_execution_tracking
+        self._enable_live_price_cache = enable_live_price_cache
         # Track async task futures to prevent re-queuing long-running tasks.
         # This is critical for continuous tasks like sell_monitor: if one run exceeds timeout,
         # it may continue running in background; without this guard we would queue duplicates
@@ -252,17 +257,32 @@ class TradingService:
                 return False
             self.logger.info("Trading engine initialized successfully", action="initialize")
 
-            # Initialize live prices (WebSocket for real-time LTP)
-            # For buy_orders task, WebSocket is not needed (AMO orders don't need real-time prices)
-            # Skip WebSocket initialization to avoid blocking - buy orders use yfinance for prices
-            self.logger.info(
-                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)",
-                action="initialize",
-            )
-            self.price_cache = None
-            self.scrip_master = None
+            # Kotak REST live price cache for sell monitoring / portfolio LTP.
+            # AMO buy_orders use yfinance; short per-task runs can skip init (enable_live_price_cache).
+            if self._enable_live_price_cache:
+                self.logger.info(
+                    "Initializing Kotak live price cache for broker LTP...",
+                    action="initialize",
+                )
+                self._initialize_live_prices()
+                if self.price_cache:
+                    self.logger.info(
+                        "[OK] Live price cache ready for sell monitoring",
+                        action="initialize",
+                    )
+                else:
+                    self.logger.warning(
+                        "Live price cache unavailable; LTP will fall back to Yahoo/delayed data",
+                        action="initialize",
+                    )
+            else:
+                self.logger.info(
+                    "Skipping live price cache init (not required for this run; AMO/yfinance path)",
+                    action="initialize",
+                )
+                self.price_cache = None
+                self.scrip_master = None
 
-            # Update portfolio with price manager for WebSocket LTP access
             if self.engine.portfolio and self.price_cache:
                 self.engine.portfolio.price_manager = self.price_cache
 
@@ -340,17 +360,14 @@ class TradingService:
                 self.sell_manager = None
                 self.unified_order_monitor = None
 
-            # Subscribe to open positions immediately to avoid reconnect loops
-            # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
-            # Skip it to avoid blocking
-            self.logger.info(
-                "Skipping position subscription for buy_orders (not needed for AMO orders)",
-                action="initialize",
-            )
-            # try:
-            #     self._subscribe_to_open_positions()
-            # except Exception as e:
-            #     self.logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
+            if self.price_cache:
+                try:
+                    self._subscribe_to_open_positions()
+                except Exception as e:
+                    self.logger.warning(
+                        f"Sell-order price subscription failed (non-fatal): {e}",
+                        action="initialize",
+                    )
 
             self.logger.info("Service initialized successfully", action="initialize")
             self.logger.info("=" * 80, action="initialize")
@@ -384,12 +401,12 @@ class TradingService:
 
     def _initialize_live_prices(self):
         """
-        Initialize LivePriceCache for real-time WebSocket prices.
-        Loads scrip master and starts WebSocket connection.
+        Initialize LivePriceCache for Kotak REST quote polling (real-time LTP).
+        Loads scrip master and starts the polling loop.
         Graceful fallback if initialization fails.
         """
         try:
-            logger.info("Initializing live price cache for real-time WebSocket prices...")
+            logger.info("Initializing live price cache (Kotak REST LTP polling)...")
 
             # Load scrip master for symbol/token mapping
             rest_client = (
@@ -412,21 +429,18 @@ class TradingService:
 
             # Start real-time price streaming
             self.price_cache.start()
-            logger.info("[OK] Live price cache started (WebSocket started)")
+            logger.info("[OK] Live price cache started (Kotak REST polling)")
 
-            # Wait for WebSocket connection to be established
-            # Use shorter timeout to avoid blocking buy_orders task
-            # Buy orders don't need WebSocket (AMO orders placed before market open)
-            logger.info("Waiting for WebSocket connection (non-blocking, 3s timeout)...")
+            logger.info("Waiting for Kotak quote poller (non-blocking, 3s timeout)...")
             try:
-                if self.price_cache.wait_for_connection(timeout=3):  # Reduced timeout to 3s
-                    logger.info("WebSocket connection established")
+                if self.price_cache.wait_for_connection(timeout=3):
+                    logger.info("Kotak live price poller ready")
                 else:
                     logger.warning(
-                        "WebSocket connection timeout (non-critical for buy orders), will use fallback"
+                        "Kotak live price poller not ready within timeout; will use LTP fallbacks"
                     )
             except Exception as e:
-                logger.warning(f"WebSocket wait failed (non-critical): {e}")
+                logger.warning(f"Live price poller wait failed (non-critical): {e}")
 
         except Exception as e:
             logger.warning(f"Failed to initialize live price cache: {e}")
@@ -673,16 +687,22 @@ class TradingService:
                         # Get symbols from open positions (for orders to be placed)
                         open_positions = self.sell_manager.get_open_positions()
                         symbols = []
-                        for trade in open_positions:
-                            symbol = trade.get("symbol", "").upper()
-                            if symbol and symbol not in symbols:
-                                symbols.append(symbol)
+                        from .utils.symbol_utils import normalize_subscription_symbol
 
-                        # Also get symbols from existing sell orders
+                        for trade in open_positions:
+                            raw = (
+                                trade.get("placed_symbol")
+                                or trade.get("symbol")
+                                or ""
+                            )
+                            sub_sym = normalize_subscription_symbol(raw)
+                            if sub_sym and sub_sym not in symbols:
+                                symbols.append(sub_sym)
+
+                        # Also get symbols from existing sell orders (full trdSym, not base)
                         from .domain.value_objects.order_enums import OrderStatus
                         from .utils.order_field_extractor import OrderFieldExtractor
                         from .utils.order_status_parser import OrderStatusParser
-                        from .utils.symbol_utils import extract_base_symbol
 
                         orders_api = KotakNeoOrders(self.auth)
                         orders_response = orders_api.get_orders()
@@ -692,13 +712,15 @@ class TradingService:
                                 status = OrderStatusParser.parse_status(order)
                                 txn_type = OrderFieldExtractor.get_transaction_type(order)
                                 broker_symbol = OrderFieldExtractor.get_symbol(order)
-                                base_symbol = (
-                                    extract_base_symbol(broker_symbol) if broker_symbol else ""
+                                sub_sym = (
+                                    normalize_subscription_symbol(broker_symbol)
+                                    if broker_symbol
+                                    else ""
                                 )
 
-                                if status == OrderStatus.OPEN and txn_type == "S" and base_symbol:
-                                    if base_symbol not in symbols:
-                                        symbols.append(base_symbol)
+                                if status == OrderStatus.OPEN and txn_type == "S" and sub_sym:
+                                    if sub_sym not in symbols:
+                                        symbols.append(sub_sym)
 
                         if symbols:
                             # Phase 4.1: Use PriceService for centralized subscription management

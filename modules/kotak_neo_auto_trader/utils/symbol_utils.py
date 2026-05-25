@@ -54,6 +54,28 @@ def extract_ticker_base(ticker: str) -> str:
     return normalize_symbol(ticker).replace(".NS", "").replace(".BO", "")
 
 
+def normalize_subscription_symbol(symbol: str, default_suffix: str = "-EQ") -> str:
+    """
+    Normalize a symbol for LivePriceCache subscription keys.
+
+    Kotak cache keys match the subscribed trading symbol (e.g. DMART-EQ).
+    Base-only symbols (DMART) miss cache lookups when LTP uses broker_symbol.
+
+    Args:
+        symbol: Base or full trading symbol (e.g. DMART, DMART-EQ, SALSTEEL-BE)
+        default_suffix: Segment suffix when none present (NSE equity default)
+
+    Returns:
+        Uppercase trading symbol suitable for subscribe/get_ltp
+    """
+    sym = normalize_symbol(symbol)
+    if not sym:
+        return sym
+    if "-" in sym:
+        return sym
+    return f"{sym}{default_suffix}"
+
+
 def get_lookup_symbol(broker_symbol: str | None, base_symbol: str) -> str:
     """
     Get the appropriate symbol for lookup.
