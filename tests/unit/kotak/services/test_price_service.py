@@ -187,7 +187,7 @@ class TestPriceService:
 
         assert result == 2550.0
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
+    @patch("core.data_fetcher.get_cached_ohlcv")
     def test_get_realtime_price_skips_zero_broker_map_and_uses_yfinance(self, mock_fetch):
         """Zero/invalid broker map entries must not block yfinance fallback."""
         mock_df = pd.DataFrame({"close": [2500.50], "date": [ist_now_naive()]})
@@ -204,7 +204,7 @@ class TestPriceService:
         assert result == 2500.50
         mock_fetch.assert_called_once()
 
-    @patch("modules.kotak_neo_auto_trader.services.price_service.fetch_ohlcv_yf")
+    @patch("core.data_fetcher.get_cached_ohlcv")
     def test_get_realtime_price_fallback_to_yfinance(self, mock_fetch):
         """Test fallback to yfinance when LivePriceManager unavailable"""
         # Mock yfinance response

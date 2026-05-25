@@ -20,6 +20,9 @@ from utils.circuit_breaker import CircuitBreaker
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
 
+# Intraday interval for LTP fallback only (not stored in Postgres price_cache).
+OHLCV_MINUTE_INTERVAL = "1m"
+
 # Shared OHLCV cache across ALL users (paper + broker trading) - market data is public
 # Format: {cache_key: (DataFrame, cached_time)}
 _shared_ohlcv_cache: dict[str, tuple[pd.DataFrame, datetime]] = {}
@@ -224,7 +227,18 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
     Fetch OHLCV via Postgres/SQLite cache when enabled, else direct Yahoo.
 
     See ``fetch_ohlcv_yf_raw`` for the underlying Yahoo implementation.
+
+    Intraday ``1m`` uses in-process ``get_cached_ohlcv`` only (not price_cache / gap_fill).
     """
+    if interval == OHLCV_MINUTE_INTERVAL:
+        return get_cached_ohlcv(
+            ticker=ticker,
+            days=days,
+            interval=interval,
+            add_current_day=add_current_day,
+            end_date=end_date,
+        )
+
     try:
         from config.settings import OHLCV_CACHE_ENABLED  # noqa: PLC0415
 
@@ -522,13 +536,22 @@ def get_cached_ohlcv(
                 f"Fetching OHLCV data for {ticker} (days={days}, interval={interval}, "
                 f"add_current_day={add_current_day}, end_date={end_date})"
             )
-            data = fetch_ohlcv_yf(
-                ticker,
-                days=days,
-                interval=interval,
-                add_current_day=add_current_day,
-                end_date=end_date,
-            )
+            if interval == OHLCV_MINUTE_INTERVAL:
+                data = fetch_ohlcv_yf_raw(
+                    ticker,
+                    days=days,
+                    interval=interval,
+                    add_current_day=add_current_day,
+                    end_date=end_date,
+                )
+            else:
+                data = fetch_ohlcv_yf(
+                    ticker,
+                    days=days,
+                    interval=interval,
+                    add_current_day=add_current_day,
+                    end_date=end_date,
+                )
             if data is not None and not data.empty:
                 # Update cache
                 _shared_ohlcv_cache[cache_key] = (data.copy(), now)
