@@ -9,18 +9,17 @@ Tests cover:
 - Symbol format inconsistencies
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 from server.app.routers import paper_trading
 from src.infrastructure.db.models import TradeMode
+from tests.ist_clock import ist_now_naive
 
 
-from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser:
     def __init__(self, id: int):
         self.id = id
@@ -104,13 +103,9 @@ class TestPaperTradingPortfolioEdgeCases:
             self.mock_ticker_factory,
         )
 
-        def mock_fetch_ohlcv_yf(ticker, days=60, interval="1d"):
-            # Minimal dataframe for EMA calculation (no network).
-            return pd.DataFrame({"close": [100.0] * max(days, 10)})
-
         monkeypatch.setattr(
-            "server.app.routers.paper_trading.fetch_ohlcv_yf",
-            mock_fetch_ohlcv_yf,
+            "server.app.routers.paper_trading.compute_sell_target",
+            lambda *args, **kwargs: 100.0,
         )
 
         # Mock PositionsRepository - must return the same instance

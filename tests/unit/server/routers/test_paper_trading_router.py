@@ -130,7 +130,7 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
     monkeypatch.setattr(paper_trading_router, "SettingsRepository", mock_settings_repo)
 
     # Avoid any accidental EMA9 fallback network calls
-    monkeypatch.setattr(paper_trading_router, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
+    monkeypatch.setattr(paper_trading_router, "compute_sell_target", lambda *args, **kwargs: None)
 
     mock_db = SimpleNamespace()
     result = paper_trading_router.get_paper_trading_portfolio(

@@ -35,6 +35,15 @@ def _set_today_like_index(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _ema9_for_ticker(ticker, broker_symbol=None, *, reliance=2600.0, tcs=3600.0):
+    """Side effect helper matching _calculate_ema9(ticker, broker_symbol=...) signature."""
+    if "RELIANCE" in ticker:
+        return reliance
+    if "TCS" in ticker:
+        return tcs
+    return None
+
+
 @pytest.fixture
 def test_user(db_session):
     """Create a test user"""
@@ -757,6 +766,8 @@ class TestPaperTradingSellMonitoring:
         # need it True so the stop-request check doesn't skip placement
         adapter.running = True
         adapter.shutdown_requested = False
+        adapter.indicator_service = MagicMock()
+        adapter.price_service = MagicMock()
 
         return adapter
 
@@ -767,13 +778,7 @@ class TestPaperTradingSellMonitoring:
         from src.infrastructure.db.models import OrderStatus, TradeMode
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
-        # Mock EMA9 calculation
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2600.0  # EMA9 for RELIANCE
-            elif "TCS" in ticker:
-                return 3600.0  # EMA9 for TCS
-            return None
+        mock_calculate_ema9 = _ema9_for_ticker
 
         # Mock broker.place_order to save orders to database
         def mock_place_order(order):
@@ -866,12 +871,8 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         def mock_place_order(order):
             from src.infrastructure.db.models import Orders
@@ -1253,7 +1254,7 @@ class TestPaperTradingSellMonitoring:
         )
 
         # Mock EMA9 calculation returning different value
-        def mock_calculate_ema9(ticker):
+        def mock_calculate_ema9(ticker, broker_symbol=None):
             return 2700.0  # EMA9 has moved up significantly!
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -1479,12 +1480,8 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         with (
             patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),
@@ -1520,12 +1517,8 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
         adapter_with_holdings.active_sell_orders = {}
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         with (
             patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),

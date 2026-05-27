@@ -65,7 +65,7 @@ def _no_network_price_and_history_fetch(monkeypatch):
         return SimpleNamespace(info={})
 
     monkeypatch.setattr(paper_trading.yf, "Ticker", _dummy_ticker, raising=True)
-    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *a, **k: None, raising=True)
+    monkeypatch.setattr(paper_trading, "compute_sell_target", lambda *a, **k: None, raising=True)
 
 
 class DummyUser(SimpleNamespace):
@@ -406,7 +406,7 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
     # and avoid any historical-data fetches during target calculations.
     with (
         patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
-        patch("server.app.routers.paper_trading.fetch_ohlcv_yf", return_value=None),
+        patch("server.app.routers.paper_trading.compute_sell_target", return_value=None),
     ):
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {}  # No price info

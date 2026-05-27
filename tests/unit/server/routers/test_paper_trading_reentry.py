@@ -106,7 +106,7 @@ def _install_router_repo_stubs(monkeypatch, *, positions, orders):
 
     monkeypatch.setattr(paper_trading, "PositionsRepository", _PositionsRepo)
     monkeypatch.setattr(paper_trading, "OrdersRepository", _OrdersRepo)
-    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
+    monkeypatch.setattr(paper_trading, "compute_sell_target", lambda *args, **kwargs: None)
 
 
 def _make_paper_buy_order(*, symbol: str, placed_at: datetime):
@@ -605,7 +605,7 @@ def test_get_paper_trading_portfolio_reentry_data_exception_handling(monkeypatch
 
     monkeypatch.setattr(paper_trading, "PositionsRepository", _FailingPositionsRepo)
     monkeypatch.setattr(paper_trading, "OrdersRepository", _OrdersRepo)
-    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
+    monkeypatch.setattr(paper_trading, "compute_sell_target", lambda *args, **kwargs: None)
 
     # Mock yfinance
     with patch("yfinance.Ticker") as mock_ticker_class:

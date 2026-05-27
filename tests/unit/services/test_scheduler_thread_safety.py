@@ -90,7 +90,7 @@ class TestSchedulerThreadSafety:
 
                 # Mock ServiceScheduleRepository to avoid actual DB queries
                 with patch(
-                    "src.application.services.schedule_manager.ServiceScheduleRepository"
+                    "src.infrastructure.persistence.service_schedule_repository.ServiceScheduleRepository"
                 ) as mock_repo_class:
                     mock_repo = MagicMock()
                     mock_repo.get_by_task_name.return_value = None
@@ -131,7 +131,7 @@ class TestSchedulerThreadSafety:
         with patch("src.infrastructure.db.session.SessionLocal", return_value=mock_thread_db):
             # Mock schedule repository
             with patch(
-                "src.application.services.schedule_manager.ServiceScheduleRepository"
+                "src.infrastructure.persistence.service_schedule_repository.ServiceScheduleRepository"
             ) as mock_repo_class:
                 mock_repo = MagicMock()
                 mock_schedule = MagicMock()
