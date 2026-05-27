@@ -4,7 +4,6 @@ Paper Trading API endpoints
 
 import logging
 from datetime import date, datetime
-from pathlib import Path
 from typing import Annotated, Any
 
 import yfinance as yf
@@ -13,12 +12,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
+from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 from modules.kotak_neo_auto_trader.services import (
     compute_sell_target,
     get_indicator_service,
     get_price_service,
 )
-from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 from src.infrastructure.db.models import (
     OrderStatus,
@@ -33,6 +32,9 @@ from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 from src.infrastructure.persistence.settings_repository import SettingsRepository
+from src.infrastructure.persistence.user_trading_config_repository import (
+    UserTradingConfigRepository,
+)
 
 from ..core.deps import get_current_user, get_db, require_entitlement
 from ..services.pnl_calculation_service import PnlCalculationService
@@ -210,6 +212,117 @@ def _upsert_pnl_from_closed_positions(
         logger.warning(f"Skipping PnL sync from history for user {user_id}: {e}")
 
 
+def _empty_paginated_portfolio(
+    initial_capital: float,
+    *,
+    page: int,
+    page_size: int,
+) -> PaginatedPaperTradingPortfolio:
+    """Portfolio shell when the user has no paper activity yet."""
+    cash = initial_capital
+    return PaginatedPaperTradingPortfolio(
+        account=PaperTradingAccount(
+            initial_capital=initial_capital,
+            available_cash=cash,
+            total_pnl=0.0,
+            realized_pnl=0.0,
+            unrealized_pnl=0.0,
+            portfolio_value=0.0,
+            total_value=cash,
+            return_percentage=0.0,
+        ),
+        holdings=[],
+        recent_orders=PaginatedPaperTradingOrders(
+            items=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+            total_pages=0,
+        ),
+        order_statistics={
+            "total_orders": 0,
+            "buy_orders": 0,
+            "sell_orders": 0,
+            "completed_orders": 0,
+            "pending_orders": 0,
+            "cancelled_orders": 0,
+            "rejected_orders": 0,
+            "success_rate": 0.0,
+        },
+    )
+
+
+def _get_paper_initial_capital(db: Session, user_id: int) -> float:
+    """Configured paper starting balance (DB)."""
+    config = UserTradingConfigRepository(db).get_or_create_default(user_id)
+    return float(getattr(config, "paper_trading_initial_capital", 0.0) or 0.0)
+
+
+def _is_paper_position(
+    pos: PositionsModel,
+    all_orders: list,
+    user_settings,
+) -> bool:
+    """True when a position belongs to paper trading (same rules as open-holdings filter)."""
+    for order in all_orders:
+        if (
+            order.symbol == pos.symbol
+            and order.side == "buy"
+            and order.placed_at
+            and pos.opened_at
+            and abs((order.placed_at - pos.opened_at).total_seconds()) < 3600
+            and getattr(order, "trade_mode", None) == TradeMode.PAPER
+        ):
+            return True
+
+    has_broker_order = any(
+        o.symbol == pos.symbol
+        and o.side == "buy"
+        and getattr(o, "trade_mode", None) == TradeMode.BROKER
+        for o in all_orders
+    )
+    if has_broker_order:
+        return False
+
+    return bool(user_settings and user_settings.trade_mode == TradeMode.PAPER)
+
+
+def _sum_paper_realized_pnl(
+    db: Session,
+    user_id: int,
+    all_orders: list,
+    user_settings,
+) -> float:
+    """Sum realized P&L from closed paper positions (DB; matches trade history)."""
+    closed_positions = (
+        db.query(PositionsModel)
+        .filter(
+            PositionsModel.user_id == user_id,
+            PositionsModel.closed_at.isnot(None),
+        )
+        .all()
+    )
+    total = 0.0
+    for pos in closed_positions:
+        if _is_paper_position(pos, all_orders, user_settings):
+            total += float(pos.realized_pnl or 0.0)
+    return total
+
+
+def _derive_available_cash(
+    initial_capital: float,
+    realized_pnl: float,
+    unrealized_pnl: float,
+    portfolio_value: float,
+) -> float:
+    """
+    Cash balance implied by DB P&L and open marks.
+
+    Ensures total_value = initial_capital + total_pnl (consistent with trade history).
+    """
+    return initial_capital + realized_pnl + unrealized_pnl - portfolio_value
+
+
 @router.get("/portfolio", response_model=PaginatedPaperTradingPortfolio)
 def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
     page: Annotated[
@@ -223,125 +336,28 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ):
-    """Get paper trading portfolio for the current user"""
+    """Get paper trading portfolio for the current user (DB-only account metrics)."""
     try:
-        storage_path = f"paper_trading/user_{current.id}"
-        store_path = Path(storage_path)
-
-        if not store_path.exists():
-            # Return empty portfolio if no data exists
-            return PaginatedPaperTradingPortfolio(
-                account=PaperTradingAccount(
-                    initial_capital=0.0,
-                    available_cash=0.0,
-                    total_pnl=0.0,
-                    realized_pnl=0.0,
-                    unrealized_pnl=0.0,
-                    portfolio_value=0.0,
-                    total_value=0.0,
-                    return_percentage=0.0,
-                ),
-                holdings=[],
-                recent_orders=PaginatedPaperTradingOrders(
-                    items=[],
-                    total=0,
-                    page=1,
-                    page_size=page_size,
-                    total_pages=0,
-                ),
-                order_statistics={
-                    "total_orders": 0,
-                    "buy_orders": 0,
-                    "sell_orders": 0,
-                    "completed_orders": 0,
-                    "pending_orders": 0,
-                    "cancelled_orders": 0,
-                    "rejected_orders": 0,
-                    "success_rate": 0.0,
-                },
-            )
-
-        store = PaperTradeStore(storage_path, auto_save=False)
-        reporter = PaperTradeReporter(store)
-
-        # Account information (still from file - cash balance managed there)
-        account_data = store.get_account()
-        if not account_data:
-            raise HTTPException(status_code=404, detail="Paper trading account not initialized")
-
-        # Read positions from database (single source of truth)
-        # Handle case where db is None (for backward compatibility with tests)
         if db is None:
-            all_positions = []
-            all_orders = []
-            open_positions = []
-            paper_positions = []
-        else:
-            positions_repo = PositionsRepository(db)
-            orders_repo = OrdersRepository(db)
-            # Get all open positions for this user
-            all_positions = positions_repo.list(current.id)
-            all_orders, _ = orders_repo.list(current.id)
-            # Filter for open positions only (closed_at IS NULL)
-            open_positions = [pos for pos in all_positions if pos.closed_at is None]
+            return _empty_paginated_portfolio(0.0, page=page, page_size=page_size)
 
-            # Filter for paper trading positions by matching with buy orders that have trade_mode=PAPER
-            # Since Positions table doesn't have trade_mode field, we match with orders
-            paper_positions = []
-            for pos in open_positions:
-                # Find a buy order for this position to check trade_mode
-                is_paper_position = False
-                for order in all_orders:
-                    if (
-                        order.symbol == pos.symbol
-                        and order.side == "buy"
-                        and order.placed_at
-                        and pos.opened_at
-                        and abs((order.placed_at - pos.opened_at).total_seconds())
-                        < 3600  # Within 1 hour
-                        and getattr(order, "trade_mode", None) == TradeMode.PAPER
-                    ):
-                        is_paper_position = True
-                        break
+        settings_repo = SettingsRepository(db)
+        user_settings = settings_repo.get_by_user_id(current.id)
+        positions_repo = PositionsRepository(db)
+        orders_repo = OrdersRepository(db)
+        initial_capital = _get_paper_initial_capital(db, current.id)
 
-                # If no matching order found, use fallback logic to determine trade mode
-                # This handles positions created before order tracking or edge cases
-                if not is_paper_position:
-                    # Check if there are any broker orders for this symbol (if yes, it's likely broker position)
-                    # Note: all_orders is already filtered by current.id, so we're only checking this user's orders
-                    has_broker_order = any(
-                        o.symbol == pos.symbol
-                        and o.side == "buy"
-                        and getattr(o, "trade_mode", None) == TradeMode.BROKER
-                        for o in all_orders
-                    )
-                    if has_broker_order:
-                        # User has broker orders for this symbol, so this position is likely broker mode
-                        # Skip it (don't add to paper_positions)
-                        is_paper_position = False
-                    else:
-                        # No broker orders found for this symbol
-                        # Check user's current trade mode setting to make an educated guess
-                        # If user is in paper mode, assume paper trading (backward compatibility)
-                        # If user is in broker mode, this is ambiguous - skip it to be safe
-                        settings_repo = SettingsRepository(db)
-                        user_settings = settings_repo.get_by_user_id(current.id)
-                        if user_settings and user_settings.trade_mode == TradeMode.PAPER:
-                            # User is in paper mode, assume paper trading for backward compatibility
-                            is_paper_position = True
-                        else:
-                            # User is in broker mode or unknown - skip ambiguous position
-                            # This prevents showing broker positions in paper trading portfolio
-                            logger.debug(
-                                f"Skipping ambiguous position {pos.symbol} for user {current.id}: "
-                                f"no matching order found and user is in broker mode"
-                            )
-                            is_paper_position = False
+        all_positions = positions_repo.list(current.id)
+        all_orders, _ = orders_repo.list(current.id)
+        open_positions = [pos for pos in all_positions if pos.closed_at is None]
 
-                if is_paper_position:
-                    paper_positions.append(pos)
+        paper_positions = [
+            pos
+            for pos in open_positions
+            if _is_paper_position(pos, all_orders, user_settings)
+        ]
 
-        # DB is the single source of truth for positions (file-based fallback removed)
+        realized_pnl = _sum_paper_realized_pnl(db, current.id, all_orders, user_settings)
 
         # Fetch live prices using yfinance (broker-agnostic)
         portfolio_value = 0.0
@@ -370,58 +386,27 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     current_price = position.avg_price or 0.0
                 portfolio_value += qty * current_price
 
-        total_value = account_data["available_cash"] + portfolio_value
-
-        # Get realized P&L from stored account (from completed trades)
-        realized_pnl = account_data.get("realized_pnl", 0.0)
-
-        # Validation: Check if account balance matches expected value based on positions
-        all_positions_for_validation = list(paper_positions)
-        expected_invested = sum(
-            pos.quantity * pos.avg_price for pos in all_positions_for_validation if pos.quantity > 0
-        )
-        initial_capital = account_data.get("initial_capital", 0.0)
-        expected_cash = initial_capital - expected_invested + realized_pnl
-        actual_cash = account_data.get("available_cash", 0.0)
-        cash_discrepancy = abs(expected_cash - actual_cash)
-
-        if cash_discrepancy > 100.0:  # More than Rs 100 discrepancy
-            logger.warning(
-                f"[PaperTrading] Account balance discrepancy detected for user {current.id}: "
-                f"expected Rs {expected_cash:.2f}, actual Rs {actual_cash:.2f}, "
-                f"difference Rs {cash_discrepancy:.2f}. "
-                f"This may indicate sync issues between account file and DB positions."
-            )
-
         # Load target prices from DATABASE sell orders ONLY (single source of truth)
         # No file fallback - database is the only source for target prices
         target_prices = {}
         try:
-            if db:
-                orders_repo = OrdersRepository(db)
-                # Get all active sell orders for this user (PENDING or ONGOING)
-                active_sell_orders, _ = orders_repo.list(
-                    current.id,
-                    side="sell",
-                    status=[OrderStatus.PENDING, OrderStatus.ONGOING],
-                )
-
-                # Extract target prices from sell orders
-                for order in active_sell_orders:
-                    if order.price and order.price > 0:
-                        # Store by both full symbol and base symbol for flexible lookup
-                        symbol = order.symbol
-                        base_symbol = extract_base_symbol(symbol).upper()
-
-                        # Prefer full symbol if available, fallback to base symbol
-                        if symbol not in target_prices:
-                            target_prices[symbol] = float(order.price)
-                        if base_symbol not in target_prices:
-                            target_prices[base_symbol] = float(order.price)
-
-                        logger.debug(
-                            f"Loaded target from DB sell order: {symbol} (base: {base_symbol}) = {order.price}"
-                        )
+            active_sell_orders, _ = orders_repo.list(
+                current.id,
+                side="sell",
+                status=[OrderStatus.PENDING, OrderStatus.ONGOING],
+            )
+            for order in active_sell_orders:
+                if order.price and order.price > 0:
+                    symbol = order.symbol
+                    base_symbol = extract_base_symbol(symbol).upper()
+                    if symbol not in target_prices:
+                        target_prices[symbol] = float(order.price)
+                    if base_symbol not in target_prices:
+                        target_prices[base_symbol] = float(order.price)
+                    logger.debug(
+                        f"Loaded target from DB sell order: {symbol} "
+                        f"(base: {base_symbol}) = {order.price}"
+                    )
         except Exception as e:
             logger.debug(f"Could not load target prices from database: {e}")
 
@@ -569,22 +554,16 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 )
             )
 
-        # Calculate total P&L with live prices
         total_pnl = realized_pnl + unrealized_pnl_total
-
-        # Calculate return percentage based on total P&L
-        # (more accurate than total_value - initial_capital)
-        # This ensures consistency with the displayed total_pnl
-        return_pct = (
-            (total_pnl / account_data["initial_capital"]) * 100
-            if account_data["initial_capital"] > 0
-            else 0.0
+        available_cash = _derive_available_cash(
+            initial_capital, realized_pnl, unrealized_pnl_total, portfolio_value
         )
+        total_value = available_cash + portfolio_value
+        return_pct = (total_pnl / initial_capital * 100) if initial_capital > 0 else 0.0
 
-        # Create account object with recalculated P&L
         account = PaperTradingAccount(
-            initial_capital=account_data["initial_capital"],
-            available_cash=account_data["available_cash"],
+            initial_capital=initial_capital,
+            available_cash=available_cash,
             total_pnl=total_pnl,
             realized_pnl=realized_pnl,
             unrealized_pnl=unrealized_pnl_total,
@@ -593,8 +572,7 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             return_percentage=return_pct,
         )
 
-        # Recent orders - read from database instead of file (with pagination)
-        orders_repo = OrdersRepository(db)
+        # Recent orders - read from database (with pagination)
         try:
             all_orders, _ = orders_repo.list(user_id=current.id)
 

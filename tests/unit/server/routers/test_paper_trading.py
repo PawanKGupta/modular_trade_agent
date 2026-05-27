@@ -30,6 +30,20 @@ def create_mock_position(user_id, symbol, quantity, avg_price, opened_at=None):
     )
 
 
+def configure_mock_db_closed_realized(mock_db, realized_pnl: float, symbol: str = "RELIANCE.NS"):
+    """Stub closed positions for portfolio realized P&L (DB source)."""
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+    closed_at = datetime(2025, 2, 1, 10, 0, 0)
+    mock_db.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(
+            symbol=symbol,
+            opened_at=opened_at,
+            closed_at=closed_at,
+            realized_pnl=float(realized_pnl),
+        )
+    ]
+
+
 def create_mock_buy_order(user_id, symbol, quantity, avg_price, placed_at=None):
     """Helper to create a mock buy order for matching with positions"""
     if placed_at is None:
@@ -51,6 +65,24 @@ def create_mock_buy_order(user_id, symbol, quantity, avg_price, placed_at=None):
         trade_mode=paper_trading.TradeMode.PAPER,
         order_metadata=None,
         metadata=None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _patch_paper_portfolio_user_config(monkeypatch):
+    """Default paper initial capital for portfolio DB metrics."""
+
+    class DummyUserTradingConfigRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_or_create_default(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(paper_trading_initial_capital=100_000.0)
+
+    monkeypatch.setattr(
+        paper_trading,
+        "UserTradingConfigRepository",
+        DummyUserTradingConfigRepository,
     )
 
 
@@ -138,12 +170,6 @@ class DummyPaperTradeReporter:
 def test_get_paper_trading_portfolio_path_not_exists(monkeypatch, tmp_path):
     user = DummyUser(id=42)
 
-    # Mock Path.exists to return False
-    def mock_exists(self):
-        return False
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
     result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
 
     assert result.account.initial_capital == 0.0
@@ -153,28 +179,11 @@ def test_get_paper_trading_portfolio_path_not_exists(monkeypatch, tmp_path):
     assert result.order_statistics["total_orders"] == 0
 
 
-def test_get_paper_trading_portfolio_no_account(monkeypatch):
+def test_get_paper_trading_portfolio_no_db_returns_empty_shell():
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = None  # No account data
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    with pytest.raises(HTTPException) as exc:
-        paper_trading.get_paper_trading_portfolio(db=None, current=user)
-
-    # HTTPException is re-raised as-is (404 for account not initialized)
-    assert exc.value.status_code == 404
-    assert "account not initialized" in exc.value.detail
+    result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+    assert result.account.initial_capital == 0.0
+    assert result.account.available_cash == 0.0
 
 
 def test_get_paper_trading_portfolio_success(monkeypatch):
@@ -300,10 +309,14 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
 
         # Pass a mock db so the router enters the DB-query branch
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 1000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         assert result.account.initial_capital == 100000.0
-        assert result.account.available_cash == 50000.0
+        assert result.account.realized_pnl == 1000.0
+        assert result.account.total_value == pytest.approx(
+            result.account.initial_capital + result.account.total_pnl
+        )
         assert len(result.holdings) == 1
         assert result.holdings[0].symbol == "RELIANCE.NS"
         assert result.holdings[0].quantity == 10
@@ -498,13 +511,17 @@ def test_get_paper_trading_portfolio_with_target_prices(monkeypatch):
 def test_get_paper_trading_portfolio_exception_handling(monkeypatch):
     user = DummyUser(id=42)
 
-    def mock_exists(self):
-        raise Exception("Unexpected error")
+    class FailingPositionsRepository:
+        def __init__(self, _db):
+            pass
 
-    monkeypatch.setattr(Path, "exists", mock_exists)
+        def list(self, user_id):  # noqa: ARG002
+            raise RuntimeError("Unexpected error")
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", FailingPositionsRepository)
 
     with pytest.raises(HTTPException) as exc:
-        paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        paper_trading.get_paper_trading_portfolio(db=MagicMock(), current=user)
 
     assert exc.value.status_code == 500
     assert "Failed to fetch portfolio" in exc.value.detail
@@ -831,7 +848,8 @@ def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         assert result.order_statistics["total_orders"] == 2
         assert result.order_statistics["buy_orders"] == 1
@@ -943,10 +961,9 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 5000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected: total_pnl = realized_pnl (5000) + unrealized_pnl (5000) = 10000
-        # return_percentage = (10000 / 100000) * 100 = 10.0%
         expected_total_pnl = 5000.0 + (20 * (2750.0 - 2500.0))  # 10000.0
         expected_return_pct = (expected_total_pnl / 100000.0) * 100  # 10.0%
 
@@ -1022,10 +1039,9 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, -2000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected: total_pnl = realized_pnl (-2000) + unrealized_pnl (-2000) = -4000
-        # return_percentage = (-4000 / 100000) * 100 = -4.0%
         expected_total_pnl = -2000.0 + (20 * (2400.0 - 2500.0))  # -4000.0
         expected_return_pct = (expected_total_pnl / 100000.0) * 100  # -4.0%
 
@@ -1137,6 +1153,19 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
     monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
     monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
+    class LargeCapitalConfigRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_or_create_default(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(paper_trading_initial_capital=200_000.0)
+
+    monkeypatch.setattr(
+        paper_trading,
+        "UserTradingConfigRepository",
+        LargeCapitalConfigRepository,
+    )
+
     call_count = [0]
 
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
@@ -1158,14 +1187,8 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 15000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
-
-        # Calculate expected values
-        # RELIANCE: 10 * (2600 - 2500) = 1000
-        # TCS: 20 * (3400 - 3500) = -2000
-        # Total unrealized: 1000 + (-2000) = -1000
-        # Total P&L: 15000 (realized) + (-1000) (unrealized) = 14000
-        # Return %: (14000 / 200000) * 100 = 7.0%
 
         expected_unrealized_pnl = (10 * (2600.0 - 2500.0)) + (20 * (3400.0 - 3500.0))  # -1000
         expected_total_pnl = 15000.0 + expected_unrealized_pnl  # 14000
@@ -1340,11 +1363,9 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
         mock_db = MagicMock()
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected total value: cash (30000) + portfolio (20 * 2600 = 52000) = 82000
-        expected_total_value = 30000.0 + (20 * 2600.0)  # 82000.0
-        assert result.account.total_value == pytest.approx(expected_total_value, rel=1e-6)
-        assert result.account.total_value == 82000.0
-        # Verify: total_value = available_cash + portfolio_value
+        assert result.account.total_value == pytest.approx(
+            result.account.initial_capital + result.account.total_pnl
+        )
         assert result.account.total_value == (
             result.account.available_cash + result.account.portfolio_value
         )
@@ -1769,13 +1790,21 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
+        closed_at = datetime(2025, 2, 1, 10, 0, 0)
+        closed_pos = SimpleNamespace(
+            symbol="RELIANCE.NS",
+            opened_at=opened_at,
+            closed_at=closed_at,
+            realized_pnl=5000.0,
+        )
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.all.return_value = [closed_pos]
+
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Verify: total_pnl = realized_pnl + unrealized_pnl
         expected_total_pnl = result.account.realized_pnl + result.account.unrealized_pnl
         assert result.account.total_pnl == pytest.approx(expected_total_pnl, rel=1e-6)
-        # Expected: 5000 (realized) + 2000 (unrealized) = 7000
+        assert result.account.realized_pnl == 5000.0
         assert result.account.total_pnl == 7000.0
 
 
