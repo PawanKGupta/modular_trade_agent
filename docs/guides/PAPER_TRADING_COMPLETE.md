@@ -2,7 +2,7 @@
 
 A complete paper trading system for testing your trading strategies without risking real money. Mimics Kotak Neo broker behavior with realistic execution, fees, and portfolio management.
 
-**Last Updated:** 2025-12-14
+**Last Updated:** 2026-05-28
 **Status:** Production Ready
 
 ---
@@ -414,6 +414,30 @@ if current_price >= ema9:
     )
     broker.place_order(order)
 ```
+
+### Sell target parity with live Kotak (placement time)
+
+Paper trading and live Kotak use the same helper at **sell placement**:
+
+- **Module:** `modules/kotak_neo_auto_trader/services/sell_target_service.py`
+- **`compute_sell_target()`** — realtime daily EMA9 (`IndicatorService.calculate_ema9_realtime`) plus NSE/BSE tick rounding (`round_sell_price`)
+- **Paper:** `PaperTradingServiceAdapter._calculate_ema9()` and the paper portfolio API (`GET /paper-trading/portfolio`) call this helper with `live_price_manager=None` (Yahoo / cached OHLCV for LTP).
+- **Live:** `SellOrderManager` uses the same EMA9 formula and delegates tick rounding to `round_sell_price` (via `round_to_tick_size`).
+
+**What should match** when you compare targets at the moment a sell limit is placed:
+
+| Factor | Paper | Live Kotak |
+|--------|-------|------------|
+| EMA9 formula | Realtime EMA9 (yesterday EMA + today LTP) | Same |
+| Tick rounding | `round_sell_price` (fallback NSE/BSE rules if no scrip master) | Same helper; Kotak scrip master used when available |
+
+**What can still differ** (expected):
+
+1. **LTP source** — Paper uses Yahoo; live prefers Kotak live quotes when configured. Same formula, different input price.
+2. **Tick size** — Live may use Kotak scrip-master tick; paper uses exchange fallback rules unless scrip is passed.
+3. **After placement** — Live sell monitor can **lower** the limit when EMA9 drops; paper keeps the **frozen** target until re-entry or exit (see `test_frozen_target_never_updates`).
+
+For sell-order architecture and monitoring, see [Sell Order Implementation](../kotak_neo_trader/SELL_ORDER_IMPLEMENTATION_COMPLETE.md).
 
 ---
 

@@ -23,7 +23,9 @@ class TestRoundSellPrice:
     def test_uses_scrip_master_tick_when_available(self):
         scrip = MagicMock()
         scrip.get_tick_size.return_value = 0.25
-        assert round_sell_price(100.1, exchange="NSE", symbol="FOO-EQ", scrip_master=scrip) == 100.25
+        assert (
+            round_sell_price(100.1, exchange="NSE", symbol="FOO-EQ", scrip_master=scrip) == 100.25
+        )
 
 
 class TestComputeSellTarget:
@@ -73,3 +75,56 @@ class TestComputeSellTarget:
             round_price=False,
         )
         assert result == pytest.approx(2565.4321)
+
+
+class TestSellTargetPlacementParity:
+    """Lock shared rounding between compute_sell_target and SellOrderManager."""
+
+    def test_compute_sell_target_matches_sell_order_manager_rounding(self):
+        from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+
+        scrip = MagicMock()
+        scrip.get_tick_size.return_value = 0.10
+        ema9 = 1000.03
+        mock_ind = MagicMock()
+        mock_ind.calculate_ema9_realtime.return_value = ema9
+
+        via_helper = compute_sell_target(
+            "RELIANCE.NS",
+            broker_symbol="RELIANCE-EQ",
+            indicator_service=mock_ind,
+            price_service=MagicMock(),
+            scrip_master=scrip,
+            exchange="NSE",
+            round_price=True,
+        )
+        mgr = MagicMock()
+        mgr.scrip_master = scrip
+        via_manager = SellOrderManager.round_to_tick_size(
+            mgr, ema9, exchange="NSE", symbol="RELIANCE-EQ"
+        )
+
+        assert via_helper == via_manager
+        assert via_helper == round_sell_price(
+            ema9, exchange="NSE", symbol="RELIANCE-EQ", scrip_master=scrip
+        )
+
+    def test_compute_sell_target_forwards_explicit_ltp(self):
+        mock_ind = MagicMock()
+        mock_ind.calculate_ema9_realtime.return_value = 2500.0
+        ltp = 2488.5
+
+        compute_sell_target(
+            "RELIANCE.NS",
+            broker_symbol="RELIANCE-EQ",
+            indicator_service=mock_ind,
+            price_service=MagicMock(),
+            round_price=False,
+            current_ltp=ltp,
+        )
+
+        mock_ind.calculate_ema9_realtime.assert_called_once_with(
+            ticker="RELIANCE.NS",
+            broker_symbol="RELIANCE-EQ",
+            current_ltp=ltp,
+        )
