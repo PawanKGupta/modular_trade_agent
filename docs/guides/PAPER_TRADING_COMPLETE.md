@@ -126,9 +126,22 @@ reporter.print_summary()
 
 ### API Endpoints
 
-- `GET /api/v1/user/paper-trading/portfolio` - Get portfolio
-- `GET /api/v1/user/paper-trading/history` - Get trade history
+- `GET /api/v1/user/paper-trading/portfolio` - Get portfolio (DB-backed metrics; see below)
+- `GET /api/v1/user/paper-trading/history` - Get trade history (paper orders and closed positions only)
 - `POST /api/v1/user/paper-trading/execute` - Execute paper trade
+
+### Web API portfolio vs simulator files
+
+The dashboard **portfolio** and **history** endpoints read from the **application database** (`positions`, `orders`, user trading config), not from `paper_trading/user_{id}/account.json`:
+
+| Field | Source |
+|--------|--------|
+| `initial_capital` | `UserTradingConfig.paper_trading_initial_capital` |
+| `realized_pnl` / history `net_pnl` | Sum of closed paper positions (`trade_mode == PAPER` or user in paper mode with symbol-matched buy) |
+| Open holdings / `unrealized_pnl` | Open paper positions + live marks |
+| `available_cash` | **Derived** so `total_value = initial_capital + total_pnl` (display identity; may differ from the simulator wallet in `account.json`) |
+
+Per-user JSON under `paper_trading/user_{user_id}/` (`account.json`, `orders.json`, etc.) is still used by the **Python paper broker adapter** during execution and reporting. After trades are persisted to the DB, the web API is the source of truth for portfolio and history totals.
 
 ---
 
@@ -625,16 +638,22 @@ Holdings Count:                      3
 
 ## Data Storage
 
-All data persists in JSON files:
+### Simulator (Python adapter)
+
+The in-process paper broker persists state under `paper_trading/user_{user_id}/` (or legacy `paper_trading/data/`):
 
 ```
-paper_trading/data/
-Γö£ΓöÇΓöÇ account.json          # Balance, P&L, capital
-Γö£ΓöÇΓöÇ orders.json           # All orders (buy/sell)
-Γö£ΓöÇΓöÇ holdings.json         # Current positions
-Γö£ΓöÇΓöÇ transactions.json     # Execution history
-ΓööΓöÇΓöÇ config.json          # Configuration
+paper_trading/user_{user_id}/
+  account.json       # Simulator wallet (cash, marks during execution)
+  orders.json        # Adapter order log
+  holdings.json      # Adapter holdings snapshot
+  transactions.json  # Execution history
+  config.json        # Adapter configuration
 ```
+
+### Web API (FastAPI)
+
+Portfolio and trade-history responses are built from the **shared DB** (`positions`, `orders`, trading config). They filter to **paper** rows only and align realized P&L between `/portfolio` and `/history` via the same closed-position rules. Do not expect `available_cash` on the API to match `account.json` byte-for-byte; the API uses a derived cash balance for consistent `total_value`.
 
 ### Backup & Restore
 
