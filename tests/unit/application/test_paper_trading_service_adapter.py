@@ -1273,41 +1273,28 @@ class TestPaperTradingSellMonitoring:
         )
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] != 2700.0
 
-    def test_calculate_ema9_with_lowercase_columns(self, db_session, test_user):
-        """Test that _calculate_ema9 works with lowercase column names from fetch_ohlcv_yf"""
-        from unittest.mock import patch
-
-        import pandas as pd
+    def test_calculate_ema9_uses_unified_sell_target(self, db_session, test_user):
+        """Test that _calculate_ema9 delegates to compute_sell_target (realtime EMA9 path)."""
+        from unittest.mock import MagicMock, patch
 
         adapter = PaperTradingServiceAdapter(
             user_id=test_user.id,
             db_session=db_session,
         )
+        adapter.indicator_service = MagicMock()
+        adapter.price_service = MagicMock()
 
-        # Mock data with lowercase columns (as returned by fetch_ohlcv_yf)
-        mock_data = pd.DataFrame(
-            {
-                "date": pd.date_range(start="2024-01-01", periods=50),
-                "open": [2500.0] * 50,
-                "high": [2550.0] * 50,
-                "low": [2480.0] * 50,
-                "close": [2520.0 + i for i in range(50)],  # Trending up
-                "volume": [1000000] * 50,
-            }
-        )
+        with patch(
+            "modules.kotak_neo_auto_trader.services.sell_target_service.compute_sell_target",
+            return_value=2565.45,
+        ) as mock_compute:
+            result = adapter._calculate_ema9("RELIANCE.NS", broker_symbol="RELIANCE-EQ")
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.ema") as mock_ema:
-                # Mock EMA calculation
-                mock_ema.return_value = pd.Series([2565.0] * 50)
-
-                result = adapter._calculate_ema9("RELIANCE.NS")
-
-                # Verify it was called with lowercase "close"
-                mock_ema.assert_called_once()
-                call_args = mock_ema.call_args
-                assert "close" in str(call_args) or call_args[0][0].name == "close"
-                assert result == 2565.0
+        assert result == 2565.45
+        mock_compute.assert_called_once()
+        call_kw = mock_compute.call_args.kwargs
+        assert call_kw["broker_symbol"] == "RELIANCE-EQ"
+        assert call_kw["live_price_manager"] is None
 
     def test_monitor_sell_orders_with_lowercase_columns(self, db_session, test_user):
         """Test that _monitor_sell_orders works with lowercase column names"""

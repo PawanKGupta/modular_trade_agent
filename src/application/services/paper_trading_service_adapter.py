@@ -98,6 +98,10 @@ class PaperTradingServiceAdapter:
         # Cached at market open (previous day's RSI10), updated with real-time if available
         self.rsi10_cache: dict[str, float] = {}
 
+        # Unified EMA9 target (same formula as live broker; Yahoo LTP, no Kotak required)
+        self.price_service = None
+        self.indicator_service = None
+
         # RSI Exit: Track orders converted to market {symbol}
         # Prevents duplicate conversion attempts
         self.converted_to_market: set[str] = set()
@@ -210,6 +214,16 @@ class PaperTradingServiceAdapter:
 
             # Initialize reporter
             self.reporter = PaperTradeReporter(self.broker.store)
+
+            from modules.kotak_neo_auto_trader.services import (  # noqa: PLC0415
+                get_indicator_service,
+                get_price_service,
+            )
+
+            self.price_service = get_price_service(live_price_manager=None, enable_caching=True)
+            self.indicator_service = get_indicator_service(
+                price_service=self.price_service, enable_caching=True
+            )
 
             # Create a mock engine object that uses paper trading broker
             # This allows AutoTradeEngine methods to work with paper trading
@@ -543,7 +557,7 @@ class PaperTradingServiceAdapter:
                     # Check if pre-market price is above EMA9-1% (cancel order if so)
                     ema9 = None
                     try:
-                        ema9 = self._calculate_ema9(price_symbol)
+                        ema9 = self._calculate_ema9(price_symbol, broker_symbol=order.symbol)
                     except Exception as e:
                         self.logger.warning(
                             f"{order.symbol}: Failed to calculate EMA9: {e}",
@@ -1093,8 +1107,8 @@ class PaperTradingServiceAdapter:
                     action="_place_sell_orders",
                 )
 
-                # Calculate EMA9 target for today's limit sell
-                ema9_target = self._calculate_ema9(ticker)
+                # Calculate EMA9 target for today's limit sell (same realtime formula as broker)
+                ema9_target = self._calculate_ema9(ticker, broker_symbol=symbol)
 
                 self.logger.info(
                     f"EMA9 calculation for {ticker}: {ema9_target}",
@@ -1669,7 +1683,7 @@ class PaperTradingServiceAdapter:
                     elif symbol_targets is None:
                         # Calculate EMA9 target (matches backtest behavior)
                         ticker = order_info.get("ticker", f"{symbol}.NS")
-                        new_target = self._calculate_ema9(ticker)
+                        new_target = self._calculate_ema9(ticker, broker_symbol=symbol)
 
                     if self._update_sell_order_quantity(symbol, holdings_qty, new_target):
                         updated_count += 1
@@ -1715,7 +1729,7 @@ class PaperTradingServiceAdapter:
 
             # Calculate new target if not provided (recalculate EMA9)
             if new_target is None:
-                new_target = self._calculate_ema9(ticker)
+                new_target = self._calculate_ema9(ticker, broker_symbol=symbol)
                 if new_target is None or new_target <= 0:
                     self.logger.warning(
                         f"Failed to calculate new EMA9 target for {symbol}, keeping old target",
@@ -1803,33 +1817,53 @@ class PaperTradingServiceAdapter:
         except Exception as e:
             self.logger.warning(f"Failed to save sell orders to file: {e}")
 
-    def _calculate_ema9(self, ticker: str) -> float | None:
+    def _default_exchange(self) -> str:
+        if self.strategy_config and getattr(self.strategy_config, "default_exchange", None):
+            return str(self.strategy_config.default_exchange)
+        from modules.kotak_neo_auto_trader import config  # noqa: PLC0415
+
+        return getattr(config, "DEFAULT_EXCHANGE", "NSE")
+
+    def _calculate_ema9(self, ticker: str, broker_symbol: str | None = None) -> float | None:
         """
-        Calculate EMA9 for a ticker.
+        Realtime EMA9 sell target (same path as live SellOrderManager; Yahoo LTP, no Kotak).
 
         Args:
             ticker: Stock ticker (e.g., "RELIANCE.NS")
+            broker_symbol: Full symbol (e.g., "RELIANCE-EQ") for LTP lookup
 
         Returns:
-            EMA9 value or None if calculation fails
+            Rounded EMA9 target or None if calculation fails
         """
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            compute_sell_target,
+        )
+
+        if not self.indicator_service or not self.price_service:
+            self.logger.warning(
+                "Price/indicator services not initialized; cannot compute EMA9 target",
+                action="_calculate_ema9",
+            )
+            return None
+
         try:
-            import pandas_ta as ta
-
-            from core.data_fetcher import fetch_ohlcv_yf
-
-            # Fetch data (need at least 50 days for stable EMA9)
-            data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
-
-            if data is None or data.empty:
-                return None
-
-            # Calculate EMA9
-            data["ema9"] = ta.ema(data["close"], length=9)
-            ema9 = data.iloc[-1]["ema9"]
-
-            return float(ema9) if not pd.isna(ema9) else None
-
+            target = compute_sell_target(
+                ticker,
+                broker_symbol=broker_symbol,
+                indicator_service=self.indicator_service,
+                price_service=self.price_service,
+                live_price_manager=None,
+                scrip_master=None,
+                exchange=self._default_exchange(),
+                round_price=True,
+            )
+            if target is not None:
+                self.logger.info(
+                    f"Sell target {broker_symbol or ticker}: Rs {target:.2f} "
+                    f"(realtime EMA9, ltp=yahoo/paper)",
+                    action="_calculate_ema9",
+                )
+            return target
         except Exception as e:
             self.logger.debug(f"Failed to calculate EMA9 for {ticker}: {e}")
             return None

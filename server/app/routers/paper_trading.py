@@ -7,14 +7,17 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-import pandas_ta as ta
 import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from core.data_fetcher import fetch_ohlcv_yf
 from modules.kotak_neo_auto_trader.infrastructure.persistence import PaperTradeStore
+from modules.kotak_neo_auto_trader.services import (
+    compute_sell_target,
+    get_indicator_service,
+    get_price_service,
+)
 from modules.kotak_neo_auto_trader.infrastructure.simulation import PaperTradeReporter
 from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 from src.infrastructure.db.models import (
@@ -434,21 +437,27 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                 logger.debug(f"Failed to fetch live price for {symbol}: {e}")
                 return None
 
-        # Calculate target prices on-the-fly if not available
+        # Calculate target prices on-the-fly if not available (same realtime EMA9 as broker/paper)
+        _paper_price_service = get_price_service(live_price_manager=None, enable_caching=True)
+        _paper_indicator_service = get_indicator_service(
+            price_service=_paper_price_service, enable_caching=True
+        )
+
         def calculate_ema9_target(symbol: str) -> float | None:
-            """Calculate EMA9 target for a holding"""
+            """Realtime EMA9 sell target (Yahoo LTP; no Kotak required)."""
             try:
-                ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
-                data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
-
-                if data is None or data.empty:
-                    return None
-
-                # Use lowercase column names (as returned by fetch_ohlcv_yf)
-                data["ema9"] = ta.ema(data["close"], length=9)
-                ema9 = data.iloc[-1]["ema9"]
-
-                return float(ema9) if not data.iloc[-1]["ema9"] != data.iloc[-1]["ema9"] else None
+                base = extract_base_symbol(symbol).upper()
+                ticker = f"{base}.NS"
+                broker_symbol = symbol if "-" in symbol else f"{base}-EQ"
+                return compute_sell_target(
+                    ticker,
+                    broker_symbol=broker_symbol,
+                    indicator_service=_paper_indicator_service,
+                    price_service=_paper_price_service,
+                    live_price_manager=None,
+                    exchange="NSE",
+                    round_price=True,
+                )
             except Exception as e:
                 logger.debug(f"Failed to calculate EMA9 for {symbol}: {e}")
                 return None
