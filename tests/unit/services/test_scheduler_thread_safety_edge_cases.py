@@ -209,7 +209,7 @@ class TestSchedulerThreadSafetyEdgeCases:
 
         with patch("src.infrastructure.db.session.SessionLocal", return_value=mock_thread_db):
             with patch(
-                "src.application.services.schedule_manager.ServiceScheduleRepository"
+                "src.infrastructure.persistence.service_schedule_repository.ServiceScheduleRepository"
             ) as mock_repo_class:
                 mock_repo = MagicMock()
                 mock_repo.get_by_task_name.return_value = None
@@ -259,7 +259,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 mock_session_local.side_effect = create_unique_session
 
                 with patch(
-                    "src.application.services.schedule_manager.ServiceScheduleRepository"
+                    "src.infrastructure.persistence.service_schedule_repository.ServiceScheduleRepository"
                 ) as mock_repo_class:
                     mock_repo = MagicMock()
                     mock_repo.get_by_task_name.return_value = None
@@ -282,7 +282,7 @@ class TestSchedulerThreadSafetyEdgeCases:
 
         # Verify queries happened
         if query_session_map:
-            for thread_id, sessions in query_session_map.items():
+            for _thread_id, sessions in query_session_map.items():
                 # All queries in same thread should use same session
                 if len(sessions) > 1:
                     first_session = sessions[0]
@@ -305,7 +305,7 @@ class TestSchedulerThreadSafetyEdgeCases:
         with patch("src.infrastructure.db.session.SessionLocal", return_value=mock_thread_db):
             with patch("src.infrastructure.db.session.engine"):  # Mock engine for pool logging
                 with patch(
-                    "src.application.services.schedule_manager.ServiceScheduleRepository"
+                    "src.infrastructure.persistence.service_schedule_repository.ServiceScheduleRepository"
                 ) as mock_repo_class:
                     mock_repo = MagicMock()
                     mock_repo.get_by_task_name.return_value = None

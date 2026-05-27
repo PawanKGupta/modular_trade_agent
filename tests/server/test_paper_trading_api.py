@@ -147,14 +147,11 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     # Also stub OHLCV fetch used for EMA9 target calculation to avoid real downloads.
     with (
         patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
-        patch("server.app.routers.paper_trading.fetch_ohlcv_yf") as mock_fetch_ohlcv,
+        patch("server.app.routers.paper_trading.compute_sell_target", return_value=160.0),
     ):
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 165.0}  # LIVE PRICE (different from 155.0)
         mock_ticker_class.return_value = mock_ticker
-
-        # Constant close series -> EMA9 should equal 160.0
-        mock_fetch_ohlcv.return_value = pd.DataFrame({"close": [160.0] * 60})
 
         # Call API
         response = client.get("/api/v1/user/paper-trading/portfolio", headers=headers)
