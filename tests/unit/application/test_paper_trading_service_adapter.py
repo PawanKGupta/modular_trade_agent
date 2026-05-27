@@ -35,6 +35,15 @@ def _set_today_like_index(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _ema9_for_ticker(ticker, broker_symbol=None, *, reliance=2600.0, tcs=3600.0):
+    """Side effect helper matching _calculate_ema9(ticker, broker_symbol=...) signature."""
+    if "RELIANCE" in ticker:
+        return reliance
+    if "TCS" in ticker:
+        return tcs
+    return None
+
+
 @pytest.fixture
 def test_user(db_session):
     """Create a test user"""
@@ -757,6 +766,8 @@ class TestPaperTradingSellMonitoring:
         # need it True so the stop-request check doesn't skip placement
         adapter.running = True
         adapter.shutdown_requested = False
+        adapter.indicator_service = MagicMock()
+        adapter.price_service = MagicMock()
 
         return adapter
 
@@ -767,13 +778,7 @@ class TestPaperTradingSellMonitoring:
         from src.infrastructure.db.models import OrderStatus, TradeMode
         from src.infrastructure.persistence.orders_repository import OrdersRepository
 
-        # Mock EMA9 calculation
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2600.0  # EMA9 for RELIANCE
-            elif "TCS" in ticker:
-                return 3600.0  # EMA9 for TCS
-            return None
+        mock_calculate_ema9 = _ema9_for_ticker
 
         # Mock broker.place_order to save orders to database
         def mock_place_order(order):
@@ -866,12 +871,8 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         def mock_place_order(order):
             from src.infrastructure.db.models import Orders
@@ -1253,7 +1254,7 @@ class TestPaperTradingSellMonitoring:
         )
 
         # Mock EMA9 calculation returning different value
-        def mock_calculate_ema9(ticker):
+        def mock_calculate_ema9(ticker, broker_symbol=None):
             return 2700.0  # EMA9 has moved up significantly!
 
         with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
@@ -1273,41 +1274,28 @@ class TestPaperTradingSellMonitoring:
         )
         assert adapter_with_holdings.active_sell_orders["RELIANCE"]["target_price"] != 2700.0
 
-    def test_calculate_ema9_with_lowercase_columns(self, db_session, test_user):
-        """Test that _calculate_ema9 works with lowercase column names from fetch_ohlcv_yf"""
-        from unittest.mock import patch
-
-        import pandas as pd
+    def test_calculate_ema9_uses_unified_sell_target(self, db_session, test_user):
+        """Test that _calculate_ema9 delegates to compute_sell_target (realtime EMA9 path)."""
+        from unittest.mock import MagicMock, patch
 
         adapter = PaperTradingServiceAdapter(
             user_id=test_user.id,
             db_session=db_session,
         )
+        adapter.indicator_service = MagicMock()
+        adapter.price_service = MagicMock()
 
-        # Mock data with lowercase columns (as returned by fetch_ohlcv_yf)
-        mock_data = pd.DataFrame(
-            {
-                "date": pd.date_range(start="2024-01-01", periods=50),
-                "open": [2500.0] * 50,
-                "high": [2550.0] * 50,
-                "low": [2480.0] * 50,
-                "close": [2520.0 + i for i in range(50)],  # Trending up
-                "volume": [1000000] * 50,
-            }
-        )
+        with patch(
+            "modules.kotak_neo_auto_trader.services.sell_target_service.compute_sell_target",
+            return_value=2565.45,
+        ) as mock_compute:
+            result = adapter._calculate_ema9("RELIANCE.NS", broker_symbol="RELIANCE-EQ")
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.ema") as mock_ema:
-                # Mock EMA calculation
-                mock_ema.return_value = pd.Series([2565.0] * 50)
-
-                result = adapter._calculate_ema9("RELIANCE.NS")
-
-                # Verify it was called with lowercase "close"
-                mock_ema.assert_called_once()
-                call_args = mock_ema.call_args
-                assert "close" in str(call_args) or call_args[0][0].name == "close"
-                assert result == 2565.0
+        assert result == 2565.45
+        mock_compute.assert_called_once()
+        call_kw = mock_compute.call_args.kwargs
+        assert call_kw["broker_symbol"] == "RELIANCE-EQ"
+        assert call_kw["live_price_manager"] is None
 
     def test_monitor_sell_orders_with_lowercase_columns(self, db_session, test_user):
         """Test that _monitor_sell_orders works with lowercase column names"""
@@ -1492,12 +1480,8 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         with (
             patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),
@@ -1533,12 +1517,8 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.place_order.return_value = "NEW_RELIANCE_SELL"
         adapter_with_holdings.active_sell_orders = {}
 
-        def mock_calculate_ema9(ticker):
-            if "RELIANCE" in ticker:
-                return 2650.0
-            elif "TCS" in ticker:
-                return 3600.0
-            return None
+        def mock_calculate_ema9(ticker, broker_symbol=None):
+            return _ema9_for_ticker(ticker, broker_symbol, reliance=2650.0, tcs=3600.0)
 
         with (
             patch.object(adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9),

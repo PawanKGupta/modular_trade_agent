@@ -666,46 +666,16 @@ class SellOrderManager:
         Returns:
             Price rounded to valid tick size (rounded UP to next valid tick)
         """
-        if price <= 0:
-            return price
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            round_sell_price,
+        )
 
-        # Try to get tick size from scrip master if symbol is provided
-        tick_size = None
-        if symbol and self.scrip_master:
-            try:
-                tick_size = self.scrip_master.get_tick_size(symbol, exchange=exchange)
-            except Exception as e:
-                logger.debug(f"Error getting tick size from scrip master for {symbol}: {e}")
-
-        # Fall back to hardcoded rules if scrip master doesn't have tick size
-        if tick_size is None or tick_size <= 0:
-            if exchange.upper() == "BSE":
-                # BSE has price-dependent tick sizes
-                if price < 10:
-                    tick_size = 0.01
-                else:
-                    tick_size = 0.05
-            # NSE tick size rules (cash equity segment)
-            # 0-1000: Rs 0.05
-            # 1000+: Rs 0.10
-            elif price >= 1000:
-                tick_size = 0.10
-            else:
-                tick_size = 0.05
-
-        # Round UP to next valid tick (ceiling)
-        # Use decimal arithmetic to avoid floating point precision issues
-        # Convert to Decimal for precise arithmetic
-        price_decimal = Decimal(str(price))
-        tick_decimal = Decimal(str(tick_size))
-
-        # Round UP to next tick (always round in favor of seller)
-        rounded = (price_decimal / tick_decimal).quantize(
-            Decimal("1"), rounding=ROUND_UP
-        ) * tick_decimal
-
-        # Convert back to float with 2 decimal places
-        return float(rounded.quantize(Decimal("0.01")))
+        return round_sell_price(
+            price,
+            exchange=exchange,
+            symbol=symbol,
+            scrip_master=self.scrip_master,
+        )
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """

@@ -2,11 +2,9 @@
 Tests for Paper Trading API endpoints - Live Price Fetching
 """
 
-import json
 import os
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 os.environ["DB_URL"] = "sqlite:///:memory:"
@@ -45,7 +43,7 @@ def auth_client():
     return client
 
 
-def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
+def test_portfolio_uses_yfinance_for_live_prices(monkeypatch):
     """Test that portfolio fetches live prices from yfinance instead of using stored prices"""
     # Create test client and auth
     client = TestClient(app)
@@ -65,31 +63,14 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     # Set to paper mode
     client.put("/api/v1/user/settings", json={"trade_mode": "paper"}, headers=headers)
 
-    # Create paper trading data files for this user
-    storage_path = tmp_path / "paper_trading" / f"user_{user_id}"
-    storage_path.mkdir(parents=True, exist_ok=True)
+    # Portfolio metrics come from DB (positions/orders + user trading config).
+    client.put(
+        "/api/v1/user/trading-config",
+        json={"paper_trading_initial_capital": 100000.0},
+        headers=headers,
+    )
 
-    # Account data
-    account_data = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "total_pnl": 0.0,
-        "realized_pnl": 0.0,
-        "unrealized_pnl": 0.0,
-    }
-    (storage_path / "account.json").write_text(json.dumps(account_data))
-
-    # Holdings file is no longer used - positions come from database
-    # Create empty holdings file for backward compatibility
-    (storage_path / "holdings.json").write_text(json.dumps({}))
-
-    # Active sell orders file is no longer the source of truth for targets.
-    # The portfolio endpoint calculates EMA9 if no DB sell order is found.
-
-    # Orders
-    (storage_path / "orders.json").write_text(json.dumps([]))
-
-    # Create position in database (this is now the source of truth)
+    # Create position in database (source of truth for holdings)
     from datetime import UTC, datetime
 
     from src.infrastructure.db.session import SessionLocal
@@ -127,42 +108,24 @@ def test_portfolio_uses_yfinance_for_live_prices(tmp_path, monkeypatch):
     finally:
         db.close()
 
-    # Monkey patch Path used inside router so all storage reads/writes go to tmp_path
-    from pathlib import Path as RealPath
-
-    def patched_path(*args, **kwargs):
-        if args and isinstance(args[0], str):
-            first = args[0]
-            if first.startswith("paper_trading"):
-                return RealPath(tmp_path / first)
-        return RealPath(*args, **kwargs)
-
-    monkeypatch.setattr("server.app.routers.paper_trading.Path", patched_path)
-    monkeypatch.setattr(
-        "modules.kotak_neo_auto_trader.infrastructure.persistence.paper_trade_store.Path",
-        patched_path,
-    )
-
-    # Mock yfinance to return a DIFFERENT price than stored.
+    # Mock yfinance to return a DIFFERENT price than stored avg_price.
     # Also stub OHLCV fetch used for EMA9 target calculation to avoid real downloads.
     with (
         patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
-        patch("server.app.routers.paper_trading.fetch_ohlcv_yf") as mock_fetch_ohlcv,
+        patch("server.app.routers.paper_trading.compute_sell_target", return_value=160.0),
     ):
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 165.0}  # LIVE PRICE (different from 155.0)
         mock_ticker_class.return_value = mock_ticker
 
-        # Constant close series -> EMA9 should equal 160.0
-        mock_fetch_ohlcv.return_value = pd.DataFrame({"close": [160.0] * 60})
-
         # Call API
         response = client.get("/api/v1/user/paper-trading/portfolio", headers=headers)
 
-        # Verify yfinance was called (check call_count as .called may not work with some mock versions)
-        assert (
-            mock_ticker_class.call_count > 0
-        ), f"yfinance.Ticker should be called for live prices (call_count={mock_ticker_class.call_count})"
+        # Verify yfinance was called (call_count is reliable across mock versions).
+        assert mock_ticker_class.call_count > 0, (
+            "yfinance.Ticker should be called for live prices "
+            f"(call_count={mock_ticker_class.call_count})"
+        )
 
         # Verify response uses LIVE price, not stored price
         assert response.status_code == 200

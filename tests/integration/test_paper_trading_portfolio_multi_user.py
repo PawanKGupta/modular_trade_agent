@@ -137,44 +137,18 @@ class TestPaperTradingPortfolioMultiUser:
         monkeypatch,
     ):
         """Test that User 1 only sees their paper position, not User 2's broker position"""
-        # Mock PaperTradeStore
         from unittest.mock import MagicMock
 
-        mock_store = MagicMock()
-        mock_store.get_account.return_value = {
-            "initial_capital": 100000.0,
-            "available_cash": 90000.0,
-            "realized_pnl": 0.0,
-        }
-        mock_store.get_all_orders.return_value = []
-        monkeypatch.setattr(
-            "server.app.routers.paper_trading.PaperTradeStore",
-            lambda path, **kwargs: mock_store,
-        )
-
-        # Mock PaperTradeReporter
-        mock_reporter = MagicMock()
-        mock_reporter.order_statistics.return_value = {
-            "total_orders": 1,
-            "buy_orders": 1,
-            "sell_orders": 0,
-            "completed_orders": 1,
-            "pending_orders": 0,
-            "cancelled_orders": 0,
-            "rejected_orders": 0,
-        }
-        monkeypatch.setattr(
-            "server.app.routers.paper_trading.PaperTradeReporter",
-            lambda store: mock_reporter,
-        )
-
-        # Mock Path.exists
-        monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
-
-        # Mock yfinance
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 100.0}
-        monkeypatch.setattr("yfinance.Ticker", lambda symbol: mock_ticker)
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.yf.Ticker",
+            lambda symbol: mock_ticker,
+        )
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.compute_sell_target",
+            lambda *args, **kwargs: None,
+        )
 
         # Mock SettingsRepository
         mock_settings_repo = MagicMock()
@@ -203,44 +177,18 @@ class TestPaperTradingPortfolioMultiUser:
         monkeypatch,
     ):
         """Test that User 2's broker position doesn't appear in paper portfolio"""
-        # Mock PaperTradeStore
         from unittest.mock import MagicMock
 
-        mock_store = MagicMock()
-        mock_store.get_account.return_value = {
-            "initial_capital": 100000.0,
-            "available_cash": 80000.0,
-            "realized_pnl": 0.0,
-        }
-        mock_store.get_all_orders.return_value = []
-        monkeypatch.setattr(
-            "server.app.routers.paper_trading.PaperTradeStore",
-            lambda path, **kwargs: mock_store,
-        )
-
-        # Mock PaperTradeReporter
-        mock_reporter = MagicMock()
-        mock_reporter.order_statistics.return_value = {
-            "total_orders": 0,
-            "buy_orders": 0,
-            "sell_orders": 0,
-            "completed_orders": 0,
-            "pending_orders": 0,
-            "cancelled_orders": 0,
-            "rejected_orders": 0,
-        }
-        monkeypatch.setattr(
-            "server.app.routers.paper_trading.PaperTradeReporter",
-            lambda store: mock_reporter,
-        )
-
-        # Mock Path.exists
-        monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
-
-        # Mock yfinance
         mock_ticker = MagicMock()
         mock_ticker.info = {"currentPrice": 100.0}
-        monkeypatch.setattr("yfinance.Ticker", lambda symbol: mock_ticker)
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.yf.Ticker",
+            lambda symbol: mock_ticker,
+        )
+        monkeypatch.setattr(
+            "server.app.routers.paper_trading.compute_sell_target",
+            lambda *args, **kwargs: None,
+        )
 
         # Mock SettingsRepository (User 2 is in broker mode)
         mock_settings_repo = MagicMock()

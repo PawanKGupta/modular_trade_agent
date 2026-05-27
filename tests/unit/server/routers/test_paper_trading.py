@@ -30,6 +30,20 @@ def create_mock_position(user_id, symbol, quantity, avg_price, opened_at=None):
     )
 
 
+def configure_mock_db_closed_realized(mock_db, realized_pnl: float, symbol: str = "RELIANCE.NS"):
+    """Stub closed positions for portfolio realized P&L (DB source)."""
+    opened_at = datetime(2025, 1, 1, 10, 0, 0)
+    closed_at = datetime(2025, 2, 1, 10, 0, 0)
+    mock_db.query.return_value.filter.return_value.all.return_value = [
+        SimpleNamespace(
+            symbol=symbol,
+            opened_at=opened_at,
+            closed_at=closed_at,
+            realized_pnl=float(realized_pnl),
+        )
+    ]
+
+
 def create_mock_buy_order(user_id, symbol, quantity, avg_price, placed_at=None):
     """Helper to create a mock buy order for matching with positions"""
     if placed_at is None:
@@ -55,6 +69,49 @@ def create_mock_buy_order(user_id, symbol, quantity, avg_price, placed_at=None):
 
 
 @pytest.fixture(autouse=True)
+def _patch_paper_db_repos(monkeypatch):
+    """Default empty orders and paper mode for portfolio/history unit tests."""
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [], 0
+
+        def get(self, order_id):  # noqa: ARG002
+            return None
+
+    class DummySettingsRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_by_user_id(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(trade_mode=paper_trading.TradeMode.PAPER)
+
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
+
+
+@pytest.fixture(autouse=True)
+def _patch_paper_portfolio_user_config(monkeypatch):
+    """Default paper initial capital for portfolio DB metrics."""
+
+    class DummyUserTradingConfigRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_or_create_default(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(paper_trading_initial_capital=100_000.0)
+
+    monkeypatch.setattr(
+        paper_trading,
+        "UserTradingConfigRepository",
+        DummyUserTradingConfigRepository,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_network_price_and_history_fetch(monkeypatch):
     """Prevent unit tests from hitting live price/history sources.
 
@@ -65,7 +122,7 @@ def _no_network_price_and_history_fetch(monkeypatch):
         return SimpleNamespace(info={})
 
     monkeypatch.setattr(paper_trading.yf, "Ticker", _dummy_ticker, raising=True)
-    monkeypatch.setattr(paper_trading, "fetch_ohlcv_yf", lambda *a, **k: None, raising=True)
+    monkeypatch.setattr(paper_trading, "compute_sell_target", lambda *a, **k: None, raising=True)
 
 
 class DummyUser(SimpleNamespace):
@@ -87,62 +144,9 @@ def mock_db():
     return db
 
 
-class DummyPaperTradeStore:
-    def __init__(self, storage_path, auto_save=False):
-        self.storage_path = storage_path
-        self.auto_save = auto_save
-        self._account = None
-        self._holdings = {}
-        self._orders = []
-        self._transactions = []
-
-    def get_account(self):
-        return self._account
-
-    def get_all_holdings(self):
-        return self._holdings
-
-    def get_all_orders(self):
-        return self._orders
-
-    def get_all_transactions(self):
-        return self._transactions
-
-
-class DummyPaperTradeReporter:
-    def __init__(self, store):
-        self.store = store
-
-    def order_statistics(self):
-        orders = self.store.get_all_orders()
-        total = len(orders)
-        completed = sum(1 for o in orders if o.get("status") == "COMPLETED")
-        buy_count = sum(1 for o in orders if o.get("transaction_type") == "BUY")
-        sell_count = sum(1 for o in orders if o.get("transaction_type") == "SELL")
-        pending = sum(1 for o in orders if o.get("status") == "PENDING")
-        cancelled = sum(1 for o in orders if o.get("status") == "CANCELLED")
-        rejected = sum(1 for o in orders if o.get("status") == "REJECTED")
-
-        return {
-            "total_orders": total,
-            "completed_orders": completed,
-            "buy_orders": buy_count,
-            "sell_orders": sell_count,
-            "pending_orders": pending,
-            "cancelled_orders": cancelled,
-            "rejected_orders": rejected,
-        }
-
-
 # GET /portfolio tests
 def test_get_paper_trading_portfolio_path_not_exists(monkeypatch, tmp_path):
     user = DummyUser(id=42)
-
-    # Mock Path.exists to return False
-    def mock_exists(self):
-        return False
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
 
     result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
 
@@ -153,68 +157,15 @@ def test_get_paper_trading_portfolio_path_not_exists(monkeypatch, tmp_path):
     assert result.order_statistics["total_orders"] == 0
 
 
-def test_get_paper_trading_portfolio_no_account(monkeypatch):
+def test_get_paper_trading_portfolio_no_db_returns_empty_shell():
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = None  # No account data
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    with pytest.raises(HTTPException) as exc:
-        paper_trading.get_paper_trading_portfolio(db=None, current=user)
-
-    # HTTPException is re-raised as-is (404 for account not initialized)
-    assert exc.value.status_code == 404
-    assert "account not initialized" in exc.value.detail
+    result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+    assert result.account.initial_capital == 0.0
+    assert result.account.available_cash == 0.0
 
 
 def test_get_paper_trading_portfolio_success(monkeypatch):
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 1000.0,
-    }
-    store._holdings = {}
-    store._orders = [
-        {
-            "order_id": "order1",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "BUY",
-            "quantity": 10,
-            "order_type": "MARKET",
-            "status": "COMPLETED",
-            "executed_price": 2500.0,
-            "created_at": "2025-01-01T10:00:00",
-            "executed_at": "2025-01-01T10:01:00",
-        }
-    ]
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Router now reads recent orders from the database; stub OrdersRepository.list()
     # to return DB-like objects for paper-trading orders.
@@ -300,10 +251,14 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
 
         # Pass a mock db so the router enters the DB-query branch
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 1000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         assert result.account.initial_capital == 100000.0
-        assert result.account.available_cash == 50000.0
+        assert result.account.realized_pnl == 1000.0
+        assert result.account.total_value == pytest.approx(
+            result.account.initial_capital + result.account.total_pnl
+        )
         assert len(result.holdings) == 1
         assert result.holdings[0].symbol == "RELIANCE.NS"
         assert result.holdings[0].quantity == 10
@@ -313,30 +268,6 @@ def test_get_paper_trading_portfolio_success(monkeypatch):
 
 def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     from datetime import datetime  # noqa: PLC0415
@@ -406,7 +337,7 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
     # and avoid any historical-data fetches during target calculations.
     with (
         patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class,
-        patch("server.app.routers.paper_trading.fetch_ohlcv_yf", return_value=None),
+        patch("server.app.routers.paper_trading.compute_sell_target", return_value=None),
     ):
         mock_ticker_instance = MagicMock()
         mock_ticker_instance.info = {}  # No price info
@@ -427,36 +358,6 @@ def test_get_paper_trading_portfolio_yfinance_fallback(monkeypatch):
 
 def test_get_paper_trading_portfolio_with_target_prices(monkeypatch):
     _user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 10,
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        }
-    }
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock yfinance
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
@@ -498,26 +399,25 @@ def test_get_paper_trading_portfolio_with_target_prices(monkeypatch):
 def test_get_paper_trading_portfolio_exception_handling(monkeypatch):
     user = DummyUser(id=42)
 
-    def mock_exists(self):
-        raise Exception("Unexpected error")
+    class FailingPositionsRepository:
+        def __init__(self, _db):
+            pass
 
-    monkeypatch.setattr(Path, "exists", mock_exists)
+        def list(self, user_id):  # noqa: ARG002
+            raise RuntimeError("Unexpected error")
+
+    monkeypatch.setattr(paper_trading, "PositionsRepository", FailingPositionsRepository)
 
     with pytest.raises(HTTPException) as exc:
-        paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        paper_trading.get_paper_trading_portfolio(db=MagicMock(), current=user)
 
     assert exc.value.status_code == 500
     assert "Failed to fetch portfolio" in exc.value.detail
 
 
 # GET /history tests
-def test_get_paper_trading_history_path_not_exists(mock_db, monkeypatch):
+def test_get_paper_trading_history_empty(mock_db):
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return False
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
 
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
@@ -526,186 +426,50 @@ def test_get_paper_trading_history_path_not_exists(mock_db, monkeypatch):
     assert result.statistics["total_trades"] == 0
 
 
-def test_get_paper_trading_history_empty(mock_db, monkeypatch):
+def test_get_paper_trading_history_with_paper_orders(mock_db, monkeypatch):
     user = DummyUser(id=42)
+    placed = datetime(2025, 1, 1, 10, 0, 0)
 
-    def mock_exists(self):
-        return True
+    paper_buy = SimpleNamespace(
+        id=1,
+        order_id="order1",
+        symbol="RELIANCE.NS",
+        side="buy",
+        quantity=10,
+        avg_price=2500.0,
+        price=None,
+        placed_at=placed,
+        trade_mode=paper_trading.TradeMode.PAPER,
+    )
+    broker_buy = SimpleNamespace(
+        id=2,
+        order_id="order2",
+        symbol="TCS.NS",
+        side="buy",
+        quantity=5,
+        avg_price=3500.0,
+        price=None,
+        placed_at=placed,
+        trade_mode=paper_trading.TradeMode.BROKER,
+    )
 
-    monkeypatch.setattr(Path, "exists", mock_exists)
+    class OrdersWithPaper:
+        def __init__(self, _db):
+            pass
 
-    store = DummyPaperTradeStore("test_path")
-    store._transactions = []
+        def list(self, user_id):  # noqa: ARG002
+            return [paper_buy, broker_buy], 2
 
-    def mock_store_init(storage_path, auto_save=False):
-        return store
+        def get(self, order_id):  # noqa: ARG002
+            return None
 
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
+    monkeypatch.setattr(paper_trading, "OrdersRepository", OrdersWithPaper)
 
     result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
 
-    assert len(result.transactions.items) == 0
-    assert len(result.closed_positions.items) == 0
+    assert len(result.transactions.items) == 1
+    assert result.transactions.items[0].symbol == "RELIANCE.NS"
     assert result.statistics["total_trades"] == 0
-
-
-def test_get_paper_trading_history_with_transactions(mock_db, monkeypatch):
-    """Test basic transaction history - currently returns empty due to db mocking.
-    This test validates the function returns proper structure with empty data."""
-    user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._transactions = [
-        {
-            "order_id": "order1",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "BUY",
-            "quantity": 10,
-            "price": 2500.0,
-            "order_value": 25000.0,
-            "charges": 100.0,
-            "timestamp": "2025-01-01T10:00:00",
-        },
-        {
-            "order_id": "order2",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "SELL",
-            "quantity": 10,
-            "price": 2600.0,
-            "order_value": 26000.0,
-            "charges": 100.0,
-            "timestamp": "2025-01-02T10:00:00",
-        },
-    ]
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
-
-    # With mocked db returning empty results, expect empty history
-    assert len(result.transactions.items) == 0
-    assert len(result.closed_positions.items) == 0
-    assert result.statistics["total_trades"] == 0
-
-
-def test_get_paper_trading_history_multiple_positions(mock_db, monkeypatch):
-    """Test multiple positions - currently returns empty due to db mocking.
-    This test validates the function returns proper structure with empty data."""
-    user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._transactions = [
-        {
-            "order_id": "order1",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "BUY",
-            "quantity": 10,
-            "price": 2500.0,
-            "order_value": 25000.0,
-            "charges": 100.0,
-            "timestamp": "2025-01-01T10:00:00",
-        },
-        {
-            "order_id": "order2",
-            "symbol": "TCS.NS",
-            "transaction_type": "BUY",
-            "quantity": 5,
-            "price": 3500.0,
-            "order_value": 17500.0,
-            "charges": 50.0,
-            "timestamp": "2025-01-01T11:00:00",
-        },
-        {
-            "order_id": "order3",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "SELL",
-            "quantity": 10,
-            "price": 2600.0,
-            "order_value": 26000.0,
-            "charges": 100.0,
-            "timestamp": "2025-01-02T10:00:00",
-        },
-        {
-            "order_id": "order4",
-            "symbol": "TCS.NS",
-            "transaction_type": "SELL",
-            "quantity": 5,
-            "price": 3400.0,
-            "order_value": 17000.0,
-            "charges": 50.0,
-            "timestamp": "2025-01-02T11:00:00",
-        },
-    ]
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
-
-    # With mocked db returning empty results, expect empty history
-    assert len(result.transactions.items) == 0
-    assert len(result.closed_positions.items) == 0
-    assert result.statistics["total_trades"] == 0
-
-
-def test_get_paper_trading_history_partial_sell(mock_db, monkeypatch):
-    """Test partial sell - currently returns empty due to db mocking.
-    This test validates the function returns proper structure with empty data."""
-    user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._transactions = [
-        {
-            "order_id": "order1",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "BUY",
-            "quantity": 20,
-            "price": 2500.0,
-            "order_value": 50000.0,
-            "charges": 200.0,
-            "timestamp": "2025-01-01T10:00:00",
-        },
-        {
-            "order_id": "order2",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "SELL",
-            "quantity": 10,
-            "price": 2600.0,
-            "order_value": 26000.0,
-            "charges": 100.0,
-            "timestamp": "2025-01-02T10:00:00",
-        },
-    ]
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    result = paper_trading.get_paper_trading_history(db=mock_db, current=user)
-
-    # With mocked db returning empty results, expect empty history
-    assert len(result.closed_positions.items) == 0
 
 
 @pytest.mark.skip(reason="Monkeypatching Path.exists breaks pytest's internal error reporting")
@@ -728,50 +492,6 @@ def test_get_paper_trading_history_exception_handling(mock_db, monkeypatch):
 
 def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = [
-        {
-            "order_id": "order1",
-            "symbol": "RELIANCE.NS",
-            "transaction_type": "BUY",
-            "quantity": 10,
-            "order_type": "MARKET",
-            "status": "COMPLETED",
-            "created_at": "2025-01-01T10:00:00",
-            "metadata": {"entry_type": "REENTRY"},
-        },
-        {
-            "order_id": "order2",
-            "symbol": "TCS.NS",
-            "transaction_type": "SELL",
-            "quantity": 5,
-            "order_type": "LIMIT",
-            "status": "PENDING",
-            "created_at": "2025-01-01T11:00:00",
-        },
-    ]
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Router now calculates order stats from DB orders; stub OrdersRepository.list()
     # to return paper-trading orders that match the expected stats.
@@ -831,7 +551,8 @@ def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
-        result = paper_trading.get_paper_trading_portfolio(db=None, current=user)
+        mock_db = MagicMock()
+        result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
         assert result.order_statistics["total_orders"] == 2
         assert result.order_statistics["buy_orders"] == 1
@@ -844,31 +565,6 @@ def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
 def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
     """Test that return_percentage is calculated correctly based on total_pnl"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    # Test case 1: Positive P&L
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 40000.0,
-        "realized_pnl": 5000.0,  # Realized profit
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     from datetime import datetime  # noqa: PLC0415
@@ -943,10 +639,9 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 5000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected: total_pnl = realized_pnl (5000) + unrealized_pnl (5000) = 10000
-        # return_percentage = (10000 / 100000) * 100 = 10.0%
         expected_total_pnl = 5000.0 + (20 * (2750.0 - 2500.0))  # 10000.0
         expected_return_pct = (expected_total_pnl / 100000.0) * 100  # 10.0%
 
@@ -958,30 +653,6 @@ def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):
 def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch):
     """Test return_percentage calculation with negative P&L"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 60000.0,
-        "realized_pnl": -2000.0,  # Realized loss
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1022,10 +693,9 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, -2000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected: total_pnl = realized_pnl (-2000) + unrealized_pnl (-2000) = -4000
-        # return_percentage = (-4000 / 100000) * 100 = -4.0%
         expected_total_pnl = -2000.0 + (20 * (2400.0 - 2500.0))  # -4000.0
         expected_return_pct = (expected_total_pnl / 100000.0) * 100  # -4.0%
 
@@ -1037,30 +707,6 @@ def test_get_paper_trading_portfolio_return_percentage_negative_pnl(monkeypatch)
 def test_get_paper_trading_portfolio_return_percentage_zero_initial_capital(monkeypatch):
     """Test return_percentage calculation with zero initial capital"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 0.0,  # Zero initial capital
-        "available_cash": 0.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     with patch("server.app.routers.paper_trading.yf.Ticker"):
 
@@ -1078,30 +724,6 @@ def test_get_paper_trading_portfolio_return_percentage_zero_initial_capital(monk
 def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
     """Test that return_percentage matches total_pnl calculation"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 200000.0,
-        "available_cash": 100000.0,
-        "realized_pnl": 15000.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1137,6 +759,19 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
     monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
     monkeypatch.setattr(paper_trading, "SettingsRepository", DummySettingsRepository)
 
+    class LargeCapitalConfigRepository:
+        def __init__(self, _db):
+            pass
+
+        def get_or_create_default(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(paper_trading_initial_capital=200_000.0)
+
+    monkeypatch.setattr(
+        paper_trading,
+        "UserTradingConfigRepository",
+        LargeCapitalConfigRepository,
+    )
+
     call_count = [0]
 
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
@@ -1158,14 +793,8 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
         mock_db = MagicMock()
+        configure_mock_db_closed_realized(mock_db, 15000.0)
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
-
-        # Calculate expected values
-        # RELIANCE: 10 * (2600 - 2500) = 1000
-        # TCS: 20 * (3400 - 3500) = -2000
-        # Total unrealized: 1000 + (-2000) = -1000
-        # Total P&L: 15000 (realized) + (-1000) (unrealized) = 14000
-        # Return %: (14000 / 200000) * 100 = 7.0%
 
         expected_unrealized_pnl = (10 * (2600.0 - 2500.0)) + (20 * (3400.0 - 3500.0))  # -1000
         expected_total_pnl = 15000.0 + expected_unrealized_pnl  # 14000
@@ -1181,30 +810,6 @@ def test_get_paper_trading_portfolio_return_percentage_consistency(monkeypatch):
 def test_get_paper_trading_portfolio_portfolio_value_calculation(monkeypatch):
     """Test portfolio value calculation from holdings"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1275,30 +880,6 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
     """Test total value calculation (cash + portfolio)"""
     user = DummyUser(id=42)
 
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 30000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
-
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
 
@@ -1340,11 +921,9 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
         mock_db = MagicMock()
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Expected total value: cash (30000) + portfolio (20 * 2600 = 52000) = 82000
-        expected_total_value = 30000.0 + (20 * 2600.0)  # 82000.0
-        assert result.account.total_value == pytest.approx(expected_total_value, rel=1e-6)
-        assert result.account.total_value == 82000.0
-        # Verify: total_value = available_cash + portfolio_value
+        assert result.account.total_value == pytest.approx(
+            result.account.initial_capital + result.account.total_pnl
+        )
         assert result.account.total_value == (
             result.account.available_cash + result.account.portfolio_value
         )
@@ -1353,30 +932,6 @@ def test_get_paper_trading_portfolio_total_value_calculation(monkeypatch):
 def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
     """Test unrealized P&L calculation for holdings"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1452,30 +1007,6 @@ def test_get_paper_trading_portfolio_unrealized_pnl_calculation(monkeypatch):
 def test_get_paper_trading_portfolio_holding_pnl_percentage_calculation(monkeypatch):
     """Test individual holding P&L percentage calculation"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1555,30 +1086,6 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
     """Test cost basis calculation for holdings"""
     user = DummyUser(id=42)
 
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
-
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
 
@@ -1630,30 +1137,6 @@ def test_get_paper_trading_portfolio_cost_basis_calculation(monkeypatch):
 def test_get_paper_trading_portfolio_market_value_calculation(monkeypatch):
     """Test market value calculation for holdings"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
@@ -1707,30 +1190,6 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
     """Test that total_pnl = realized_pnl + unrealized_pnl"""
     user = DummyUser(id=42)
 
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 40000.0,
-        "realized_pnl": 5000.0,  # Realized profit
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
-
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
 
@@ -1769,49 +1228,27 @@ def test_get_paper_trading_portfolio_total_pnl_consistency(monkeypatch):
 
         monkeypatch.setattr(Path, "exists", mock_path_exists)
 
+        closed_at = datetime(2025, 2, 1, 10, 0, 0)
+        closed_pos = SimpleNamespace(
+            symbol="RELIANCE.NS",
+            opened_at=opened_at,
+            closed_at=closed_at,
+            realized_pnl=5000.0,
+        )
         mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.all.return_value = [closed_pos]
+
         result = paper_trading.get_paper_trading_portfolio(db=mock_db, current=user)
 
-        # Verify: total_pnl = realized_pnl + unrealized_pnl
         expected_total_pnl = result.account.realized_pnl + result.account.unrealized_pnl
         assert result.account.total_pnl == pytest.approx(expected_total_pnl, rel=1e-6)
-        # Expected: 5000 (realized) + 2000 (unrealized) = 7000
+        assert result.account.realized_pnl == 5000.0
         assert result.account.total_pnl == 7000.0
 
 
 def test_get_paper_trading_portfolio_zero_quantity_holding(monkeypatch):
     """Test handling of holdings with zero quantity"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {
-        "RELIANCE.NS": {
-            "quantity": 0,  # Zero quantity
-            "average_price": 2500.0,
-            "current_price": 2600.0,
-        },
-    }
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     with patch("server.app.routers.paper_trading.yf.Ticker") as mock_ticker_class:
         mock_ticker_instance = MagicMock()
@@ -1833,30 +1270,6 @@ def test_get_paper_trading_portfolio_zero_quantity_holding(monkeypatch):
 def test_get_paper_trading_portfolio_zero_average_price(monkeypatch):
     """Test handling of holdings with zero average price"""
     user = DummyUser(id=42)
-
-    def mock_exists(self):
-        return True
-
-    monkeypatch.setattr(Path, "exists", mock_exists)
-
-    store = DummyPaperTradeStore("test_path")
-    store._account = {
-        "initial_capital": 100000.0,
-        "available_cash": 50000.0,
-        "realized_pnl": 0.0,
-    }
-    store._holdings = {}
-    store._orders = []
-
-    def mock_store_init(storage_path, auto_save=False):
-        return store
-
-    monkeypatch.setattr(paper_trading, "PaperTradeStore", mock_store_init)
-
-    def mock_reporter_init(store):
-        return DummyPaperTradeReporter(store)
-
-    monkeypatch.setattr(paper_trading, "PaperTradeReporter", mock_reporter_init)
 
     # Mock PositionsRepository and OrdersRepository
     opened_at = datetime(2025, 1, 1, 10, 0, 0)
