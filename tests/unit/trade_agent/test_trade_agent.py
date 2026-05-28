@@ -9,6 +9,7 @@ import sys
 import types
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 # ---------------------------------------------------------------------------
@@ -310,8 +311,9 @@ def test_main_async_falls_back(monkeypatch):
 
 
 def test_process_results_without_backtest(monkeypatch):
-    stock1 = _valid_stock(verdict="strong_buy")
-    stock2 = _valid_stock(index=2, verdict="buy")
+    stock1 = _valid_stock(verdict="strong_buy", ml_verdict="watch")
+    # ML-only buy: rule verdict is watch, ml_verdict is buy
+    stock2 = _valid_stock(index=2, verdict="watch", ml_verdict="buy")
     monkeypatch.setattr(trade_agent, "compute_strength_score", lambda r: 10)
     monkeypatch.setattr(trade_agent, "compute_trading_priority_score", lambda r: 50)
     sent = {"calls": []}
@@ -320,9 +322,18 @@ def test_process_results_without_backtest(monkeypatch):
         sent["calls"].append(msg)
 
     monkeypatch.setattr(trade_agent, "send_telegram", _send)
-    result = trade_agent._process_results([stock1, stock2], enable_backtest_scoring=False)
+    config = SimpleNamespace(ml_enabled=True, ml_confidence_threshold=0.0, ml_combine_with_rules=False)
+    result = trade_agent._process_results(
+        [stock1, stock2],
+        enable_backtest_scoring=False,
+        config=config,
+    )
     assert len(result) == 2
     assert sent["calls"]
+    msg = sent["calls"][0]
+    assert "Rule buys: 1" in msg
+    assert "ML-only buys: 1" in msg
+    assert "ML-ONLY candidates" in msg
 
 
 def test_process_results_no_candidates_logs(monkeypatch):
