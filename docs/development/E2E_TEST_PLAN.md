@@ -103,7 +103,6 @@ Comprehensive E2E test plan for Rebound — Modular Trade Agent before test envi
      - Broker Settings
      - Notification Settings
      - System Logs
-     - Activity Log
      - Notifications
   3. Verify each page loads correctly
   4. Verify active menu item is highlighted
@@ -333,15 +332,12 @@ Comprehensive E2E test plan for Rebound — Modular Trade Agent before test envi
   7. Verify logs filtered by date
 - **Expected**: Filters work correctly
 
-### 5.5 Activity Log Page
-- **Test**: Activity Log page displays activity
+### 5.5 Legacy activity URL redirect
+- **Test**: `/dashboard/activity` redirects to System Logs
 - **Steps**:
-  1. Navigate to Activity Log
-  2. Verify page loads
-  3. Verify activity table is displayed
-  4. Verify activity filters are available
-  5. Verify recent activities are shown
-- **Expected**: Activity log displays correctly
+  1. Navigate to `/dashboard/activity`
+  2. Verify URL is `/dashboard/logs` (or Log Management heading is visible)
+- **Expected**: User lands on System Logs (Activity Log UI removed)
 
 ### 5.6 Error Log Resolution
 - **Test**: Admin can resolve error logs

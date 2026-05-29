@@ -194,9 +194,9 @@ If you add new checks or workflows, update the relevant sections above and this 
 - PnL (`/dashboard/pnl`):
   - Daily PnL table and summary (total, days green/red) via `src/api/pnl.ts`
   - React Query with date range support
-- Activity (`/dashboard/activity`):
-  - Activity log with level filter (info/warn/error/all) via `src/api/activity.ts`
-  - React Query with level query param
+- System Logs (`/dashboard/logs`):
+  - JSONL service logs via `src/api/logs.ts` (level/module/date filters)
+  - Legacy `/dashboard/activity` redirects here (Activity Log UI removed)
 - Targets (`/dashboard/targets`):
   - Targets list via `src/api/targets.ts` (currently placeholder until persistence added)
 - Dashboard Home (`/dashboard`):
@@ -204,7 +204,7 @@ If you add new checks or workflows, update the relevant sections above and this 
 
 ### API Clients and Routing
 - Axios client with base config (`src/api/client.ts`)
-- API modules for `auth`, `user`, `signals`, `orders`, `pnl`, `activity`, `targets`, `admin` (`src/api/*.ts`)
+- API modules for `auth`, `user`, `signals`, `orders`, `pnl`, `logs`, `targets`, `admin` (`src/api/*.ts`)
 - Broker integration methods in `src/api/user.ts`: `saveBrokerCreds()`, `testBrokerConnection()`, `getBrokerStatus()`
 - Centralized routing in `src/router.tsx` with nested dashboard routes
 
@@ -335,10 +335,6 @@ cd web; npx playwright install chromium; npm run test:e2e
   - Returns: array of `{ date, pnl }` for the authenticated user
 - GET `/api/v1/user/pnl/summary` — same optional params
   - Returns: `{ totalPnl, daysGreen, daysRed }`
-
-### Activity
-- GET `/api/v1/user/activity/` — Query param: `level=info|warn|error|all` (default `all`)
-  - Returns: recent activity rows for the authenticated user
 
 ### Targets
 - GET `/api/v1/user/targets/`

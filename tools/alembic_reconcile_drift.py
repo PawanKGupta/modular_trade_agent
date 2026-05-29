@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 CORE_TABLES = frozenset(
-    {"users", "orders", "positions", "usersettings", "signals", "activity"}
+    {"users", "orders", "positions", "usersettings", "signals"}
 )
 
 

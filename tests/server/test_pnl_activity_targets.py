@@ -64,14 +64,9 @@ def test_pnl_daily_and_summary():
     assert "totalPnl" in sm and "daysGreen" in sm and "daysRed" in sm
 
 
-def test_activity_and_targets():
+def test_targets():
     client, headers = _auth_client()
 
-    # activity list (empty ok)
-    a = client.get("/api/v1/user/activity/", headers=headers)
-    assert a.status_code == 200
-
-    # targets list (empty ok for now)
     t = client.get("/api/v1/user/targets/", headers=headers)
     assert t.status_code == 200
     assert isinstance(t.json(), list)

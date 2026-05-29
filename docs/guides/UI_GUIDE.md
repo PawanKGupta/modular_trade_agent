@@ -723,35 +723,11 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 15. Activity (`/dashboard/activity`)
+### 15. Activity (legacy URL)
 
-**Purpose:** Track user activity and system events.
+**Route:** `/dashboard/activity` redirects to **System Logs** (`/dashboard/logs`).
 
-#### Features
-
-**Activity Log:**
-- Chronological list of activities
-- Activity type filtering
-- Date range filtering
-- Activity details
-
-**Activity Types:**
-- Order placements
-- Configuration changes
-- Service starts/stops
-- Signal approvals/rejections
-- Login/logout events
-
-#### Actions
-- **Filter Activities:** Apply filters
-- **View Details:** Click activity for details
-- **Export:** Export activity log (if implemented)
-
-#### Usage Tips
-- Review activity for security
-- Track configuration changes
-- Monitor order activity
-- Use for audit purposes
+The Activity Log page and `activity` database table were removed. Operational and service events are recorded in per-user JSONL files and viewed under **Log Viewer** (see §12).
 
 ---
 
@@ -827,7 +803,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 5. **Use Filters:** Use filters to focus on relevant data
 6. **Customize Columns:** Show only relevant information
 7. **Keep Service Running:** Enable automated trading service
-8. **Review Activity:** Check activity log for security
+8. **Review System Logs:** Check logs for errors and audit-related events
 
 ## 🆘 Getting Help
 

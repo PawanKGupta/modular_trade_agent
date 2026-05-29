@@ -109,19 +109,4 @@ test.describe('System & Monitoring', () => {
 		// Verify filters applied - page should still be visible
 		await expect(authenticatedPage.getByRole('heading', { name: /Log Management/i })).toBeVisible();
 	});
-
-	test('Activity Log page displays activity', async ({ authenticatedPage }) => {
-		await authenticatedPage.goto('/dashboard/activity');
-		await authenticatedPage.waitForLoadState('networkidle');
-
-		// Verify page loads - use heading to avoid strict mode violation
-		await expect(authenticatedPage.getByRole('heading', { name: /Activity/i })).toBeVisible();
-
-		// Verify activity table is displayed (even if empty, table structure exists)
-		const activityTable = authenticatedPage.locator('table, [role="table"]');
-		await expect(activityTable.first()).toBeVisible({ timeout: 5000 });
-
-		// Verify activity filters are available
-		await expect(authenticatedPage.getByText(/Level|Filter/i).first()).toBeVisible();
-	});
 });

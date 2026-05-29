@@ -1,6 +1,5 @@
 """Persistence layer repositories"""
 
-from .activity_repository import ActivityRepository
 from .audit_log_repository import AuditLogRepository
 from .csv_repository import CSVRepository
 from .error_log_repository import ErrorLogRepository
@@ -25,7 +24,6 @@ from .user_repository import UserRepository
 from .user_trading_config_repository import UserTradingConfigRepository
 
 __all__ = [
-    "ActivityRepository",
     "AuditLogRepository",
     "CSVRepository",
     "ErrorLogRepository",

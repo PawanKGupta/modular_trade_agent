@@ -14,7 +14,6 @@ vi.mock('../client', () => ({
 	api: hoisted.api,
 }));
 
-import * as activity from '../activity';
 import * as admin from '../admin';
 import * as billing from '../billing';
 import * as broker from '../broker';
@@ -105,10 +104,8 @@ describe('api wrappers (mocked client)', () => {
 		await broker.getBrokerHistory({ from: '2026-01-01', limit: 5 });
 	});
 
-	it('targets, activity, paper-trading', async () => {
+	it('targets and paper-trading', async () => {
 		await targets.listTargets();
-		await activity.listActivity();
-		await activity.listActivity('error');
 		await paperTrading.getPaperTradingPortfolio();
 		await paperTrading.getPaperTradingHistory({ positions_page: 1 });
 	});

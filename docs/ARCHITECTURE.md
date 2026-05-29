@@ -66,10 +66,9 @@ Rebound — Modular Trade Agent is a **multi-user, web-based trading system** wi
 - `broker.py` - Broker credential management
 - `service.py` - Service status and management
 - `ml.py` - ML training and models
-- `logs.py` - Log viewing
+- `logs.py` - Log viewing (JSONL system logs; legacy `/dashboard/activity` redirects to Log Viewer)
 - `admin.py` - Admin operations
 - `user.py` - User management
-- `activity.py` - Activity tracking
 - `notification_preferences.py` - Notification preferences management
 
 #### Core (`server/app/core/`)

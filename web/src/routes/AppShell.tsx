@@ -137,7 +137,6 @@ export function AppShell() {
 			title: 'Logs',
 			items: [
 				{ path: '/dashboard/logs', label: 'System Logs', icon: '📄' },
-				{ path: '/dashboard/activity', label: 'Activity Log', icon: '📋' },
 			],
 		},
 		{
