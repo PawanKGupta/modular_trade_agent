@@ -1185,16 +1185,23 @@ class PaperTradingServiceAdapter:
 
     def _monitor_sell_orders(self):
         """
-        Monitor sell orders for exit conditions (matches backtest strategy).
+        Monitor paper sell orders for exit conditions.
 
-        Exit conditions (from 10-year backtest):
-        1. High >= Target (EMA9) - 90% of exits, 76% profitable
-        2. RSI > 50 - 10% of exits, 37% profitable (falling knives)
+        Target exit (frozen EMA9), in order:
 
-        NOTE: Target price is recalculated as EMA9 when re-entry happens (matches backtest).
-        Unexecuted sell limits are cancelled at EOD (18:00), not here; see ``run_eod_cleanup``.
+        1. Open limit fills when live LTP >= limit (``check_and_execute_pending_orders``).
+        2. If the limit did not fill but Yahoo daily ``high >= target``, fill the pending
+           sell limit at the target/limit price (same as a limit fill, not a separate market).
+        Integrated backtest uses only (2) because intraday LTP is unavailable.
+
+        RSI > 50: market sell (falling-knife exit), aligned with integrated_backtest.
+
+        Target price is recalculated as EMA9 on re-entry. Unexecuted sell limits are
+        cancelled at EOD (18:00), not here; see ``run_eod_cleanup``.
         """
-        # First, check and execute any pending limit orders
+        symbols_to_remove: list[str] = []
+
+        # Target exit: pending limit sells when LTP >= frozen EMA9
         try:
             execution_summary = self.broker.check_and_execute_pending_orders()
             executed = 0
@@ -1214,21 +1221,36 @@ class PaperTradingServiceAdapter:
                 action="_monitor_sell_orders",
             )
 
-        if not self.active_sell_orders:
-            return
+        # Drop tracking for positions closed by limit fills
+        if self.active_sell_orders:
+            for symbol in list(self.active_sell_orders.keys()):
+                try:
+                    holding = self.broker.get_holding(symbol)
+                    if not holding or holding.quantity == 0:
+                        symbols_to_remove.append(symbol)
+                        self.logger.info(
+                            f"Sell limit filled — position closed for {symbol}",
+                            action="_monitor_sell_orders",
+                        )
+                except Exception as e:
+                    self.logger.debug(
+                        f"Could not verify holding for {symbol}: {e}",
+                        action="_monitor_sell_orders",
+                    )
 
-        import pandas_ta as ta
+        if not self.active_sell_orders:
+            self._finalize_monitor_sell_removals(symbols_to_remove)
+            return
 
         from core.data_fetcher import fetch_ohlcv_yf
 
-        symbols_to_remove = []
-
         for symbol, order_info in list(self.active_sell_orders.items()):
+            if symbol in symbols_to_remove:
+                continue
             try:
                 ticker = order_info["ticker"]
-                target_price = order_info["target_price"]  # Updated on re-entry (EMA9)
 
-                # Fetch recent data for exit condition checks (60 days for stable indicators)
+                # Fetch recent data for RSI exit and today's-session guard (60 days)
                 data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
 
                 if data is None or data.empty:
@@ -1255,104 +1277,19 @@ class PaperTradingServiceAdapter:
                     if latest_date_ist != today_ist:
                         continue
 
-                high = latest["high"]
-                close = latest["close"]
+                close = latest.get("close", latest.get("Close"))
+                target_price = order_info["target_price"]
+                daily_high = latest.get("high", latest.get("High"))
 
-                # Calculate RSI for exit condition 2
-                data["rsi10"] = ta.rsi(data["close"], length=10)
-                rsi = data.iloc[-1]["rsi10"]
+                # Fallback: daily high touched target but LTP did not fill the limit yet
+                if daily_high is not None and daily_high >= target_price:
+                    if self._try_fill_paper_sell_limit_on_daily_high(
+                        symbol, order_info, target_price, daily_high
+                    ):
+                        symbols_to_remove.append(symbol)
+                        continue
 
-                # Exit Condition 1: High >= Frozen Target (primary exit)
-                # When high touches target, force execution at target price
-                if high >= target_price:
-                    self.logger.info(
-                        f"? EXIT CONDITION MET: {symbol} - "
-                        f"High {high:.2f} >= Target {target_price:.2f}",
-                        action="_monitor_sell_orders",
-                    )
-
-                    entry_price = order_info.get("entry_price", target_price)
-                    pnl_pct = (
-                        (target_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
-                    )
-
-                    self.logger.info(
-                        f"? Target reached: {symbol} @ Rs {target_price:.2f} "
-                        f"(Est. P&L: {pnl_pct:+.2f}%)",
-                        action="_monitor_sell_orders",
-                    )
-
-                    # Force execute at target price since high touched it
-                    # Even if current price dropped below, we assume fill at target
-                    from modules.kotak_neo_auto_trader.domain import (
-                        Money,
-                        Order,
-                        OrderType,
-                        TransactionType,
-                    )
-
-                    target_order = Order(
-                        symbol=symbol,
-                        quantity=order_info["qty"],
-                        order_type=OrderType.MARKET,  # Use MARKET to force immediate execution
-                        transaction_type=TransactionType.SELL,
-                        price=Money(target_price),  # Will execute at this price
-                    )
-                    target_order._metadata = {
-                        "original_ticker": ticker,
-                        "exit_reason": "Target Hit",
-                    }
-
-                    try:
-                        # If position is already closed (e.g. elsewhere or previous run), don't place sell
-                        holding_before = self.broker.get_holding(symbol)
-                        if not holding_before or holding_before.quantity == 0:
-                            symbols_to_remove.append(symbol)
-                            self.logger.info(
-                                f"Position already closed for {symbol}, removing from tracking (no sell placed)",
-                                action="_monitor_sell_orders",
-                            )
-                            continue
-
-                        # Cancel existing limit order if any
-                        pending_orders = self.broker.get_all_orders()
-                        for pending in pending_orders:
-                            if (
-                                pending.symbol.replace(".NS", "").replace("-EQ", "") == symbol
-                                and pending.transaction_type.value == "SELL"
-                                and pending.status.value in ["PENDING", "OPEN"]
-                            ):
-                                try:
-                                    self.broker.cancel_order(pending.order_id)
-                                except Exception:
-                                    pass  # Ignore if already executed/cancelled
-                                break
-
-                        # Place market order - will execute immediately at target price
-                        self.broker.place_order(target_order)
-
-                        # Verify position is actually closed after sell
-                        holding = self.broker.get_holding(symbol)
-                        if not holding or holding.quantity == 0:
-                            symbols_to_remove.append(symbol)
-                            self.logger.info(
-                                f"Position closed for {symbol} @ Rs {target_price:.2f}",
-                                action="_monitor_sell_orders",
-                            )
-                        else:
-                            self.logger.warning(
-                                f"Target exit placed for {symbol} but position still open - will retry",
-                                action="_monitor_sell_orders",
-                            )
-                    except Exception as e:
-                        self.logger.error(
-                            f"Failed to execute target exit for {symbol}: {e}",
-                            action="_monitor_sell_orders",
-                        )
-
-                    continue
-
-                # Exit Condition 2: RSI > 50 (secondary exit for failing stocks)
+                # RSI > 50 market exit (falling knife; same rule as integrated_backtest)
                 # Use cache-based RSI (previous day first, then real-time)
                 # Skip if already converted
                 if symbol in self.converted_to_market:
@@ -1407,19 +1344,93 @@ class PaperTradingServiceAdapter:
                     f"Error monitoring {symbol}: {e}", exc_info=True, action="_monitor_sell_orders"
                 )
 
-        # Remove executed orders from tracking
-        for symbol in symbols_to_remove:
-            if symbol in self.active_sell_orders:
-                del self.active_sell_orders[symbol]
+        self._finalize_monitor_sell_removals(symbols_to_remove)
 
-        if symbols_to_remove:
-            self.logger.info(
-                f"Removed {len(symbols_to_remove)} executed orders. "
-                f"Active orders: {len(self.active_sell_orders)}",
+    def _try_fill_paper_sell_limit_on_daily_high(
+        self,
+        symbol: str,
+        order_info: dict,
+        target_price: float,
+        session_high: float,
+    ) -> bool:
+        """
+        Fill pending sell limit at target when Yahoo daily high >= target (LTP may be below limit).
+
+        Returns True if the caller should stop further checks for this symbol (closed or flat).
+        """
+        self.logger.info(
+            f"? EXIT CONDITION MET: {symbol} - "
+            f"Daily high {session_high:.2f} >= target {target_price:.2f} "
+            f"(filling pending sell limit at target)",
+            action="_monitor_sell_orders",
+        )
+
+        entry_price = order_info.get("entry_price", target_price)
+        pnl_pct = (target_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+        self.logger.info(
+            f"? Target reached: {symbol} @ Rs {target_price:.2f} (Est. P&L: {pnl_pct:+.2f}%)",
+            action="_monitor_sell_orders",
+        )
+
+        try:
+            holding_before = self.broker.get_holding(symbol)
+            if not holding_before or holding_before.quantity == 0:
+                self.logger.info(
+                    f"Position already closed for {symbol}, removing from tracking",
+                    action="_monitor_sell_orders",
+                )
+                return True
+
+            fill_fn = getattr(self.broker, "fill_pending_sell_limits_on_daily_high", None)
+            if not callable(fill_fn):
+                self.logger.warning(
+                    f"Broker does not support daily-high limit fill for {symbol}",
+                    action="_monitor_sell_orders",
+                )
+                return False
+
+            filled = fill_fn(symbol, session_high)
+            if not filled:
+                self.logger.warning(
+                    f"Daily high >= target for {symbol} but no pending sell limit was filled",
+                    action="_monitor_sell_orders",
+                )
+                return False
+
+            holding = self.broker.get_holding(symbol)
+            if not holding or holding.quantity == 0:
+                self.logger.info(
+                    f"Position closed for {symbol} @ Rs {target_price:.2f} (limit fill)",
+                    action="_monitor_sell_orders",
+                )
+                return True
+
+            self.logger.warning(
+                f"Limit fill on daily high for {symbol} but position still open - will retry",
                 action="_monitor_sell_orders",
             )
-            # Update saved file after removing executed orders
-            self._save_sell_orders_to_file()
+            return False
+        except Exception as e:
+            self.logger.error(
+                f"Failed to fill sell limit on daily high for {symbol}: {e}",
+                action="_monitor_sell_orders",
+            )
+            return False
+
+    def _finalize_monitor_sell_removals(self, symbols_to_remove: list[str]) -> None:
+        """Remove closed symbols from active sell tracking and persist state."""
+        if not symbols_to_remove:
+            return
+        unique = list(dict.fromkeys(symbols_to_remove))
+        for symbol in unique:
+            if symbol in self.active_sell_orders:
+                del self.active_sell_orders[symbol]
+        self.logger.info(
+            f"Removed {len(unique)} executed orders. "
+            f"Active orders: {len(self.active_sell_orders)}",
+            action="_monitor_sell_orders",
+        )
+        self._save_sell_orders_to_file()
 
     def _initialize_rsi10_cache_paper(self) -> None:
         """

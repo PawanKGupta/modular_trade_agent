@@ -193,6 +193,31 @@ class OrderSimulator:
         else:
             return False, f"Unsupported order type for AMO: {order.order_type}", None
 
+    def try_fill_sell_limit_on_session_high(
+        self, order: Order, session_high: float
+    ) -> tuple[bool, str, Money | None]:
+        """
+        Fill a sell limit when session high >= limit (e.g. Yahoo daily high touched target).
+
+        Execution price is the limit price, same as a normal limit fill.
+        """
+        if order.order_type != OrderType.LIMIT or not order.is_sell_order():
+            return False, "Not a sell limit order", None
+        if order.price is None:
+            return False, "Limit order requires price", None
+        if session_high < float(order.price.amount):
+            return False, "Session high below limit", None
+        if not order.is_amo_order() and not self._is_market_open(order):
+            return False, "Market is closed", None
+
+        execution_price = order.price
+        logger.info(
+            f"? Limit SELL filled (daily high touch): {order.symbol} "
+            f"@ Rs {execution_price.amount:.2f} "
+            f"(Limit: Rs {order.price.amount:.2f}, session high: Rs {session_high:.2f})"
+        )
+        return True, "Limit sell filled on daily high touch", execution_price
+
     def _execute_limit_order(
         self, order: Order, current_price: Money
     ) -> tuple[bool, str, Money | None]:

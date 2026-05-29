@@ -490,6 +490,49 @@ def test_get_paper_trading_history_exception_handling(mock_db, monkeypatch):
     assert "Failed to fetch trade history" in exc.value.detail
 
 
+def test_build_paper_order_statistics_fill_and_trade_win_rates():
+    """Strategy-cancelled sells should not depress fill_rate; trade win uses closed paper rows."""
+    orders = [
+        SimpleNamespace(side="buy", status=SimpleNamespace(value="closed")),
+        SimpleNamespace(side="sell", status=SimpleNamespace(value="closed")),
+        SimpleNamespace(side="sell", status=SimpleNamespace(value="cancelled")),
+    ]
+    paper_closed = [
+        SimpleNamespace(closed_at=datetime(2025, 1, 2), realized_pnl=100.0),
+        SimpleNamespace(closed_at=datetime(2025, 1, 3), realized_pnl=-50.0),
+    ]
+    stats = paper_trading._build_paper_order_statistics(orders, paper_closed)
+    assert stats["fill_rate"] == 100.0
+    assert stats["sell_fill_rate"] == pytest.approx(50.0)
+    assert stats["trade_win_rate"] == pytest.approx(50.0)
+    assert stats["closed_positions"] == 2
+    assert stats["winning_positions"] == 1
+    assert stats["success_rate"] == pytest.approx(66.67)
+
+
+def test_build_paper_order_statistics_trade_win_rate_excludes_broker_closed():
+    """trade_win_rate must use paper-closed positions only, not all user closes."""
+    orders = [
+        SimpleNamespace(
+            symbol="RELIANCE-EQ",
+            side="buy",
+            placed_at=datetime(2025, 1, 1, 10, 0, 0),
+            trade_mode=paper_trading.TradeMode.PAPER,
+            status=SimpleNamespace(value="closed"),
+        ),
+    ]
+    paper_win = SimpleNamespace(closed_at=datetime(2025, 2, 1), realized_pnl=100.0)
+    broker_loss = SimpleNamespace(closed_at=datetime(2025, 2, 1), realized_pnl=-500.0)
+
+    stats_paper_only = paper_trading._build_paper_order_statistics(orders, [paper_win])
+    assert stats_paper_only["trade_win_rate"] == 100.0
+    assert stats_paper_only["closed_positions"] == 1
+
+    stats_mixed = paper_trading._build_paper_order_statistics(orders, [paper_win, broker_loss])
+    assert stats_mixed["trade_win_rate"] == pytest.approx(50.0)
+    assert stats_mixed["closed_positions"] == 2
+
+
 def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
     user = DummyUser(id=42)
 
@@ -560,6 +603,38 @@ def test_get_paper_trading_portfolio_order_statistics(monkeypatch):
         assert result.order_statistics["completed_orders"] == 1
         assert result.order_statistics["pending_orders"] == 1
         assert result.order_statistics["reentry_orders"] == 1
+        assert result.order_statistics["fill_rate"] == 100.0
+        assert result.order_statistics["sell_fill_rate"] == 0.0
+        assert result.order_statistics["success_rate"] == 50.0
+
+
+def test_get_paper_trading_portfolio_trade_win_rate_uses_paper_closed_only(monkeypatch):
+    """Portfolio API trade_win_rate aligns with _list_paper_closed_positions, not all closes."""
+    user = DummyUser(id=42)
+    paper_closed = [
+        SimpleNamespace(closed_at=datetime(2025, 2, 1), realized_pnl=200.0),
+    ]
+
+    class DummyOrdersRepository:
+        def __init__(self, _db):
+            pass
+
+        def list(self, user_id, **_kwargs):  # noqa: ARG002
+            return [], 0
+
+    monkeypatch.setattr(paper_trading, "OrdersRepository", DummyOrdersRepository)
+    monkeypatch.setattr(
+        paper_trading,
+        "_list_paper_closed_positions",
+        lambda db, user_id, all_orders, user_settings: paper_closed,  # noqa: ARG005
+    )
+
+    with patch("server.app.routers.paper_trading.yf.Ticker"):
+        result = paper_trading.get_paper_trading_portfolio(db=MagicMock(), current=user)
+
+    assert result.order_statistics["trade_win_rate"] == 100.0
+    assert result.order_statistics["closed_positions"] == 1
+    assert result.order_statistics["winning_positions"] == 1
 
 
 def test_get_paper_trading_portfolio_return_percentage_calculation(monkeypatch):

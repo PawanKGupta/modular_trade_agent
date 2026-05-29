@@ -924,66 +924,14 @@ class TestPaperTradingSellMonitoring:
         assert len(tcs_orders) == 1
         assert tcs_orders[0].price == 3600.0
 
-    def test_monitor_sell_orders_target_reached(self, db_session, test_user, adapter_with_holdings):
-        """Test exit condition: High >= Frozen Target"""
-        from unittest.mock import MagicMock, patch
-
-        import pandas as pd
-
-        # Set up active sell order with frozen target
-        adapter_with_holdings.active_sell_orders = {
-            "RELIANCE": {
-                "order_id": "SELL_ORDER_123",
-                "target_price": 2600.0,  # Frozen target
-                "qty": 40,
-                "ticker": "RELIANCE.NS",
-                "entry_date": "2024-01-01",
-                "entry_price": 2500.0,
-            }
-        }
-
-        # Mock check_and_execute_pending_orders to simulate order execution
-        mock_execution_summary = {"checked": 1, "executed": 1, "still_pending": 0}
-        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
-            return_value=mock_execution_summary
-        )
-
-        # Mock get_holding to return None (position closed after execution)
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
-
-        # Mock OHLCV data where High >= Target (use lowercase columns like fetch_ohlcv_yf returns)
-        mock_data = _set_today_like_index(
-            pd.DataFrame(
-                {
-                    "high": [2650.0],  # High >= 2600.0 (target reached!)
-                    "close": [2620.0],
-                    "rsi10": [45.0],  # RSI < 50 (not triggered)
-                }
-            )
-        )
-
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["rsi10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
-
-                adapter_with_holdings._monitor_sell_orders()
-
-        # Order should be removed from tracking (position closed)
-        assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
-
-        # Verify check_and_execute_pending_orders was called
-        assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
-
-    def test_monitor_sell_orders_target_reached_market_order_placed(
+    def test_monitor_sell_orders_target_reached_via_limit_fill(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that MARKET order is placed when target is reached (not LIMIT)"""
+        """Test target exit: limit fill via check_and_execute_pending_orders (LTP >= limit)."""
         from unittest.mock import MagicMock, patch
 
         import pandas as pd
 
-        # Set up active sell order with frozen target
         adapter_with_holdings.active_sell_orders = {
             "RELIANCE": {
                 "order_id": "SELL_ORDER_123",
@@ -995,55 +943,85 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Pre-check: get_holding must return a holding first so we don't skip place_order.
-        # After place_order we verify position closed (get_holding returns None).
-        mock_holding = MagicMock()
-        mock_holding.quantity = 40
-        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"checked": 1, "executed": 1, "still_pending": 0}
+        )
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=None)
 
-        # Mock get_all_orders to return pending order
-        pending_order = MagicMock()
-        pending_order.symbol = "RELIANCE"
-        pending_order.transaction_type.value = "SELL"
-        pending_order.status.value = "PENDING"
-        pending_order.order_id = "PENDING_123"
-        adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
-
-        # Mock OHLCV data where High >= Target
         mock_data = _set_today_like_index(
-            pd.DataFrame(
-                {
-                    "high": [2650.0],
-                    "close": [2620.0],
-                    "rsi10": [45.0],
-                }
-            )
+            pd.DataFrame({"high": [2650.0], "close": [2620.0]})
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["rsi10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
 
-                adapter_with_holdings._monitor_sell_orders()
+        assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
+        assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
+        adapter_with_holdings.broker.place_order.assert_not_called()
 
-        # Verify MARKET order was placed (not LIMIT)
-        assert adapter_with_holdings.broker.place_order.called
-        call_args = adapter_with_holdings.broker.place_order.call_args
-        placed_order = call_args[0][0]
-        assert placed_order.order_type.name == "MARKET"
-        assert placed_order.transaction_type.name == "SELL"
-        assert placed_order.price.amount == 2600.0  # At target price
+    def test_monitor_sell_orders_daily_high_fills_pending_limit(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """When daily high >= target but LTP did not fill, fill pending sell limit at target."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter_with_holdings.active_sell_orders = {
+            "RELIANCE": {
+                "order_id": "SELL_ORDER_123",
+                "target_price": 2600.0,
+                "qty": 40,
+                "ticker": "RELIANCE.NS",
+                "entry_date": "2024-01-01",
+                "entry_price": 2500.0,
+            }
+        }
+
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"checked": 1, "executed": 0, "still_pending": 1}
+        )
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(
+            side_effect=[mock_holding, mock_holding, None]
+        )
+        adapter_with_holdings.broker.fill_pending_sell_limits_on_daily_high = MagicMock(
+            return_value=True
+        )
+
+        mock_data = _set_today_like_index(
+            pd.DataFrame({"high": [2650.0], "close": [2620.0]})
+        )
+
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
+
+        assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
+        adapter_with_holdings.broker.fill_pending_sell_limits_on_daily_high.assert_called_once_with(
+            "RELIANCE", 2650.0
+        )
+        adapter_with_holdings.broker.place_order.assert_not_called()
+        adapter_with_holdings.broker.cancel_order.assert_not_called()
 
     def test_monitor_sell_orders_target_reached_position_not_closed(
         self, db_session, test_user, adapter_with_holdings
     ):
-        """Test that position remains tracked if not actually closed after order placement"""
+        """Position stays tracked when limit was not filled and holding remains open."""
         from unittest.mock import MagicMock, patch
 
         import pandas as pd
 
-        # Set up active sell order
         adapter_with_holdings.active_sell_orders = {
             "RELIANCE": {
                 "order_id": "SELL_ORDER_123",
@@ -1055,86 +1033,27 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock get_holding to return position still open (qty > 0)
-        mock_holding = MagicMock()
-        mock_holding.quantity = 40  # Position still open
-        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
-
-        # Mock OHLCV data where High >= Target
-        mock_data = _set_today_like_index(
-            pd.DataFrame(
-                {
-                    "high": [2650.0],
-                    "close": [2620.0],
-                    "rsi10": [45.0],
-                }
-            )
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 0, "still_pending": 1}
         )
-
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["rsi10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
-
-                adapter_with_holdings._monitor_sell_orders()
-
-        # Order should still be tracked (position not closed)
-        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
-
-    def test_monitor_sell_orders_target_reached_cancels_pending_order(
-        self, db_session, test_user, adapter_with_holdings
-    ):
-        """Test that pending limit order is cancelled when target is reached"""
-        from unittest.mock import MagicMock, patch
-
-        import pandas as pd
-
-        # Set up active sell order
-        adapter_with_holdings.active_sell_orders = {
-            "RELIANCE": {
-                "order_id": "SELL_ORDER_123",
-                "target_price": 2600.0,
-                "qty": 40,
-                "ticker": "RELIANCE.NS",
-                "entry_date": "2024-01-01",
-                "entry_price": 2500.0,
-            }
-        }
-
-        # Pre-check: get_holding must return a holding first so we enter the block that
-        # cancels pending and places market order; then get_holding returns None (closed).
         mock_holding = MagicMock()
         mock_holding.quantity = 40
-        adapter_with_holdings.broker.get_holding = MagicMock(side_effect=[mock_holding, None])
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
 
-        # Mock get_all_orders to return pending order
-        pending_order = MagicMock()
-        pending_order.symbol = "RELIANCE"
-        pending_order.transaction_type.value = "SELL"
-        pending_order.status.value = "OPEN"
-        pending_order.order_id = "PENDING_ORDER_456"
-        adapter_with_holdings.broker.get_all_orders = MagicMock(return_value=[pending_order])
-
-        # Mock OHLCV data where High >= Target
         mock_data = _set_today_like_index(
-            pd.DataFrame(
-                {
-                    "high": [2650.0],
-                    "close": [2620.0],
-                    "rsi10": [45.0],
-                }
-            )
+            pd.DataFrame({"high": [2550.0], "close": [2520.0]})  # High < target
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["rsi10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
 
-                adapter_with_holdings._monitor_sell_orders()
-
-        # Verify cancel_order was called
-        adapter_with_holdings.broker.cancel_order.assert_called_once_with("PENDING_ORDER_456")
+        assert "RELIANCE" in adapter_with_holdings.active_sell_orders
+        adapter_with_holdings.broker.place_order.assert_not_called()
 
     def test_monitor_sell_orders_rsi_exit(self, db_session, test_user, adapter_with_holdings):
         """Test exit condition: RSI > 50 (falling knife)"""
@@ -1155,24 +1074,26 @@ class TestPaperTradingSellMonitoring:
         adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
             return_value={"executed": 0, "pending": 0}
         )
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
 
-        # Mock OHLCV data where RSI > 50 but High < Target (use lowercase columns like fetch_ohlcv_yf returns)
         mock_data = _set_today_like_index(
             pd.DataFrame(
                 {
-                    "high": [2550.0],  # High < Target (not reached)
+                    "high": [2550.0],
                     "close": [2520.0],
-                    "rsi10": [52.0],  # RSI > 50 (falling knife exit!)
                 }
             )
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["rsi10"] = 52.0
-                mock_rsi.return_value = pd.Series([52.0], index=mock_data.index)
-
-                adapter_with_holdings._monitor_sell_orders()
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=52.0
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
 
         # Order should be removed (RSI exit triggered)
         assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
@@ -1205,19 +1126,26 @@ class TestPaperTradingSellMonitoring:
         mock_data = _set_today_like_index(
             pd.DataFrame(
                 {
-                    "High": [2580.0],  # High < Target
-                    "Close": [2560.0],
-                    "RSI10": [45.0],  # RSI < 50
+                    "high": [2580.0],
+                    "close": [2560.0],
                 }
             )
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["RSI10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 0, "pending": 0}
+        )
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
 
-                adapter_with_holdings._monitor_sell_orders()
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
 
         # Order should still be active
         assert "RELIANCE" in adapter_with_holdings.active_sell_orders
@@ -1257,15 +1185,23 @@ class TestPaperTradingSellMonitoring:
         def mock_calculate_ema9(ticker, broker_symbol=None):
             return 2700.0  # EMA9 has moved up significantly!
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                mock_data["RSI10"] = 45.0
-                mock_rsi.return_value = pd.Series([45.0])
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 0, "pending": 0}
+        )
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
 
-                with patch.object(
-                    adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9
-                ):
-                    adapter_with_holdings._monitor_sell_orders()
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+            patch.object(
+                adapter_with_holdings, "_calculate_ema9", side_effect=mock_calculate_ema9
+            ),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
 
         # Target should STILL be frozen at original value
         assert "RELIANCE" in adapter_with_holdings.active_sell_orders
@@ -1298,7 +1234,7 @@ class TestPaperTradingSellMonitoring:
         assert call_kw["live_price_manager"] is None
 
     def test_monitor_sell_orders_with_lowercase_columns(self, db_session, test_user):
-        """Test that _monitor_sell_orders works with lowercase column names"""
+        """Test limit-fill tracking removal with lowercase OHLC columns."""
         from unittest.mock import MagicMock, patch
 
         import pandas as pd
@@ -1309,10 +1245,10 @@ class TestPaperTradingSellMonitoring:
         )
         adapter.broker = MagicMock()
         adapter.logger = MagicMock()
+        adapter.converted_to_market = set()
 
-        # Set up active sell order
         adapter.active_sell_orders = {
-            "RELIANCE-EQ": {  # Full symbol after migration
+            "RELIANCE-EQ": {
                 "order_id": "SELL_ORDER_123",
                 "target_price": 2600.0,
                 "qty": 40,
@@ -1321,13 +1257,11 @@ class TestPaperTradingSellMonitoring:
             }
         }
 
-        # Mock OHLCV data with lowercase columns (as returned by fetch_ohlcv_yf)
         mock_data = _set_today_like_index(
             pd.DataFrame(
                 {
-                    "date": pd.date_range(start="2024-01-01", periods=50),
                     "open": [2500.0] * 50,
-                    "high": [2650.0] * 50,  # High exceeds target
+                    "high": [2650.0] * 50,
                     "low": [2480.0] * 50,
                     "close": [2620.0] * 50,
                     "volume": [1000000] * 50,
@@ -1335,23 +1269,19 @@ class TestPaperTradingSellMonitoring:
             )
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data):
-            with patch("pandas_ta.rsi") as mock_rsi:
-                # Mock RSI calculation
-                mock_rsi.return_value = pd.Series([45.0] * 50)
+        adapter.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 1, "still_pending": 0}
+        )
+        adapter.broker.get_holding.return_value = None
 
-                # Ensure broker reports no remaining holding so order is removed
-                adapter.broker.get_holding.return_value = None
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(adapter, "_get_current_rsi10_paper", return_value=45.0),
+        ):
+            adapter._monitor_sell_orders()
 
-                adapter._monitor_sell_orders()
-
-                # Verify RSI was called with lowercase "close"
-                mock_rsi.assert_called_once()
-                call_args = mock_rsi.call_args
-                assert "close" in str(call_args) or call_args[0][0].name == "close"
-
-        # Order should be removed (target reached)
-        assert "RELIANCE" not in adapter.active_sell_orders
+        assert "RELIANCE-EQ" not in adapter.active_sell_orders
+        assert mock_data["close"].iloc[-1] == 2620.0
 
     def test_monitor_sell_orders_fetches_60_days(self, db_session, test_user):
         """Test that _monitor_sell_orders fetches 60 days of data for stable indicators"""
@@ -1386,22 +1316,27 @@ class TestPaperTradingSellMonitoring:
             )
         )
 
-        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data) as mock_fetch:
-            with patch("pandas_ta.rsi", return_value=pd.Series([45.0])):
-                adapter._monitor_sell_orders()
+        adapter.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"executed": 0, "pending": 0}
+        )
+        mock_holding = MagicMock()
+        mock_holding.quantity = 40
+        adapter.broker.get_holding = MagicMock(return_value=mock_holding)
 
-                # Verify fetch_ohlcv_yf was called
-                # Main monitoring path uses days=60, RSI exit logic uses days=200
-                calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
-                assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data) as mock_fetch,
+            patch.object(adapter, "_get_current_rsi10_paper", return_value=45.0),
+        ):
+            adapter._monitor_sell_orders()
 
-                # Check that main monitoring path uses days=60
-                # (RSI exit logic may also call with days=200, but main path should use 60)
-                main_call = next((call for call in calls if call[1].get("days") == 60), None)
-                assert main_call is not None, (
-                    "fetch_ohlcv_yf should be called with days=60 for main monitoring. "
-                    f"Actual calls: {[call[1] for call in calls]}"
-                )
+            calls = [call for call in mock_fetch.call_args_list if call[0][0] == "RELIANCE.NS"]
+            assert len(calls) > 0, "fetch_ohlcv_yf should be called for RELIANCE.NS"
+
+            main_call = next((call for call in calls if call[1].get("days") == 60), None)
+            assert main_call is not None, (
+                "fetch_ohlcv_yf should be called with days=60 for RSI session guard. "
+                f"Actual calls: {[call[1] for call in calls]}"
+            )
 
     def test_service_state_attributes(self, db_session, test_user):
         """Test that service has running and shutdown_requested attributes for scheduler control"""

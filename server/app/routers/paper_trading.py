@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from modules.kotak_neo_auto_trader.services import (
@@ -177,6 +177,121 @@ class PaginatedTradeHistory(BaseModel):
     statistics: dict[str, Any]
 
 
+class PaperOrderStatistics(BaseModel):
+    """Aggregated paper order metrics for the portfolio dashboard."""
+
+    total_orders: int = 0
+    buy_orders: int = 0
+    sell_orders: int = 0
+    completed_orders: int = 0
+    pending_orders: int = 0
+    cancelled_orders: int = 0
+    rejected_orders: int = 0
+    reentry_orders: int = 0
+    fill_rate: float = Field(
+        0.0,
+        description="Closed orders / (closed + failed). Cancelled limits excluded.",
+    )
+    sell_fill_rate: float = Field(
+        0.0,
+        description="Closed sell orders / (closed + cancelled sell orders).",
+    )
+    trade_win_rate: float = Field(
+        0.0,
+        description="Paper closed positions with realized_pnl > 0 / paper closed positions.",
+    )
+    closed_positions: int = 0
+    winning_positions: int = 0
+    success_rate: float = Field(
+        0.0,
+        deprecated=True,
+        description="Deprecated: use fill_rate. Was closed / total_orders.",
+    )
+
+
+def _order_status_value(order: Any) -> str:
+    """Normalize order.status to a lowercase string."""
+    status = order.status
+    if hasattr(status, "value"):
+        return str(status.value).lower()
+    return str(status).lower()
+
+
+def _default_order_statistics() -> dict[str, Any]:
+    """Empty order statistics payload (includes deprecated success_rate)."""
+    return PaperOrderStatistics().model_dump()
+
+
+def _build_paper_order_statistics(
+    all_db_orders: list[Any],
+    paper_closed_positions: list[Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Build portfolio order statistics.
+
+    fill_rate: terminal success among orders that finished (not cancelled).
+    sell_fill_rate: how often sell limits actually closed vs cancelled.
+    trade_win_rate: realized P&L win rate on paper closed positions only
+        (use ``_list_paper_closed_positions``; same rules as trade history).
+    """
+    total_orders = len(all_db_orders)
+    buy_orders = sum(1 for o in all_db_orders if o.side.lower() == "buy")
+    sell_orders = sum(1 for o in all_db_orders if o.side.lower() == "sell")
+
+    completed_orders = [o for o in all_db_orders if _order_status_value(o) == "closed"]
+    pending_orders = [o for o in all_db_orders if _order_status_value(o) in ("pending", "ongoing")]
+    cancelled_orders = [o for o in all_db_orders if _order_status_value(o) == "cancelled"]
+    rejected_orders = [o for o in all_db_orders if _order_status_value(o) == "failed"]
+
+    completed_count = len(completed_orders)
+    fill_denominator = completed_count + len(rejected_orders)
+    fill_rate = (completed_count / fill_denominator * 100) if fill_denominator > 0 else 0.0
+
+    sell_closed = [o for o in completed_orders if o.side.lower() == "sell"]
+    sell_cancelled = [o for o in cancelled_orders if o.side.lower() == "sell"]
+    sell_fill_denominator = len(sell_closed) + len(sell_cancelled)
+    sell_fill_rate = (
+        (len(sell_closed) / sell_fill_denominator * 100) if sell_fill_denominator > 0 else 0.0
+    )
+
+    closed_positions_list = list(paper_closed_positions or [])
+    closed_positions_count = len(closed_positions_list)
+    winning_positions = sum(
+        1 for p in closed_positions_list if float(getattr(p, "realized_pnl", None) or 0) > 0
+    )
+    trade_win_rate = (
+        (winning_positions / closed_positions_count * 100) if closed_positions_count > 0 else 0.0
+    )
+
+    reentry_count = sum(
+        1
+        for db_order in all_db_orders
+        if getattr(db_order, "order_metadata", None)
+        and getattr(db_order, "order_metadata", {}).get("entry_type") == "REENTRY"
+    )
+
+    # Deprecated: penalizes strategy-cancelled sell limits; kept for API compatibility.
+    success_rate = (completed_count / total_orders * 100) if total_orders > 0 else 0.0
+
+    stats = PaperOrderStatistics(
+        total_orders=total_orders,
+        buy_orders=buy_orders,
+        sell_orders=sell_orders,
+        completed_orders=completed_count,
+        pending_orders=len(pending_orders),
+        cancelled_orders=len(cancelled_orders),
+        rejected_orders=len(rejected_orders),
+        reentry_orders=reentry_count,
+        fill_rate=round(fill_rate, 2),
+        sell_fill_rate=round(sell_fill_rate, 2),
+        trade_win_rate=round(trade_win_rate, 2),
+        closed_positions=closed_positions_count,
+        winning_positions=winning_positions,
+        success_rate=round(success_rate, 2),
+    )
+    return stats.model_dump()
+
+
 def _parse_iso_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -246,16 +361,7 @@ def _empty_paginated_portfolio(
             page_size=page_size,
             total_pages=0,
         ),
-        order_statistics={
-            "total_orders": 0,
-            "buy_orders": 0,
-            "sell_orders": 0,
-            "completed_orders": 0,
-            "pending_orders": 0,
-            "cancelled_orders": 0,
-            "rejected_orders": 0,
-            "success_rate": 0.0,
-        },
+        order_statistics=_default_order_statistics(),
     )
 
 
@@ -782,42 +888,10 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             if hasattr(o, "trade_mode") and o.trade_mode and o.trade_mode == TradeMode.PAPER
         ]
 
-        total_orders = len(all_db_orders)
-        buy_orders = sum(1 for o in all_db_orders if o.side.lower() == "buy")
-        sell_orders = sum(1 for o in all_db_orders if o.side.lower() == "sell")
-
-        def get_status_value(order):
-            """Safely get status value from order"""
-            if hasattr(order.status, "value"):
-                return order.status.value.lower()
-            return str(order.status).lower()
-
-        completed_orders = [o for o in all_db_orders if get_status_value(o) == "closed"]
-        pending_orders = [o for o in all_db_orders if get_status_value(o) in ["pending", "ongoing"]]
-        cancelled_orders = [o for o in all_db_orders if get_status_value(o) == "cancelled"]
-        rejected_orders = [o for o in all_db_orders if get_status_value(o) == "failed"]
-
-        success_rate = (len(completed_orders) / total_orders * 100) if total_orders > 0 else 0.0
-
-        # Count re-entry orders (orders with entry_type="REENTRY" in metadata)
-        reentry_count = sum(
-            1
-            for db_order in all_db_orders
-            if getattr(db_order, "order_metadata", None)
-            and getattr(db_order, "order_metadata", {}).get("entry_type") == "REENTRY"
+        paper_closed_positions = _list_paper_closed_positions(
+            db, current.id, all_orders, user_settings
         )
-
-        order_statistics = {
-            "total_orders": total_orders,
-            "buy_orders": buy_orders,
-            "sell_orders": sell_orders,
-            "completed_orders": len(completed_orders),
-            "pending_orders": len(pending_orders),
-            "cancelled_orders": len(cancelled_orders),
-            "rejected_orders": len(rejected_orders),
-            "success_rate": success_rate,
-            "reentry_orders": reentry_count,
-        }
+        order_statistics = _build_paper_order_statistics(all_db_orders, paper_closed_positions)
 
         return PaginatedPaperTradingPortfolio(
             account=account,

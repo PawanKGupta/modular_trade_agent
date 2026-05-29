@@ -1048,51 +1048,88 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         # Add timestamp for context
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
+        def _rule_verdict(rec: dict) -> str:
+            if enable_backtest_scoring:
+                return (rec.get("final_verdict") or rec.get("verdict") or "unknown").lower()
+            return (rec.get("verdict") or "unknown").lower()
+
+        def _is_rule_buy(rec: dict) -> bool:
+            return _rule_verdict(rec) in ["buy", "strong_buy"]
+
+        def _is_ml_buy(rec: dict) -> bool:
+            return (rec.get("ml_verdict") or "").lower() in ["buy", "strong_buy"]
+
+        # Split candidates into rule-based vs ML-only for clearer alerts
+        candidate_tickers: set[str] = set()
+        candidates: list[dict] = []
+        for rec in (strong_buys or []) + (buys or []):
+            if not isinstance(rec, dict):
+                continue
+            t = rec.get("ticker")
+            if not t or t in candidate_tickers:
+                continue
+            candidate_tickers.add(t)
+            candidates.append(rec)
+
+        rule_candidates = [r for r in candidates if _is_rule_buy(r)]
+        ml_only_candidates = [r for r in candidates if (not _is_rule_buy(r)) and _is_ml_buy(r)]
+
         msg_prefix = "*Reversal Buy Candidates (today)*"
         if enable_backtest_scoring:
             msg_prefix += " *with Backtest Scoring*"
         msg_prefix += (
-            "\n? *Includes: Rule-Based + ML Predictions*"  # 2025-11-12: Clarify inclusion of ML
+            "\n? *Includes: Rule-Based + ML Predictions*"
+            f"\n\n*Summary*: Rule buys: {len(rule_candidates)}, ML-only buys: {len(ml_only_candidates)}"
         )
         msg = msg_prefix + "\n"
 
-        # Highlight strong buys first (sorted by priority)
-        if strong_buys:
-            strong_buys = [r for r in strong_buys if r is not None]  # Filter out None values
-            strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n? *STRONG BUY* (Multi-timeframe confirmed):\n"
-            for i, b in enumerate(strong_buys, 1):
+        # Rule-based strong buys first
+        rule_strong_buys = [
+            r for r in (strong_buys or []) if isinstance(r, dict) and _rule_verdict(r) == "strong_buy"
+        ]
+        if rule_strong_buys:
+            rule_strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))
+            msg += "\n? *STRONG BUY* (Rule-based, multi-timeframe confirmed):\n"
+            for i, b in enumerate(rule_strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
-                if enhanced_info:  # Skip stocks with invalid parameters
+                if enhanced_info:
                     msg += enhanced_info
 
-        # Regular buys (exclude stocks already in strong_buys to avoid duplicates)
-        strong_buy_tickers = {r.get("ticker") for r in strong_buys}
-        if enable_backtest_scoring:
-            # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [
-                r
-                for r in buys
-                if r.get("ticker") not in strong_buy_tickers
-                and (r.get("final_verdict") == "buy" or r.get("ml_verdict") == "buy")
-            ]
-        else:
-            # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [
-                r
-                for r in buys
-                if r.get("ticker") not in strong_buy_tickers
-                and (r.get("verdict") == "buy" or r.get("ml_verdict") == "buy")
-            ]
-
-        if regular_buys:
-            regular_buys = [r for r in regular_buys if r is not None]  # Filter out None values
-            regular_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n? *BUY* candidates:\n"
-            for i, b in enumerate(regular_buys, 1):
+        # Rule-based buy candidates (excluding rule strong buys)
+        rule_strong_tickers = {r.get("ticker") for r in rule_strong_buys}
+        rule_buy_candidates = [
+            r for r in (buys or []) if isinstance(r, dict) and _rule_verdict(r) == "buy"
+        ]
+        rule_buy_candidates = [r for r in rule_buy_candidates if r.get("ticker") not in rule_strong_tickers]
+        if rule_buy_candidates:
+            rule_buy_candidates.sort(key=lambda x: -compute_trading_priority_score(x))
+            msg += "\n? *BUY* candidates (Rule-based):\n"
+            for i, b in enumerate(rule_buy_candidates, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
-                if enhanced_info:  # Skip stocks with invalid parameters
+                if enhanced_info:
                     msg += enhanced_info
+
+        # ML-only candidates (rule verdict is NOT buy/strong_buy)
+        if ml_only_candidates:
+            ml_only_strong = [r for r in ml_only_candidates if (r.get("ml_verdict") or "").lower() == "strong_buy"]
+            ml_only_buy = [r for r in ml_only_candidates if (r.get("ml_verdict") or "").lower() == "buy"]
+            msg += "\n\n? *ML-ONLY candidates* (Rule verdict was not buy):\n"
+
+            if ml_only_strong:
+                ml_only_strong.sort(key=lambda x: -compute_trading_priority_score(x))
+                msg += "\n? *STRONG BUY* (ML-only):\n"
+                for i, b in enumerate(ml_only_strong, 1):
+                    enhanced_info = get_enhanced_stock_info(b, i)
+                    if enhanced_info:
+                        msg += enhanced_info
+
+            if ml_only_buy:
+                ml_only_buy.sort(key=lambda x: -compute_trading_priority_score(x))
+                msg += "\n? *BUY* (ML-only):\n"
+                for i, b in enumerate(ml_only_buy, 1):
+                    enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
+                    if enhanced_info:
+                        msg += enhanced_info
 
         # Add timestamp at the end for context
         msg += f"\n\n_Generated: {timestamp}_"
