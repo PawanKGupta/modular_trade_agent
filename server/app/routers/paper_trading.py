@@ -198,7 +198,7 @@ class PaperOrderStatistics(BaseModel):
     )
     trade_win_rate: float = Field(
         0.0,
-        description="Closed positions with realized_pnl > 0 / all closed positions.",
+        description="Paper closed positions with realized_pnl > 0 / paper closed positions.",
     )
     closed_positions: int = 0
     winning_positions: int = 0
@@ -224,23 +224,22 @@ def _default_order_statistics() -> dict[str, Any]:
 
 def _build_paper_order_statistics(
     all_db_orders: list[Any],
-    all_positions: list[Any] | None = None,
+    paper_closed_positions: list[Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build portfolio order statistics.
 
     fill_rate: terminal success among orders that finished (not cancelled).
     sell_fill_rate: how often sell limits actually closed vs cancelled.
-    trade_win_rate: realized P&L win rate on closed positions.
-  """
+    trade_win_rate: realized P&L win rate on paper closed positions only
+        (use ``_list_paper_closed_positions``; same rules as trade history).
+    """
     total_orders = len(all_db_orders)
     buy_orders = sum(1 for o in all_db_orders if o.side.lower() == "buy")
     sell_orders = sum(1 for o in all_db_orders if o.side.lower() == "sell")
 
     completed_orders = [o for o in all_db_orders if _order_status_value(o) == "closed"]
-    pending_orders = [
-        o for o in all_db_orders if _order_status_value(o) in ("pending", "ongoing")
-    ]
+    pending_orders = [o for o in all_db_orders if _order_status_value(o) in ("pending", "ongoing")]
     cancelled_orders = [o for o in all_db_orders if _order_status_value(o) == "cancelled"]
     rejected_orders = [o for o in all_db_orders if _order_status_value(o) == "failed"]
 
@@ -255,9 +254,7 @@ def _build_paper_order_statistics(
         (len(sell_closed) / sell_fill_denominator * 100) if sell_fill_denominator > 0 else 0.0
     )
 
-    closed_positions_list: list[Any] = []
-    if all_positions:
-        closed_positions_list = [p for p in all_positions if getattr(p, "closed_at", None) is not None]
+    closed_positions_list = list(paper_closed_positions or [])
     closed_positions_count = len(closed_positions_list)
     winning_positions = sum(
         1 for p in closed_positions_list if float(getattr(p, "realized_pnl", None) or 0) > 0
@@ -891,7 +888,10 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             if hasattr(o, "trade_mode") and o.trade_mode and o.trade_mode == TradeMode.PAPER
         ]
 
-        order_statistics = _build_paper_order_statistics(all_db_orders, all_positions)
+        paper_closed_positions = _list_paper_closed_positions(
+            db, current.id, all_orders, user_settings
+        )
+        order_statistics = _build_paper_order_statistics(all_db_orders, paper_closed_positions)
 
         return PaginatedPaperTradingPortfolio(
             account=account,

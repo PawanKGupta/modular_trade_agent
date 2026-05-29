@@ -81,7 +81,7 @@ export interface PaperTradingPortfolio {
 		fill_rate: number;
 		/** Closed sells / (closed + cancelled sells). */
 		sell_fill_rate: number;
-		/** Winning closed positions / all closed positions. */
+		/** Winning paper closed positions / paper closed positions. */
 		trade_win_rate: number;
 		closed_positions: number;
 		winning_positions: number;
