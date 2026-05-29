@@ -226,7 +226,6 @@ from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
 from .routers import (
-    activity,
     admin,
     auth,
     billing_admin,
@@ -675,7 +674,6 @@ app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
 app.include_router(reports.router, prefix="/api/v1/user/reports", tags=["reports"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
-app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
 app.include_router(portfolio.router, prefix="/api/v1/user/portfolio", tags=["portfolio"])
 app.include_router(

@@ -689,17 +689,6 @@ class UserSignalStatus(Base):
     )
 
 
-class Activity(Base):
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
-    type: Mapped[str] = mapped_column(
-        String(64), index=True, nullable=False
-    )  # order_placed, order_filled, error, etc.
-    ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
-
-
 # Phase 1.1: New models for multi-user service architecture
 
 

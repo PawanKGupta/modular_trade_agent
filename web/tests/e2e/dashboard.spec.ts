@@ -44,7 +44,6 @@ test.describe('Dashboard & Navigation', () => {
 			{ category: /Settings/i, name: /Broker Settings/i, url: /\/dashboard\/settings/ },
 			{ category: /Settings/i, name: /Notification Settings/i, url: /\/dashboard\/notification-preferences/ },
 			{ category: /Logs/i, name: /System Logs/i, url: /\/dashboard\/logs/ },
-			{ category: /Logs/i, name: /Activity Log/i, url: /\/dashboard\/activity/ },
 			{ category: /Notifications/i, name: /Notifications/i, url: /\/dashboard\/notifications/ },
 		];
 

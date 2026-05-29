@@ -7,7 +7,8 @@ from sqlalchemy.orm import sessionmaker
 
 from scripts.etl_import_files import import_pending_orders, import_signals, import_trades_history
 from src.infrastructure.db.base import Base
-from src.infrastructure.db.models import Activity, Orders, Signals
+from src.infrastructure.db.models import Orders, Signals
+from src.infrastructure.persistence.trade_history_repository import TradeHistoryRepository
 
 
 def make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
@@ -80,7 +81,8 @@ def test_etl_imports(tmp_path):
         assert import_signals(db, signals_json) == 1
 
         assert db.query(Orders).count() == 1
-        assert db.query(Activity).count() == 1
+        repo = TradeHistoryRepository(str(tmp_path / "trade_history.csv"))
+        assert len(repo.read_all()) == 1
         assert db.query(Signals).count() == 1
     finally:
         db.close()

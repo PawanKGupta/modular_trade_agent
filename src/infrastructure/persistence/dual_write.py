@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Orders as OrdersModel
 from src.infrastructure.db.models import Signals as SignalsModel
-from src.infrastructure.persistence.activity_repository import ActivityRepository
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
@@ -71,35 +70,6 @@ class DualOrdersWriter:
     def cancel(self, order: OrdersModel) -> None:
         self.db_repo.cancel(order)
         # No-op for legacy by default
-
-
-class DualActivityWriter:
-    def __init__(self, db: Session, *, trade_history_repo: Any | None = None):
-        self.db_repo = ActivityRepository(db)
-        self.trade_history_repo = trade_history_repo
-
-    def append(
-        self, *, user_id: int | None, type: str, ref_id: str | None, details: dict[str, Any] | None
-    ) -> None:
-        self.db_repo.append(user_id=user_id, type=type, ref_id=ref_id, details=details)
-        if self.trade_history_repo and type == "trade_history":
-            try:
-                self.trade_history_repo.record_trade(
-                    {
-                        "timestamp": (
-                            details.get("timestamp") if details else datetime.utcnow().isoformat()
-                        ),
-                        "ticker": details.get("ticker") if details else "",
-                        "side": details.get("side") if details else "",
-                        "quantity": details.get("quantity") if details else "",
-                        "price": details.get("price") if details else "",
-                        "order_id": ref_id or "",
-                        "verdict": details.get("verdict") if details else "",
-                        "combined_score": details.get("combined_score") if details else "",
-                    }
-                )
-            except Exception:
-                pass
 
 
 class DualSignalsWriter:
