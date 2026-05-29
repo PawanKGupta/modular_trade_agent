@@ -92,6 +92,12 @@ vi.mock('@/api/paper-trading', () => ({
 				pending_orders: 1,
 				cancelled_orders: 0,
 				rejected_orders: 0,
+				reentry_orders: 0,
+				fill_rate: 100,
+				sell_fill_rate: 100,
+				trade_win_rate: 50,
+				closed_positions: 2,
+				winning_positions: 1,
 				success_rate: 66.67,
 			},
 		})
@@ -217,7 +223,8 @@ describe('PaperTradingPage', () => {
 			expect(screen.getByText('Total Orders')).toBeInTheDocument();
 			expect(screen.getByText('Buy Orders')).toBeInTheDocument();
 			expect(screen.getByText('Sell Orders')).toBeInTheDocument();
-			expect(screen.getByText('Success Rate')).toBeInTheDocument();
+			expect(screen.getByText('Fill Rate')).toBeInTheDocument();
+			expect(screen.getByText('Trade Win Rate')).toBeInTheDocument();
 			expect(screen.getByText('Completed')).toBeInTheDocument();
 			expect(screen.getByText('Pending')).toBeInTheDocument();
 		});

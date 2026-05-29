@@ -1014,16 +1014,9 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             recent_orders = []
 
             # Order statistics (empty for now - can be enhanced later)
-            order_statistics = {
-                "total_orders": 0,
-                "buy_orders": 0,
-                "sell_orders": 0,
-                "completed_orders": 0,
-                "pending_orders": 0,
-                "cancelled_orders": 0,
-                "rejected_orders": 0,
-                "success_rate": 0.0,
-            }
+            from server.app.routers.paper_trading import _default_order_statistics
+
+            order_statistics = _default_order_statistics()
 
             return PaperTradingPortfolio(
                 account=account,
@@ -1215,20 +1208,13 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
             ),
         )
 
+        from server.app.routers.paper_trading import _default_order_statistics
+
         return PaperTradingPortfolio(
             account=account,
             holdings=portfolio_holdings,
             recent_orders=[],
-            order_statistics={
-                "total_orders": 0,
-                "buy_orders": 0,
-                "sell_orders": 0,
-                "completed_orders": 0,
-                "pending_orders": 0,
-                "cancelled_orders": 0,
-                "rejected_orders": 0,
-                "success_rate": 0.0,
-            },
+            order_statistics=_default_order_statistics(),
         )
 
     except HTTPException:
