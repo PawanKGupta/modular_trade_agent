@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 
 def _make_client() -> TestClient:
-    """In-memory DB with explicit schema reset (includes activity, orders, pnl_daily)."""
+    """In-memory DB with explicit schema reset (includes orders, pnl_daily)."""
     os.environ["DB_URL"] = "sqlite:///:memory:"
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     if root not in sys.path:
@@ -41,14 +41,14 @@ def _signup(client: TestClient, email: str) -> tuple[dict, int]:
 
 
 @pytest.mark.unit
-def test_orders_pnl_activity_are_isolated_by_user_id():
+def test_orders_and_pnl_are_isolated_by_user_id():
     client = _make_client()
 
     # create two users
     headers_a, user_a = _signup(client, "iso_a@example.com")
     headers_b, _user_b = _signup(client, "iso_b@example.com")
 
-    from src.infrastructure.db.models import Activity, Orders, OrderStatus, PnlDaily
+    from src.infrastructure.db.models import Orders, OrderStatus, PnlDaily
     from src.infrastructure.db.session import SessionLocal
 
     # seed data for user A only
@@ -74,15 +74,6 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
                 fees=1.0,
             )
         )
-        db.add(
-            Activity(
-                user_id=user_a,
-                type="info",
-                ref_id=None,
-                details_json={"detail": "seed for isolation test"},
-                ts=datetime.utcnow(),
-            )
-        )
         db.commit()
 
     # user B should not see user A data
@@ -98,8 +89,3 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
     assert r_pnl_b.status_code == 200
     assert isinstance(r_pnl_b.json(), list)
     assert len(r_pnl_b.json()) == 0
-
-    r_act_b = client.get("/api/v1/user/activity/", headers=headers_b)
-    assert r_act_b.status_code == 200
-    assert isinstance(r_act_b.json(), list)
-    assert len(r_act_b.json()) == 0

@@ -79,16 +79,19 @@ def test_etl_imports_files_into_db(tmp_path):
         main()
         # verify counts
         from src.infrastructure.db.models import (  # noqa: PLC0415
-            Activity,
             Orders,
             PnlDaily,
             Signals,
+        )
+        from src.infrastructure.persistence.trade_history_repository import (  # noqa: PLC0415
+            TradeHistoryRepository,
         )
         from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
 
         sess = SessionLocal()
         assert sess.query(Orders).count() >= 1
-        assert sess.query(Activity).count() >= 1
+        repo = TradeHistoryRepository(str(tmp_path / "data" / "trade_history.csv"))
+        assert len(repo.read_all()) >= 1
         assert sess.query(PnlDaily).count() >= 1
         assert sess.query(Signals).count() >= 1
         sess.close()

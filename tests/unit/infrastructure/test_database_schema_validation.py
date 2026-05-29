@@ -34,7 +34,6 @@ class TestSchemaExistence:
             "fills",
             "pnldaily",
             "signals",
-            "activity",
             "service_status",
             "service_task_execution",
             "service_logs",
@@ -408,7 +407,6 @@ class TestAllTablesHaveUserForeignKey:
             "orders",
             "positions",
             "pnldaily",
-            "activity",  # signals might be global, so we check separately
             "service_status",
             "service_task_execution",
             "service_logs",

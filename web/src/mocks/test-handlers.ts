@@ -563,19 +563,6 @@ http.post(API('/auth/refresh'), async () => {
 		error.resolution_notes = payload?.notes ?? null;
 		return HttpResponse.json({ message: 'Error marked as resolved', error });
 	}),
-	// activity
-	http.get(API('/user/activity'), async ({ request }) => {
-		const url = new URL(request.url);
-		const level = url.searchParams.get('level') ?? 'all';
-		const now = new Date().toISOString();
-		const items = [
-			{ id: 1, ts: now, event: 'Login', detail: 'User logged in', level: 'info' },
-			{ id: 2, ts: now, event: 'Order Placed', detail: 'BUY INFY x10', level: 'info' },
-			{ id: 3, ts: now, event: 'Warning', detail: 'API rate limit near', level: 'warn' },
-			{ id: 4, ts: now, event: 'Error', detail: 'Broker connection failed', level: 'error' },
-		];
-		return HttpResponse.json(level === 'all' ? items : items.filter((i) => i.level === level));
-	}),
 	// targets
 	http.get(API('/user/targets'), async () => {
 		const now = new Date().toISOString();
