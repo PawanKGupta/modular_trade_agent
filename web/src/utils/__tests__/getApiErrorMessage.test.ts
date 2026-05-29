@@ -40,4 +40,20 @@ describe('getApiErrorMessage', () => {
 		const err = axiosErrorWithData(400, { detail: 'bad' });
 		expect(axios.isAxiosError(err)).toBe(true);
 	});
+
+	it('uses message field when detail is absent', () => {
+		const err = axiosErrorWithData(400, { message: 'Broker unavailable' });
+		expect(getApiErrorMessage(err)).toBe('Broker unavailable');
+	});
+
+	it('returns status fallback when body has no detail', () => {
+		const err = axiosErrorWithData(503, {});
+		err.message = '';
+		expect(getApiErrorMessage(err)).toBe('Request failed (503)');
+	});
+
+	it('stringifies non-string validation items', () => {
+		const err = axiosErrorWithData(422, { detail: [42] });
+		expect(getApiErrorMessage(err)).toBe('42');
+	});
 });

@@ -357,4 +357,47 @@ describe('AppShell', () => {
 			});
 		});
 	});
+
+	it('toggles mobile sidebar menu and overlay', async () => {
+		renderAppShell();
+
+		const menuButton = await screen.findByRole('button', { name: /Toggle menu/i });
+		expect(screen.queryByRole('navigation')).toBeInTheDocument();
+
+		fireEvent.click(menuButton);
+		await waitFor(() => {
+			expect(menuButton).toHaveTextContent('✕');
+		});
+
+		const overlay = document.querySelector('.sm\\:hidden.fixed.inset-0');
+		expect(overlay).toBeTruthy();
+		fireEvent.click(overlay!);
+
+		await waitFor(() => {
+			expect(menuButton).toHaveTextContent('☰');
+		});
+	});
+
+	it('shows admin navigation for admin users', async () => {
+		const { useSessionStore } = await import('@/state/sessionStore');
+		useSessionStore.setState({
+			isAuthenticated: true,
+			isAdmin: true,
+			hasHydrated: true,
+			user: { id: 1, email: 'admin@example.com', roles: ['admin'] } as never,
+		});
+
+		renderAppShell('/dashboard');
+
+		await waitFor(() => {
+			expect(screen.getByText('Administration')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByText('Administration'));
+
+		await waitFor(() => {
+			expect(screen.getByText('Users')).toBeInTheDocument();
+			expect(screen.getByText('Billing')).toBeInTheDocument();
+		});
+	});
 });
