@@ -450,6 +450,15 @@ Paper trading and live Kotak use the same helper at **sell placement**:
 2. **Tick size** — Live may use Kotak scrip-master tick; paper uses exchange fallback rules unless scrip is passed.
 3. **After placement** — Live sell monitor can **lower** the limit when EMA9 drops; paper keeps the **frozen** target until re-entry or exit (see `test_frozen_target_never_updates`).
 
+### Target exit: paper vs integrated backtest
+
+| Runtime | Data | How target is hit |
+|---------|------|-------------------|
+| **Integrated backtest** (`integrated_backtest.py`) | Daily OHLC only | `high >= frozen EMA9` on the bar → exit at target |
+| **Paper trading** (`_monitor_sell_orders`) | Live LTP + open limit + Yahoo daily bar | (1) Limit fills when **LTP ≥ limit**; (2) if LTP did not fill but **Yahoo daily high ≥ target**, **fill the pending sell limit** at target price; (3) **RSI > 50** → market sell |
+
+Paper uses live limit fills first; the daily-high path fills the same pending limit (not a separate market order) when the session high touched target.
+
 For sell-order architecture and monitoring, see [Sell Order Implementation](../kotak_neo_trader/SELL_ORDER_IMPLEMENTATION_COMPLETE.md).
 
 ---

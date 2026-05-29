@@ -943,12 +943,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise RuntimeError(f"Order placement failed: {e}")
 
-    def _execute_order(self, order: Order) -> None:
+    def _execute_order(
+        self, order: Order, *, predetermined_execution_price: Money | None = None
+    ) -> None:
         """
         Execute an order
 
         Args:
             order: Order to execute
+            predetermined_execution_price: When set, skip simulator pricing (e.g. daily-high limit fill)
         """
         # Get current balance
         account = self.store.get_account()
@@ -1016,7 +1019,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 return
 
         # Execute order
-        success, message, execution_price = self.order_simulator.execute_order(order)
+        if predetermined_execution_price is not None:
+            success, message, execution_price = True, "Predetermined fill", predetermined_execution_price
+        else:
+            success, message, execution_price = self.order_simulator.execute_order(order)
 
         if success and execution_price:
             # Mark as executed
@@ -1304,6 +1310,49 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
 
         return summary
+
+    def fill_pending_sell_limits_on_daily_high(self, symbol: str, session_high: float) -> bool:
+        """
+        Fill open sell limit order(s) when session high >= limit price.
+
+        Used when Yahoo daily high touched the frozen target but live LTP has not
+        filled the pending limit yet. Fill price is the limit (target), not LTP.
+        """
+        if not self.is_connected():
+            raise ConnectionError("Not connected")
+
+        norm_symbol = symbol.replace(".NS", "").replace("-EQ", "")
+        filled_any = False
+
+        for order in list(self.get_pending_orders()):
+            if order.order_type != OrderType.LIMIT or not order.is_sell_order():
+                continue
+            order_norm = order.symbol.replace(".NS", "").replace("-EQ", "")
+            if order_norm != norm_symbol:
+                continue
+
+            success, _message, execution_price = (
+                self.order_simulator.try_fill_sell_limit_on_session_high(order, session_high)
+            )
+            if not success or not execution_price:
+                continue
+
+            try:
+                self._execute_order(order, predetermined_execution_price=execution_price)
+            except Exception as e:
+                logger.error(
+                    f"Error filling sell limit on daily high for {order.symbol}: {e}"
+                )
+                continue
+
+            if order.is_executed():
+                filled_any = True
+                logger.info(
+                    f"Pending sell limit filled on daily high touch: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f}"
+                )
+
+        return filled_any
 
     # ===== PORTFOLIO MANAGEMENT =====
 
