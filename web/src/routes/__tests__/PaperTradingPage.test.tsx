@@ -225,18 +225,30 @@ describe('PaperTradingPage', () => {
 			expect(screen.getByText('Sell Orders')).toBeInTheDocument();
 			expect(screen.getByText('Fill Rate')).toBeInTheDocument();
 			expect(screen.getByText('Trade Win Rate')).toBeInTheDocument();
+			expect(screen.getByText('Sell Fill Rate')).toBeInTheDocument();
 			expect(screen.getByText('Completed')).toBeInTheDocument();
 			expect(screen.getByText('Pending')).toBeInTheDocument();
 		});
 
-		// Check statistics values
+		// Check statistics values (match mock order_statistics)
 		await waitFor(() => {
-			// Total orders: 3
-			const totalOrders = screen.getAllByText('3');
-			expect(totalOrders.length).toBeGreaterThan(0);
+			const totalOrdersCell = screen.getByText('Total Orders').parentElement;
+			expect(totalOrdersCell?.children[1]).toHaveTextContent('3');
 
-			// Success rate: 66.67%
-			expect(screen.getByText('66.67%')).toBeInTheDocument();
+			const buyOrdersCell = screen.getByText('Buy Orders').parentElement;
+			expect(buyOrdersCell?.children[1]).toHaveTextContent('2');
+
+			const sellOrdersCell = screen.getByText('Sell Orders').parentElement;
+			expect(sellOrdersCell?.children[1]).toHaveTextContent('1');
+
+			const fillRateCell = screen.getByText('Fill Rate').parentElement;
+			expect(fillRateCell?.children[1]).toHaveTextContent('100.00%');
+
+			const tradeWinCell = screen.getByText('Trade Win Rate').parentElement;
+			expect(tradeWinCell?.children[1]).toHaveTextContent('50.00%');
+
+			const sellFillCell = screen.getByText('Sell Fill Rate').parentElement;
+			expect(sellFillCell?.children[1]).toHaveTextContent('100.00%');
 		});
 	});
 
