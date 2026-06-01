@@ -335,20 +335,20 @@ http.post(API('/auth/refresh'), async () => {
 
 			const byStatus: Record<string, unknown[]> = {
 				pending: [
-					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
-					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
+					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', trade_mode_display: 'Paper', created_at: now, updated_at: now },
+					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', trade_mode_display: 'Kotak Neo', created_at: now, updated_at: now },
 				],
 				ongoing: [
-					{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', created_at: now, updated_at: now },
+					{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', trade_mode_display: 'Paper', execution_price: 2400, execution_qty: 5, execution_time: now, created_at: now, updated_at: now },
 				],
 				failed: [
-					{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, created_at: now, updated_at: now },
+					{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, trade_mode_display: 'Paper', created_at: now, updated_at: now },
 				],
 				closed: [
-					{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', created_at: now, updated_at: now },
+					{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', trade_mode_display: 'Paper', execution_price: 1500, execution_qty: 2, execution_time: now, created_at: now, updated_at: now },
 				],
 				cancelled: [
-					{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', created_at: now, updated_at: now },
+					{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', trade_mode_display: 'Paper', created_at: now, updated_at: now },
 				],
 			};
 
@@ -367,6 +367,32 @@ http.post(API('/auth/refresh'), async () => {
 			});
 		})
 	)),
+	http.post(API('/user/orders/sync'), async () =>
+		HttpResponse.json({
+			message: 'Synced',
+			sync_performed: true,
+			monitoring_active: false,
+			synced: 1,
+			updated: 1,
+			executed: 0,
+			rejected: 0,
+			cancelled: 0,
+			errors: [],
+		})
+	),
+	http.post(API('/user/orders/:id/retry'), async () =>
+		HttpResponse.json({
+			id: 301,
+			symbol: 'TCS',
+			side: 'buy',
+			quantity: 3,
+			price: 3600,
+			status: 'pending',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+		})
+	),
+	http.delete(API('/user/orders/:id'), async () => HttpResponse.json({ message: 'Dropped' })),
 	// pnl
 	http.get(API('/user/pnl/daily'), async () => {
 		return HttpResponse.json([

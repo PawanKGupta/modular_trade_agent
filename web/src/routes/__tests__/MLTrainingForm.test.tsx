@@ -60,4 +60,62 @@ describe('MLTrainingForm', () => {
 		fireEvent.click(checkbox);
 		expect(checkbox).not.toBeChecked();
 	});
+
+	it('switches model type to price regressor and resets default path', () => {
+		const onSubmit = vi.fn();
+		render(<MLTrainingForm onSubmit={onSubmit} isSubmitting={false} />);
+
+		fireEvent.change(screen.getByLabelText(/Model Type/i), { target: { value: 'price_regressor' } });
+		expect(screen.getByText(/Price regressor needs actual_pnl_pct/i)).toBeInTheDocument();
+
+		fireEvent.submit(screen.getByRole('form', { name: /ML Training Form/i }));
+		expect(onSubmit.mock.calls[0][0]).toMatchObject({
+			model_type: 'price_regressor',
+			training_data_path: 'data/ml_training_data_price.csv',
+		});
+	});
+
+	it('resets algorithm when price regressor selected with logistic regression', () => {
+		const onSubmit = vi.fn();
+		render(<MLTrainingForm onSubmit={onSubmit} isSubmitting={false} />);
+
+		fireEvent.change(screen.getByLabelText(/Algorithm/i), { target: { value: 'logistic_regression' } });
+		fireEvent.change(screen.getByLabelText(/Model Type/i), { target: { value: 'price_regressor' } });
+
+		const algoSelect = screen.getByLabelText(/Algorithm/i) as HTMLSelectElement;
+		expect(algoSelect.value).toBe('xgboost');
+		expect(screen.queryByRole('option', { name: /Logistic Regression/i })).not.toBeInTheDocument();
+	});
+
+	it('submits optional notes, training end date, and toggles incremental training', () => {
+		const onSubmit = vi.fn();
+		render(<MLTrainingForm onSubmit={onSubmit} isSubmitting={false} />);
+
+		fireEvent.change(screen.getByLabelText(/Notes \(optional\)/i), { target: { value: '  nightly run  ' } });
+		fireEvent.change(screen.getByLabelText(/Training runs through/i), { target: { value: '2025-06-01' } });
+		fireEvent.click(screen.getByLabelText(/Incremental training/i));
+
+		fireEvent.submit(screen.getByRole('form', { name: /ML Training Form/i }));
+
+		expect(onSubmit.mock.calls[0][0]).toMatchObject({
+			notes: 'nightly run',
+			training_run_end_date: '2025-06-01',
+			incremental_training: false,
+		});
+	});
+
+	it('ignores invalid hyperparameter JSON and submits empty object', () => {
+		const onSubmit = vi.fn();
+		render(<MLTrainingForm onSubmit={onSubmit} isSubmitting={false} />);
+
+		fireEvent.change(screen.getByLabelText(/Hyperparameters \(JSON\)/i), { target: { value: 'not-json' } });
+		fireEvent.submit(screen.getByRole('form', { name: /ML Training Form/i }));
+
+		expect(onSubmit.mock.calls[0][0].hyperparameters).toEqual({});
+	});
+
+	it('shows submitting label when isSubmitting is true', () => {
+		render(<MLTrainingForm onSubmit={vi.fn()} isSubmitting={true} />);
+		expect(screen.getByRole('button', { name: /Starting Training/i })).toBeDisabled();
+	});
 });

@@ -46,10 +46,28 @@ describe('brokerApi utilities', () => {
 			expect(isRetryableError(error)).toBe(false);
 		});
 
-		it('returns false for non-error objects', () => {
-			expect(isRetryableError({})).toBe(false);
-			expect(isRetryableError(null)).toBe(false);
-			expect(isRetryableError(undefined)).toBe(false);
+		it('returns false for session expiration in axios detail', () => {
+			const error = {
+				response: {
+					status: 503,
+					data: { detail: 'Broker session expired, please refresh the page to reconnect' },
+				},
+			};
+			expect(isRetryableError(error)).toBe(false);
+		});
+
+		it('returns false for session expiration in axios message field', () => {
+			const error = {
+				response: {
+					status: 500,
+					data: { message: 'Session expired' },
+				},
+			};
+			expect(isRetryableError(error)).toBe(false);
+		});
+
+		it('returns false when error message mentions session expiration', () => {
+			expect(isRetryableError(new Error('Broker session expired'))).toBe(false);
 		});
 	});
 
@@ -88,6 +106,10 @@ describe('brokerApi utilities', () => {
 		it('returns default message for unknown error types', () => {
 			expect(extractErrorMessage(null)).toBe('An unknown error occurred');
 			expect(extractErrorMessage(undefined)).toBe('An unknown error occurred');
+		});
+
+		it('extracts message from generic object', () => {
+			expect(extractErrorMessage({ message: 'Custom failure' })).toBe('Custom failure');
 		});
 	});
 

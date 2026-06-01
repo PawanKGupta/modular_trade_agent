@@ -170,4 +170,43 @@ describe('IndividualServiceControls', () => {
 			expect(screen.getByText('Disabled')).toBeInTheDocument();
 		});
 	});
+
+	describe('Service control actions', () => {
+		it('starts and stops individual service', async () => {
+			vi.mocked(serviceApi.startIndividualService).mockResolvedValue({
+				success: true,
+				message: 'Started',
+			});
+			vi.mocked(serviceApi.stopIndividualService).mockResolvedValue({
+				success: true,
+				message: 'Stopped',
+			});
+
+			const { rerender } = render(
+				withProviders(
+					<IndividualServiceControls service={mockService} unifiedServiceRunning={false} />
+				)
+			);
+
+			const startBtn = screen.getByRole('button', { name: 'Start Service' });
+			expect(startBtn).not.toBeDisabled();
+			fireEvent.click(startBtn);
+			await waitFor(() => {
+				expect(serviceApi.startIndividualService).toHaveBeenCalledWith({ task_name: 'analysis' });
+			});
+
+			rerender(
+				withProviders(
+					<IndividualServiceControls
+						service={{ ...mockService, is_running: true, started_at: new Date().toISOString() }}
+						unifiedServiceRunning={false}
+					/>
+				)
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Stop Service' }));
+			await waitFor(() => {
+				expect(serviceApi.stopIndividualService).toHaveBeenCalledWith({ task_name: 'analysis' });
+			});
+		});
+	});
 });
