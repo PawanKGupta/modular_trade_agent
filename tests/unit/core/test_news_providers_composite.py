@@ -94,6 +94,19 @@ def test_fetch_composite_merges_provider_outputs(monkeypatch):
     assert "Google unique headline" in titles
 
 
+def test_analyze_news_sentiment_passes_resolved_profile_to_fetch(monkeypatch):
+    """Backtest as_of_date must request cheap sources even without ContextVar."""
+    monkeypatch.setenv("NEWS_BACKTEST_PROFILE", "cheap")
+    monkeypatch.setenv("NEWS_LIVE_PROFILE", "full")
+    monkeypatch.setattr("core.news_sentiment.NEWS_SENTIMENT_ENABLED", True)
+    monkeypatch.setattr("core.news_sentiment.NEWS_SENTIMENT_CACHE_TTL_SEC", 0)
+
+    with patch("core.news_sentiment.get_recent_news", return_value=[]) as mock_get:
+        analyze_news_sentiment("TEST.NS", as_of_date="2024-01-15")
+
+    mock_get.assert_called_once_with("TEST.NS", profile="cheap")
+
+
 def test_analyze_sentiment_on_merged_articles(monkeypatch):
     monkeypatch.setattr("core.news_sentiment.NEWS_SENTIMENT_ENABLED", True)
     monkeypatch.setattr("core.news_sentiment.NEWS_SENTIMENT_CACHE_TTL_SEC", 0)

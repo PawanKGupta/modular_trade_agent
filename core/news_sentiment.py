@@ -235,8 +235,10 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     if cached and (now - cached[0]) < NEWS_SENTIMENT_CACHE_TTL_SEC:
         return cached[1]
 
-    # Pull news and filter by lookback/as_of_date
-    news = get_recent_news(ticker)
+    from core.news_providers import resolve_news_profile
+
+    profile = resolve_news_profile(as_of_date=as_of_date)
+    news = get_recent_news(ticker, profile=profile)
     if not news:
         res = result_neutral.copy()
         res.update({"reason": "no_news", "total": 0})

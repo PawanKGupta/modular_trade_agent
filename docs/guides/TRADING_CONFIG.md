@@ -210,8 +210,31 @@ Control system behavior and logic.
 **In the web app (Trading Configuration → Behavior)**
 
 - **Enable News Sentiment Analysis** (default matches server DB defaults)
-  - When enabled, Yahoo headlines are fetched and scored for signals/analysis.
+  - When enabled, headlines are fetched from composite sources (Yahoo, Google RSS, optional paid APIs) and scored for signals/analysis. See **Composite news profiles** below.
   - When disabled, no news-sentiment attachment runs for this user's workflows that respect trading config.
+
+**Composite news profiles (operators)**
+
+Headlines are merged in `core/news_providers.py`. Profiles control which sources run and API spend.
+
+| Env var | Default | Role |
+|---------|---------|------|
+| `NEWS_UNIVERSE_PROFILE` | `cheap` | Universe / batch scans (`trade_agent`, `AsyncAnalysisService`) |
+| `NEWS_BACKTEST_PROFILE` | `cheap` | When `as_of_date` is set on `analyze_ticker` |
+| `NEWS_LIVE_PROFILE` | `full` | Live single-ticker analysis when no request context override |
+| `NEWS_SOURCES` | `composite` | `composite` = cheap sources + Marketaux/NewsData when keys set; or explicit list e.g. `yfinance,google_rss` |
+| `NEWS_GOOGLE_RSS_ENABLED` | `true` | Include Google News RSS in cheap/composite |
+| `NEWS_ENRICH_FILTERED_NEWS` | `true` | After filtering, re-score **buy** / **strong_buy** with paid APIs (`enrich_filtered_candidates_with_paid_news`) |
+| `MARKETAUX_API_KEY` | (unset) | Paid source; free tier ~100 req/day, 3 articles/req |
+| `NEWSDATA_API_KEY` | (unset) | Paid source; free tier ~200 credits/day |
+| `MARKETAUX_NEWS_LIMIT` | `3` | Max articles per Marketaux request |
+
+| Profile | Sources | Typical use |
+|---------|---------|-------------|
+| **cheap** | yfinance + Google RSS | Universe scan, integrated backtest, bulk jobs |
+| **full** | cheap + Marketaux + NewsData (if keys set) | Live `analyze_ticker`, paid enrich on shortlisted buys |
+
+**Backtest / historical `as_of_date` caveat:** News is still **fetched from live APIs** at run time; only headlines whose publish time falls in the lookback window ending on `as_of_date` are used. This is not a point-in-time news archive—backtest news sentiment can reflect headlines that were not knowable on that calendar day. Use `NEWS_BACKTEST_PROFILE=cheap` to avoid paid API usage; it does not remove lookahead from live fetches.
 
 **Server-only tuning (operators)**
 
@@ -220,7 +243,7 @@ Control system behavior and logic.
 
 The HTTP API still returns legacy DB-backed fields (**lookback/min articles/pos/neg thresholds**); **sentiment computation uses env-driven `config.settings`, not UI-edited overrides.**
 
-**Rule-based downgrade (operators):** `VerdictService` downgrades `buy` / `strong_buy` → `watch` only when news is strongly negative **and** the aggregate is credible: **`used` ≥ `NEWS_SENTIMENT_MIN_ARTICLES`**, **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`). Justification: `news_negative`.
+**Rule-based downgrade (operators):** `VerdictService` and paid enrich (`core/news_sentiment.enrich_result_with_paid_news`) can downgrade `buy` / `strong_buy` → `watch` when news is strongly negative **and** the aggregate is credible: **`used` ≥ `NEWS_SENTIMENT_MIN_ARTICLES`**, **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`). Justification: `news_negative`.
 
 ### 8. ML Configuration
 
