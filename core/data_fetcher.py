@@ -138,22 +138,47 @@ api_retry_configured = exponential_backoff_retry(
 )
 
 
+def live_current_day_scope_allowed(
+    *,
+    end_date: str | datetime | None,
+    add_current_day: bool,
+    interval: str,
+) -> bool:
+    """
+    Whether live intraday OHLCV may be appended or refreshed.
+
+    Returns False for backtests and any historical ``end_date`` strictly before IST
+    calendar today, so completed sessions are not mixed with the live session.
+    """
+    if not add_current_day or interval != "1d":
+        return False
+    if end_date is None:
+        return True
+    if isinstance(end_date, str):
+        end_d = datetime.strptime(end_date, "%Y-%m-%d").date()
+    elif isinstance(end_date, datetime):
+        end_d = end_date.date()
+    else:
+        return False
+    return end_d >= ist_now().date()
+
+
 def _get_current_day_data(ticker, session=None):
     """
-    Get current day trading data from live ticker info
-    Returns dict with current day OHLCV data or None if not available
-    session is ignored: yfinance now requires curl_cffi session; we use default (no session).
+    Return today's OHLCV only when yfinance ``history`` includes an intraday row for today.
+
+    Does not synthesize a bar from ``Ticker.info`` (``dayHigh`` / ``volume`` can reflect the
+  prior session before today's daily row exists, e.g. Monday open).
+
+    ``session`` is ignored: yfinance uses its default curl_cffi session.
     """
     try:
         # Do not pass requests.Session - yfinance requires curl_cffi session or None (use its default)
         stock = yf.Ticker(ticker)
-        info = stock.info
         hist = stock.history(period="2d")  # Get last 2 days to find today's data
 
-        # Check if we have today's data in history
         today = ist_now().date()
         if not hist.empty and hist.index[-1].date() == today:
-            # Use today's data from history
             latest = hist.iloc[-1]
             return {
                 "date": today,
@@ -164,25 +189,11 @@ def _get_current_day_data(ticker, session=None):
                 "volume": latest["Volume"],
             }
 
-        # Fallback: construct current day data from live info
-        current_price = info.get("currentPrice")
-        prev_close = info.get("previousClose")
-        volume = info.get("volume")
-
-        if current_price and prev_close and volume:
-            # Estimate OHLC from available data
-            day_high = info.get("dayHigh", current_price)
-            day_low = info.get("dayLow", current_price)
-
-            return {
-                "date": today,
-                "open": prev_close,  # Approximate - actual open not always available
-                "high": day_high,
-                "low": day_low,
-                "close": current_price,
-                "volume": volume,
-            }
-
+        logger.debug(
+            "No intraday history row for %s on %s; skipping info-based current-day bar",
+            ticker,
+            today,
+        )
         return None
 
     except Exception as e:
@@ -393,12 +404,14 @@ def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_curre
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        # Only add current day data if explicitly requested (avoid data leakage in backtests)
-        if add_current_day:
+        # Only add live current-day data for live/analysis windows (not historical backtests)
+        if live_current_day_scope_allowed(
+            end_date=end_date, add_current_day=add_current_day, interval=interval
+        ):
             today_str = ist_now_naive().strftime("%Y-%m-%d")
             latest_date_str = df["date"].iloc[-1].strftime("%Y-%m-%d")
 
-            if latest_date_str < today_str and interval == "1d":
+            if latest_date_str < today_str:
                 logger.debug(
                     f"Historical data for {ticker} is outdated (latest: {latest_date_str}, today: {today_str})"
                 )

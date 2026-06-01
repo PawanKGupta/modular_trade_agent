@@ -27,6 +27,7 @@ from src.infrastructure.persistence.price_cache_repository import (
     MINUTE_INTERVAL,
     PriceCacheRepository,
 )
+from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.utils.holiday_calendar import get_previous_trading_day
 from utils.logger import logger
 
@@ -207,6 +208,14 @@ class OhlcvCacheService:
         end_d = _parse_end_date(end_date)
         start_d = end_d - timedelta(days=days + 5)
 
+        from core.data_fetcher import live_current_day_scope_allowed  # noqa: PLC0415
+
+        include_live_today = live_current_day_scope_allowed(
+            end_date=end_date,
+            add_current_day=add_current_day,
+            interval=interval,
+        )
+
         bars_before = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         missing = self.repo.get_dates_needing_gap_fill(
             symbol,
@@ -236,7 +245,7 @@ class OhlcvCacheService:
                 interval=interval,
                 days=days,
                 yf_end_date=end_date,
-                add_current_day=add_current_day,
+                add_current_day=include_live_today,
             )
         else:
             log_ohlcv_cache(
@@ -251,6 +260,14 @@ class OhlcvCacheService:
             self._maybe_revalidate_partial_meta_on_cache_hit(
                 symbol, start_d, end_d, interval, coverage
             )
+            if include_live_today:
+                self._refresh_today_bar_from_yahoo(
+                    symbol,
+                    end_d,
+                    interval=interval,
+                    days=days,
+                    yf_end_date=end_date,
+                )
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         if not bars:
@@ -301,9 +318,92 @@ class OhlcvCacheService:
             )
 
         df = _bars_to_dataframe(bars)
-        if not add_current_day and not df.empty:
+        if not include_live_today and not df.empty:
             df = df[df["date"].dt.date <= end_d]
         return df
+
+    def _refresh_today_bar_from_yahoo(
+        self,
+        symbol: str,
+        end_d: date,
+        *,
+        interval: str,
+        days: int,
+        yf_end_date: str | datetime | None,
+    ) -> int:
+        """
+        On cache hit with ``add_current_day=True``, upsert today's bar from Yahoo.
+
+        Avoids serving a stale same-day row written earlier (e.g. pre-open gap-fill).
+        Skips when ``end_d`` is before IST calendar today (backtests / historical end_date).
+        Caller must gate with ``live_current_day_scope_allowed`` first.
+        """
+        if interval != DEFAULT_INTERVAL:
+            return 0
+        today_ist = ist_now().date()
+        if end_d != today_ist:
+            return 0
+
+        try:
+            fetched = self._yahoo_fetch(
+                symbol,
+                days=min(max(days, 5), 60),
+                interval=interval,
+                end_date=yf_end_date,
+                add_current_day=True,
+            )
+        except Exception as exc:
+            logger.warning(
+                "OHLCV today_refresh Yahoo failed for %s [%s]: %s",
+                symbol,
+                interval,
+                exc,
+            )
+            return 0
+
+        if fetched is None or fetched.empty:
+            return 0
+
+        rows = _dataframe_to_upsert_rows(symbol, fetched, interval=interval)
+        today_rows = [r for r in rows if r["date"] == end_d]
+        if not today_rows:
+            log_ohlcv_cache(
+                logger,
+                "OHLCV today_refresh %s [%s]: no Yahoo bar for %s (keeping cached history)",
+                symbol,
+                interval,
+                end_d,
+            )
+            return 0
+
+        validation = validate_yahoo_ohlcv_frame(
+            fetched,
+            symbol=symbol,
+            interval=interval,
+            start_date=end_d,
+            end_date=end_d,
+        )
+        if validation.status == "failed" and OHLCV_REJECT_INVALID_FETCH:
+            logger.warning(
+                "OHLCV today_refresh rejected for %s [%s]: %s",
+                symbol,
+                interval,
+                validation.message,
+            )
+            return 0
+
+        count = self.repo.upsert_many(today_rows)
+        if count:
+            log_ohlcv_cache(
+                logger,
+                "OHLCV today_refresh upserted %s row(s) for %s [%s] date=%s (yahoo_calls=%s)",
+                count,
+                symbol,
+                interval,
+                end_d,
+                get_ohlcv_cache_stats()["yahoo_calls"],
+            )
+        return count
 
     def _maybe_revalidate_partial_meta_on_cache_hit(
         self,

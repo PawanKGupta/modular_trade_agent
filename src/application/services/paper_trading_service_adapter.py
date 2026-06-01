@@ -8,7 +8,7 @@ Uses PaperTradingBrokerAdapter instead of real broker authentication.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,60 @@ from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from src.infrastructure.logging import get_user_logger
 
 logger = logging.getLogger(__name__)
+
+_OHLCV_DUP_TOLERANCE = 1e-6
+
+
+def _ohlcv_field(row: pd.Series, name: str) -> float | None:
+    """Read a lowercase or Title-case OHLCV field from a DataFrame row."""
+    val = row.get(name)
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        title = name.capitalize() if name != "volume" else "Volume"
+        val = row.get(title)
+    if val is None or pd.isna(val):
+        return None
+    return float(val)
+
+
+def _latest_daily_bar_date_ist(data: pd.DataFrame, latest: pd.Series) -> date | None:
+    """Resolve the latest row's session date (IST calendar day) from date column or index."""
+    if "date" in data.columns:
+        try:
+            raw = latest.get("date", data["date"].iloc[-1])
+            return pd.to_datetime(raw).date()
+        except (TypeError, ValueError):
+            pass
+
+    latest_ts = latest.name
+    if isinstance(latest_ts, (pd.Timestamp, datetime)):
+        try:
+            ts = pd.to_datetime(latest_ts)
+            if getattr(ts, "tzinfo", None) is None:
+                ts = ts.tz_localize("UTC")
+            return ts.tz_convert("Asia/Kolkata").date()
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _daily_bar_duplicates_prior_session(data: pd.DataFrame) -> bool:
+    """
+    True when the latest bar's high, low, and volume all match the prior row.
+
+    Detects stale "today" rows copied from the previous session (e.g. Monday open).
+    """
+    if data is None or len(data) < 2:
+        return False
+    latest = data.iloc[-1]
+    prior = data.iloc[-2]
+    for field in ("high", "low", "volume"):
+        a = _ohlcv_field(latest, field)
+        b = _ohlcv_field(prior, field)
+        if a is None or b is None:
+            return False
+        if abs(a - b) > _OHLCV_DUP_TOLERANCE:
+            return False
+    return True
 
 
 class PaperTradingServiceAdapter:
@@ -1192,6 +1246,10 @@ class PaperTradingServiceAdapter:
         1. Open limit fills when live LTP >= limit (``check_and_execute_pending_orders``).
         2. If the limit did not fill but Yahoo daily ``high >= target``, fill the pending
            sell limit at the target/limit price (same as a limit fill, not a separate market).
+           Backtest parity: LTP below the limit is allowed when high touched target.
+           Layer 3 guards: latest bar must be IST today (``date`` column or index) and must not
+           duplicate the prior session's high/low/volume (stale cached bar).
+
         Integrated backtest uses only (2) because intraday LTP is unavailable.
 
         RSI > 50: market sell (falling-knife exit), aligned with integrated_backtest.
@@ -1256,32 +1314,42 @@ class PaperTradingServiceAdapter:
                 if data is None or data.empty:
                     continue
 
-                # Get latest daily candle and ensure it belongs to today's session (IST)
                 latest = data.iloc[-1]
-                latest_ts = latest.name
-                latest_date_ist = None
-                try:
-                    # Only apply the "guard by date" when we have a real datetime-like index.
-                    # Unit tests often build DataFrames with RangeIndex/int indices.
-                    if isinstance(latest_ts, (pd.Timestamp, datetime)):
-                        ts = pd.to_datetime(latest_ts)
-                        if getattr(ts, "tzinfo", None) is None:
-                            ts = ts.tz_localize("UTC")
-                        latest_date_ist = ts.tz_convert("Asia/Kolkata").date()
-                except Exception:
-                    latest_date_ist = None
+                latest_date_ist = _latest_daily_bar_date_ist(data, latest)
+                today_ist = ist_now().date()
 
-                if latest_date_ist is not None:
-                    today_ist = ist_now().date()
-                    # If Yahoo's latest daily bar is not for today yet, skip exit checks based on it
-                    if latest_date_ist != today_ist:
-                        continue
+                if latest_date_ist is None:
+                    self.logger.debug(
+                        "Skipping exit checks for %s: cannot determine latest bar date",
+                        symbol,
+                        action="_monitor_sell_orders",
+                    )
+                    continue
+
+                if latest_date_ist != today_ist:
+                    self.logger.debug(
+                        "Skipping exit checks for %s: latest bar %s is not today %s",
+                        symbol,
+                        latest_date_ist,
+                        today_ist,
+                        action="_monitor_sell_orders",
+                    )
+                    continue
+
+                if _daily_bar_duplicates_prior_session(data):
+                    self.logger.warning(
+                        "Skipping exit checks for %s: latest daily bar duplicates prior "
+                        "session high/low/volume (stale today row)",
+                        symbol,
+                        action="_monitor_sell_orders",
+                    )
+                    continue
 
                 close = latest.get("close", latest.get("Close"))
                 target_price = order_info["target_price"]
                 daily_high = latest.get("high", latest.get("High"))
 
-                # Fallback: daily high touched target but LTP did not fill the limit yet
+                # Backtest parity: high >= target fills limit at target (LTP may be below limit)
                 if daily_high is not None and daily_high >= target_price:
                     if self._try_fill_paper_sell_limit_on_daily_high(
                         symbol, order_info, target_price, daily_high
