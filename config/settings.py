@@ -73,6 +73,30 @@ NEWS_SENTIMENT_POS_THRESHOLD = float(os.getenv("NEWS_SENTIMENT_POS_THRESHOLD", "
 NEWS_SENTIMENT_NEG_THRESHOLD = float(os.getenv("NEWS_SENTIMENT_NEG_THRESHOLD", "-0.25"))
 NEWS_SENTIMENT_CACHE_TTL_SEC = int(os.getenv("NEWS_SENTIMENT_CACHE_TTL_SEC", "900"))  # 15 min
 
+# Composite news: ``composite`` (default) = yfinance + Google RSS + APIs when keys are set.
+# Or explicit list: ``yfinance,google_rss,marketaux,newsdata`` (Finnhub is excluded)
+NEWS_SOURCES = os.getenv("NEWS_SOURCES", "composite").strip().lower()
+NEWS_GOOGLE_RSS_ENABLED = os.getenv("NEWS_GOOGLE_RSS_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# cheap = yfinance + Google RSS; full = also Marketaux / NewsData when keys are set
+NEWS_UNIVERSE_PROFILE = os.getenv("NEWS_UNIVERSE_PROFILE", "cheap").strip().lower()
+NEWS_LIVE_PROFILE = os.getenv("NEWS_LIVE_PROFILE", "full").strip().lower()
+NEWS_BACKTEST_PROFILE = os.getenv("NEWS_BACKTEST_PROFILE", "cheap").strip().lower()
+NEWS_ENRICH_FILTERED_NEWS = os.getenv("NEWS_ENRICH_FILTERED_NEWS", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+MARKETAUX_NEWS_LIMIT = int(os.getenv("MARKETAUX_NEWS_LIMIT", "3"))
+# Optional provider keys (set in local .env only — never commit)
+MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY", "").strip()
+NEWSDATA_API_KEY = os.getenv("NEWSDATA_API_KEY", "").strip()
+
 # Headline sentiment backend: auto (try local Transformer on CPU, else lexicon),
 # transformer (same as auto), lexicon (word-list only; no torch/transformers).
 _NEWS_SB = os.getenv("NEWS_SENTIMENT_BACKEND", "auto").strip().lower()

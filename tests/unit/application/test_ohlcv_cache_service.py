@@ -104,6 +104,11 @@ def test_get_ohlcv_cache_hit_refreshes_today_when_add_current_day(db_session, mo
         "src.application.services.ohlcv_cache_service.ist_now",
         lambda: datetime(2026, 6, 1, 9, 15),
     )
+    # Gate for live-today refresh uses core.data_fetcher.ist_now() (not the service module).
+    monkeypatch.setattr(
+        "core.data_fetcher.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
 
     end = today
     start = end - timedelta(days=65)

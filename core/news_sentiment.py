@@ -1,14 +1,15 @@
-"""Headline-backed sentiment helpers using Yahoo Finance only.
+"""Headline-backed sentiment from merged news sources.
 
-Fetched via ``yf.Ticker(ticker).news`` (see ``get_recent_news``). Manual verification:
-``tools/yfinance_news_smoke.py`` shares the same field extraction helpers as this module.
+``get_recent_news`` uses :mod:`core.news_providers` (yfinance, Google RSS, and optional
+Marketaux / NewsData when API keys are set; Finnhub excluded). ``analyze_news_sentiment`` scores
+deduplicated headlines in the lookback window (lexicon or local Transformer).
+
+Manual verification: ``tools/yfinance_news_smoke.py`` and ``tools/news_api_probe.py``.
 """
 
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-
-import yfinance as yf
 
 from config.settings import (
     NEWS_SENTIMENT_BACKEND,
@@ -110,16 +111,44 @@ def _now_ts() -> float:
     return time.time()
 
 
-def _cache_key(ticker: str, as_of_date: Optional[str]) -> Tuple[str, str]:
-    return (ticker.upper(), as_of_date or "latest")
+def _cache_key(ticker: str, as_of_date: Optional[str]) -> Tuple[str, str, str]:
+    from core.news_providers import resolve_news_profile
+
+    profile = resolve_news_profile(as_of_date=as_of_date)
+    return (ticker.upper(), as_of_date or "latest", profile)
 
 
-def get_recent_news(ticker: str) -> List[dict]:
+def get_recent_news(ticker: str, profile: Optional[str] = None) -> List[dict]:
+    """Return merged recent headlines for *ticker* (profile: cheap | full)."""
+    from core.news_providers import enabled_sources, fetch_composite_news, fetch_yfinance_articles
+
     try:
-        return yf.Ticker(ticker).news or []
+        sources = enabled_sources(profile)
+        if sources == ["yfinance"]:
+            return fetch_yfinance_articles(ticker)
+        return fetch_composite_news(ticker, profile=profile)
     except Exception as e:
-        logger.warning(f"News fetch failed for {ticker}: {e}")
+        logger.warning("News fetch failed for %s: %s", ticker, e)
         return []
+
+
+def news_item_timestamp_and_title(item: Dict[str, Any]) -> Tuple[Any, str]:
+    """Return publish time and title for yfinance-shaped or normalized articles."""
+    if item.get("source") in ("google_rss", "marketaux", "newsdata", "finnhub"):
+        return item.get("providerPublishTime"), (item.get("title") or "").strip()
+    return yfinance_news_raw_timestamp_and_title(item)
+
+
+def parse_news_timestamp(ts_raw: Any) -> Optional[datetime]:
+    """Parse article timestamps from any supported provider payload."""
+    from core.news_providers import parse_published
+
+    if ts_raw is None:
+        return None
+    dt = parse_published(ts_raw)
+    if dt is not None:
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    return parse_yfinance_news_timestamp(ts_raw)
 
 
 def yfinance_news_raw_timestamp_and_title(item: Dict[str, Any]) -> Tuple[Any, str]:
@@ -206,8 +235,10 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
     if cached and (now - cached[0]) < NEWS_SENTIMENT_CACHE_TTL_SEC:
         return cached[1]
 
-    # Pull news and filter by lookback/as_of_date
-    news = get_recent_news(ticker)
+    from core.news_providers import resolve_news_profile
+
+    profile = resolve_news_profile(as_of_date=as_of_date)
+    news = get_recent_news(ticker, profile=profile)
     if not news:
         res = result_neutral.copy()
         res.update({"reason": "no_news", "total": 0})
@@ -223,12 +254,13 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
 
     used_titles: List[str] = []
     used_articles: List[dict] = []
+    source_counts: Dict[str, int] = {}
     for item in news:
-        ts_raw, title = yfinance_news_raw_timestamp_and_title(item)
+        ts_raw, title = news_item_timestamp_and_title(item)
         if ts_raw is None:
             continue
 
-        dt = parse_yfinance_news_timestamp(ts_raw)
+        dt = parse_news_timestamp(ts_raw)
         if dt is None:
             continue
 
@@ -240,6 +272,8 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
 
         used_titles.append(title)
         used_articles.append(item)  # Store the article
+        src = str(item.get("source") or "yfinance")
+        source_counts[src] = source_counts.get(src, 0) + 1
 
     total_articles = len(news)
     used_count = len(used_titles)
@@ -295,9 +329,84 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
         "confidence": round(confidence, 3),
         "label": label,
         "scorer": scorer,
+        "sources": source_counts,
     }
     if model_name:
         res["model"] = model_name
 
     _cache[key] = (now, res)
     return res
+
+
+def enrich_result_with_paid_news(result: dict) -> dict:
+    """
+    Re-score news for a filtered buy candidate using paid APIs (Marketaux / NewsData).
+
+    Universe scans should use ``news_profile='cheap'``; call this only for shortlisted names.
+    May downgrade ``buy`` / ``strong_buy`` to ``watch`` when composite sentiment is strongly negative.
+    """
+    from config.settings import (
+        NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE,
+        NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD,
+        NEWS_SENTIMENT_MIN_ARTICLES,
+    )
+    from core.news_context import reset_news_profile, set_news_profile
+
+    ticker = result.get("ticker")
+    if not ticker:
+        return result
+
+    token = set_news_profile("full")
+    try:
+        keys_to_drop = [k for k in _cache if k[0] == str(ticker).upper()]
+        for key in keys_to_drop:
+            _cache.pop(key, None)
+        sentiment = analyze_news_sentiment(ticker)
+    finally:
+        reset_news_profile(token)
+
+    result["news_sentiment"] = sentiment
+
+    verdict = result.get("verdict")
+    if verdict not in ("buy", "strong_buy") or not sentiment.get("enabled"):
+        return result
+
+    used = int(sentiment.get("used", 0))
+    conf = float(sentiment.get("confidence", 0.0))
+    score = float(sentiment.get("score", 0.0))
+    min_used = max(1, int(NEWS_SENTIMENT_MIN_ARTICLES))
+    if (
+        used >= min_used
+        and conf >= NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE
+        and score <= NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD
+    ):
+        result["verdict"] = "watch"
+        justification = list(result.get("justification") or [])
+        if "news_negative" not in justification:
+            justification.append("news_negative")
+        result["justification"] = justification
+
+    return result
+
+
+def enrich_filtered_candidates_with_paid_news(candidates: list[dict]) -> list[dict]:
+    """Apply :func:`enrich_result_with_paid_news` to each filtered candidate."""
+    import os
+
+    flag = os.getenv("NEWS_ENRICH_FILTERED_NEWS", "true").lower()
+    if flag not in ("1", "true", "yes", "on"):
+        return candidates
+    has_paid = bool(os.getenv("MARKETAUX_API_KEY", "").strip()) or bool(
+        os.getenv("NEWSDATA_API_KEY", "").strip()
+    )
+    if not has_paid:
+        return candidates
+
+    enriched: list[dict] = []
+    for row in candidates:
+        try:
+            enriched.append(enrich_result_with_paid_news(dict(row)))
+        except Exception as exc:
+            logger.warning("Paid news enrich failed for %s: %s", row.get("ticker"), exc)
+            enriched.append(row)
+    return enriched

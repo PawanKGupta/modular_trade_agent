@@ -47,22 +47,21 @@ def test_parse_bad_timestamp_returns_none():
     assert parse_yfinance_news_timestamp("not-a-date") is None
 
 
-def test_get_recent_news_success_and_empty():
-    stub = [{"content": {"title": "A", "publishTime": "2026-05-01T12:00:00Z"}}]
-    fake = MagicMock(news=stub)
-    with patch("core.news_sentiment.yf.Ticker", return_value=fake):
+def test_get_recent_news_success_and_empty(monkeypatch):
+    monkeypatch.setenv("NEWS_SOURCES", "yfinance")
+    stub = [{"content": {"title": "A", "publishTime": "2026-05-01T12:00:00Z"}, "source": "yfinance"}]
+    with patch("core.news_providers.yf.Ticker") as mock_ticker:
+        mock_ticker.return_value.news = stub
         assert get_recent_news("IOC.NS") == stub
 
 
-def test_get_recent_news_exceptions_return_empty():
-    with patch(
-        "core.news_sentiment.yf.Ticker",
-        side_effect=RuntimeError("network"),
-    ):
+def test_get_recent_news_exceptions_return_empty(monkeypatch):
+    monkeypatch.setenv("NEWS_SOURCES", "yfinance")
+    with patch("core.news_providers.yf.Ticker", side_effect=RuntimeError("network")):
         assert get_recent_news("IOC.NS") == []
 
-    stub = MagicMock(news=None)
-    with patch("core.news_sentiment.yf.Ticker", return_value=stub):
+    with patch("core.news_providers.yf.Ticker") as mock_ticker:
+        mock_ticker.return_value.news = None
         assert get_recent_news("IOC.NS") == []
 
 

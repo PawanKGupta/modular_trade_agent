@@ -5,7 +5,7 @@
 Overnight and large ChartInk bulk runs (`python trade_agent.py --backtest`) should stay on the **full quality path**:
 
 - **Integrated** backtest (`run_integrated_backtest`)
-- **Full** `AnalysisService.analyze_ticker` per historical signal (MTF, fundamentals, news when enabled in config)
+- **Full** `AnalysisService.analyze_ticker` per historical signal (MTF, fundamentals, news when enabled in config). News uses **`NEWS_BACKTEST_PROFILE`** (default `cheap`); see **Composite news profiles** and the backtest lookahead caveat in [`TRADING_CONFIG.md`](TRADING_CONFIG.md#7-news-sentiment).
 - No switching to simple backtest for speed
 
 Speed is controlled only via **environment** (concurrency, delays), not by skipping analysis steps.

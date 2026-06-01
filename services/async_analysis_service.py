@@ -68,6 +68,7 @@ class AsyncAnalysisService:
         export_to_csv: bool = False,
         csv_exporter: CSVExporter | None = None,
         as_of_date: str | None = None,
+        news_profile: str | None = None,
     ) -> dict[str, Any]:
         """
         Async analyze a single ticker
@@ -95,16 +96,18 @@ class AsyncAnalysisService:
                 )
 
                 reset_symbol_yahoo_counter()
-                # Run blocking analysis in executor
-                result = await loop.run_in_executor(
-                    None,
-                    self.analysis_service.analyze_ticker,
-                    ticker,
-                    enable_multi_timeframe,
-                    export_to_csv,
-                    csv_exporter,
-                    as_of_date,
-                )
+                # Run blocking analysis in executor (kwargs not supported by run_in_executor)
+                def _run_analysis() -> dict:
+                    return self.analysis_service.analyze_ticker(
+                        ticker=ticker,
+                        enable_multi_timeframe=enable_multi_timeframe,
+                        export_to_csv=export_to_csv,
+                        csv_exporter=csv_exporter,
+                        as_of_date=as_of_date,
+                        news_profile=news_profile,
+                    )
+
+                result = await loop.run_in_executor(None, _run_analysis)
 
                 record_analysis_yahoo_calls(result)
                 logger.debug(
@@ -121,6 +124,7 @@ class AsyncAnalysisService:
         enable_multi_timeframe: bool = True,
         export_to_csv: bool = False,
         as_of_date: str | None = None,
+        news_profile: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Analyze multiple tickers in parallel
@@ -133,10 +137,16 @@ class AsyncAnalysisService:
             enable_multi_timeframe: Enable multi-timeframe analysis
             export_to_csv: Export results to CSV
             as_of_date: Date for analysis (YYYY-MM-DD format)
+            news_profile: News API profile (defaults to ``NEWS_UNIVERSE_PROFILE`` / ``cheap``)
 
         Returns:
             List of analysis results
         """
+        import os
+
+        if news_profile is None:
+            news_profile = os.getenv("NEWS_UNIVERSE_PROFILE", "cheap").strip().lower() or "cheap"
+
         start_time = ist_now_naive()
         logger.info(
             f"Starting async batch analysis for {len(tickers)} tickers "
@@ -154,6 +164,7 @@ class AsyncAnalysisService:
                 export_to_csv=False,  # We'll handle bulk export separately
                 csv_exporter=None,
                 as_of_date=as_of_date,
+                news_profile=news_profile,
             )
             for ticker in tickers
         ]
