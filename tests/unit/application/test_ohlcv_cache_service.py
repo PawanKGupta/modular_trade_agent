@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -77,6 +77,98 @@ def test_get_ohlcv_uses_fetch_on_empty(db_session):
     assert not df.empty
     df2 = svc.get_ohlcv("B.NS", days=30, end_date="2024-01-31", add_current_day=False)
     assert len(df2) == len(df)
+
+
+def test_get_ohlcv_cache_hit_refreshes_today_when_add_current_day(db_session, monkeypatch):
+    """Layer 2: cache hit still re-fetches today's bar when add_current_day=True."""
+    reset_ohlcv_cache_stats()
+    calls = {"n": 0}
+    stale_high = 4149.9
+    fresh_high = 4106.0
+    today = date(2026, 6, 1)
+
+    def counting_fetch(symbol, days=365, interval="1d", end_date=None, add_current_day=True):
+        calls["n"] += 1
+        return pd.DataFrame(
+            {
+                "date": [pd.Timestamp(today)],
+                "open": [4050.0],
+                "high": [fresh_high],
+                "low": [4000.0],
+                "close": [4051.0],
+                "volume": [100000],
+            }
+        )
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
+
+    end = today
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end - timedelta(days=1)):
+        repo.create_or_update("DMART.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+    repo.create_or_update(
+        "DMART.NS",
+        today,
+        close=4051.0,
+        open=4050.0,
+        high=stale_high,
+        low=4000.0,
+        volume=2177691,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_fetch)
+    df = svc.get_ohlcv("DMART.NS", days=60, end_date=today.isoformat(), add_current_day=True)
+    assert df is not None
+    assert calls["n"] == 1
+    latest = df.iloc[-1]
+    assert float(latest["high"]) == fresh_high
+
+
+def test_get_ohlcv_backtest_window_excludes_live_today_and_skips_refresh(db_session, monkeypatch):
+    """Historical end_date must not trigger today refresh or return live-session bars."""
+    reset_ohlcv_cache_stats()
+    calls = {"n": 0}
+    live_today = date(2026, 6, 1)
+    backtest_end = date(2024, 1, 31)
+
+    def counting_fetch(*args, **kwargs):
+        calls["n"] += 1
+        return _fake_yahoo(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
+        lambda: datetime(2026, 6, 1, 16, 0),
+    )
+
+    end = backtest_end
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end):
+        repo.create_or_update("BT.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+    repo.create_or_update(
+        "BT.NS",
+        live_today,
+        close=999.0,
+        open=999.0,
+        high=999.0,
+        low=999.0,
+        volume=999,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_fetch)
+    df = svc.get_ohlcv("BT.NS", days=60, end_date=end.isoformat(), add_current_day=False)
+    assert df is not None
+    assert calls["n"] == 0
+    assert (df["date"].dt.date <= end).all()
+    assert live_today not in set(df["date"].dt.date)
+
+    df2 = svc.get_ohlcv("BT.NS", days=60, end_date=end.isoformat(), add_current_day=True)
+    assert calls["n"] == 0
+    assert live_today not in set(df2["date"].dt.date)
 
 
 def test_get_ohlcv_cache_hit_skips_yahoo_when_warm(db_session):
