@@ -238,6 +238,7 @@ class AnalysisService:
         pre_fetched_daily: pd.DataFrame | None = None,
         pre_fetched_weekly: pd.DataFrame | None = None,
         pre_calculated_indicators: dict[str, Any] | None = None,
+        news_profile: str | None = None,
     ) -> dict[str, Any]:
         """
         Analyze a single ticker - main entry point
@@ -254,6 +255,8 @@ class AnalysisService:
             pre_fetched_daily: Optional pre-fetched daily DataFrame (avoids duplicate fetching)
             pre_fetched_weekly: Optional pre-fetched weekly DataFrame (avoids duplicate fetching)
             pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
+            news_profile: ``cheap`` (yfinance + Google RSS), ``full`` (+ paid APIs), or
+                ``None``/``auto`` — cheap when ``as_of_date`` is set (backtest)
 
         Returns:
             Dict with analysis results including:
@@ -265,8 +268,21 @@ class AnalysisService:
             - buy_range, target, stop: Optional values
             - status: str (success/error)
         """
+        from core.news_context import reset_news_profile, set_news_profile
+        from core.news_providers import resolve_news_profile
+
+        profile_token = None
         try:
-            logger.debug(f"Starting analysis for {ticker}")
+            resolved_profile = resolve_news_profile(
+                news_profile=news_profile, as_of_date=as_of_date
+            )
+            if resolved_profile in ("cheap", "full"):
+                profile_token = set_news_profile(resolved_profile)
+            logger.debug(
+                "Starting analysis for %s (news_profile=%s)",
+                ticker,
+                resolved_profile,
+            )
 
             # Disable current day data addition during backtesting (when as_of_date is provided)
             add_current_day = as_of_date is None  # Only add current day for live analysis
@@ -804,3 +820,6 @@ class AnalysisService:
                 f"Unexpected error in analyze_ticker for {ticker}: {type(e).__name__}: {e}"
             )
             return {"ticker": ticker, "status": "analysis_error", "error": str(e)}
+        finally:
+            if profile_token is not None:
+                reset_news_profile(profile_token)

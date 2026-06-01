@@ -380,6 +380,7 @@ def analyze_ticker(
     config=None,
     pre_fetched_data=None,
     pre_calculated_indicators=None,
+    news_profile=None,
 ):
     """
     Analyze a ticker - backward compatible wrapper using new service layer.
@@ -412,6 +413,7 @@ def analyze_ticker(
         config: StrategyConfig instance (uses default if None)
         pre_fetched_data: Optional pre-fetched daily DataFrame (from BacktestEngine)
         pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
+        news_profile: ``cheap``, ``full``, or ``None``/``auto`` for news APIs during analysis
     """
     # Get config if not provided
     from config.strategy_config import StrategyConfig
@@ -439,6 +441,7 @@ def analyze_ticker(
             export_to_csv=export_to_csv,
             csv_exporter=csv_exporter,
             as_of_date=as_of_date,
+            news_profile=news_profile,
         )
     except ImportError as e:
         # Service layer is required - no fallback

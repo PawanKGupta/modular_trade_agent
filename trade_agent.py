@@ -385,12 +385,15 @@ async def main_async(
         # Use configurable concurrency from settings
         # Default: 5 for regular backtesting (balanced), can be increased via MAX_CONCURRENT_ANALYSES env var
         # For ML training with >3000 stocks, set MAX_CONCURRENT_ANALYSES=10 for faster processing
-        from config.settings import MAX_CONCURRENT_ANALYSES
+        from config.settings import MAX_CONCURRENT_ANALYSES, NEWS_UNIVERSE_PROFILE
         from services.async_analysis_service import AsyncAnalysisService
 
         async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES, config=config)
         results = await async_service.analyze_batch_async(
-            tickers=tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=export_csv
+            tickers=tickers,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=export_csv,
+            news_profile=NEWS_UNIVERSE_PROFILE,
         )
 
         logger.info(f"Async analysis complete: {len(results)} results")
@@ -473,11 +476,14 @@ def main_sequential(
                 )
 
                 reset_symbol_yahoo_counter()
+                from config.settings import NEWS_UNIVERSE_PROFILE
+
                 r = analyze_ticker(
                     t,
                     enable_multi_timeframe=enable_multi_timeframe,
                     export_to_csv=False,
                     config=analysis_config,
+                    news_profile=NEWS_UNIVERSE_PROFILE,
                 )
                 record_analysis_yahoo_calls(r)
                 results.append(r)
@@ -965,6 +971,18 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     all_recommendations = strong_buys + [
         r for r in buys if r.get("ticker") not in {s.get("ticker") for s in strong_buys}
     ]
+    if all_recommendations:
+        from core.news_sentiment import enrich_filtered_candidates_with_paid_news
+
+        all_recommendations = enrich_filtered_candidates_with_paid_news(all_recommendations)
+        enriched_by_ticker = {r.get("ticker"): r for r in all_recommendations if r.get("ticker")}
+        for idx, row in enumerate(results):
+            ticker = row.get("ticker")
+            if ticker in enriched_by_ticker:
+                results[idx] = enriched_by_ticker[ticker]
+        strong_buys = [enriched_by_ticker.get(r.get("ticker"), r) for r in strong_buys]
+        buys = [enriched_by_ticker.get(r.get("ticker"), r) for r in buys]
+
     # Create a set of strong_buy tickers for quick lookup
     strong_buy_tickers = {s.get("ticker") for s in strong_buys}
 

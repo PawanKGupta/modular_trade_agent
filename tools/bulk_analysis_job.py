@@ -63,7 +63,13 @@ def _run_symbol(symbol: str, *, dip_mode: bool) -> dict:
     config = StrategyConfig.default()
     reset_symbol_yahoo_counter()
     service = AnalysisService(config=config)
-    result = service.analyze_ticker(ticker=symbol, enable_multi_timeframe=True, export_to_csv=False)
+    universe_news = os.getenv("NEWS_UNIVERSE_PROFILE", "cheap")
+    result = service.analyze_ticker(
+        ticker=symbol,
+        enable_multi_timeframe=True,
+        export_to_csv=False,
+        news_profile=universe_news,
+    )
     record_analysis_yahoo_calls(result)
     if not isinstance(result, dict):
         return {"ticker": symbol, "status": "failed"}
