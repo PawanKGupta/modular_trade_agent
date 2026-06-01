@@ -343,10 +343,22 @@ export function PaperTradingPage() {
 							{order_statistics.sell_orders}
 						</div>
 					</div>
-					<div>
-						<div className="text-xs sm:text-sm text-[var(--muted)]">Success Rate</div>
+					<div title="Closed orders ÷ (closed + rejected). Cancelled limits are excluded.">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Fill Rate</div>
 						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
-							{order_statistics.success_rate.toFixed(2)}%
+							{order_statistics.fill_rate.toFixed(2)}%
+						</div>
+					</div>
+					<div title="Closed positions with profit ÷ all closed positions.">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Trade Win Rate</div>
+						<div className="text-base sm:text-lg font-semibold text-green-400">
+							{order_statistics.trade_win_rate.toFixed(2)}%
+						</div>
+					</div>
+					<div title="Closed sell orders ÷ (closed + cancelled sell orders).">
+						<div className="text-xs sm:text-sm text-[var(--muted)]">Sell Fill Rate</div>
+						<div className="text-base sm:text-lg font-semibold text-[var(--text)]">
+							{order_statistics.sell_fill_rate.toFixed(2)}%
 						</div>
 					</div>
 					<div>

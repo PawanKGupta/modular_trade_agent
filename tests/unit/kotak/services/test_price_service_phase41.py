@@ -245,10 +245,8 @@ class TestPriceServiceLivePriceCacheInterface:
         symbols = ["RELIANCE", "TATA"]
         service.subscribe_to_symbols(symbols, service_id="service1")
 
-        # Verify subscribe was called for each symbol
-        assert broker_client.subscribe.call_count == 2
-        broker_client.subscribe.assert_any_call("RELIANCE")
-        broker_client.subscribe.assert_any_call("TATA")
+        # LivePriceCache.subscribe expects a list of symbols (single batched call)
+        broker_client.subscribe.assert_called_once_with(["RELIANCE", "TATA"])
 
     def test_unsubscribe_from_symbols_live_price_cache_interface(self):
         """Test unsubscription with LivePriceCache interface (unsubscribe method)"""
@@ -267,8 +265,8 @@ class TestPriceServiceLivePriceCacheInterface:
         # Unsubscribe
         service.unsubscribe_from_symbols(["RELIANCE"], service_id="service1")
 
-        # Verify unsubscribe was called
-        broker_client.unsubscribe.assert_called_once_with("RELIANCE")
+        # LivePriceCache.unsubscribe expects a list of symbols
+        broker_client.unsubscribe.assert_called_once_with(["RELIANCE"])
 
 
 class TestPriceServiceNoLivePriceManager:

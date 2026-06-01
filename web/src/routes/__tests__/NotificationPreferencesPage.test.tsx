@@ -31,6 +31,7 @@ const mockPreferences = {
 	notify_service_started: true,
 	notify_service_stopped: true,
 	notify_service_execution_completed: true,
+	notify_payment_failed: true,
 	quiet_hours_start: null,
 	quiet_hours_end: null,
 };
@@ -72,6 +73,7 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/Retry Queue Events/i)).toBeInTheDocument();
 			expect(screen.getByText(/System Events/i)).toBeInTheDocument();
 			expect(screen.getByText(/Service Events/i)).toBeInTheDocument();
+			expect(screen.getByText(/Billing emails/i)).toBeInTheDocument();
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
 		});
 	});
@@ -351,5 +353,109 @@ describe('NotificationPreferencesPage', () => {
 			expect(serviceStopped.checked).toBe(true);
 			expect(serviceExecution.checked).toBe(true);
 		});
+	});
+
+	it('tests telegram connection and disables order events', async () => {
+		const fetchMock = vi.spyOn(global, 'fetch').mockResolvedValue({
+			ok: true,
+			json: async () => ({ success: true, message: 'Telegram OK' }),
+		} as Response);
+		localStorage.setItem('ta_access_token', 'token');
+
+		renderPage();
+		await waitFor(() => expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument());
+
+		fireEvent.click(screen.getByLabelText(/Telegram/i));
+		fireEvent.change(screen.getByPlaceholderText(/Telegram Bot Token/i), {
+			target: { value: '123:ABC' },
+		});
+		fireEvent.change(screen.getByPlaceholderText(/Telegram Chat ID/i), {
+			target: { value: '999' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }));
+
+		await waitFor(() => {
+			expect(fetchMock).toHaveBeenCalled();
+			expect(screen.getByText('Telegram OK')).toBeInTheDocument();
+		});
+
+		const disableAllButtons = screen.getAllByRole('button', { name: /Disable All/i });
+		fireEvent.click(disableAllButtons[0]);
+		expect((screen.getByLabelText(/Order Placed/i) as HTMLInputElement).checked).toBe(false);
+
+		fetchMock.mockRestore();
+	});
+
+	it('allows enabling billing notifications and disabling system events', async () => {
+		renderPage();
+		await waitFor(() => expect(screen.getByText(/Billing emails/i)).toBeInTheDocument());
+
+		const enableAllButtons = screen.getAllByRole('button', { name: /Enable All/i });
+		fireEvent.click(enableAllButtons[4]);
+		expect((screen.getByLabelText(/Payment failed/i) as HTMLInputElement).checked).toBe(true);
+
+		const disableAllButtons = screen.getAllByRole('button', { name: /Disable All/i });
+		fireEvent.click(disableAllButtons[2]);
+		expect((screen.getByLabelText(/System Errors/i) as HTMLInputElement).checked).toBe(false);
+	});
+
+	it('disables service and billing notifications via disable all', async () => {
+		renderPage();
+		await waitFor(() => expect(screen.getByText(/Service Events/i)).toBeInTheDocument());
+
+		const disableAllButtons = screen.getAllByRole('button', { name: /Disable All/i });
+		fireEvent.click(disableAllButtons[3]);
+		expect((screen.getByLabelText(/Service Started/i) as HTMLInputElement).checked).toBe(false);
+
+		fireEvent.click(disableAllButtons[4]);
+		expect((screen.getByLabelText(/Payment failed/i) as HTMLInputElement).checked).toBe(false);
+	});
+
+	it('saves preferences and shows success message', async () => {
+		const notificationApi = await import('@/api/notification-preferences');
+		renderPage();
+		await waitFor(() => expect(screen.getByLabelText(/Order Placed/i)).toBeInTheDocument());
+
+		fireEvent.click(screen.getByLabelText(/Order Modified/i));
+		fireEvent.click(screen.getByRole('button', { name: /Save Preferences/i }));
+
+		await waitFor(() => {
+			expect(notificationApi.updateNotificationPreferences).toHaveBeenCalled();
+			expect(screen.getByText(/saved successfully/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows save error when update fails', async () => {
+		const notificationApi = await import('@/api/notification-preferences');
+		vi.mocked(notificationApi.updateNotificationPreferences).mockRejectedValue({
+			response: { data: { detail: 'Server rejected update' } },
+		});
+
+		renderPage();
+		await waitFor(() => expect(screen.getByLabelText(/Order Placed/i)).toBeInTheDocument());
+		fireEvent.click(screen.getByLabelText(/Order Modified/i));
+		fireEvent.click(screen.getByRole('button', { name: /Save Preferences/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/Server rejected update/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows telegram test failure when fetch throws', async () => {
+		const fetchMock = vi.spyOn(global, 'fetch').mockRejectedValue(new Error('network'));
+		localStorage.setItem('ta_access_token', 'token');
+
+		renderPage();
+		await waitFor(() => expect(screen.getByText(/Notification Channels/i)).toBeInTheDocument());
+
+		fireEvent.click(screen.getByLabelText(/Telegram/i));
+		fireEvent.change(screen.getByPlaceholderText(/Telegram Bot Token/i), { target: { value: 'tok' } });
+		fireEvent.change(screen.getByPlaceholderText(/Telegram Chat ID/i), { target: { value: '1' } });
+		fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/Failed to test connection/i)).toBeInTheDocument();
+		});
+		fetchMock.mockRestore();
 	});
 });

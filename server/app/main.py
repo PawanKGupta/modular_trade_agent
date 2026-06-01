@@ -226,9 +226,11 @@ from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
 from .routers import (
-    activity,
     admin,
     auth,
+    billing_admin,
+    billing_user,
+    billing_webhooks,
     broker,
     export,
     logs,
@@ -664,6 +666,7 @@ async def log_exceptions(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
+app.include_router(billing_user.router, prefix="/api/v1/user", tags=["billing"])
 app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-config"])
 app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
@@ -671,7 +674,6 @@ app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
 app.include_router(reports.router, prefix="/api/v1/user/reports", tags=["reports"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
-app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
 app.include_router(portfolio.router, prefix="/api/v1/user/portfolio", tags=["portfolio"])
 app.include_router(
@@ -683,9 +685,11 @@ app.include_router(
 app.include_router(notifications.router, prefix="/api/v1/user", tags=["notifications"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["metrics"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(billing_admin.router, prefix="/api/v1/admin", tags=["admin-billing"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+app.include_router(billing_webhooks.router, prefix="/api/v1/billing", tags=["billing-webhooks"])
 app.include_router(monitoring.router, prefix="/api/v1/admin/monitoring", tags=["monitoring"])
 
 
@@ -700,9 +704,41 @@ async def _log_retention_worker():
         await asyncio.sleep(24 * 60 * 60)
 
 
+async def _individual_subprocess_reaper_worker(interval_seconds: int = 45):
+    """
+    Poll spawned individual-service Popen handles and reap exited children.
+
+    Keeps SQLite/Postgres task status aligned when processes exit outside stop_service
+    and prevents zombie buildup on the API worker (waitpid runs via subprocess.Popen.poll).
+    """
+    from src.application.services.individual_service_manager import IndividualServiceManager
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            with SessionLocal() as db:
+                n = IndividualServiceManager(db).cleanup_stopped_processes()
+                if n:
+                    logging.getLogger(__name__).info(
+                        "Reaped %s stopped individual-service subprocess(es)", n
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("Individual-service subprocess reap failed")
+
+
 @app.on_event("startup")
 async def start_log_retention_worker():
     app.state.log_retention_task = asyncio.create_task(_log_retention_worker())
+
+
+@app.on_event("startup")
+async def start_individual_subprocess_reaper():
+    """Background reap for IndividualServiceManager child processes."""
+    app.state.individual_subprocess_reaper_task = asyncio.create_task(
+        _individual_subprocess_reaper_worker()
+    )
 
 
 @app.on_event("startup")
@@ -726,6 +762,15 @@ async def stop_log_retention_worker():
             await task
 
     # File-based logging doesn't require shutdown
+
+
+@app.on_event("shutdown")
+async def stop_individual_subprocess_reaper():
+    reap_task = getattr(app.state, "individual_subprocess_reaper_task", None)
+    if reap_task:
+        reap_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reap_task
 
 
 @app.on_event("shutdown")

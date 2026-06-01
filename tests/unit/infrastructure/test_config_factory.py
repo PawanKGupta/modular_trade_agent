@@ -58,6 +58,7 @@ class TestConfigFactory:
         assert config.default_variety == "AMO"
         # Verify ML defaults
         assert config.ml_enabled is False
+        assert config.ml_price_enabled is False
         assert config.ml_confidence_threshold == 0.5
         # Verify behavior settings defaults
         assert config.enable_premarket_amo_adjustment is True
@@ -85,6 +86,7 @@ class TestConfigFactory:
             db_config.enable_premarket_amo_adjustment
             == strategy_config.enable_premarket_amo_adjustment
         )
+        assert db_config.ml_price_enabled == strategy_config.ml_price_enabled
 
     def test_db_config_to_strategy_config(self, db_session, sample_user):
         """Test converting UserTradingConfig to StrategyConfig"""
@@ -161,6 +163,19 @@ class TestConfigFactory:
         assert strategy_config.chart_quality_enabled is False
         assert strategy_config.ml_enabled is True
         assert strategy_config.ml_confidence_threshold == 0.7
+
+    def test_ml_price_enabled_roundtrip(self, db_session, sample_user):
+        """ml_price_enabled is persisted and mapped to StrategyConfig."""
+        db_config = UserTradingConfig(
+            user_id=sample_user.id,
+            ml_price_enabled=True,
+        )
+        db_session.add(db_config)
+        db_session.commit()
+        db_session.refresh(db_config)
+
+        strategy_config = db_config_to_strategy_config(db_config)
+        assert strategy_config.ml_price_enabled is True
 
     def test_enable_premarket_amo_adjustment_in_default_config(self, sample_user):
         """Test that enable_premarket_amo_adjustment is included in default config"""

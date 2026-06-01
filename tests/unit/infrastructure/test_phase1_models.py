@@ -266,6 +266,7 @@ class TestUserTradingConfig:
         assert config.chart_quality_enabled is True
         assert config.default_target_pct == 0.10
         assert config.ml_enabled is False
+        assert config.ml_price_enabled is False
         assert config.created_at is not None
         assert config.updated_at is not None
 

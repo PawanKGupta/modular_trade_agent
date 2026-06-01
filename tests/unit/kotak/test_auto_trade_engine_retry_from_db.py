@@ -3,7 +3,7 @@
 Tests for AutoTradeEngine retry_pending_orders_from_db method
 
 Tests that orders with FAILED status are retried from database
-at scheduled time (8:00 AM) instead of during buy order placement.
+at scheduled premarket_retry (default 9:03 IST) instead of during buy order placement.
 Note: RETRY_PENDING merged into FAILED - all FAILED orders are retriable until expiry.
 """
 

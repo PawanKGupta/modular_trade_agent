@@ -170,6 +170,7 @@ def validate_initial_entry_with_trade_agent(
     ema200: float,
     full_market_data: pd.DataFrame,
     config=None,
+    pre_fetched_weekly: pd.DataFrame | None = None,
 ) -> dict | None:
     """
     Validate initial entry with trade agent.
@@ -253,7 +254,7 @@ def validate_initial_entry_with_trade_agent(
             export_to_csv=False,
             as_of_date=signal_date,
             pre_fetched_daily=market_data_for_agent,
-            pre_fetched_weekly=None,
+            pre_fetched_weekly=pre_fetched_weekly,
             pre_calculated_indicators={"rsi": rsi, "ema200": ema200},
         )
 
@@ -335,6 +336,14 @@ def run_integrated_backtest(
 
     market_data = fetch_ohlcv_yf(
         ticker=stock_name, days=days_needed, interval="1d", end_date=end_date, add_current_day=False
+    )
+
+    weekly_data = fetch_ohlcv_yf(
+        ticker=stock_name,
+        days=days_needed,
+        interval="1wk",
+        end_date=end_date,
+        add_current_day=False,
     )
 
     if market_data is None or market_data.empty:
@@ -550,7 +559,13 @@ def run_integrated_backtest(
                     # Normal mode: Validate with trade agent
                     print("   ? Trade Agent analyzing...")
                     validation = validate_initial_entry_with_trade_agent(
-                        stock_name, date_str, rsi, ema200, market_data, config=config
+                        stock_name,
+                        date_str,
+                        rsi,
+                        ema200,
+                        market_data,
+                        config=config,
+                        pre_fetched_weekly=weekly_data,
                     )
 
                 # Track ML predictions from validation (if available) with entry date

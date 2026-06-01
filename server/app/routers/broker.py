@@ -18,8 +18,13 @@ from src.application.services.broker_credentials import (
 from src.infrastructure.db.models import Orders, TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
-from ..core.crypto import decrypt_blob, encrypt_blob
-from ..core.deps import get_current_user, get_db
+from ..core.crypto import (
+    MissingDedicatedEncryptionKeyError,
+    assert_db_secret_encryption_allowed,
+    decrypt_blob,
+    encrypt_blob,
+)
+from ..core.deps import get_current_user, get_db, require_entitlement
 from ..routers.paper_trading import (
     ClosedPosition,
     PaperTradingAccount,
@@ -33,7 +38,7 @@ from ..schemas.user import BrokerCredsInfo, BrokerCredsRequest, BrokerTestRespon
 from .broker_history_impl import _fifo_match_orders
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_entitlement("broker_execution"))])
 
 
 def _get_or_create_auth_session(
@@ -407,6 +412,10 @@ def save_broker_creds(
         broker=payload.broker,
         broker_status="Stored",
     )
+    try:
+        assert_db_secret_encryption_allowed()
+    except MissingDedicatedEncryptionKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     # store encrypted creds
     settings.broker_creds_encrypted = encrypt_blob(json.dumps(creds_blob).encode("utf-8"))
     db.commit()
@@ -1005,16 +1014,9 @@ def get_broker_portfolio(  # noqa: PLR0915, PLR0912, B008
             recent_orders = []
 
             # Order statistics (empty for now - can be enhanced later)
-            order_statistics = {
-                "total_orders": 0,
-                "buy_orders": 0,
-                "sell_orders": 0,
-                "completed_orders": 0,
-                "pending_orders": 0,
-                "cancelled_orders": 0,
-                "rejected_orders": 0,
-                "success_rate": 0.0,
-            }
+            from server.app.routers.paper_trading import _default_order_statistics
+
+            order_statistics = _default_order_statistics()
 
             return PaperTradingPortfolio(
                 account=account,
@@ -1077,8 +1079,15 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
                 ),
             )
 
+        from modules.kotak_neo_auto_trader.services import get_price_service
+        from modules.kotak_neo_auto_trader.utils.symbol_utils import (
+            extract_base_symbol,
+            get_ticker_from_full_symbol,
+            symbol_lookup_keys,
+        )
         from src.infrastructure.persistence.positions_repository import PositionsRepository
 
+        price_service = get_price_service(enable_caching=True)
         positions_repo = PositionsRepository(db)
         all_positions = positions_repo.list(current.id)
         open_positions = [p for p in all_positions if p.closed_at is None]
@@ -1104,17 +1113,15 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
                             sym = holding.symbol.upper().replace(".NS", "").replace(".BO", "")
                             if "-" not in sym:
                                 sym = f"{sym}-EQ"
-                            broker_price_by_symbol[sym] = float(holding.current_price.amount)
-                            # Also map base symbol for positions that use full symbol
-                            base = (
-                                sym.replace("-EQ", "")
-                                .replace("-BE", "")
-                                .replace("-BL", "")
-                                .replace("-BZ", "")
-                            )
-                            broker_price_by_symbol[base] = float(holding.current_price.amount)
+                            ltp = float(holding.current_price.amount)
+                            for key in symbol_lookup_keys(sym):
+                                broker_price_by_symbol[key] = ltp
                 except Exception as e:
-                    logger.debug(f"Could not fetch broker prices for system holdings: {e}")
+                    logger.warning(
+                        "Could not fetch broker prices for system holdings (user %s): %s",
+                        current.id,
+                        e,
+                    )
                 finally:
                     try:
                         Path(temp_env_file).unlink(missing_ok=True)
@@ -1126,17 +1133,23 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
         unrealized_pnl_total = 0.0
 
         for pos in open_positions:
-            current_price = (
-                broker_price_by_symbol.get(pos.symbol.upper())
-                or broker_price_by_symbol.get(
-                    pos.symbol.upper()
-                    .replace("-EQ", "")
-                    .replace("-BE", "")
-                    .replace("-BL", "")
-                    .replace("-BZ", "")
-                )
-                or pos.avg_price
+            full_symbol = pos.symbol.upper()
+            base_symbol = extract_base_symbol(full_symbol)
+            ticker = get_ticker_from_full_symbol(full_symbol)
+            resolved = price_service.get_realtime_price(
+                symbol=base_symbol,
+                ticker=ticker,
+                broker_symbol=full_symbol,
+                broker_price_map=broker_price_by_symbol or None,
             )
+            if resolved is not None:
+                current_price = resolved
+            else:
+                logger.warning(
+                    "No live price for %s in system holdings; using avg_price",
+                    pos.symbol,
+                )
+                current_price = float(pos.avg_price)
             qty = int(pos.quantity)
             avg_price = float(pos.avg_price)
             cost_basis = avg_price * qty
@@ -1195,20 +1208,13 @@ def get_broker_system_holdings(  # noqa: PLR0915, PLR0912, B008
             ),
         )
 
+        from server.app.routers.paper_trading import _default_order_statistics
+
         return PaperTradingPortfolio(
             account=account,
             holdings=portfolio_holdings,
             recent_orders=[],
-            order_statistics={
-                "total_orders": 0,
-                "buy_orders": 0,
-                "sell_orders": 0,
-                "completed_orders": 0,
-                "pending_orders": 0,
-                "cancelled_orders": 0,
-                "rejected_orders": 0,
-                "success_rate": 0.0,
-            },
+            order_statistics=_default_order_statistics(),
         )
 
     except HTTPException:

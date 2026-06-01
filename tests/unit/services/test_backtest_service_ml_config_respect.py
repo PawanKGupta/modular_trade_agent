@@ -8,6 +8,14 @@ from config.strategy_config import StrategyConfig
 from services.backtest_service import BacktestService
 
 
+def _config_from_call(call_args):
+    if "config" in call_args.kwargs:
+        return call_args.kwargs["config"]
+    if len(call_args.args) > 3:
+        return call_args.args[3]
+    return None
+
+
 class TestBacktestServiceMLConfigRespect:
     """Test that BacktestService respects ML configuration"""
 
@@ -36,7 +44,8 @@ class TestBacktestServiceMLConfigRespect:
         self, ml_enabled_config, sample_stock_result
     ):
         """Test that BacktestService passes config to run_stock_backtest"""
-        with patch("services.backtest_service.run_stock_backtest") as mock_run_backtest:
+        service = BacktestService()
+        with patch.object(service, "run_stock_backtest") as mock_run_backtest:
             mock_run_backtest.return_value = {
                 "backtest_score": 50.0,
                 "total_return_pct": 10.0,
@@ -45,24 +54,14 @@ class TestBacktestServiceMLConfigRespect:
                 "avg_return": 2.0,
             }
 
-            service = BacktestService()
             service.add_backtest_scores_to_results(
                 [sample_stock_result],
                 config=ml_enabled_config,
             )
 
-            # Verify config was passed to run_stock_backtest
             mock_run_backtest.assert_called_once()
-            # Config can be passed as positional or keyword argument
-            call_args = mock_run_backtest.call_args
-            if "config" in call_args.kwargs:
-                call_config = call_args.kwargs["config"]
-            else:
-                # Check positional arguments (stock_symbol, years_back, dip_mode, config)
-                call_config = call_args.args[3] if len(call_args.args) > 3 else None
-            assert (
-                call_config is not None and call_config.ml_enabled is True
-            ), "Should pass config with ML enabled"
+            call_config = _config_from_call(mock_run_backtest.call_args)
+            assert call_config is not None and call_config.ml_enabled is True
 
     def test_backtest_service_uses_config_from_result_if_available(
         self, ml_enabled_config, sample_stock_result
@@ -71,7 +70,8 @@ class TestBacktestServiceMLConfigRespect:
         # Set config in result
         sample_stock_result["_config"] = ml_enabled_config
 
-        with patch("services.backtest_service.run_stock_backtest") as mock_run_backtest:
+        service = BacktestService()
+        with patch.object(service, "run_stock_backtest") as mock_run_backtest:
             mock_run_backtest.return_value = {
                 "backtest_score": 50.0,
                 "total_return_pct": 10.0,
@@ -80,24 +80,14 @@ class TestBacktestServiceMLConfigRespect:
                 "avg_return": 2.0,
             }
 
-            service = BacktestService()
             service.add_backtest_scores_to_results(
                 [sample_stock_result],
                 config=None,  # No config passed, should use from result
             )
 
-            # Verify config from result was used
             mock_run_backtest.assert_called_once()
-            # Config can be passed as positional or keyword argument
-            call_args = mock_run_backtest.call_args
-            if "config" in call_args.kwargs:
-                call_config = call_args.kwargs["config"]
-            else:
-                # Check positional arguments (stock_symbol, years_back, dip_mode, config)
-                call_config = call_args.args[3] if len(call_args.args) > 3 else None
-            assert (
-                call_config is not None and call_config.ml_enabled is True
-            ), "Should use config from result"
+            call_config = _config_from_call(mock_run_backtest.call_args)
+            assert call_config is not None and call_config.ml_enabled is True
 
     def test_backtest_service_logs_config_usage(
         self, ml_enabled_config, sample_stock_result, caplog
@@ -105,7 +95,8 @@ class TestBacktestServiceMLConfigRespect:
         """Test that BacktestService logs config usage"""
         sample_stock_result["_config"] = ml_enabled_config
 
-        with patch("services.backtest_service.run_stock_backtest") as mock_run_backtest:
+        service = BacktestService()
+        with patch.object(service, "run_stock_backtest") as mock_run_backtest:
             mock_run_backtest.return_value = {
                 "backtest_score": 50.0,
                 "total_return_pct": 10.0,
@@ -114,7 +105,6 @@ class TestBacktestServiceMLConfigRespect:
                 "avg_return": 2.0,
             }
 
-            service = BacktestService()
             with caplog.at_level("DEBUG"):
                 service.add_backtest_scores_to_results(
                     [sample_stock_result],
@@ -133,7 +123,8 @@ class TestBacktestServiceMLConfigRespect:
         # No config in result and no config passed
         sample_stock_result["_config"] = None
 
-        with patch("services.backtest_service.run_stock_backtest") as mock_run_backtest:
+        service = BacktestService()
+        with patch.object(service, "run_stock_backtest") as mock_run_backtest:
             mock_run_backtest.return_value = {
                 "backtest_score": 50.0,
                 "total_return_pct": 10.0,
@@ -142,7 +133,6 @@ class TestBacktestServiceMLConfigRespect:
                 "avg_return": 2.0,
             }
 
-            service = BacktestService()
             with caplog.at_level("WARNING"):
                 service.add_backtest_scores_to_results(
                     [sample_stock_result],

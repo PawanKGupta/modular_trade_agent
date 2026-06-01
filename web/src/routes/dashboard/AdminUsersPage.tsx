@@ -12,9 +12,9 @@ export function AdminUsersPage() {
 	}, []);
 
 	const qc = useQueryClient();
-	const { data, isLoading, isError } = useQuery({
+	const { data, isLoading, isError } = useQuery<AdminUser[]>({
 		queryKey: ['admin-users'],
-		queryFn: listUsers,
+		queryFn: () => listUsers(),
 		enabled: isAdmin,
 	});
 

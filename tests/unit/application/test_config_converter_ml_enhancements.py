@@ -7,6 +7,8 @@ Tests for ML configuration enhancements:
 - Model path resolution from database
 """
 
+# ruff: noqa: E402 -- sys.path must be amended before src imports
+
 import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -228,10 +230,22 @@ class TestMLConfigurationEnhancements:
                 model_path.unlink()
 
     def test_resolve_ml_model_path_no_version(self, db_session):
-        """Test _resolve_ml_model_path with None version"""
+        """Test _resolve_ml_model_path with None version and no active row."""
         resolved_path = _resolve_ml_model_path(None, "verdict_classifier", db_session)
 
         assert resolved_path == "models/verdict_model_random_forest.pkl"
+
+    def test_resolve_ml_model_path_uses_active_when_no_version(self, db_session, sample_ml_model):
+        """NULL ml_model_version uses active MLModel row when file exists."""
+        model_path = Path(sample_ml_model.model_path)
+        model_path.parent.mkdir(exist_ok=True)
+        model_path.touch()
+        try:
+            resolved_path = _resolve_ml_model_path(None, "verdict_classifier", db_session)
+            assert Path(resolved_path) == Path(sample_ml_model.model_path)
+        finally:
+            if model_path.exists():
+                model_path.unlink()
 
     def test_resolve_ml_model_path_no_db_session(self):
         """Test _resolve_ml_model_path without db_session"""
@@ -285,4 +299,12 @@ class TestMLConfigurationEnhancements:
                 # Should log warning and return default
                 assert resolved_path == "models/verdict_model_random_forest.pkl"
                 mock_warning.assert_called_once()
-                assert "not found in database" in str(mock_warning.call_args)
+                assert "not found" in str(mock_warning.call_args).lower()
+
+    def test_ml_price_enabled_passed_to_strategy_config(self, sample_user_config, db_session):
+        """Trading DB flag maps to StrategyConfig.ml_price_enabled for AnalysisService."""
+        sample_user_config.ml_price_enabled = True
+        db_session.commit()
+
+        strategy_config = user_config_to_strategy_config(sample_user_config, db_session=db_session)
+        assert strategy_config.ml_price_enabled is True

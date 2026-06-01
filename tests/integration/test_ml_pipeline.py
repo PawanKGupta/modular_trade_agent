@@ -15,22 +15,24 @@ import sys
 from pathlib import Path
 
 # Add project root to path
+from tests.ist_clock import ist_now_naive
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-import pytest
+from unittest.mock import patch
+
 import pandas as pd
-from unittest.mock import Mock, patch
-from datetime import datetime, timedelta
-from services.pipeline_steps import create_analysis_pipeline
-from services.pipeline import PipelineContext
+import pytest
+
 from config.strategy_config import StrategyConfig
+from services.pipeline_steps import create_analysis_pipeline
 from utils.logger import logger
 
 
 def create_mock_dataframe(days=365):
     """Create a mock DataFrame with OHLCV data for testing"""
-    dates = pd.date_range(end=datetime.now(), periods=days, freq="D")
+    dates = pd.date_range(end=ist_now_naive(), periods=days, freq="D")
     # Generate realistic price data
     base_price = 2000.0
     prices = []
@@ -93,7 +95,7 @@ def test_pipeline_without_ml():
     justification = result.get_result("justification")
     verdict_source = result.get_result("verdict_source")
 
-    logger.info(f"\n? Results:")
+    logger.info("\n? Results:")
     logger.info(f"   Ticker: {result.ticker}")
     logger.info(f"   Verdict: {verdict}")
     logger.info(f"   Verdict Source: {verdict_source or 'rule_based'}")
@@ -131,10 +133,11 @@ def test_pipeline_with_ml():
     config.ml_verdict_model_path = "models/verdict_model_random_forest.pkl"
     config.ml_confidence_threshold = 0.5
 
-    # Create pipeline with ML
-    pipeline = create_analysis_pipeline(
-        enable_fundamentals=False, enable_multi_timeframe=False, enable_ml=True, config=config
-    )
+    # Legacy pipeline ML path is deprecated (production uses AnalysisService + determine_verdict)
+    with pytest.warns(DeprecationWarning, match="create_analysis_pipeline\\(enable_ml=True\\)"):
+        pipeline = create_analysis_pipeline(
+            enable_fundamentals=False, enable_multi_timeframe=False, enable_ml=True, config=config
+        )
 
     # Mock the DataService.fetch_single_timeframe method
     from services.data_service import DataService
@@ -168,7 +171,7 @@ def test_pipeline_with_ml():
     rule_verdict = result.get_result("rule_verdict")
     verdict_source = result.get_result("verdict_source")
 
-    logger.info(f"\n? Results:")
+    logger.info("\n? Results:")
     logger.info(f"   Ticker: {result.ticker}")
     logger.info(f"   Final Verdict: {verdict}")
     logger.info(f"   Verdict Source: {verdict_source}")
@@ -223,10 +226,10 @@ def test_ml_verdict_comparison():
     config.ml_verdict_model_path = "models/verdict_model_random_forest.pkl"
     config.ml_confidence_threshold = 0.5
 
-    # Create pipeline with ML
-    pipeline = create_analysis_pipeline(
-        enable_fundamentals=False, enable_multi_timeframe=False, enable_ml=True, config=config
-    )
+    with pytest.warns(DeprecationWarning, match="create_analysis_pipeline\\(enable_ml=True\\)"):
+        pipeline = create_analysis_pipeline(
+            enable_fundamentals=False, enable_multi_timeframe=False, enable_ml=True, config=config
+        )
 
     results = []
 
@@ -264,7 +267,7 @@ def test_ml_verdict_comparison():
             logger.info(f"   ML: Not available, Rule: {rule_verdict}")
 
     # Summary
-    logger.info(f"\n? Summary:")
+    logger.info("\n? Summary:")
     logger.info(f"   Total analyzed: {len(results)}")
 
     ml_used_count = sum(1 for r in results if r["verdict_source"] == "ml")
@@ -287,10 +290,10 @@ def test_ml_verdict_comparison():
         )
 
         logger.info(
-            f"\n   Agreement: {agreements}/{ml_used_count + disagreements} ({agreements/(ml_used_count + disagreements)*100:.0f}%)"
+            f"\n   Agreement: {agreements}/{ml_used_count + disagreements} ({agreements / (ml_used_count + disagreements) * 100:.0f}%)"
         )
         logger.info(
-            f"   Disagreement: {disagreements}/{ml_used_count + disagreements} ({disagreements/(ml_used_count + disagreements)*100:.0f}%)"
+            f"   Disagreement: {disagreements}/{ml_used_count + disagreements} ({disagreements / (ml_used_count + disagreements) * 100:.0f}%)"
         )
 
     logger.info("\n? Test 3 PASSED: ML vs Rule-Based comparison completed")

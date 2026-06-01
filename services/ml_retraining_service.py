@@ -6,13 +6,13 @@ Service for automatic model retraining triggered by events.
 Phase 4 Feature - Continuous Learning
 """
 
-import os
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any
 
-from services.event_bus import EventBus, Event, EventType, get_event_bus
+from services.event_bus import Event, EventBus, EventType, get_event_bus
 from services.ml_training_service import MLTrainingService
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 
@@ -49,7 +49,7 @@ class MLRetrainingService:
         self.min_new_samples = min_new_samples
         self.auto_backup = auto_backup
 
-        self.last_retraining_time: Optional[datetime] = None
+        self.last_retraining_time: datetime | None = None
         self.retraining_count = 0
 
         # Track retraining history
@@ -58,7 +58,7 @@ class MLRetrainingService:
 
         logger.info("MLRetrainingService initialized")
 
-    def setup_listeners(self, event_bus: Optional[EventBus] = None) -> None:
+    def setup_listeners(self, event_bus: EventBus | None = None) -> None:
         """
         Setup event listeners for automatic retraining
 
@@ -117,7 +117,7 @@ class MLRetrainingService:
         """
         # Check time since last retraining
         if self.last_retraining_time:
-            time_since_last = datetime.now() - self.last_retraining_time
+            time_since_last = ist_now_naive() - self.last_retraining_time
             if time_since_last < self.min_retraining_interval:
                 logger.debug(
                     f"Too soon to retrain: {time_since_last} < {self.min_retraining_interval}"
@@ -138,7 +138,7 @@ class MLRetrainingService:
 
     def retrain_models(
         self, reason: str = "Manual trigger", model_types: list = ["random_forest"]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Retrain ML models
 
@@ -152,7 +152,7 @@ class MLRetrainingService:
         logger.info(f"Starting model retraining: {reason}")
 
         results = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": ist_now().isoformat(),
             "reason": reason,
             "models_trained": [],
             "errors": [],
@@ -171,7 +171,7 @@ class MLRetrainingService:
                 try:
                     logger.info(f"Training {model_type} verdict classifier...")
 
-                    model_path = trainer.train_verdict_classifier(
+                    model_path, _accuracy = trainer.train_verdict_classifier(
                         training_data_path=self.training_data_path,
                         model_type=model_type,
                         test_size=0.2,
@@ -189,7 +189,7 @@ class MLRetrainingService:
                     results["errors"].append(error_msg)
 
             # Update retraining metadata
-            self.last_retraining_time = datetime.now()
+            self.last_retraining_time = ist_now_naive()
             self.retraining_count += 1
 
             # Log to history
@@ -233,7 +233,7 @@ class MLRetrainingService:
             backup_dir.mkdir(parents=True, exist_ok=True)
 
             # Backup with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = ist_now_naive().strftime("%Y%m%d_%H%M%S")
 
             for model_file in models_dir.glob("*.pkl"):
                 backup_path = backup_dir / f"{model_file.stem}_{timestamp}.pkl"
@@ -248,11 +248,11 @@ class MLRetrainingService:
         except Exception as e:
             logger.warning(f"Failed to backup models: {e}")
 
-    def _log_retraining(self, results: Dict[str, Any]) -> None:
+    def _log_retraining(self, results: dict[str, Any]) -> None:
         """Log retraining to history file"""
         try:
             with open(self.history_file, "a") as f:
-                f.write(f"\n{'='*60}\n")
+                f.write(f"\n{'=' * 60}\n")
                 f.write(f"Retraining #{self.retraining_count}\n")
                 f.write(f"Timestamp: {results['timestamp']}\n")
                 f.write(f"Reason: {results['reason']}\n")
@@ -266,12 +266,12 @@ class MLRetrainingService:
                     for error in results["errors"]:
                         f.write(f"  - {error}\n")
 
-                f.write(f"{'='*60}\n")
+                f.write(f"{'=' * 60}\n")
 
         except Exception as e:
             logger.debug(f"Failed to log retraining history: {e}")
 
-    def get_retraining_stats(self) -> Dict[str, Any]:
+    def get_retraining_stats(self) -> dict[str, Any]:
         """
         Get retraining statistics
 

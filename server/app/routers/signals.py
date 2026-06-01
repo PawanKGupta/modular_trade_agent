@@ -8,9 +8,9 @@ from src.infrastructure.db.models import Signals, SignalStatus
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.signals_repository import SignalsRepository
 
-from ..core.deps import get_current_user, get_db
+from ..core.deps import get_current_user, get_db, require_entitlement
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_entitlement("stock_recommendations"))])
 
 
 @router.get("/buying-zone")

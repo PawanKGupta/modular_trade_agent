@@ -53,10 +53,15 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    # SQLAlchemy 2.0 autobegin: configure()/version probes may open a transaction
+    # before Alembic's begin_transaction(), which then becomes a no-op. In that
+    # case nothing commits on connection close — migrations roll back. Commit
+    # explicitly after run_migrations() so DDL and alembic_version persist.
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
+        connection.commit()
 
 
 if context.is_offline_mode():

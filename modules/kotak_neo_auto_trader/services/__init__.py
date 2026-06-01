@@ -14,6 +14,7 @@ from .order_validation_service import (
 from .portfolio_service import PortfolioService, get_portfolio_service
 from .position_loader import PositionLoader, get_position_loader
 from .price_service import PriceService, get_price_service
+from .sell_target_service import compute_sell_target, round_sell_price
 
 __all__ = [
     "PriceService",
@@ -27,4 +28,6 @@ __all__ = [
     "OrderValidationService",
     "ValidationResult",
     "get_order_validation_service",
+    "compute_sell_target",
+    "round_sell_price",
 ]

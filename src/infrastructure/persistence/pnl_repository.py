@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import PnlDaily
@@ -21,6 +22,18 @@ class PnlRepository:
             .order_by(PnlDaily.date.asc())
         )
         return list(self.db.execute(stmt).scalars().all())
+
+    def sum_realized_pnl_calendar_month(self, user_id: int, year: int, month: int) -> float:
+        start = date(year, month, 1)
+        end = date(year, month, monthrange(year, month)[1])
+        total = self.db.execute(
+            select(func.coalesce(func.sum(PnlDaily.realized_pnl), 0.0)).where(
+                PnlDaily.user_id == user_id,
+                PnlDaily.date >= start,
+                PnlDaily.date <= end,
+            )
+        ).scalar_one()
+        return float(total or 0.0)
 
     def upsert(self, rec: PnlDaily) -> PnlDaily:
         # Query for existing record

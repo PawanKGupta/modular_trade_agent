@@ -16,6 +16,16 @@ from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
 )
 from utils.logger import logger  # noqa: E402
 
+try:
+    from src.infrastructure.db.timezone_utils import ist_now_naive as _ist_now_naive_fn
+except ImportError:
+    _ist_now_naive_fn = None  # type: ignore[misc, assignment]
+
+
+def _naive_stamp() -> datetime:
+    return _ist_now_naive_fn() if _ist_now_naive_fn is not None else datetime.now()
+
+
 # Import existing data fetcher
 try:
     from core.data_fetcher import DataFetcher
@@ -95,7 +105,7 @@ class PriceProvider:
         with self._lock:
             if symbol in self._price_cache:
                 price, timestamp = self._price_cache[symbol]
-                if datetime.now() - timestamp < self.cache_duration:
+                if _naive_stamp() - timestamp < self.cache_duration:
                     return price
 
         # Fetch fresh price
@@ -104,7 +114,7 @@ class PriceProvider:
         # Update cache
         if price is not None:
             with self._lock:
-                self._price_cache[symbol] = (price, datetime.now())
+                self._price_cache[symbol] = (price, _naive_stamp())
 
         return price
 
@@ -184,7 +194,29 @@ class PriceProvider:
         if price is not None:
             return price
 
-        logger.warning(f"[WARN]? Live providers unavailable for {ticker}; falling back to mock")
+        stale = self._stale_cached_price(symbol) or self._stale_cached_price(ticker)
+        if stale is not None:
+            logger.warning(
+                "[WARN]? Live providers unavailable for %s; using stale cached price Rs %.2f",
+                ticker,
+                stale,
+            )
+            return stale
+
+        mock_price = self._fetch_mock_price(symbol)
+        logger.warning(
+            "[WARN]? Live providers unavailable for %s; using mock price Rs %.2f",
+            ticker,
+            mock_price,
+        )
+        return mock_price
+
+    def _stale_cached_price(self, symbol: str) -> float | None:
+        """Return last cached price regardless of TTL (for live-mode fallback)."""
+        with self._lock:
+            entry = self._price_cache.get(symbol)
+            if entry:
+                return entry[0]
         return None
 
     def _fetch_yfinance_price(self, symbol: str) -> float | None:
@@ -231,7 +263,7 @@ class PriceProvider:
             price: Price to set
         """
         with self._lock:
-            self._price_cache[symbol] = (price, datetime.now())
+            self._price_cache[symbol] = (price, _naive_stamp())
             logger.debug(f"? Set mock price for {symbol}: Rs {price:.2f}")
 
     def clear_cache(self) -> None:
@@ -243,7 +275,7 @@ class PriceProvider:
     def get_cache_info(self) -> dict:
         """Get cache statistics"""
         with self._lock:
-            now = datetime.now()
+            now = _naive_stamp()
             valid_count = sum(
                 1 for _, (_, ts) in self._price_cache.items() if now - ts < self.cache_duration
             )

@@ -32,6 +32,7 @@ class DummyOrder(SimpleNamespace):
             placed_at=kwargs.get("placed_at", datetime(2025, 1, 15, 10, 0, 0)),
             closed_at=kwargs.get("closed_at", None),
             reason=kwargs.get("reason", None),
+            rejection_reason=kwargs.get("rejection_reason", None),
             first_failed_at=kwargs.get("first_failed_at", None),
             last_retry_attempt=kwargs.get("last_retry_attempt", None),
             retry_count=kwargs.get("retry_count", 0),
@@ -372,8 +373,8 @@ def test_list_orders_format_datetime_fields(orders_repo, current_user):
     result = orders.list_orders(db=None, current=current_user)
 
     assert len(result.items) == 1
-    assert result.items[0].created_at == "2025-01-15T10:30:00"
-    assert result.items[0].updated_at == "2025-01-16T14:00:00"
+    assert result.items[0].created_at == "2025-01-15T10:30:00+05:30"
+    assert result.items[0].updated_at == "2025-01-16T14:00:00+05:30"
 
 
 # POST /{order_id}/retry - retry_order tests
@@ -386,7 +387,7 @@ def test_retry_order_success(orders_repo, current_user, mock_ist_now):
     assert result.status == "failed"
     assert order.retry_count == 1
     assert order.last_retry_attempt == mock_ist_now
-    assert order.reason == "manual_retry_queued"
+    assert order.reason == "manual_retry_queued: Error"
     assert len(orders_repo.update_calls) == 1
 
 
@@ -457,7 +458,7 @@ def test_retry_order_resets_reason_to_manual_queue_state(orders_repo, current_us
 
     orders.retry_order(order_id=1, db=None, current=current_user)
 
-    assert order.reason == "manual_retry_queued"
+    assert order.reason == "manual_retry_queued: Network error"
 
 
 def test_retry_order_exception_handling(orders_repo, current_user):

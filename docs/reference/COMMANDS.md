@@ -126,6 +126,12 @@ python trade_agent.py --backtest
 ```
 Analyzes stocks and generates scored recommendations based on historical performance.
 
+### Run analysis with verdict ML (CLI, no DB user)
+```powershell
+python trade_agent.py --backtest --ml
+```
+Same as `--ml-enabled`. Sets `StrategyConfig.ml_enabled=True` for the batch when you are **not** loading trading config via `TRADE_AGENT_USER_ID` (if a DB user config loads successfully, that config controls `ml_enabled` instead). Requires the verdict model file on disk (see `ML_COMPLETE_GUIDE.md`).
+
 ---
 
 ## Kotak Neo Auto Trader Commands
@@ -339,12 +345,14 @@ Get-Process python | Where-Object {$_.Modules.FileName -like "*run_trading_servi
 | Time | Task | Description |
 |------|------|-------------|
 | **At Startup** | Service Start | Login once, runs continuously |
-| **Mon-Fri 9:00 AM** | Pre-Market Retry | Retry failed orders from previous day |
+| **Mon-Fri 9:01 AM** | Buy Orders | Place REGULAR market buys at open (+ re-entry) |
+| **Mon-Fri 9:03 AM** | Pre-Market Retry | Retry failed orders from database |
+| **Mon-Fri 9:05 AM** | Pending Buy Adjustment | Adjust open pending buys (if enabled) |
 | **Mon-Fri 9:15 AM** | Sell Orders | Place limit sell orders at EMA9 targets |
 | **Mon-Fri 9:15-3:30 PM** | Sell Monitoring | Update orders every minute, RSI exit check |
 | **Mon-Fri 4:00 PM** | Market Analysis | Run trade_agent.py --backtest |
-| **Mon-Fri 4:05 PM** | Buy Orders | Place AMO buy orders for next day |
-| **Mon-Fri 6:00 PM** | EOD Cleanup | Cleanup + reset for next day |
+| **Mon-Fri 4:05 PM (16:05)** | Buy Margin Preview | Margin check only (no placement) |
+| **Mon-Fri 6:00 PM (18:00)** | EOD Cleanup | Cleanup + reset for next day |
 | **Sat-Sun** | Idle | Service runs but no tasks execute |
 
 ### Task Settings

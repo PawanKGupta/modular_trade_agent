@@ -84,6 +84,12 @@ def _test_telegram_connection(bot_token: str, chat_id: str) -> tuple[bool, str]:
         return False, "Unable to complete the connection test. Please try again later."
 
 
+def _bool_notification_pref(prefs: Any, attr: str, default: bool = True) -> bool:
+    """ORM rows or stubs may omit new columns; treat None as default."""
+    v = getattr(prefs, attr, default)
+    return default if v is None else bool(v)
+
+
 def _preferences_to_response(prefs: UserNotificationPreferences) -> NotificationPreferencesResponse:
     """Convert UserNotificationPreferences model to response schema"""
     return NotificationPreferencesResponse(
@@ -113,6 +119,7 @@ def _preferences_to_response(prefs: UserNotificationPreferences) -> Notification
         notify_service_started=prefs.notify_service_started,
         notify_service_stopped=prefs.notify_service_stopped,
         notify_service_execution_completed=prefs.notify_service_execution_completed,
+        notify_payment_failed=_bool_notification_pref(prefs, "notify_payment_failed"),
         quiet_hours_start=prefs.quiet_hours_start,
         quiet_hours_end=prefs.quiet_hours_end,
     )

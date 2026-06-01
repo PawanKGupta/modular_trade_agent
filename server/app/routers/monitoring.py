@@ -9,7 +9,8 @@ from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status as http_status
 from sqlalchemy import and_, desc, or_, text
 from sqlalchemy.orm import Session
 
@@ -311,7 +312,7 @@ def get_task_executions(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching task executions: {str(e)}",
         ) from e
 
@@ -379,7 +380,7 @@ def get_running_tasks(
         return _get_running_tasks_impl(db, user_id)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching running tasks: {str(e)}",
         ) from e
 
@@ -477,7 +478,7 @@ def get_task_metrics(
         return TaskMetricsResponse(metrics=metrics, period_days=period_days)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching task metrics: {str(e)}",
         ) from e
 
@@ -613,7 +614,7 @@ def get_schedule_compliance(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching schedule compliance: {str(e)}",
         ) from e
 
@@ -800,7 +801,7 @@ def get_active_sessions(
         return _get_active_sessions_impl(db)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching active sessions: {str(e)}",
         ) from e
 
@@ -893,7 +894,7 @@ def get_reauth_history(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching re-auth history: {str(e)}",
         ) from e
 
@@ -995,7 +996,7 @@ def get_auth_errors(
         )
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching auth errors: {str(e)}",
         ) from e
 
@@ -1125,7 +1126,7 @@ def get_reauth_statistics(
         return ReauthStatisticsResponse(statistics=statistics, period_days=period_days)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching re-auth statistics: {str(e)}",
         ) from e
 
@@ -1530,6 +1531,6 @@ def get_monitoring_dashboard(
         logger.error(traceback.format_exc())
 
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching monitoring dashboard: {str(e)}",
         ) from e

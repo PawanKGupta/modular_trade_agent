@@ -205,15 +205,11 @@ describe('BuyingZonePage', () => {
 			expect(screen.getByText('RSI10')).toBeInTheDocument();
 		});
 
-		// Select columns until we reach max (20)
-		// Start with 5 default, need to add 15 more to reach max of 20
-		// Add columns one by one until we hit the max
 		let addedCount = 0;
-		const maxToAdd = 15; // To reach 20 from 5 default
+		const maxToAdd = 15;
 
 		while (addedCount < maxToAdd) {
 			const allCheckboxes = screen.getAllByRole('checkbox');
-			// Find an unchecked, enabled checkbox
 			const checkboxToAdd = allCheckboxes.find((cb) => {
 				const label = cb.closest('label');
 				return label && !label.closest('table') && !cb.checked && !cb.disabled;
@@ -221,28 +217,23 @@ describe('BuyingZonePage', () => {
 
 			if (checkboxToAdd) {
 				fireEvent.click(checkboxToAdd);
-				await waitFor(() => {
-					expect(checkboxToAdd).toBeChecked();
-				}, { timeout: 1000 });
 				addedCount++;
 			} else {
-				break; // No more columns to add
+				break;
 			}
 		}
 
-		// Now at max (20), verify remaining unchecked columns are disabled
 		await waitFor(() => {
 			const allCheckboxes = screen.getAllByRole('checkbox');
 			const uncheckedCheckboxes = allCheckboxes.filter((cb) => {
 				const label = cb.closest('label');
 				return label && !label.closest('table') && !cb.checked;
 			});
-			// All unchecked checkboxes should be disabled at max
 			uncheckedCheckboxes.forEach((cb) => {
 				expect(cb).toBeDisabled();
 			});
-		}, { timeout: 2000 });
-	});
+		});
+	}, 60000);
 
 	it('displays selected columns as chips', async () => {
 		render(

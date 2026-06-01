@@ -34,7 +34,6 @@ class TestSchemaExistence:
             "fills",
             "pnldaily",
             "signals",
-            "activity",
             "service_status",
             "service_task_execution",
             "service_logs",
@@ -65,7 +64,7 @@ class TestUsersTableSchema:
         columns = {col["name"]: col for col in inspector.get_columns("users")}
 
         assert "id" in columns
-        assert columns["id"]["type"].python_type == int
+        assert columns["id"]["type"].python_type is int
         assert not columns["id"]["nullable"]
 
         assert "email" in columns
@@ -88,7 +87,7 @@ class TestUsersTableSchema:
         assert not columns["role"]["nullable"]
 
         assert "is_active" in columns
-        assert columns["is_active"]["type"].python_type == bool
+        assert columns["is_active"]["type"].python_type is bool
         assert not columns["is_active"]["nullable"]
 
         assert "created_at" in columns
@@ -139,7 +138,7 @@ class TestOrdersTableSchema:
             assert col_name in columns, f"Missing required column: {col_name}"
 
         # Check user_id foreign key
-        assert columns["user_id"]["type"].python_type == int
+        assert columns["user_id"]["type"].python_type is int
         assert not columns["user_id"]["nullable"]
 
         # Check symbol
@@ -218,13 +217,13 @@ class TestPositionsTableSchema:
         for col_name in required_columns:
             assert col_name in columns, f"Missing required column: {col_name}"
 
-        assert columns["user_id"]["type"].python_type == int
+        assert columns["user_id"]["type"].python_type is int
         assert not columns["user_id"]["nullable"]
 
         assert isinstance(columns["symbol"]["type"], String)
         assert not columns["symbol"]["nullable"]
 
-        assert columns["quantity"]["type"].python_type == float
+        assert columns["quantity"]["type"].python_type is float
         assert not columns["quantity"]["nullable"]
 
         assert columns["closed_at"]["nullable"], "closed_at should be nullable"
@@ -243,7 +242,7 @@ class TestPositionsTableSchema:
         )
         assert (
             user_symbol_constraint is None
-        ), "Unique constraint (user_id, symbol) should not exist - multiple positions per symbol are now allowed"
+        ), "expected no unique (user_id, symbol) for multi-position support"
 
 
 class TestFillsTableSchema:
@@ -257,13 +256,13 @@ class TestFillsTableSchema:
         for col_name in required_columns:
             assert col_name in columns, f"Missing required column: {col_name}"
 
-        assert columns["order_id"]["type"].python_type == int
+        assert columns["order_id"]["type"].python_type is int
         assert not columns["order_id"]["nullable"]
 
-        assert columns["quantity"]["type"].python_type == float
+        assert columns["quantity"]["type"].python_type is float
         assert not columns["quantity"]["nullable"]
 
-        assert columns["price"]["type"].python_type == float
+        assert columns["price"]["type"].python_type is float
         assert not columns["price"]["nullable"]
 
     def test_fills_table_foreign_key(self, inspector):
@@ -298,13 +297,13 @@ class TestServiceStatusTableSchema:
         for col_name in required_columns:
             assert col_name in columns, f"Missing required column: {col_name}"
 
-        assert columns["user_id"]["type"].python_type == int
+        assert columns["user_id"]["type"].python_type is int
         assert not columns["user_id"]["nullable"]
 
-        assert columns["service_running"]["type"].python_type == bool
+        assert columns["service_running"]["type"].python_type is bool
         assert not columns["service_running"]["nullable"]
 
-        assert columns["error_count"]["type"].python_type == int
+        assert columns["error_count"]["type"].python_type is int
         assert not columns["error_count"]["nullable"]
 
         assert columns["last_heartbeat"]["nullable"], "last_heartbeat should be nullable"
@@ -351,20 +350,24 @@ class TestUserTradingConfigTableSchema:
         assert "user_capital" in columns
         assert "max_portfolio_size" in columns
         assert "ml_enabled" in columns
+        assert "ml_price_enabled" in columns
         assert "created_at" in columns
         assert "updated_at" in columns
 
-        assert columns["user_id"]["type"].python_type == int
+        assert columns["user_id"]["type"].python_type is int
         assert not columns["user_id"]["nullable"]
 
-        assert columns["rsi_period"]["type"].python_type == int
+        assert columns["rsi_period"]["type"].python_type is int
         assert not columns["rsi_period"]["nullable"]
 
-        assert columns["user_capital"]["type"].python_type == float
+        assert columns["user_capital"]["type"].python_type is float
         assert not columns["user_capital"]["nullable"]
 
-        assert columns["ml_enabled"]["type"].python_type == bool
+        assert columns["ml_enabled"]["type"].python_type is bool
         assert not columns["ml_enabled"]["nullable"]
+
+        assert columns["ml_price_enabled"]["type"].python_type is bool
+        assert not columns["ml_price_enabled"]["nullable"]
 
     def test_user_trading_config_unique_constraint(self, inspector):
         """Validate UserTradingConfig unique constraint on user_id"""
@@ -404,7 +407,6 @@ class TestAllTablesHaveUserForeignKey:
             "orders",
             "positions",
             "pnldaily",
-            "activity",  # signals might be global, so we check separately
             "service_status",
             "service_task_execution",
             "service_logs",

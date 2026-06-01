@@ -1,7 +1,7 @@
 # Sell Order Implementation - Complete Documentation
 
 **Date**: 2025-01-27
-**Last Updated**: 2025-12-17 (Documentation Consolidation)
+**Last Updated**: 2026-05-28
 **Status**: ✅ Current Implementation
 **Version**: Database-Based (Post-Unified-Service)
 
@@ -56,6 +56,16 @@ The Sell Order Management System is an automated profit-taking system that:
 **Update Rule**: Only lower the price (never raise) - tracks lowest EMA9 seen
 
 **Safety Check**: EMA9 must be >= 95% of entry price (prevents selling at loss > 5%)
+
+### Placement-time parity with paper trading
+
+Live sell placement and paper trading share one target pipeline:
+
+- **`compute_sell_target()`** and **`round_sell_price()`** in `modules/kotak_neo_auto_trader/services/sell_target_service.py`
+- Live: `_get_ema9_with_retry()` → `calculate_ema9_realtime`, then `SellOrderManager.round_to_tick_size()` → `round_sell_price`
+- Paper: `PaperTradingServiceAdapter._calculate_ema9()` → `compute_sell_target` (Yahoo LTP, no Kotak WebSocket)
+
+Targets should align at placement when LTP and tick rules match. After open, live orders may still be revised downward (lowest EMA9); paper targets stay frozen until re-entry. Details: [Paper Trading Complete Guide](../guides/PAPER_TRADING_COMPLETE.md#sell-target-parity-with-live-kotak-placement-time).
 
 ---
 

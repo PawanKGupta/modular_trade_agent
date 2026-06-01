@@ -4,16 +4,17 @@ from src.application.dto.analysis_request import BulkAnalysisRequest, AnalysisRe
 from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class FakeAnalyzeStock:
     def execute(self, request: AnalysisRequest):
         # Return deterministic responses per ticker
         if request.ticker == 'AAA.NS':
             return AnalysisResponse(
-                ticker='AAA.NS', status='success', timestamp=datetime.now(),
+                ticker='AAA.NS', status='success', timestamp=ist_now_naive(),
                 verdict='buy', combined_score=50.0, priority_score=60.0
             )
         return AnalysisResponse(
-            ticker=request.ticker, status='success', timestamp=datetime.now(),
+            ticker=request.ticker, status='success', timestamp=ist_now_naive(),
             verdict='watch', combined_score=10.0, priority_score=10.0
         )
 

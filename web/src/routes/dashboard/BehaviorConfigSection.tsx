@@ -65,7 +65,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 							className="rounded"
 						/>
 						<span className="text-sm">
-							Enable Pre-Market AMO Adjustment (9:05 AM)
+							Enable Pre-Market Pending Buy Adjustment (9:05 AM)
 							{!isDefault('enable_premarket_amo_adjustment') && <span className="text-yellow-400 ml-1">*</span>}
 						</span>
 					</label>
@@ -73,7 +73,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 						Default: {defaultConfig.enable_premarket_amo_adjustment ? 'Enabled' : 'Disabled'}
 					</div>
 					<div className="text-xs text-blue-400 mt-1 ml-6">
-						Automatically adjust AMO order quantities at 9:05 AM based on pre-market prices to keep capital constant
+						Adjust open pending buy orders (AMO or REGULAR) at 9:05 AM using pre-market prices to keep capital constant
 					</div>
 				</div>
 
@@ -118,81 +118,43 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
 						Default: {defaultConfig.news_sentiment_enabled ? 'Enabled' : 'Disabled'}
 					</div>
+					{config.news_sentiment_enabled && (
+						<div className="text-xs text-blue-400 mt-1 ml-6 max-w-xl">
+							Advanced tuning (lookback, thresholds, model) uses server environment variables —
+							see docs/guides/TRADING_CONFIG.md.
+						</div>
+					)}
 				</div>
-				{config.news_sentiment_enabled && (
-					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
-						<div>
-							<label htmlFor="news_sentiment_lookback_days" className="block text-sm mb-1">
-								Lookback Days
-								{!isDefault('news_sentiment_lookback_days') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_lookback_days"
-								type="number"
-								min="1"
-								max="365"
-								value={config.news_sentiment_lookback_days}
-								onChange={(e) => onChange({ news_sentiment_lookback_days: parseInt(e.target.value) || 7 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_lookback_days}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_min_articles" className="block text-sm mb-1">
-								Min Articles
-								{!isDefault('news_sentiment_min_articles') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_min_articles"
-								type="number"
-								min="0"
-								value={config.news_sentiment_min_articles}
-								onChange={(e) => onChange({ news_sentiment_min_articles: parseInt(e.target.value) || 3 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_min_articles}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_pos_threshold" className="block text-sm mb-1">
-								Positive Threshold
-								{!isDefault('news_sentiment_pos_threshold') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_pos_threshold"
-								type="number"
-								step="0.1"
-								min="-1"
-								max="1"
-								value={config.news_sentiment_pos_threshold}
-								onChange={(e) => onChange({ news_sentiment_pos_threshold: parseFloat(e.target.value) || 0.6 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_pos_threshold}</div>
-						</div>
-						<div>
-							<label htmlFor="news_sentiment_neg_threshold" className="block text-sm mb-1">
-								Negative Threshold
-								{!isDefault('news_sentiment_neg_threshold') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="news_sentiment_neg_threshold"
-								type="number"
-								step="0.1"
-								min="-1"
-								max="1"
-								value={config.news_sentiment_neg_threshold}
-								onChange={(e) => onChange({ news_sentiment_neg_threshold: parseFloat(e.target.value) || -0.4 })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.news_sentiment_neg_threshold}</div>
-						</div>
-					</div>
-				)}
 			</div>
 
 			{/* ML Configuration */}
 			<div className="mt-6 pt-6 border-t border-[#1e293b]">
 				<h3 className="text-sm font-medium mb-3 text-[var(--muted)]">ML Configuration</h3>
+				<div className="mb-4">
+					<label htmlFor="ml_price_enabled" className="flex items-center gap-2">
+						<input
+							id="ml_price_enabled"
+							type="checkbox"
+							checked={config.ml_price_enabled}
+							onChange={(e) => onChange({ ml_price_enabled: e.target.checked })}
+							className="rounded"
+						/>
+						<span className="text-sm">
+							Use ML for target / stop (when model files exist on server)
+							{!isDefault('ml_price_enabled') && <span className="text-yellow-400 ml-1">*</span>}
+						</span>
+					</label>
+					<div className="text-xs text-[var(--muted)] mt-1 ml-6">
+						Separate from verdict ML. Uses confidence threshold when either ML option is enabled.
+					</div>
+					{config.ml_price_enabled && config.ml_price_models_available === false && (
+						<p className="text-xs text-amber-400 mt-2 ml-6" role="status">
+							ML price is enabled but no price model file is on the server (e.g.{' '}
+							<code className="text-amber-200">models/price_model_random_forest.pkl</code>
+							). Targets and stops use rule-based values until an operator deploys a trained model.
+						</p>
+					)}
+				</div>
 				<div className="mb-4">
 					<label htmlFor="ml_enabled" className="flex items-center gap-2">
 						<input
@@ -211,28 +173,30 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 						Default: {defaultConfig.ml_enabled ? 'Enabled' : 'Disabled'}
 					</div>
 				</div>
-				{config.ml_enabled && (
+				{(config.ml_enabled || config.ml_price_enabled) && (
 					<div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-6">
-						<div>
-							<label htmlFor="ml_model_version" className="block text-sm mb-1">
-								ML Model Version
-								{!isDefault('ml_model_version') && <span className="text-yellow-400 ml-1">*</span>}
-							</label>
-							<input
-								id="ml_model_version"
-								type="text"
-								value={config.ml_model_version || ''}
-								onChange={(e) => onChange({ ml_model_version: e.target.value || null })}
-								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
-								placeholder="v1.0"
-							/>
-							<div className="text-xs text-[var(--muted)] mt-1">
-								Default: {defaultConfig.ml_model_version || 'None'}
+						{config.ml_enabled && (
+							<div>
+								<label htmlFor="ml_model_version" className="block text-sm mb-1">
+									ML Model Version
+									{!isDefault('ml_model_version') && <span className="text-yellow-400 ml-1">*</span>}
+								</label>
+								<input
+									id="ml_model_version"
+									type="text"
+									value={config.ml_model_version || ''}
+									onChange={(e) => onChange({ ml_model_version: e.target.value || null })}
+									className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
+									placeholder="v1.0"
+								/>
+								<div className="text-xs text-[var(--muted)] mt-1">
+									Default: {defaultConfig.ml_model_version || 'None'}
+								</div>
 							</div>
-						</div>
+						)}
 						<div>
 							<label htmlFor="ml_confidence_threshold" className="block text-sm mb-1">
-								Confidence Threshold
+								ML Confidence Threshold
 								{!isDefault('ml_confidence_threshold') && <span className="text-yellow-400 ml-1">*</span>}
 							</label>
 							<input
@@ -247,24 +211,26 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.ml_confidence_threshold}</div>
 						</div>
-						<div>
-							<label htmlFor="ml_combine_with_rules" className="flex items-center gap-2">
-								<input
-									id="ml_combine_with_rules"
-									type="checkbox"
-									checked={config.ml_combine_with_rules}
-									onChange={(e) => onChange({ ml_combine_with_rules: e.target.checked })}
-									className="rounded"
-								/>
-								<span className="text-sm">
-									Combine ML with Rule-Based Logic
-									{!isDefault('ml_combine_with_rules') && <span className="text-yellow-400 ml-1">*</span>}
-								</span>
-							</label>
-							<div className="text-xs text-[var(--muted)] mt-1 ml-6">
-								Default: {defaultConfig.ml_combine_with_rules ? 'Enabled' : 'Disabled'}
+						{config.ml_enabled && (
+							<div>
+								<label htmlFor="ml_combine_with_rules" className="flex items-center gap-2">
+									<input
+										id="ml_combine_with_rules"
+										type="checkbox"
+										checked={config.ml_combine_with_rules}
+										onChange={(e) => onChange({ ml_combine_with_rules: e.target.checked })}
+										className="rounded"
+									/>
+									<span className="text-sm">
+										Combine ML with Rule-Based Logic
+										{!isDefault('ml_combine_with_rules') && <span className="text-yellow-400 ml-1">*</span>}
+									</span>
+								</label>
+								<div className="text-xs text-[var(--muted)] mt-1 ml-6">
+									Default: {defaultConfig.ml_combine_with_rules ? 'Enabled' : 'Disabled'}
+								</div>
 							</div>
-						</div>
+						)}
 					</div>
 				)}
 			</div>

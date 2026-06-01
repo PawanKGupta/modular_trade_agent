@@ -24,6 +24,8 @@ class DummyUserRepo:
         self.db = db
         self.listed_active_only = None
         self._users = []
+        self._search_results = []
+        self.search_called = None
         self.created = None
         self.updated = None
         self.delete_called = False
@@ -33,6 +35,10 @@ class DummyUserRepo:
     def list_users(self, active_only):
         self.listed_active_only = active_only
         return self._users
+
+    def search_users(self, q, *, limit=50):
+        self.search_called = (q, limit)
+        return self._search_results
 
     def get_by_email(self, email):
         return self.by_email
@@ -79,10 +85,21 @@ def test_list_users_transforms_response(user_repo):
         DummyUser(id=1, email="a@x.com", name="A", role=UserRole.ADMIN),
         DummyUser(id=2, email="b@x.com", name="B", role=UserRole.USER),
     ]
-    result = admin.list_users(db=None)
+    result = admin.list_users(db=None, q=None, limit=50)
     assert user_repo.listed_active_only is False
     assert result[0].role == "admin"
     assert result[1].email == "b@x.com"
+
+
+def test_list_users_with_search_uses_repo(user_repo):
+    user_repo._search_results = [
+        DummyUser(id=3, email="find@x.com", name="Find", role=UserRole.USER)
+    ]
+    result = admin.list_users(db=None, q="  find  ", limit=10)
+    assert user_repo.search_called == ("find", 10)
+    assert user_repo.listed_active_only is None
+    assert len(result) == 1
+    assert result[0].email == "find@x.com"
 
 
 def test_create_user_conflict(user_repo):

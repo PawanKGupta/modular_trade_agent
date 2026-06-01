@@ -15,10 +15,9 @@ export default defineConfig({
 			reporter: ['text', 'html'],
 			include: ['src/**/*.ts', 'src/**/*.tsx'],
 			exclude: ['src/main.tsx', 'src/router.tsx', 'src/index.css', 'src/mocks/**', 'src/test/**'],
-			lines: 80,
-			branches: 80,
-			functions: 80,
-			statements: 80,
+			thresholds: {
+				lines: 90,
+			},
 		},
 	},
 	resolve: {

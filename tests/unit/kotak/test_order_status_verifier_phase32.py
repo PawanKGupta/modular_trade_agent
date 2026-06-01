@@ -17,6 +17,8 @@ from modules.kotak_neo_auto_trader.order_status_verifier import (
     get_order_status_verifier,
 )
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestOrderStatusVerifierResultSharing:
     """Test OrderStatusVerifier result sharing methods"""
@@ -34,7 +36,7 @@ class TestOrderStatusVerifierResultSharing:
             "status": "EXECUTED",
             "executed_qty": 10,
             "rejection_reason": None,
-            "verified_at": datetime.now().isoformat(),
+            "verified_at": ist_now().isoformat(),
             "broker_order": {"nOrdNo": order_id, "ordSt": "complete"},
         }
         verifier._verification_results[order_id] = result
@@ -67,7 +69,7 @@ class TestOrderStatusVerifierResultSharing:
             "symbol": "RELIANCE",
             "status": "EXECUTED",
             "executed_qty": 10,
-            "verified_at": datetime.now().isoformat(),
+            "verified_at": ist_now().isoformat(),
             "broker_order": None,
         }
         verifier._verification_results["ORDER2"] = {
@@ -75,7 +77,7 @@ class TestOrderStatusVerifierResultSharing:
             "symbol": "RELIANCE-EQ",
             "status": "PENDING",
             "executed_qty": 0,
-            "verified_at": datetime.now().isoformat(),
+            "verified_at": ist_now().isoformat(),
             "broker_order": None,
         }
         verifier._verification_results["ORDER3"] = {
@@ -83,7 +85,7 @@ class TestOrderStatusVerifierResultSharing:
             "symbol": "TATA",
             "status": "REJECTED",
             "executed_qty": 0,
-            "verified_at": datetime.now().isoformat(),
+            "verified_at": ist_now().isoformat(),
             "broker_order": None,
         }
 
@@ -142,7 +144,7 @@ class TestOrderStatusVerifierResultSharing:
         verifier = OrderStatusVerifier(broker_client)
 
         # Set last check time to 10 minutes ago (within 15 minute threshold)
-        verifier._last_check_time = datetime.now() - timedelta(minutes=10)
+        verifier._last_check_time = ist_now_naive() - timedelta(minutes=10)
 
         should_skip = verifier.should_skip_verification(minutes_threshold=15)
 
@@ -154,7 +156,7 @@ class TestOrderStatusVerifierResultSharing:
         verifier = OrderStatusVerifier(broker_client)
 
         # Set last check time to 20 minutes ago (outside 15 minute threshold)
-        verifier._last_check_time = datetime.now() - timedelta(minutes=20)
+        verifier._last_check_time = ist_now_naive() - timedelta(minutes=20)
 
         should_skip = verifier.should_skip_verification(minutes_threshold=15)
 
@@ -212,7 +214,7 @@ class TestOrderStatusVerifierResultSharing:
         broker_client = Mock()
         verifier = OrderStatusVerifier(broker_client)
 
-        check_time = datetime.now()
+        check_time = ist_now_naive()
         verifier._last_check_time = check_time
 
         retrieved_time = verifier.get_last_check_time()
@@ -233,7 +235,7 @@ class TestOrderStatusVerifierResultSharing:
         broker_client = Mock()
         verifier = OrderStatusVerifier(broker_client, check_interval_seconds=1800)
 
-        check_time = datetime.now()
+        check_time = ist_now_naive()
         verifier._last_check_time = check_time
 
         next_check_time = verifier.get_next_check_time()
@@ -262,7 +264,7 @@ class TestEODCleanupOrderVerificationSkip:
         broker_client = Mock()
         mock_verifier = Mock()
         # Mock get_last_check_time to return a recent time (within 1 minute)
-        recent_time = datetime.now() - timedelta(seconds=30)
+        recent_time = ist_now_naive() - timedelta(seconds=30)
         mock_verifier.get_last_check_time = Mock(return_value=recent_time)
         mock_verifier.verify_pending_orders = Mock(
             return_value={
@@ -298,7 +300,7 @@ class TestEODCleanupOrderVerificationSkip:
         broker_client = Mock()
         mock_verifier = Mock()
         # Mock get_last_check_time to return an old time (more than 1 minute ago)
-        old_time = datetime.now() - timedelta(minutes=20)
+        old_time = ist_now_naive() - timedelta(minutes=20)
         mock_verifier.get_last_check_time = Mock(return_value=old_time)
         mock_verifier.verify_pending_orders = Mock(
             return_value={
@@ -403,7 +405,7 @@ class TestSellMonitorOrderVerificationIntegration:
                     "status": "EXECUTED",
                     "symbol": "RELIANCE",
                     "executed_qty": 10,
-                    "verified_at": datetime.now().isoformat(),
+                    "verified_at": ist_now().isoformat(),
                     "broker_order": None,
                 }
                 if order_id == "ORDER123"
@@ -468,7 +470,7 @@ class TestSellMonitorOrderVerificationIntegration:
                         "status": "EXECUTED",
                         "symbol": "RELIANCE",
                         "executed_qty": 10,
-                        "verified_at": datetime.now().isoformat(),
+                        "verified_at": ist_now().isoformat(),
                         "broker_order": mock_broker_order,
                     }
                 ]

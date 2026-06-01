@@ -15,9 +15,11 @@ Features provided:
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, Optional, Tuple
 import logging
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ class MarketRegimeService:
         """Initialize the market regime service"""
         self._nifty_cache: Optional[pd.DataFrame] = None
         self._vix_cache: Optional[float] = None
-        self._cache_timestamp: Optional[datetime] = None
+        self._cache_timestamp = None  # naive IST datetime
         self._cache_date: Optional[str] = None  # Track which date's data is cached
 
     def get_market_regime_features(
@@ -58,7 +60,7 @@ class MarketRegimeService:
         try:
             # Use current date if not specified
             if date is None:
-                date = datetime.now().strftime("%Y-%m-%d")
+                date = ist_now_naive().strftime("%Y-%m-%d")
 
             # Fetch market data
             nifty_data = self._get_nifty_data(date)
@@ -162,7 +164,7 @@ class MarketRegimeService:
             # Cache the result
             self._nifty_cache = result_df
             self._cache_date = target_date
-            self._cache_timestamp = datetime.now()
+            self._cache_timestamp = ist_now_naive()
 
             return result_df
 
@@ -289,7 +291,7 @@ class MarketRegimeService:
             return False
 
         # Check if cache has expired
-        age = (datetime.now() - self._cache_timestamp).total_seconds()
+        age = (ist_now_naive() - self._cache_timestamp).total_seconds()
         return age < self.CACHE_DURATION
 
     def _get_default_features(self) -> Dict[str, float]:

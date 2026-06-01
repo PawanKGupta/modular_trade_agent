@@ -7,7 +7,7 @@ Manages ML model versions based on configuration.
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
+from src.infrastructure.db.timezone_utils import ist_now
 
 from utils.logger import logger
 from config.strategy_config import StrategyConfig
@@ -127,7 +127,7 @@ class ModelVersioning:
                 "volume_exhaustion_lookback_daily": config.volume_exhaustion_lookback_daily,
                 "support_resistance_lookback_daily": config.support_resistance_lookback_daily
             },
-            "trained_date": datetime.now().isoformat(),
+            "trained_date": ist_now().isoformat(),
             "performance": performance or {}
         }
         

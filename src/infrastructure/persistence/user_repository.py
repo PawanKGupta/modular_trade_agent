@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from server.app.core.security import hash_password
@@ -21,6 +22,34 @@ class UserRepository:
         if active_only:
             q = q.filter(Users.is_active.is_(True))
         return q.order_by(Users.created_at.desc()).all()
+
+    def search_users(self, q: str, *, limit: int = 50) -> list[Users]:
+        """Match email, name, or id substring (case-insensitive)."""
+        needle = q.strip()
+        if not needle:
+            return []
+        # Avoid user-supplied % / _ becoming LIKE wildcards
+        safe = needle.replace("%", "").replace("_", "")
+        if not safe:
+            return []
+        term = f"%{safe}%"
+        id_filters = []
+        if safe.isdigit():
+            id_filters.append(Users.id == int(safe))
+        id_filters.append(cast(Users.id, String).ilike(term))
+        return (
+            self.db.query(Users)
+            .filter(
+                or_(
+                    Users.email.ilike(term),
+                    Users.name.ilike(term),
+                    *id_filters,
+                )
+            )
+            .order_by(Users.created_at.desc())
+            .limit(limit)
+            .all()
+        )
 
     def create_user(
         self, email: str, password: str, name: str | None = None, role: UserRole = UserRole.USER

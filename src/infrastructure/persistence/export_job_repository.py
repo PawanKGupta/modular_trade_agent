@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from sqlalchemy import select, and_
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ExportJob
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 try:
     from utils.logger import logger
@@ -77,9 +76,9 @@ class ExportJobRepository:
             job.error_message = error_message
 
         if status == "processing" and job.started_at is None:
-            job.started_at = datetime.now()
+            job.started_at = ist_now_naive()
         elif status in ("completed", "failed") and job.completed_at is None:
-            job.completed_at = datetime.now()
+            job.completed_at = ist_now_naive()
             if job.started_at:
                 duration = (job.completed_at - job.started_at).total_seconds()
                 job.duration_seconds = duration
@@ -118,7 +117,7 @@ class ExportJobRepository:
         job.records_exported = records_exported
 
         if job.completed_at is None:
-            job.completed_at = datetime.now()
+            job.completed_at = ist_now_naive()
             if job.started_at:
                 duration = (job.completed_at - job.started_at).total_seconds()
                 job.duration_seconds = duration

@@ -15,6 +15,8 @@ from modules.kotak_neo_auto_trader.services.portfolio_service import (
 )
 from src.infrastructure.db.models import OrderStatus
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class TestPortfolioCache:
     """Test PortfolioCache functionality"""
@@ -324,7 +326,7 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.CLOSED
         mock_db_order.symbol = "WIPRO-EQ"
-        mock_db_order.placed_at = datetime.now()
+        mock_db_order.placed_at = ist_now_naive()
 
         mock_orders_repo = Mock()
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))

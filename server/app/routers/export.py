@@ -333,8 +333,8 @@ def export_signals_csv(
             # Format: DATE((ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')
             tz_expr = "DATE((signals.ts AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')"
             query = db.query(Signals).filter(
-                text(f"{tz_expr} >= :start_date").bindparam(start_date=start_date_str),
-                text(f"{tz_expr} <= :end_date").bindparam(end_date=end_date_str),
+                text(f"{tz_expr} >= :start_date").bindparams(start_date=start_date_str),
+                text(f"{tz_expr} <= :end_date").bindparams(end_date=end_date_str),
             )
         else:
             # SQLite: Direct date extraction (SQLite stores naive datetimes, assumed to be IST)

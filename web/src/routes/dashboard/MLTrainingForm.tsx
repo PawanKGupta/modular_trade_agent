@@ -4,15 +4,24 @@ import type { StartTrainingPayload } from '@/api/ml-training';
 interface Props {
 	onSubmit: (payload: StartTrainingPayload) => void;
 	isSubmitting: boolean;
+	/** API / network error from the parent mutation (e.g. HTTP 400 missing CSV). */
+	serverError?: string | null;
 }
 
-export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
+const DEFAULT_TRAINING_PATH: Record<StartTrainingPayload['model_type'], string> = {
+	verdict_classifier: 'data/training/verdict_classifier.csv',
+	price_regressor: 'data/ml_training_data_price.csv',
+};
+
+export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 	const [modelType, setModelType] = useState<StartTrainingPayload['model_type']>('verdict_classifier');
 	const [algorithm, setAlgorithm] = useState<StartTrainingPayload['algorithm']>('xgboost');
-	const [trainingDataPath, setTrainingDataPath] = useState('data/training/verdict_classifier.csv');
+	const [trainingDataPath, setTrainingDataPath] = useState(DEFAULT_TRAINING_PATH.verdict_classifier);
 	const [hyperparametersText, setHyperparametersText] = useState('{"max_depth": 6, "learning_rate": 0.1}');
 	const [notes, setNotes] = useState<string>('');
 	const [autoActivate, setAutoActivate] = useState(true);
+	const [incrementalTraining, setIncrementalTraining] = useState(true);
+	const [trainingRunEndDate, setTrainingRunEndDate] = useState<string>(''); // yyyy-mm-dd ISO
 	const [error, setError] = useState<string | null>(null);
 
 	const parsedHyperparameters = useMemo<Record<string, string | number | boolean>>(() => {
@@ -40,6 +49,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 		}
 
 		try {
+			const trimmedEnd = trainingRunEndDate.trim();
 			const payload: StartTrainingPayload = {
 				model_type: modelType,
 				algorithm,
@@ -47,6 +57,8 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				hyperparameters: parsedHyperparameters,
 				notes: notes.trim() || undefined,
 				auto_activate: autoActivate,
+				incremental_training: incrementalTraining,
+				training_run_end_date: trimmedEnd ? trimmedEnd : undefined,
 			};
 			onSubmit(payload);
 		} catch (err) {
@@ -61,7 +73,14 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 					<span className="text-[var(--muted)]">Model Type</span>
 					<select
 						value={modelType}
-						onChange={(e) => setModelType(e.target.value as StartTrainingPayload['model_type'])}
+						onChange={(e) => {
+							const next = e.target.value as StartTrainingPayload['model_type'];
+							setModelType(next);
+							setTrainingDataPath(DEFAULT_TRAINING_PATH[next]);
+							if (next === 'price_regressor' && algorithm === 'logistic_regression') {
+								setAlgorithm('xgboost');
+							}
+						}}
 						className="bg-[#0f1720] border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0 text-[var(--text)]"
 					>
 						<option value="verdict_classifier">Verdict Classifier</option>
@@ -78,7 +97,9 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 					>
 						<option value="xgboost">XGBoost</option>
 						<option value="random_forest">Random Forest</option>
-						<option value="logistic_regression">Logistic Regression</option>
+						{modelType === 'verdict_classifier' && (
+							<option value="logistic_regression">Logistic Regression</option>
+						)}
 					</select>
 				</label>
 			</div>
@@ -89,10 +110,15 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 					type="text"
 					value={trainingDataPath}
 					onChange={(e) => setTrainingDataPath(e.target.value)}
-					placeholder="data/training/verdict_classifier.csv"
+					placeholder={DEFAULT_TRAINING_PATH[modelType]}
 					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
 				/>
 			</label>
+			<p className="text-xs text-[var(--muted)]">
+				{modelType === 'price_regressor'
+					? 'Price regressor needs actual_pnl_pct and entry_date (use data/ml_training_data_price.csv).'
+					: 'Verdict classifier needs a label column (use data/training/verdict_classifier.csv).'}
+			</p>
 
 			<label className="text-xs sm:text-sm flex flex-col gap-1">
 				<span className="text-[var(--muted)]">Hyperparameters (JSON)</span>
@@ -104,6 +130,31 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				/>
 				<span className="text-[var(--muted)] text-xs">
 					Example: {"{ \"max_depth\": 6, \"learning_rate\": 0.1 }"}
+				</span>
+			</label>
+
+			<label className="text-xs sm:text-sm flex flex-col gap-1">
+				<span className="text-[var(--muted)]">Training runs through (optional)</span>
+				<input
+					type="date"
+					value={trainingRunEndDate}
+					onChange={(e) => setTrainingRunEndDate(e.target.value)}
+					className="bg-transparent border border-[#1e293b] rounded px-3 py-2.5 sm:p-2 text-xs sm:text-sm min-h-[44px] sm:min-h-0"
+				/>
+				<span className="text-[var(--muted)] text-xs">
+					Leave blank to use today (server IST). Rows are capped by entry/backtest date.
+				</span>
+			</label>
+
+			<label className="text-xs sm:text-sm flex items-center gap-2 min-h-[44px] sm:min-h-0">
+				<input
+					type="checkbox"
+					checked={incrementalTraining}
+					onChange={(e) => setIncrementalTraining(e.target.checked)}
+					className="w-4 h-4 sm:w-auto sm:h-auto"
+				/>
+				<span className="text-[var(--text)]">
+					Incremental training (requires watermark + consolidated CSV baseline)
 				</span>
 			</label>
 
@@ -127,7 +178,11 @@ export function MLTrainingForm({ onSubmit, isSubmitting }: Props) {
 				<span>Auto-activate new model version</span>
 			</label>
 
-			{error && <div className="text-xs sm:text-sm text-red-400">{error}</div>}
+			{(serverError || error) && (
+				<div role="alert" className="text-xs sm:text-sm text-red-400 break-words whitespace-pre-wrap">
+					{serverError || error}
+				</div>
+			)}
 
 			<button
 				type="submit"

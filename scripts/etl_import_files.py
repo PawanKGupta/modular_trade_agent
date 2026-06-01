@@ -13,8 +13,9 @@ if str(ROOT_DIR) not in sys.path:
 
 from sqlalchemy.orm import Session
 
-from src.infrastructure.db.models import Activity, Orders, PnlDaily, Signals
+from src.infrastructure.db.models import Orders, PnlDaily, Signals
 from src.infrastructure.db.session import SessionLocal
+from src.infrastructure.persistence.trade_history_repository import TradeHistoryRepository
 
 
 def load_json(path: Path) -> Any:
@@ -55,46 +56,50 @@ def import_pending_orders(db: Session, path: Path) -> int:
     return count
 
 
-def import_trades_history(db: Session, path: Path) -> int:
+def import_trades_history(
+    db: Session, path: Path, *, trade_history_repo: TradeHistoryRepository | None = None
+) -> int:
+    """Import legacy trade history files to CSV (activity DB table removed)."""
+    del db  # kept for backward-compatible call signature
     if not path.exists():
         return 0
-    # support both CSV and JSON structures
+
+    repo = trade_history_repo or TradeHistoryRepository(str(path.parent / "trade_history.csv"))
     count = 0
     if path.suffix.lower() == ".csv":
         with path.open("r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                act = Activity(
-                    user_id=1,
-                    type="trade_history",
-                    ref_id=row.get("order_id"),
-                    details_json=row,
-                    ts=(
-                        datetime.fromisoformat(row["timestamp"])
-                        if row.get("timestamp")
-                        else datetime.utcnow()
-                    ),
+                repo.record_trade(
+                    {
+                        "timestamp": row.get("timestamp") or datetime.utcnow().isoformat(),
+                        "ticker": row.get("ticker") or "",
+                        "side": row.get("side") or "",
+                        "quantity": row.get("quantity") or "",
+                        "price": row.get("price") or "",
+                        "order_id": row.get("order_id") or "",
+                        "verdict": row.get("verdict") or "",
+                        "combined_score": row.get("combined_score") or "",
+                    }
                 )
-                db.add(act)
                 count += 1
     else:
         data = load_json(path)
         records = data if isinstance(data, list) else []
         for row in records:
-            act = Activity(
-                user_id=row.get("user_id", 1),
-                type="trade_history",
-                ref_id=str(row.get("order_id")) if row.get("order_id") is not None else None,
-                details_json=row,
-                ts=(
-                    datetime.fromisoformat(row["timestamp"])
-                    if row.get("timestamp")
-                    else datetime.utcnow()
-                ),
+            repo.record_trade(
+                {
+                    "timestamp": row.get("timestamp") or datetime.utcnow().isoformat(),
+                    "ticker": row.get("ticker") or "",
+                    "side": row.get("side") or "",
+                    "quantity": row.get("quantity") or "",
+                    "price": row.get("price") or "",
+                    "order_id": str(row.get("order_id")) if row.get("order_id") is not None else "",
+                    "verdict": row.get("verdict") or "",
+                    "combined_score": row.get("combined_score") or "",
+                }
             )
-            db.add(act)
             count += 1
-    db.commit()
     return count
 
 

@@ -8,10 +8,12 @@ Supports both in-memory (default) and file-based caching.
 import pickle
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Optional, Dict, Any
 from pathlib import Path
 import pandas as pd
+
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 from utils.logger import logger
 from config.strategy_config import StrategyConfig
@@ -89,7 +91,7 @@ class CacheService:
             entry = self.memory_cache[key]
             expires_at = entry.get('expires_at')
             
-            if expires_at and datetime.now() < expires_at:
+            if expires_at and ist_now_naive() < expires_at:
                 logger.debug(f"Cache HIT (memory): {key}")
                 return entry['value']
             else:
@@ -106,7 +108,7 @@ class CacheService:
                         entry = pickle.load(f)
                     
                     expires_at = entry.get('expires_at')
-                    if expires_at and datetime.now() < expires_at:
+                    if expires_at and ist_now_naive() < expires_at:
                         logger.debug(f"Cache HIT (file): {key}")
                         # Also add to memory cache for faster access
                         self.memory_cache[key] = entry
@@ -138,12 +140,12 @@ class CacheService:
         if ttl_seconds is None:
             ttl_seconds = self.default_ttl
         
-        expires_at = datetime.now() + timedelta(seconds=ttl_seconds)
+        expires_at = ist_now_naive() + timedelta(seconds=ttl_seconds)
         
         entry = {
             'value': value,
             'expires_at': expires_at,
-            'cached_at': datetime.now()
+            'cached_at': ist_now_naive()
         }
         
         # Store in memory cache
@@ -210,7 +212,7 @@ class CacheService:
             Cache key
         """
         # Use today's date as part of key (data changes daily)
-        today = datetime.now().date().isoformat()
+        today = ist_now_naive().date().isoformat()
         return self._make_key('ohlcv', ticker, timeframe, end_date, date=today)
     
     def get_fundamentals_key(self, ticker: str) -> str:
@@ -224,7 +226,7 @@ class CacheService:
             Cache key
         """
         # Fundamentals change less frequently, use weekly key
-        week = datetime.now().isocalendar()
+        week = ist_now_naive().isocalendar()
         return self._make_key('fundamentals', ticker, week=week)
     
     def get_news_sentiment_key(
@@ -243,7 +245,7 @@ class CacheService:
             Cache key
         """
         # News sentiment changes daily
-        today = datetime.now().date().isoformat()
+        today = ist_now_naive().date().isoformat()
         return self._make_key('news_sentiment', ticker, lookback_days, date=today)
 
 

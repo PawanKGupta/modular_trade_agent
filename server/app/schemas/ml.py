@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, constr
@@ -17,6 +17,19 @@ class MLTrainingRequest(BaseModel):
     hyperparameters: dict[str, float | int | str | bool] = Field(default_factory=dict)
     notes: constr(max_length=512) | None = None
     auto_activate: bool = False
+    incremental_training: bool = Field(
+        default=True,
+        description=(
+            "When true and an active model has a watermark, require baseline + new CSV rows "
+            "for supervised refits."
+        ),
+    )
+    training_run_end_date: date | None = Field(
+        default=None,
+        description=(
+            "Inclusive cap on row dates (entry/backtest). Defaults to server today (IST)."
+        ),
+    )
 
 
 class MLTrainingJobResponse(BaseModel):
@@ -49,6 +62,7 @@ class MLModelResponse(BaseModel):
     model_type: str
     version: str
     model_path: str
+    training_data_through_date: date | None = None
     accuracy: float | None
     training_job_id: int
     is_active: bool

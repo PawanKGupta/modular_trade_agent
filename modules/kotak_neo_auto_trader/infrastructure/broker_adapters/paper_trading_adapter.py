@@ -10,6 +10,7 @@ from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 from ...config.paper_trading_config import PaperTradingConfig
@@ -26,6 +27,18 @@ from ...domain import (
 )
 from ..persistence import PaperTradeStore
 from ..simulation import OrderSimulator, PortfolioManager, PriceProvider
+
+# Execution messages that should keep limit orders pending (not mark DB failed).
+_TRANSIENT_PENDING_FAILURE_PHRASES = (
+    "price not available",
+    "market is closed",
+)
+
+
+def _is_transient_pending_failure(message: str) -> bool:
+    """True when failure is environmental/transient; order should stay pending."""
+    lowered = (message or "").lower()
+    return any(phrase in lowered for phrase in _TRANSIENT_PENDING_FAILURE_PHRASES)
 
 
 class PaperTradingBrokerAdapter(IBrokerGateway):
@@ -727,7 +740,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                         quantity=int(pos.quantity),
                         average_price=Money(pos.avg_price),
                         current_price=Money(pos.avg_price),  # Will be updated by price_provider
-                        last_updated=pos.opened_at or datetime.now(),
+                        last_updated=pos.opened_at or ist_now_naive(),
                     )
                     self.portfolio._holdings[symbol] = holding
 
@@ -930,12 +943,15 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise RuntimeError(f"Order placement failed: {e}")
 
-    def _execute_order(self, order: Order) -> None:
+    def _execute_order(
+        self, order: Order, *, predetermined_execution_price: Money | None = None
+    ) -> None:
         """
         Execute an order
 
         Args:
             order: Order to execute
+            predetermined_execution_price: When set, skip simulator pricing (e.g. daily-high limit fill)
         """
         # Get current balance
         account = self.store.get_account()
@@ -964,10 +980,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
             estimated_price = self.price_provider.get_price(price_symbol)
             if estimated_price is None:
-                order.reject(f"Price not available for {order.symbol} (tried {price_symbol})")
-                self._save_order(order)
-                self._sync_order_failure_to_db(
-                    order, "rejected", f"Price not available for {order.symbol}"
+                logger.warning(
+                    "Price not available for %s (tried %s); keeping order pending for next check",
+                    order.symbol,
+                    price_symbol,
                 )
                 return
 
@@ -1003,7 +1019,10 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 return
 
         # Execute order
-        success, message, execution_price = self.order_simulator.execute_order(order)
+        if predetermined_execution_price is not None:
+            success, message, execution_price = True, "Predetermined fill", predetermined_execution_price
+        else:
+            success, message, execution_price = self.order_simulator.execute_order(order)
 
         if success and execution_price:
             # Mark as executed
@@ -1030,14 +1049,14 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 "price below limit" in message.lower() or "price above limit" in message.lower()
             )
 
-            if is_price_limit_message:
-                # This is expected behavior for limit orders - don't mark as failed
-                # Order should remain PENDING/ONGOING and will be checked again
+            if is_price_limit_message or _is_transient_pending_failure(message):
+                # Expected: limit not hit, market closed, or transient price fetch failure
                 logger.debug(
-                    f"Limit order {order.symbol} not yet executable: {message}. "
-                    f"Order remains in {order.status.value} status and will be checked again."
+                    "Order %s not executable yet: %s. Status remains %s.",
+                    order.symbol,
+                    message,
+                    order.status.value,
                 )
-                # Don't sync to DB as failure - order is still valid and pending
             else:
                 # Actual failure (rejection, insufficient funds, etc.)
                 msg = (
@@ -1172,7 +1191,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Update order status
         self.store.update_order(
-            order_id, {"status": "CANCELLED", "cancelled_at": datetime.now().isoformat()}
+            order_id, {"status": "CANCELLED", "cancelled_at": ist_now().isoformat()}
         )
 
         # Sync cancellation to DB using stored db_session
@@ -1252,6 +1271,9 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     # Not yet time to execute AMO order
                     summary["still_pending"] += 1
                     continue
+            elif not self.order_simulator._is_market_open(order):
+                summary["still_pending"] += 1
+                continue
 
             # Try to execute the order
             try:
@@ -1288,6 +1310,49 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             )
 
         return summary
+
+    def fill_pending_sell_limits_on_daily_high(self, symbol: str, session_high: float) -> bool:
+        """
+        Fill open sell limit order(s) when session high >= limit price.
+
+        Used when Yahoo daily high touched the frozen target but live LTP has not
+        filled the pending limit yet. Fill price is the limit (target), not LTP.
+        """
+        if not self.is_connected():
+            raise ConnectionError("Not connected")
+
+        norm_symbol = symbol.replace(".NS", "").replace("-EQ", "")
+        filled_any = False
+
+        for order in list(self.get_pending_orders()):
+            if order.order_type != OrderType.LIMIT or not order.is_sell_order():
+                continue
+            order_norm = order.symbol.replace(".NS", "").replace("-EQ", "")
+            if order_norm != norm_symbol:
+                continue
+
+            success, _message, execution_price = (
+                self.order_simulator.try_fill_sell_limit_on_session_high(order, session_high)
+            )
+            if not success or not execution_price:
+                continue
+
+            try:
+                self._execute_order(order, predetermined_execution_price=execution_price)
+            except Exception as e:
+                logger.error(
+                    f"Error filling sell limit on daily high for {order.symbol}: {e}"
+                )
+                continue
+
+            if order.is_executed():
+                filled_any = True
+                logger.info(
+                    f"Pending sell limit filled on daily high touch: {order.symbol} "
+                    f"@ Rs {execution_price.amount:.2f}"
+                )
+
+        return filled_any
 
     # ===== PORTFOLIO MANAGEMENT =====
 
@@ -1450,7 +1515,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     quantity=int(pos.quantity),
                     average_price=Money(pos.avg_price),
                     current_price=Money(pos.avg_price),  # Will be updated by price_provider
-                    last_updated=pos.opened_at or datetime.now(),
+                    last_updated=pos.opened_at or ist_now_naive(),
                 )
                 holdings.append(holding)
 
@@ -1547,7 +1612,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 quantity=int(position.quantity),
                 average_price=Money(position.avg_price),
                 current_price=Money(position.avg_price),  # Will be updated by price_provider
-                last_updated=position.opened_at or datetime.now(),
+                last_updated=position.opened_at or ist_now_naive(),
             )
 
             return holding
@@ -1575,7 +1640,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             for holding in holdings:
                 if holding.symbol in prices:
                     holding.current_price = Money(prices[holding.symbol])
-                    holding.last_updated = datetime.now()
+                    holding.last_updated = ist_now_naive()
 
         return holdings
 
@@ -1592,7 +1657,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             price = self.price_provider.get_price(symbol)
             if price:
                 holding.current_price = Money(price)
-                holding.last_updated = datetime.now()
+                holding.last_updated = ist_now_naive()
 
         return holding
 
@@ -1622,6 +1687,17 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         account = self.store.get_account()
         return Money(account["available_cash"])
+
+    def get_portfolio(self) -> dict[str, Any]:
+        """
+        Cash summary for re-entry balance checks.
+
+        Matches the shape expected by PaperTradingEngineAdapter.place_reentry_orders().
+        """
+        limits = self.get_account_limits()
+        available = limits["available_cash"]
+        cash = float(available.amount) if isinstance(available, Money) else float(available)
+        return {"availableCash": cash, "cash": cash}
 
     # ===== UTILITY METHODS =====
 
@@ -1659,7 +1735,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         The counter is checked against the database to ensure uniqueness even after service restarts.
         """
-        timestamp = datetime.now().strftime("%Y%m%d")
+        timestamp = ist_now_naive().strftime("%Y%m%d")
 
         # Check database for highest counter value for today to prevent duplicates after restart
         if self.db_session and self.user_id:
@@ -1753,7 +1829,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             "price": float(execution_price.amount),
             "order_value": order_value,
             "charges": charges,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": ist_now().isoformat(),
         }
 
         # For sell orders, include P&L information from trade_info

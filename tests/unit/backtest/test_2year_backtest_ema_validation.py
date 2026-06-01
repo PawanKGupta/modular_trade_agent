@@ -18,6 +18,8 @@ import sys
 import os
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from backtest.backtest_engine import BacktestEngine
@@ -38,7 +40,7 @@ class Test2YearBacktestEMAValidation:
     @pytest.fixture
     def date_range_2years(self):
         """2-year date range ending today"""
-        end_date = datetime.now()
+        end_date = ist_now_naive()
         start_date = end_date - timedelta(days=730)  # ~2 years
         return (start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 

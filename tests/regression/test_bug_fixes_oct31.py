@@ -19,6 +19,8 @@ from datetime import datetime
 import pytest
 
 # Now in tests/regression/ so need to go up 2 levels
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -348,7 +350,7 @@ class TestTradeHistoryUpdateAfterReentry:
                 "level": reentry_level,
                 "rsi": reentry_rsi,
                 "price": reentry_price,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
             }
         )
 
@@ -369,7 +371,7 @@ class TestTradeHistoryUpdateAfterReentry:
                 "level": 30,
                 "rsi": 28.5,
                 "price": 100.00,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
             }
         )
 
@@ -381,7 +383,7 @@ class TestTradeHistoryUpdateAfterReentry:
                 "level": 20,
                 "rsi": 18.2,
                 "price": 95.00,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
             }
         )
 
@@ -397,7 +399,7 @@ class TestTradeHistoryUpdateAfterReentry:
             "level": 30,
             "rsi": 29.01,
             "price": 2050.00,
-            "time": datetime.now().isoformat(),
+            "time": ist_now().isoformat(),
         }
 
         # Validate all required fields present
@@ -550,7 +552,7 @@ class TestIntegrationReentryWorkflow:
                 "level": next_level,
                 "rsi": rsi,
                 "price": reentry_price,
-                "time": datetime.now().isoformat(),
+                "time": ist_now().isoformat(),
             }
         )
 
@@ -582,11 +584,11 @@ class TestEdgeCases:
     def test_concurrent_reentry_same_day(self):
         """Test that only 1 reentry per day is allowed"""
         # Create entry with reentry from today
-        today_str = datetime.now().isoformat()
+        today_str = ist_now().isoformat()
         entry = {"symbol": "TESTSTOCK", "reentries": [{"qty": 25, "level": 30, "time": today_str}]}
 
         # Check if reentry already happened today
-        today = datetime.now().date()
+        today = ist_now().date()
         reentries_today = [
             r
             for r in entry.get("reentries", [])

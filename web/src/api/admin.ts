@@ -26,8 +26,13 @@ export interface UpdateUserPayload {
 	password?: string;
 }
 
-export async function listUsers(): Promise<AdminUser[]> {
-	const { data } = await api.get<AdminUser[]>('/admin/users');
+export async function listUsers(params?: { q?: string; limit?: number }): Promise<AdminUser[]> {
+	const { data } = await api.get<AdminUser[]>('/admin/users', {
+		params:
+			params?.q != null && params.q.trim() !== ''
+				? { q: params.q.trim(), limit: params.limit ?? 50 }
+				: undefined,
+	});
 	return data;
 }
 

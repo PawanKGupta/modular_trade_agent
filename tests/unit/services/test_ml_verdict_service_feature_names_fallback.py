@@ -4,6 +4,8 @@ Unit Tests for ML Verdict Service Feature Names Fallback
 Tests for the feature_names_in_ fallback logic when feature file is missing.
 """
 
+# ruff: noqa: E402 -- project root on sys.path before local imports
+
 import shutil
 import sys
 import tempfile
@@ -17,6 +19,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.strategy_config import StrategyConfig
+from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
 from services.ml_verdict_service import MLVerdictService
 
 
@@ -83,7 +86,10 @@ class TestMLVerdictServiceFeatureNamesFallback:
             f.write("volume_ratio\n")
 
         with patch("joblib.load") as mock_load:
-            mock_load.return_value = mock_model_with_feature_names
+            m = MagicMock()
+            m.feature_names_in_ = list(mock_model_with_feature_names.feature_names_in_)
+            m.n_features_in_ = 4
+            mock_load.return_value = m
 
             service = MLVerdictService(model_path=str(model_path), config=default_config)
 
@@ -145,9 +151,8 @@ class TestMLVerdictServiceFeatureNamesFallback:
                     and "Feature columns file not found and model doesn't have feature_names_in_"
                     in str(call)
                 ]
-                assert (
-                    len(warning_calls) > 0
-                ), "Should log warning when both file and feature_names_in_ are missing"
+                warn_msg = "Should log warning when both file and feature_names_in_ are missing"
+                assert len(warning_calls) > 0, warn_msg
 
                 # Verify feature_cols is empty (will extract dynamically)
                 assert len(service.feature_cols) == 0
@@ -169,7 +174,10 @@ class TestMLVerdictServiceFeatureNamesFallback:
             f.write("ema200\n")
 
         with patch("joblib.load") as mock_load:
-            mock_load.return_value = mock_model_with_feature_names
+            m = MagicMock()
+            m.feature_names_in_ = list(mock_model_with_feature_names.feature_names_in_)
+            m.n_features_in_ = 2
+            mock_load.return_value = m
 
             service = MLVerdictService(model_path=str(model_path), config=default_config)
 
@@ -226,9 +234,10 @@ class TestMLVerdictServiceFeatureNamesFallback:
 
             # Verify feature columns order matches model.feature_names_in_
             expected_order = list(mock_model_with_feature_names.feature_names_in_)
-            assert (
-                service.feature_cols == expected_order
-            ), f"Feature order mismatch. Expected: {expected_order}, Got: {service.feature_cols}"
+            order_msg = (
+                f"Feature order mismatch. Expected: {expected_order}, Got: {service.feature_cols}"
+            )
+            assert service.feature_cols == expected_order, order_msg
 
     def test_feature_names_fallback_with_legacy_enhanced_file(
         self, default_config, temp_dir, mock_model_with_feature_names
@@ -245,7 +254,10 @@ class TestMLVerdictServiceFeatureNamesFallback:
             f.write("dip_depth_from_20d_high_pct\n")
 
         with patch("joblib.load") as mock_load:
-            mock_load.return_value = mock_model_with_feature_names
+            m = MagicMock()
+            m.feature_names_in_ = list(mock_model_with_feature_names.feature_names_in_)
+            m.n_features_in_ = 3
+            mock_load.return_value = m
 
             service = MLVerdictService(model_path=str(model_path), config=default_config)
 
@@ -253,3 +265,41 @@ class TestMLVerdictServiceFeatureNamesFallback:
             assert len(service.feature_cols) == 3
             assert "rsi_10" in service.feature_cols
             assert "dip_depth_from_20d_high_pct" in service.feature_cols
+
+    def test_versioned_manifest_wins_over_legacy_sidecar(self, default_config, temp_dir):
+        """JSON manifest is preferred to heuristic *_features.txt discovery."""
+        model_path = temp_dir / "verdict_model_random_forest.pkl"
+        model_path.touch()
+
+        write_verdict_feature_manifest(model_path, ["w", "x", "y", "z"])
+
+        legacy = temp_dir / "verdict_model_features_random_forest.txt"
+        legacy.write_text("rsi_10\nprice_above_ema200\n", encoding="utf-8")
+
+        mock = MagicMock()
+        mock.n_features_in_ = 4
+        mock.feature_names_in_ = ["a", "b", "c", "d"]
+
+        with patch("joblib.load") as mock_load:
+            mock_load.return_value = mock
+            service = MLVerdictService(model_path=str(model_path), config=default_config)
+
+        assert service.model_loaded is True
+        assert service.feature_cols == ["w", "x", "y", "z"]
+
+    def test_manifest_feature_count_mismatch_disables_ml(self, default_config, temp_dir):
+        """Reject load when manifest column count disagrees with sklearn expectation."""
+        model_path = temp_dir / "verdict_model_random_forest.pkl"
+        model_path.touch()
+        write_verdict_feature_manifest(model_path, ["a", "b", "c"])
+
+        mock = MagicMock()
+        mock.n_features_in_ = 99
+
+        with patch("joblib.load") as mock_load:
+            mock_load.return_value = mock
+            service = MLVerdictService(model_path=str(model_path), config=default_config)
+
+        assert service.model_loaded is False
+        assert service.model is None
+        assert service.feature_cols == []

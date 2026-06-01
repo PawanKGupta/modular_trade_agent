@@ -108,6 +108,73 @@ def test_get_live_price_handles_import_errors(monkeypatch):
     assert mtm_updater.get_live_price("RANDOM") is None
 
 
+def test_get_live_price_keeps_ns_suffix(monkeypatch):
+    seen = {}
+
+    class _Ticker:
+        def __init__(self, ticker: str):
+            seen["ticker"] = ticker
+            self.info = {"currentPrice": 10.0}
+            self.fast_info = {}
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=_Ticker))
+
+    assert mtm_updater.get_live_price("FOO.NS") == 10.0
+    assert seen["ticker"] == "FOO.NS"
+
+
+def test_get_live_price_ignores_fast_info_when_get_raises(monkeypatch):
+    class _BadFastInfo:
+        def get(self, key, default=None):
+            raise RuntimeError("no fast info")
+
+    class _Ticker:
+        def __init__(self, ticker: str):
+            self.info = {}
+            self.fast_info = _BadFastInfo()
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=_Ticker))
+
+    assert mtm_updater.get_live_price("XYZ") is None
+
+
+def test_update_mtm_for_user_closes_session_when_db_omitted(monkeypatch):
+    positions = [DummyPosition("ABC", 1, 100.0)]
+
+    class _Session(DummySession):
+        def __init__(self):
+            super().__init__(positions)
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    db = _Session()
+    monkeypatch.setattr(mtm_updater, "SessionLocal", lambda: db)
+    monkeypatch.setattr(mtm_updater, "get_live_price", lambda symbol: 100.0)
+
+    stats = mtm_updater.update_mtm_for_user(7, db=None)
+
+    assert stats["updated"] == 1
+    assert db.closed == 1
+
+
+def test_update_mtm_for_user_outer_error_returns_payload(monkeypatch):
+    class _BadDb:
+        def query(self, _model):
+            raise RuntimeError("db unavailable")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mtm_updater, "SessionLocal", lambda: _BadDb())
+
+    stats = mtm_updater.update_mtm_for_user(3, db=None)
+
+    assert stats["total"] == 0
+    assert "error" in stats
+
+
 def test_update_unrealized_pnl_rolls_back_on_commit_error():
     class _FailingSession(DummySession):
         def commit(self):

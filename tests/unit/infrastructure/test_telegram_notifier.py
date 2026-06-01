@@ -7,13 +7,14 @@ from src.domain.entities.analysis_result import AnalysisResult
 from src.domain.entities.signal import Signal, SignalType
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def make_result(ticker='AAA.NS', buy=True):
     sig_type = SignalType.BUY if buy else SignalType.WATCH
-    sig = Signal(ticker=ticker, signal_type=sig_type, timestamp=datetime.now(), strength_score=50.0)
+    sig = Signal(ticker=ticker, signal_type=sig_type, timestamp=ist_now_naive(), strength_score=50.0)
     return AnalysisResult(
         ticker=ticker,
         status='success',
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         signal=sig,
         metadata={'last_close': 100.0},
     )

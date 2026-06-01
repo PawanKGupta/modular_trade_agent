@@ -39,5 +39,24 @@ describe('SignupPage', () => {
 		await screen.findByText('Dashboard');
 	});
 
-	// Additional error path tests can be added by asserting non-navigation or error banners if UI changes
+	it('shows signup error when API rejects', async () => {
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/signup', () =>
+				HttpResponse.json({ detail: 'Email already registered' }, { status: 400 })
+			)
+		);
+
+		renderWithRouter(<SignupPage />);
+		fireEvent.change(document.querySelector('input[type="email"]')!, {
+			target: { value: 'dup@example.com' },
+		});
+		fireEvent.change(document.querySelector('input[type="password"]')!, {
+			target: { value: 'Secret123' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Email already registered')).toBeInTheDocument();
+		});
+	});
 });

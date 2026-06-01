@@ -19,5 +19,16 @@ class Settings(BaseSettings):
     log_retention_days: int = 90
     jwt_refresh_days: int = 30
 
+    # Billing (Razorpay). Enforcement off => non-admin users keep full access (backward compatible).
+    subscription_enforcement_enabled: bool = False
+    # ISO 8601 end instant for grandfathering full entitlements (optional)
+    subscription_grandfather_until: str | None = None
+    # Optional env overrides; else admin can store key id + encrypted secrets in DB (see crypto.py).
+    # When True, RAZORPAY_KEY_* and RAZORPAY_WEBHOOK_SECRET env vars are ignored (DB only).
+    razorpay_use_db_only: bool = False
+    razorpay_key_id: str | None = None
+    razorpay_key_secret: str | None = None
+    razorpay_webhook_secret: str | None = None
+
 
 settings = Settings()

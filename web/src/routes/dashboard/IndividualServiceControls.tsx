@@ -19,14 +19,17 @@ const TASK_DISPLAY_NAMES: Record<string, string> = {
 	sell_monitor: 'Sell Monitor',
 	analysis: 'Analysis',
 	buy_orders: 'Buy Orders',
+	buy_margin_preview: 'Buy Margin Preview',
 	eod_cleanup: 'End-of-Day Cleanup',
 };
 
 const TASK_DESCRIPTIONS: Record<string, string> = {
-	premarket_retry: 'Retries failed orders from previous day',
+	premarket_retry: 'Retries failed buy orders after morning placement (default 9:03 AM IST)',
 	sell_monitor: 'Monitors sell orders continuously, converts to market on RSI exit',
 	analysis: 'Analyzes stocks and generates recommendations',
-	buy_orders: 'Places AMO buy orders (fresh entries and re-entries) for the next day',
+	buy_orders: 'Places REGULAR buy orders at market open (default 9:01 AM IST)',
+	buy_margin_preview:
+		'Evening margin preview for next-morning buys — notify only, no placement (default 4:05 PM IST)',
 	eod_cleanup: 'End-of-day cleanup and reset for the next day',
 };
 

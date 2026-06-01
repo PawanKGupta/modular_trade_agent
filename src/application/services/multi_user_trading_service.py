@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime
 from datetime import time as dt_time
 from typing import Any
 
@@ -30,6 +29,7 @@ from src.application.services.broker_credentials import (
 from src.application.services.config_converter import user_config_to_strategy_config
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
 from src.application.services.schedule_manager import ScheduleManager
+from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.notification_repository import NotificationRepository
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
@@ -546,7 +546,7 @@ class MultiUserTradingService:
 
             while service.running and not getattr(service, "shutdown_requested", False):
                 try:
-                    now = datetime.now()
+                    now = ist_now()
                     current_time = now.time()
 
                     # Check only once per minute
@@ -592,11 +592,11 @@ class MultiUserTradingService:
                                         action="scheduler",
                                     )
 
-                    # 9:05 AM - Pre-market AMO adjustment
+                    # 9:05 AM - Pre-market pending buy adjustment
                     if dt_time(9, 5) <= current_time < dt_time(9, 6):
                         if not service.tasks_completed.get("premarket_amo_adjustment"):
                             try:
-                                service.adjust_amo_quantities_premarket()
+                                service.run_premarket_amo_adjustment()
                                 service.tasks_completed["premarket_amo_adjustment"] = True
                             except Exception as e:
                                 user_logger.error(
@@ -605,18 +605,8 @@ class MultiUserTradingService:
                                     action="scheduler",
                                 )
 
-                    # 9:15 AM - Execute AMO orders at market open
-                    if dt_time(9, 15) <= current_time < dt_time(9, 16):
-                        if not service.tasks_completed.get("amo_orders_executed"):
-                            try:
-                                service.execute_amo_orders_at_market_open()
-                                service.tasks_completed["amo_orders_executed"] = True
-                            except Exception as e:
-                                user_logger.error(
-                                    f"AMO order execution failed: {e}",
-                                    exc_info=True,
-                                    action="scheduler",
-                                )
+                    # Morning buys use 9:01 REGULAR (buy_orders); do not auto-execute legacy
+                    # pending AMO at 9:15 — see PaperTradingServiceAdapter.execute_amo_orders_at_market_open.
 
                     # Sell monitoring (continuous during market hours, uses DB schedule)
                     sell_schedule = thread_schedule_manager.get_schedule("sell_monitor")
@@ -719,6 +709,27 @@ class MultiUserTradingService:
                                 except Exception as e:
                                     user_logger.error(
                                         f"Analysis failed: {e}", exc_info=True, action="scheduler"
+                                    )
+
+                    # Evening buy margin preview (uses DB schedule)
+                    margin_preview_schedule = thread_schedule_manager.get_schedule(
+                        "buy_margin_preview"
+                    )
+                    if margin_preview_schedule and margin_preview_schedule.enabled:
+                        preview_time = margin_preview_schedule.schedule_time
+                        current_minutes = current_time.hour * 60 + current_time.minute
+                        preview_minutes = preview_time.hour * 60 + preview_time.minute
+                        preview_diff = current_minutes - preview_minutes
+                        if 0 <= preview_diff < 2:
+                            if not service.tasks_completed.get("buy_margin_preview"):
+                                try:
+                                    service.run_buy_margin_preview()
+                                    service.tasks_completed["buy_margin_preview"] = True
+                                except Exception as e:
+                                    user_logger.error(
+                                        f"Buy margin preview failed: {e}",
+                                        exc_info=True,
+                                        action="scheduler",
                                     )
 
                     # Buy orders (uses DB schedule)

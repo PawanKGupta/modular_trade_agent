@@ -6,6 +6,7 @@ from backtest.backtest_config import BacktestConfig
 from backtest.performance_analyzer import PerformanceAnalyzer
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class FakeEngine:
     def __init__(self):
         self.symbol = 'TEST.NS'
@@ -25,7 +26,7 @@ class FakeEngine:
 
     def get_trades_dataframe(self):
         if self._trades_df is None:
-            now = datetime.now()
+            now = ist_now_naive()
             data = [
                 {
                     'symbol': 'TEST.NS', 'position_id': 1,
@@ -52,12 +53,12 @@ def test_position_manager_basic_operations():
     cfg = BacktestConfig()
     pm = PositionManager('ABC.NS', cfg)
 
-    pos = pm.add_position(entry_date=datetime.now(), entry_price=100.0, entry_reason='test')
+    pos = pm.add_position(entry_date=ist_now_naive(), entry_price=100.0, entry_reason='test')
     assert pos is not None
     assert pm.get_total_quantity() > 0
     assert pm.get_average_entry_price() > 0
 
-    pm.close_all_positions(exit_date=datetime.now(), exit_price=110.0, exit_reason='end')
+    pm.close_all_positions(exit_date=ist_now_naive(), exit_price=110.0, exit_reason='end')
     df = pm.get_trades_dataframe()
     assert not df.empty
     assert (df['pnl'] != 0).any()

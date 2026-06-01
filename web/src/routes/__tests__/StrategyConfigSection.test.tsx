@@ -96,4 +96,41 @@ describe('StrategyConfigSection', () => {
 		const rsiPeriodLabel = screen.getByText(/RSI Period/i);
 		expect(rsiPeriodLabel.textContent).toContain('*');
 	});
+
+	it('updates remaining RSI and chart quality fields', () => {
+		const onChange = vi.fn();
+		render(<StrategyConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText(/RSI Extreme Oversold/i), { target: { value: '18' } });
+		expect(onChange).toHaveBeenCalledWith({ rsi_extreme_oversold: 18 });
+
+		fireEvent.change(screen.getByLabelText(/RSI Near Oversold/i), { target: { value: '38' } });
+		expect(onChange).toHaveBeenCalledWith({ rsi_near_oversold: 38 });
+
+		fireEvent.change(screen.getByLabelText(/Min Absolute Avg Volume/i), { target: { value: '20000' } });
+		expect(onChange).toHaveBeenCalledWith({ min_absolute_avg_volume: 20000 });
+
+		fireEvent.change(screen.getByLabelText(/Max Position Volume Ratio/i), { target: { value: '0.15' } });
+		expect(onChange).toHaveBeenCalledWith({ max_position_volume_ratio: 0.15 });
+
+		fireEvent.change(screen.getByLabelText(/Max Gap Frequency/i), { target: { value: '20' } });
+		expect(onChange).toHaveBeenCalledWith({ chart_quality_max_gap_frequency: 20 });
+	});
+
+	it('updates rsi oversold and remaining chart quality thresholds', () => {
+		const onChange = vi.fn();
+		render(<StrategyConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText(/RSI Oversold Threshold/i), { target: { value: '28' } });
+		expect(onChange).toHaveBeenCalledWith({ rsi_oversold: 28 });
+
+		fireEvent.change(screen.getByLabelText(/Min Quality Score/i), { target: { value: '55' } });
+		expect(onChange).toHaveBeenCalledWith({ chart_quality_min_score: 55 });
+
+		fireEvent.change(screen.getByLabelText(/Min Daily Range/i), { target: { value: '1.5' } });
+		expect(onChange).toHaveBeenCalledWith({ chart_quality_min_daily_range_pct: 1.5 });
+
+		fireEvent.change(screen.getByLabelText(/Max Extreme Candle Frequency/i), { target: { value: '15' } });
+		expect(onChange).toHaveBeenCalledWith({ chart_quality_max_extreme_candle_frequency: 15 });
+	});
 });

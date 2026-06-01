@@ -165,4 +165,4 @@ Historical and outdated documentation has been moved to the `archive/` folder fo
 
 **Reference Documentation:**
 - See `docs/` folder for all documentation organized by category
-- See `docs/development/DOCUMENTATION_RULES.md` for documentation standards and guidelines
+- See [`docs/DOCUMENTATION_RULES.md`](DOCUMENTATION_RULES.md) for documentation standards and guidelines

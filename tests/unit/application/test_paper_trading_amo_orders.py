@@ -1,10 +1,10 @@
 """
 Tests for Paper Trading AMO Order Flow
 
-Tests the complete AMO order lifecycle:
-1. Order placement (4:05 PM) - No execution, saved as PENDING
+Tests the paper AMO simulator API (legacy evening path):
+1. Order placement off-hours (AMO, pending)
 2. Pre-market quantity adjustment (9:05 AM)
-3. AMO order execution at market open (9:15 AM)
+3. execute_amo_orders_at_market_open() — manual/tests only (not scheduled at 9:15)
 """
 
 from math import floor
@@ -358,7 +358,7 @@ class TestPreMarketQuantityAdjustment:
 
 
 class TestAMOOrderExecution:
-    """Test AMO order execution at market open (9:15 AM)"""
+    """Test execute_amo_orders_at_market_open (direct call; not multi-user scheduler)."""
 
     def test_execute_amo_orders_at_market_open_executes_pending_orders(
         self, db_session, test_user, mock_paper_broker
@@ -574,7 +574,7 @@ class TestCompleteAMOFlow:
     """Test complete AMO order flow from placement to execution"""
 
     def test_complete_amo_flow_4pm_to_915am(self, db_session, test_user, mock_paper_broker):
-        """Test complete flow: Place at 4:05 PM, adjust at 9:05 AM, execute at 9:15 AM"""
+        """Legacy API flow: off-hours AMO place, 9:05 adjust, execute_amo at open (manual)."""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 

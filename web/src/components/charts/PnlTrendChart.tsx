@@ -19,6 +19,7 @@ interface PnlTrendChartProps {
 export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: PnlTrendChartProps) {
 	const [timeRange, setTimeRange] = useState<TimeRange>('30d');
 	const [showUnrealized, setShowUnrealized] = useState(false);
+	const unrealizedControlled = includeUnrealized !== undefined;
 
 	const getDatesForRange = (range: TimeRange) => {
 		const today = new Date();
@@ -48,7 +49,7 @@ export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: Pn
 
 	const { startDate, endDate } = getDatesForRange(timeRange);
 
-	const includeUnrealizedEffective = includeUnrealized ?? showUnrealized;
+	const includeUnrealizedEffective = unrealizedControlled ? includeUnrealized : showUnrealized;
 
 	const { data, isLoading, isError } = useQuery({
 		queryKey: ['pnl', 'daily', timeRange, tradeMode, includeUnrealizedEffective],
@@ -108,15 +109,17 @@ export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: Pn
 					))}
 				</div>
 				<div className="flex-1" />
-				<label className="flex items-center gap-2 text-xs text-[var(--muted)] cursor-pointer">
-					<input
-						type="checkbox"
-						checked={includeUnrealizedEffective}
-						onChange={(e) => setShowUnrealized(e.target.checked)}
-						className="w-4 h-4"
-					/>
-					Show Unrealized
-				</label>
+				{!unrealizedControlled && (
+					<label className="flex items-center gap-2 text-xs text-[var(--muted)] cursor-pointer">
+						<input
+							type="checkbox"
+							checked={showUnrealized}
+							onChange={(e) => setShowUnrealized(e.target.checked)}
+							className="w-4 h-4"
+						/>
+						Show Unrealized
+					</label>
+				)}
 			</div>
 
 			{/* Stats */}
@@ -174,7 +177,7 @@ export function PnlTrendChart({ height = 360, tradeMode, includeUnrealized }: Pn
 							dot={false}
 							name="Cumulative P&L"
 						/>
-						{showUnrealized && (
+						{includeUnrealizedEffective && (
 							<Line
 								type="monotone"
 								dataKey="unrealized"

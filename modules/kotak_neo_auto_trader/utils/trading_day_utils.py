@@ -1,9 +1,10 @@
 """Trading day utility functions for order expiry calculation"""
 
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
 from src.infrastructure.db.timezone_utils import IST, ist_now
-from src.infrastructure.utils.holiday_calendar import get_next_trading_day, is_trading_day as is_trading_day_check
+from src.infrastructure.utils.holiday_calendar import get_next_trading_day
+from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
 
 MARKET_CLOSE_TIME = time(15, 30)  # 3:30 PM IST
 SATURDAY = 5  # weekday() returns 5 for Saturday
@@ -22,8 +23,8 @@ def get_next_trading_day_close(failed_at: datetime) -> datetime:
         datetime: Next trading day market close (3:30 PM IST)
 
     Example:
-        - failed_at: Monday 4:05 PM → Returns: Tuesday 3:30 PM
-        - failed_at: Friday 4:05 PM → Returns: Monday 3:30 PM (skip weekend)
+        - failed_at: Monday 9:01 AM → Returns: Tuesday 3:30 PM
+        - failed_at: Friday 9:01 AM → Returns: Monday 3:30 PM (skip weekend)
     """
     # Extract date (handle both timezone-aware and naive datetimes)
     if failed_at.tzinfo is None:

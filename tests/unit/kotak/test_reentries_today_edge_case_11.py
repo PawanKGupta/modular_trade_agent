@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -45,7 +47,7 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_counts_from_reentries_array(self, engine, mock_positions_repo):
         """Test that reentries_today() counts reentries from reentries array"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         # Mock position with reentries array
         mock_position = MagicMock()
@@ -66,7 +68,7 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_filters_by_symbol(self, engine, mock_positions_repo):
         """Test that reentries_today() only counts reentries for the specified symbol"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         # Mock RELIANCE position
         mock_reliance = MagicMock()
@@ -96,9 +98,9 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_filters_by_date(self, engine, mock_positions_repo):
         """Test that reentries_today() only counts reentries from today"""
-        today = datetime.now().date()
+        today = ist_now().date()
         yesterday = today - timedelta(days=1)
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
         yesterday_iso = datetime.combine(yesterday, datetime.min.time()).isoformat()
 
         mock_position = MagicMock()
@@ -120,8 +122,8 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_handles_multiple_reentries_same_day(self, engine, mock_positions_repo):
         """Test that reentries_today() counts multiple reentries in same day"""
-        today = datetime.now().date()
-        today_iso = datetime.now().isoformat()
+        today = ist_now().date()
+        today_iso = ist_now().isoformat()
 
         mock_position = MagicMock()
         mock_position.reentries = [
@@ -202,7 +204,7 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_case_insensitive_symbol_matching(self, engine, mock_positions_repo):
         """Test that reentries_today() matches symbols case-insensitively"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         mock_position = MagicMock()
         mock_position.reentries = [{"qty": 10, "level": 20, "time": today_iso}]
@@ -219,7 +221,7 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_daily_cap_enforcement(self, engine, mock_positions_repo):
         """Test that daily cap is enforced correctly with fixed reentries_today()"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         # Mock position with 1 reentry today
         mock_position = MagicMock()
@@ -241,8 +243,8 @@ class TestReentriesTodayEdgeCase11:
     ):
         """Test that reentries_today() uses placed_at date (placement date)
         not time (execution date)"""
-        yesterday = (datetime.now() - timedelta(days=1)).date()
-        today_iso = datetime.now().isoformat()
+        yesterday = (ist_now_naive() - timedelta(days=1)).date()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -268,8 +270,8 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_prioritizes_placed_at_over_time(self, engine, mock_positions_repo):
         """Test that reentries_today() prioritizes placed_at field over time field"""
-        today = datetime.now().date()
-        yesterday_iso = (datetime.now() - timedelta(days=1)).isoformat()
+        today = ist_now().date()
+        yesterday_iso = (ist_now_naive() - timedelta(days=1)).isoformat()
 
         from unittest.mock import MagicMock
 
@@ -296,7 +298,7 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test backward compatibility: falls back to time field if placed_at key is not present"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -323,7 +325,7 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test backward compatibility: falls back to time field if placed_at is empty string"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -346,7 +348,7 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_fallback_when_placed_at_is_none(self, engine, mock_positions_repo):
         """Test backward compatibility: falls back to time field if placed_at is None"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -371,7 +373,7 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test backward compatibility: falls back to time field if placed_at is invalid format"""
-        today_iso = datetime.now().isoformat()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -394,8 +396,8 @@ class TestReentriesTodayEdgeCase11:
 
     def test_reentries_today_handles_partial_execution(self, engine, mock_positions_repo):
         """Test that partial execution still counts as 1 re-entry for daily cap"""
-        today = datetime.now().date()
-        today_iso = datetime.now().isoformat()
+        today = ist_now().date()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -420,8 +422,8 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test daily cap fix: AMO order placed Day 1, executed Day 2 → counts for Day 1"""
-        yesterday = (datetime.now() - timedelta(days=1)).date()
-        today_iso = datetime.now().isoformat()
+        yesterday = (ist_now_naive() - timedelta(days=1)).date()
+        today_iso = ist_now().isoformat()
 
         from unittest.mock import MagicMock
 
@@ -447,8 +449,8 @@ class TestReentriesTodayEdgeCase11:
         self, engine, mock_positions_repo
     ):
         """Test that reentries_today() correctly filters by placement date"""
-        yesterday = (datetime.now() - timedelta(days=1)).date()
-        today_iso = datetime.now().isoformat()
+        yesterday = (ist_now_naive() - timedelta(days=1)).date()
+        today_iso = ist_now().isoformat()
 
         # Mock position with multiple reentries:
         # - One placed yesterday (executed today)
@@ -465,7 +467,7 @@ class TestReentriesTodayEdgeCase11:
                 "qty": 5,
                 "level": 10,
                 "time": today_iso,
-                "placed_at": datetime.now().date().isoformat(),  # Placed today ✅
+                "placed_at": ist_now().date().isoformat(),  # Placed today ✅
             },
         ]
         mock_positions_repo.get_by_symbol.return_value = mock_position
