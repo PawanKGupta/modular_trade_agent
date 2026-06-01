@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { LogExportButton } from '../dashboard/LogExportButton';
+import { LogExportButton, exportLogsToCsv, exportLogsToJson } from '../dashboard/LogExportButton';
 
 describe('LogExportButton', () => {
 	const logs = [
@@ -40,6 +40,13 @@ describe('LogExportButton', () => {
 
 		expect(screen.getByRole('button', { name: 'Export CSV' })).toBeDisabled();
 		expect(screen.getByRole('button', { name: 'Export JSON' })).toBeDisabled();
+	});
+
+	it('alerts when exporting empty log lists', () => {
+		exportLogsToCsv([]);
+		exportLogsToJson([]);
+		expect(window.alert).toHaveBeenCalledTimes(2);
+		expect(window.alert).toHaveBeenCalledWith('No logs to export');
 	});
 
 	it('exports logs without context payload', () => {
