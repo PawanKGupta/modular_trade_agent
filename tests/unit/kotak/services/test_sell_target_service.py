@@ -6,6 +6,10 @@ import pytest
 
 from modules.kotak_neo_auto_trader.services.sell_target_service import (
     compute_sell_target,
+    is_price_on_tick_grid,
+    nse_fallback_tick_size_by_price,
+    prepare_broker_sell_limit_price,
+    resolve_tick_size,
     round_sell_price,
 )
 
@@ -26,6 +30,46 @@ class TestRoundSellPrice:
         assert (
             round_sell_price(100.1, exchange="NSE", symbol="FOO-EQ", scrip_master=scrip) == 100.25
         )
+
+    def test_nse_5000_band_rounds_high_priced_ema9(self):
+        """Regression: LINDEINDIA-style targets must not stay at 7140.9 on a 0.10-only tick."""
+        assert round_sell_price(7140.9, exchange="NSE") == 7141.0
+        assert round_sell_price(7088.3, exchange="NSE") == 7088.5
+
+    def test_scrip_fine_tick_uses_band_floor_for_high_prices(self):
+        scrip = MagicMock()
+        scrip.get_tick_size.return_value = 0.10
+        tick, source = resolve_tick_size(
+            7140.9, exchange="NSE", symbol="LINDEINDIA-EQ", scrip_master=scrip
+        )
+        assert tick == 0.50
+        assert source == "scrip_master+band_floor"
+        assert round_sell_price(7140.9, exchange="NSE", symbol="LINDEINDIA-EQ", scrip_master=scrip) == 7141.0
+
+    def test_is_price_on_tick_grid_detects_invalid_high_price_paise(self):
+        assert is_price_on_tick_grid(7140.9, 0.10) is True
+        assert is_price_on_tick_grid(7140.9, 0.50) is False
+        assert is_price_on_tick_grid(7141.0, 0.50) is True
+
+
+class TestPrepareBrokerSellLimitPrice:
+    def test_places_valid_high_price_target(self):
+        prepared = prepare_broker_sell_limit_price(7140.9, exchange="NSE", symbol="LINDEINDIA-EQ")
+        assert prepared.action == "place"
+        assert prepared.price == 7141.0
+
+    def test_rejects_non_positive(self):
+        prepared = prepare_broker_sell_limit_price(0.0, exchange="NSE")
+        assert prepared.action == "invalid_tick"
+        assert prepared.price is None
+
+
+class TestNseFallbackTickBands:
+    def test_bands(self):
+        assert nse_fallback_tick_size_by_price(500) == 0.05
+        assert nse_fallback_tick_size_by_price(2500) == 0.10
+        assert nse_fallback_tick_size_by_price(7140) == 0.50
+        assert nse_fallback_tick_size_by_price(25000) == 1.00
 
 
 class TestComputeSellTarget:

@@ -667,15 +667,28 @@ class SellOrderManager:
             Price rounded to valid tick size (rounded UP to next valid tick)
         """
         from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
-            round_sell_price,
+            prepare_broker_sell_limit_price,
         )
 
-        return round_sell_price(
+        prepared = prepare_broker_sell_limit_price(
             price,
             exchange=exchange,
             symbol=symbol,
             scrip_master=self.scrip_master,
         )
+        if prepared.action == "place" and prepared.price is not None:
+            if prepared.price != price:
+                logger.info(
+                    f"Sell limit rounded {symbol or exchange}: Rs {price:.4f} -> Rs {prepared.price:.2f} "
+                    f"(tick={prepared.tick_size})"
+                )
+            return prepared.price
+
+        logger.error(
+            f"Invalid sell limit price for {symbol or exchange}: raw Rs {price:.4f}, "
+            f"tick={prepared.tick_size}, adjustments={prepared.adjustments}"
+        )
+        return None
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """
@@ -2998,12 +3011,13 @@ class SellOrderManager:
                 logger.warning(f"Invalid quantity {qty} for {symbol}")
                 return None
 
-            # Round price to valid tick size (use symbol to get tick size from scrip master)
             rounded_price = self.round_to_tick_size(target_price, exchange=exchange, symbol=symbol)
-            if rounded_price != target_price:
-                logger.debug(
-                    f"Rounded price from Rs {target_price:.4f} to Rs {rounded_price:.2f} (tick size)"
+            if rounded_price is None or rounded_price <= 0:
+                logger.error(
+                    f"Cannot place sell for {symbol}: invalid limit price after tick rounding "
+                    f"(raw Rs {target_price:.4f})"
                 )
+                return None
 
             # Place limit sell order
             logger.info(f"Placing LIMIT SELL order: {symbol} x{qty} @ Rs {rounded_price:.2f}")
@@ -3176,12 +3190,13 @@ class SellOrderManager:
                 else config.DEFAULT_EXCHANGE
             )
 
-            # Round price to valid tick size (use symbol to get tick size from scrip master)
             rounded_price = self.round_to_tick_size(new_price, exchange=exchange, symbol=symbol)
-            if rounded_price != new_price:
-                logger.debug(
-                    f"Rounded price from Rs {new_price:.4f} to Rs {rounded_price:.2f} (tick size)"
+            if rounded_price is None or rounded_price <= 0:
+                logger.error(
+                    f"Cannot modify sell {order_id} for {symbol}: invalid limit price "
+                    f"(raw Rs {new_price:.4f})"
                 )
+                return False
 
             # Modify existing order directly (more efficient than cancel+replace)
             logger.info(f"Modifying order {order_id}: {symbol} x{qty} @ Rs {rounded_price:.2f}")
@@ -5640,6 +5655,14 @@ class SellOrderManager:
             rounded_ema9 = self.round_to_tick_size(
                 current_ema9, exchange=exchange_for_tick_size, symbol=symbol_for_tick_size
             )
+            if rounded_ema9 is None or rounded_ema9 <= 0:
+                logger.warning(
+                    f"{symbol}: Skipping EMA9 monitor update — invalid rounded price "
+                    f"(raw EMA9={current_ema9})"
+                )
+                result["action"] = "skipped"
+                result["success"] = True
+                return result
 
             # Check if ROUNDED EMA9 is lower than lowest seen
             # Initialize lowest_ema9 from target_price if not set
