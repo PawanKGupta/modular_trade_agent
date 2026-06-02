@@ -112,10 +112,23 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 **NSE backfill** (run after deploy or when switching from Yahoo-backed cache):
 
 ```bash
+.venv/bin/python tools/nse_bhavcopy_backfill.py backfill-cached --days 500
 .venv/bin/python tools/nse_bhavcopy_backfill.py backfill-symbol DMART.NS --days 500
 .venv/bin/python tools/nse_bhavcopy_backfill.py backfill-dates --from 2024-07-08 --to 2026-06-02 --symbols DMART.NS,LINDEINDIA.NS
 .venv/bin/python tools/ohlcv_cache_admin.py nse-gap-fill RELIANCE.NS --days 500
 ```
+
+``backfill-cached`` reads distinct ``SYMBOL.NS`` keys from ``price_cache`` (interval ``1d``) and downloads **one bhavcopy per trading day**, upserting all cached symbols from that file. Use ``--limit 10`` for a dry run on a subset.
+
+**Deploy runbook (flip to NSE on production):**
+
+1. Deploy code with `OHLCV_CACHE_ENABLED=true` and `DB_URL` pointing at prod Postgres.
+2. Until backfill completes, set `OHLCV_DAILY_SOURCE=nse_with_yahoo_fallback` (or keep `yahoo`) so gap-fill does not fail closed on NSE outages.
+3. Run `backfill-cached --days 500` (or `nse-gap-fill` per symbol) against prod DB.
+4. Verify with `tools/nse_rsi_pilot.py` on a few names; optional `compare_yahoo_cache_ohlcv.py SYMBOL.NS --days 30`.
+5. Set `OHLCV_DAILY_SOURCE=nse` and redeploy/restart API workers.
+
+For bulk universes, prefer `backfill-cached` or `backfill-dates` (one NSE zip per day) over repeated `backfill-symbol` (one zip per day **per symbol**).
 
 **RSI pilot** (NSE vs Yahoo vs TradingView, no DB):
 
