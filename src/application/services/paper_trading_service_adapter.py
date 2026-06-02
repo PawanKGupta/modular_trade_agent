@@ -25,6 +25,8 @@ from src.infrastructure.logging import get_user_logger
 logger = logging.getLogger(__name__)
 
 _OHLCV_DUP_TOLERANCE = 1e-6
+# Match IndicatorService / live AutoTradeEngine — short windows (e.g. 60d) inflate RSI10.
+_DAILY_INDICATOR_LOOKBACK_DAYS = 800
 
 
 def _ohlcv_field(row: pd.Series, name: str) -> float | None:
@@ -2790,12 +2792,15 @@ class PaperTradingEngineAdapter:
         except Exception as e:
             self.logger.error(f"Failed to save position metadata: {e}")
 
-    def _get_daily_indicators(self, ticker: str) -> dict | None:
+    def _get_daily_indicators(
+        self, ticker: str, *, add_current_day: bool = True
+    ) -> dict | None:
         """
         Get daily indicators (RSI, EMA9, price, volume) for a ticker.
 
         Args:
             ticker: Stock ticker (e.g., "INFY.NS")
+            add_current_day: Include today's session bar when available (live path policy).
 
         Returns:
             Dict with indicators or None if failed
@@ -2805,8 +2810,12 @@ class PaperTradingEngineAdapter:
 
             from core.data_fetcher import fetch_ohlcv_yf
 
-            # Fetch 60 days of data for stable indicators
-            data = fetch_ohlcv_yf(ticker, days=60, interval="1d")
+            data = fetch_ohlcv_yf(
+                ticker,
+                days=_DAILY_INDICATOR_LOOKBACK_DAYS,
+                interval="1d",
+                add_current_day=add_current_day,
+            )
 
             if data is None or len(data) < 30:
                 return None
@@ -2878,6 +2887,21 @@ class PaperTradingEngineAdapter:
                 action="place_reentry_orders",
             )
 
+            # Re-entry RSI source policy (matches live AutoTradeEngine.place_reentry_orders):
+            # morning run uses previous closed-day RSI; post-close uses today-inclusive RSI.
+            from datetime import time as dt_time
+
+            from core.volume_analysis import is_market_hours
+            from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+            now_time = ist_now().time()
+            market_close = dt_time(15, 30)
+            use_latest_rsi_after_close = (
+                AutoTradeEngine.is_trading_weekday()
+                and (not is_market_hours())
+                and now_time >= market_close
+            )
+
             # Active BUY orders only — re-entry adds to existing holdings (matches live engine).
             pending_orders = self.broker.get_all_orders()
             orders_repo = None
@@ -2917,7 +2941,9 @@ class PaperTradingEngineAdapter:
                     ticker = f"{symbol}.NS" if not symbol.endswith(".NS") else symbol
 
                     # Get current indicators
-                    ind = self._get_daily_indicators(ticker)
+                    ind = self._get_daily_indicators(
+                        ticker, add_current_day=use_latest_rsi_after_close
+                    )
                     if not ind:
                         self.logger.warning(
                             f"Skipping {symbol}: missing indicators for re-entry evaluation",

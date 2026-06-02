@@ -238,6 +238,57 @@ def test_cache_hit_revalidates_stale_partial_meta(db_session, monkeypatch):
     assert meta.fetch_status == "ok"
 
 
+def test_gap_fill_routes_to_nse_for_daily(db_session, monkeypatch):
+    """Daily gap_fill uses NSE ingest when OHLCV_DAILY_SOURCE=nse."""
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: False,
+    )
+
+    nse_called = {"n": 0}
+
+    class FakeIngest:
+        def __init__(self, _db):
+            pass
+
+        def fill_symbol_range(self, ticker, start, end):
+            nse_called["n"] += 1
+            assert ticker == "Z.NS"
+            return 3
+
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.NseBhavcopyIngestService",
+        FakeIngest,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    n = svc.gap_fill("Z.NS", date(2024, 1, 1), date(2024, 1, 31), interval="1d")
+    assert n == 3
+    assert nse_called["n"] == 1
+
+
+def test_gap_fill_weekly_still_yahoo(db_session, monkeypatch):
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    yahoo_calls = {"n": 0}
+
+    def counting_yahoo(*args, **kwargs):
+        yahoo_calls["n"] += 1
+        return _fake_yahoo(*args, **kwargs)
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_yahoo)
+    svc.gap_fill("W.NS", date(2024, 1, 1), date(2024, 1, 31), interval="1wk")
+    assert yahoo_calls["n"] >= 1
+
+
 def test_get_ohlcv_blocks_short_daily_history_on_long_lookback(db_session, monkeypatch):
     monkeypatch.setattr(
         "src.application.services.ohlcv_cache_service.OHLCV_ENFORCE_INDICATOR_MIN_BARS",

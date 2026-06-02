@@ -190,3 +190,19 @@ OHLCV_LISTING_START_GAP_WINDOW_TRADING_DAYS = int(
 )
 OHLCV_LISTING_START_GAP_MIN_MISSING = int(os.getenv("OHLCV_LISTING_START_GAP_MIN_MISSING", "5"))
 CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))
+
+# Daily OHLCV source for price_cache gap-fill (1d interval): nse | yahoo | nse_with_yahoo_fallback
+OHLCV_DAILY_SOURCE = os.getenv("OHLCV_DAILY_SOURCE", "nse").strip().lower()
+NSE_BHAVCOPY_CACHE_DIR = os.getenv("NSE_BHAVCOPY_CACHE_DIR", ".cache/nse_bhavcopy")
+NSE_BHAVCOPY_REQUEST_DELAY_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_DELAY_S", "0.15"))
+NSE_BHAVCOPY_REQUEST_TIMEOUT_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_TIMEOUT_S", "30"))
+
+
+def daily_ohlcv_uses_nse() -> bool:
+    """True when daily gap-fill should use NSE bhavcopy (nse or nse_with_yahoo_fallback)."""
+    return OHLCV_DAILY_SOURCE in ("nse", "nse_with_yahoo_fallback")
+
+
+def daily_ohlcv_yahoo_fallback() -> bool:
+    """True when NSE gap-fill may fall back to Yahoo on failure."""
+    return OHLCV_DAILY_SOURCE == "nse_with_yahoo_fallback"

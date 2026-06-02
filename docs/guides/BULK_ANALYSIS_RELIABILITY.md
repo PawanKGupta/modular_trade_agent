@@ -85,7 +85,7 @@ with `TRADE_AGENT_USER_ID` set to the logged-in user. Trading settings from the 
 
 ## Postgres / SQLite OHLCV cache
 
-Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. Yahoo is called only when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). **Listing-aware coverage:** expected bars are counted from `max(requested_start, first cached bar in range)` (and `ohlcv_symbol_meta.first_date` when the window is empty), so young listings are not treated as permanently incomplete versus a 5y lookback. Interior holiday holes that Yahoo never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. Prices are **unadjusted** (`auto_adjust=False`), matching TradingView.
+Persistent cache (`price_cache`, `ohlcv_symbol_meta`, `corporate_actions`) avoids re-downloading full history on repeat bulk runs. **Daily `1d` bars** are filled from **NSE UDiFF bhavcopy** when `OHLCV_DAILY_SOURCE=nse` (default). Yahoo is still used for **weekly `1wk`**, **intraday `1m`**, corporate-action sync, and optional rollback (`OHLCV_DAILY_SOURCE=yahoo` or `nse_with_yahoo_fallback`). Gap-fill runs when **coverage** in the requested window is below `OHLCV_CACHE_MIN_COVERAGE_PCT` (default 85%) or the **tail** lacks bars (last ~10 trading days for `1d`, last ~3 weeks for `1wk`). **Listing-aware coverage:** expected bars are counted from `max(requested_start, first cached bar in range)` (and `ohlcv_symbol_meta.first_date` when the window is empty), so young listings are not treated as permanently incomplete versus a 5y lookback. Interior holiday holes that the vendor never returns do not force a refetch once coverage is adequate. Weekly bars use **ISO week** matching (±4 calendar days) so Yahoo week stamps align with cache without refetching. NSE daily closes align with TradingView RSI/EMA inputs; `price_cache.source` is `nse` for those rows.
 
 **Correctness check** (field-by-field O/H/L/C/V on every bar vs Yahoo):
 
@@ -98,13 +98,30 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `OHLCV_CACHE_ENABLED` | `true` when `DB_URL` set | Toggle read-through cache in `fetch_ohlcv_yf` |
+| `OHLCV_DAILY_SOURCE` | `nse` | Daily gap-fill: `nse`, `yahoo`, or `nse_with_yahoo_fallback` |
+| `NSE_BHAVCOPY_CACHE_DIR` | `.cache/nse_bhavcopy` | On-disk cache of downloaded bhavcopy CSV zips |
+| `NSE_BHAVCOPY_REQUEST_DELAY_S` | `0.15` | Pause between NSE archive HTTP requests |
 | `OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS` | `10` | Tail refresh window |
 | `OHLCV_CACHE_MIN_COVERAGE_PCT` | `85` | Health gate coverage threshold |
 | `OHLCV_CACHE_DEBUG` | `false` | INFO logs for `cache_hit` / `gap_fill` (or `trade_agent --ohlcv-cache-debug`) |
-| `OHLCV_REJECT_INVALID_FETCH` | `true` | Do not upsert Yahoo data when ingest validation fails |
+| `OHLCV_REJECT_INVALID_FETCH` | `true` | Do not upsert when ingest validation fails |
 | `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` | `250` | Warn when `partial` cache has fewer daily bars (EMA200 safety) |
 
-**Ingest validation:** Each `gap_fill` validates the Yahoo frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data.
+**Ingest validation:** Each `gap_fill` validates the OHLCV frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data.
+
+**NSE backfill** (run after deploy or when switching from Yahoo-backed cache):
+
+```bash
+.venv/bin/python tools/nse_bhavcopy_backfill.py backfill-symbol DMART.NS --days 500
+.venv/bin/python tools/nse_bhavcopy_backfill.py backfill-dates --from 2024-07-08 --to 2026-06-02 --symbols DMART.NS,LINDEINDIA.NS
+.venv/bin/python tools/ohlcv_cache_admin.py nse-gap-fill RELIANCE.NS --days 500
+```
+
+**RSI pilot** (NSE vs Yahoo vs TradingView, no DB):
+
+```bash
+.venv/bin/python tools/nse_rsi_pilot.py --symbols DMART LINDEINDIA AXISCADES
+```
 
 **Hardening (post listing-aware coverage):**
 

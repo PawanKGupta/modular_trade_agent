@@ -2274,3 +2274,34 @@ class TestDuplicateSymbolDeduplication:
         # Should only return one recommendation (first one)
         assert len(recs) == 1
         assert recs[0].ticker == "MULTI.NS"
+
+
+class TestPaperDailyIndicatorsLookback:
+    """RSI10 must use a long OHLCV window (matches live IndicatorService)."""
+
+    def test_get_daily_indicators_uses_long_lookback(self, db_session, test_user):
+        engine = PaperTradingEngineAdapter(
+            broker=MagicMock(),
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=MagicMock(),
+            logger=MagicMock(),
+        )
+        mock_df = pd.DataFrame(
+            {
+                "close": [100.0 + i * 0.1 for i in range(100)],
+                "volume": [1000] * 100,
+            }
+        )
+
+        with patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_df) as mock_fetch:
+            result = engine._get_daily_indicators("DMART.NS", add_current_day=False)
+
+        assert result is not None
+        mock_fetch.assert_called_once_with(
+            "DMART.NS",
+            days=800,
+            interval="1d",
+            add_current_day=False,
+        )
+        assert "rsi10" in result
