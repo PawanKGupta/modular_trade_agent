@@ -508,6 +508,18 @@ class IndividualServiceManager:
                 # But if we get here, it means cleanup didn't find them, so they're legitimately running
                 return False, f"Task '{task_name}' is already running", {}
 
+        if task_name == "analysis":
+            from src.application.services.analysis_access import (  # noqa: PLC0415
+                is_analysis_operator,
+            )
+
+            if not is_analysis_operator(user_id, self.db):
+                return (
+                    False,
+                    "Analysis is restricted to admin users (results are shared via Signals)",
+                    {},
+                )
+
         try:
             # Create execution record
             execution = self._execution_repo.create(
@@ -665,12 +677,20 @@ class IndividualServiceManager:
 
         logger = get_user_logger(user_id=user_id, db=task_db, module="IndividualService")
 
-        # Maximum execution time: 5 minutes for all tasks
-        MAX_EXECUTION_TIME = 300  # 5 minutes
+        from src.application.services.analysis_access import (  # noqa: PLC0415
+            ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS,
+        )
+
+        # Analysis subprocess allows up to 30 minutes; other run-once tasks stay at 5 minutes.
+        max_execution_time = (
+            ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS
+            if task_name == "analysis"
+            else 300
+        )
 
         try:
             logger.info(
-                f"Executing task once: {task_name} (timeout: {MAX_EXECUTION_TIME}s)",
+                f"Executing task once: {task_name} (timeout: {max_execution_time}s)",
                 action="run_once",
             )
 
@@ -748,7 +768,7 @@ class IndividualServiceManager:
             task_thread.start()
 
             # Wait for completion or timeout
-            if task_completed.wait(timeout=MAX_EXECUTION_TIME):
+            if task_completed.wait(timeout=max_execution_time):
                 # Task completed (success or exception)
                 if task_exception[0]:
                     raise task_exception[0]
@@ -782,7 +802,7 @@ class IndividualServiceManager:
                 # TIMEOUT: Task exceeded maximum execution time
                 duration = time.time() - start_time
                 timeout_msg = (
-                    f"Task '{task_name}' exceeded maximum execution time ({MAX_EXECUTION_TIME}s)"
+                    f"Task '{task_name}' exceeded maximum execution time ({max_execution_time}s)"
                 )
                 logger.error(timeout_msg, action="run_once", task_name=task_name)
 
@@ -794,7 +814,7 @@ class IndividualServiceManager:
                     details={
                         "error": timeout_msg,
                         "error_type": "TimeoutError",
-                        "timeout_seconds": MAX_EXECUTION_TIME,
+                        "timeout_seconds": max_execution_time,
                     },
                     task_name=task_name,
                     db_override=task_db,
@@ -2061,6 +2081,11 @@ class IndividualServiceManager:
                 result_data["last_execution_details"] = None
 
             result[task_name] = result_data
+
+        from src.application.services.analysis_access import is_analysis_operator  # noqa: PLC0415
+
+        if not is_analysis_operator(user_id, self.db):
+            result.pop("analysis", None)
 
         return result
 

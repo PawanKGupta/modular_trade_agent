@@ -669,6 +669,28 @@ def test_run_task_once_value_error(
     assert "Invalid task" in exc.value.detail
 
 
+def test_run_task_once_analysis_requires_admin(
+    individual_service_manager, conflict_service, mock_db
+):
+    """Non-admins cannot trigger shared analysis via run-once API."""
+    from src.infrastructure.db.models import UserRole, Users
+
+    non_admin = Users(id=99, email="u@test.com", role=UserRole.USER, is_active=True)
+
+    request = RunOnceRequest(task_name="analysis", execution_type="run_once")
+
+    with pytest.raises(HTTPException) as exc:
+        service.run_task_once(
+            request=request,
+            db=mock_db,
+            current=non_admin,
+            service_manager=individual_service_manager,
+        )
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert len(individual_service_manager.run_once_called) == 0
+
+
 def test_run_task_once_exception(
     individual_service_manager, conflict_service, current_user, mock_db
 ):

@@ -22,7 +22,7 @@ from src.infrastructure.utils.holiday_calendar import (
     is_trading_day,
 )
 
-from ..core.deps import get_current_user, get_db, require_entitlement
+from ..core.deps import get_current_user, get_db, require_admin, require_entitlement
 from ..schemas.service import (
     IndividualServicesStatusResponse,
     IndividualServiceStatus,
@@ -299,6 +299,9 @@ def run_task_once(
 ):
     """Run a task once immediately (run once execution)"""
     try:
+        if request.task_name == "analysis":
+            require_admin(current)
+
         conflict_service = ConflictDetectionService(db)
         has_conflict, conflict_message = conflict_service.check_conflict(
             current.id, request.task_name
@@ -320,6 +323,8 @@ def run_task_once(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,

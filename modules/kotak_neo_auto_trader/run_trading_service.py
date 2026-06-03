@@ -850,146 +850,37 @@ class TradingService:
                     )
 
     def run_analysis(self):
-        """4:00 PM - Analyze stocks and generate recommendations"""
-        from src.application.services.task_execution_wrapper import execute_task
+        """4:00 PM - Analyze stocks and persist shared Signals (admin operator only)."""
+        from src.application.services.analysis_access import is_analysis_operator
+        from src.application.services.individual_service_manager import (
+            IndividualServiceManager,
+        )
 
-        max_retries = 3
-        base_delay = 30.0  # Start with 30 seconds delay
-        timeout_seconds = 1800  # 30 minutes timeout for market analysis
-
-        with execute_task(
-            self.user_id,
-            self.db,
-            "analysis",
-            self.logger,
-            track_execution=not self.skip_execution_tracking,
-        ) as task_context:
-            task_context["max_retries"] = max_retries
-            task_context["timeout_seconds"] = timeout_seconds
-
-            for attempt in range(max_retries):
-                try:
-                    if attempt > 0:
-                        logger.info(
-                            f"Retry attempt {attempt + 1}/{max_retries} for market analysis..."
-                        )
-                        time.sleep(base_delay * attempt)  # Exponential backoff
-                        task_context["retry_attempt"] = attempt + 1
-
-                    logger.info("")
-                    logger.info("=" * 80)
-                    logger.info("TASK: MARKET ANALYSIS (4:00 PM)")
-                    logger.info("=" * 80)
-
-                    # Run trade_agent.py --backtest with timeout
-                    import subprocess
-
-                    try:
-                        result = subprocess.run(
-                            [sys.executable, "trade_agent.py", "--backtest"],
-                            check=False,
-                            cwd=project_root,
-                            capture_output=True,
-                            text=True,
-                            encoding="utf-8",
-                            errors="replace",  # Replace problematic Unicode chars instead of failing
-                            timeout=timeout_seconds,  # 30 minute timeout
-                        )
-
-                        if result.returncode == 0:
-                            logger.info("Market analysis completed successfully")
-                            task_context["return_code"] = 0
-                            task_context["success"] = True
-                            self.tasks_completed["analysis"] = True
-                            return  # Success - exit retry loop
-                        else:
-                            # Log both stdout and stderr for better debugging
-                            error_msg = (
-                                f"Market analysis failed with return code {result.returncode}"
-                            )
-                            if result.stderr:
-                                error_msg += f"\nSTDERR:\n{result.stderr}"
-                            if result.stdout:
-                                # Show last 500 chars of stdout to avoid log spam
-                                stdout_snippet = (
-                                    result.stdout[-500:]
-                                    if len(result.stdout) > 500
-                                    else result.stdout
-                                )
-                                error_msg += f"\nSTDOUT (last 500 chars):\n{stdout_snippet}"
-
-                            logger.error(error_msg)
-                            task_context["return_code"] = result.returncode
-                            task_context["error_message"] = error_msg
-
-                            # Check if it's a network-related error that we should retry
-                            error_text = (result.stderr + result.stdout).lower()
-                            network_keywords = [
-                                "timeout",
-                                "connection",
-                                "socket",
-                                "urllib3",
-                                "recv_into",
-                                "network",
-                            ]
-                            is_network_error = any(
-                                keyword in error_text for keyword in network_keywords
-                            )
-                            task_context["is_network_error"] = is_network_error
-
-                            if is_network_error and attempt < max_retries - 1:
-                                logger.warning(
-                                    f"Network error detected - will retry in {base_delay * (attempt + 1):.0f} seconds..."
-                                )
-                                continue  # Retry on network errors
-                            else:
-                                # Non-network error or final attempt - mark as failed
-                                self.tasks_completed["analysis"] = (
-                                    True  # Mark as attempted to prevent infinite retries
-                                )
-                                raise Exception(
-                                    error_msg
-                                )  # Raise to be caught by execute_task wrapper
-
-                    except subprocess.TimeoutExpired:
-                        logger.error(f"Market analysis timed out after {timeout_seconds} seconds")
-                        task_context["timeout"] = True
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"Will retry analysis in {base_delay * (attempt + 1):.0f} seconds..."
-                            )
-                            continue
-                        else:
-                            logger.error("Max retries exceeded for market analysis timeout")
-                            self.tasks_completed["analysis"] = True
-                            raise  # Raise to be caught by execute_task wrapper
-
-                except Exception as e:
-                    logger.error(f"Analysis failed with exception: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-
-                    # Check if it's a network-related exception
-                    error_str = str(e).lower()
-                    network_keywords = ["timeout", "connection", "socket", "network"]
-                    is_network_error = any(keyword in error_str for keyword in network_keywords)
-                    task_context["is_network_error"] = is_network_error
-
-                    if is_network_error and attempt < max_retries - 1:
-                        logger.warning(
-                            f"Network exception detected - will retry in {base_delay * (attempt + 1):.0f} seconds..."
-                        )
-                        continue
-                    else:
-                        # Final attempt or non-network error
-                        self.tasks_completed["analysis"] = True
-                        raise  # Re-raise to be caught by execute_task wrapper
-
-            # If we get here, all retries exhausted
-            logger.error("Market analysis failed after all retry attempts")
+        if not is_analysis_operator(self.user_id, self.db):
+            logger.info(
+                "Skipping market analysis: admin-only task (Signals are shared for all users)",
+                action="scheduler",
+            )
             self.tasks_completed["analysis"] = True
-            raise Exception("Market analysis failed after all retry attempts")
+            return
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("TASK: MARKET ANALYSIS (4:00 PM)")
+        logger.info("=" * 80)
+
+        try:
+            manager = IndividualServiceManager(self.db)
+            manager._run_analysis_task(self.user_id)
+            logger.info("Market analysis completed successfully")
+            self.tasks_completed["analysis"] = True
+        except Exception as e:
+            logger.error(f"Market analysis failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            self.tasks_completed["analysis"] = True
+            raise
 
     def run_buy_margin_preview(self):
         """16:05 IST - Evening margin preview for next-morning buys (no placement)."""
@@ -1718,8 +1609,12 @@ class TradingService:
                             # Analysis (uses DB schedule) - 30 minute timeout
                             analysis_schedule = self._schedule_manager.get_schedule("analysis")
                             if analysis_schedule and analysis_schedule.enabled:
+                                from src.application.services.analysis_access import (  # noqa: PLC0415
+                                    is_analysis_operator,
+                                )
+
                                 analysis_time = analysis_schedule.schedule_time
-                                if self.should_run_task(
+                                if is_analysis_operator(self.user_id, self.db) and self.should_run_task(
                                     "analysis", dt_time(analysis_time.hour, analysis_time.minute)
                                 ):
                                     self._execute_task_async(
@@ -1727,6 +1622,8 @@ class TradingService:
                                         "analysis",
                                         timeout_seconds=1800,  # 30 minutes
                                     )
+                                elif not is_analysis_operator(self.user_id, self.db):
+                                    self.tasks_completed["analysis"] = True
                             elif not analysis_schedule:
                                 logger.debug("Analysis schedule not found in DB")
 

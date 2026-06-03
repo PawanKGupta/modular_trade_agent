@@ -663,6 +663,9 @@ class MultiUserTradingService:
                         if 0 <= analysis_diff < 2:
                             if not service.tasks_completed.get("analysis"):
                                 try:
+                                    from src.application.services.analysis_access import (  # noqa: PLC0415
+                                        is_analysis_operator,
+                                    )
                                     from src.application.services.individual_service_manager import (  # noqa: PLC0415, E501
                                         IndividualServiceManager,
                                     )
@@ -670,42 +673,52 @@ class MultiUserTradingService:
                                         SessionLocal,
                                     )
 
-                                    user_logger.info(
-                                        f"Starting analysis task (scheduled at {analysis_time})",
-                                        action="scheduler",
-                                    )
-
-                                    # Create fresh DB session for analysis (avoid session conflict)
-                                    analysis_db = SessionLocal()
-                                    try:
-                                        # Trigger analysis via Individual Service Manager with fresh session  # noqa: E501
-                                        service_manager = IndividualServiceManager(analysis_db)
-                                        success, message, _ = service_manager.run_once(
-                                            user_id, "analysis", execution_type="scheduled"
+                                    if not is_analysis_operator(user_id, thread_db):
+                                        user_logger.info(
+                                            "Skipping scheduled analysis: admin-only "
+                                            "(shared Signals updated by admin run)",
+                                            action="scheduler",
+                                        )
+                                        service.tasks_completed["analysis"] = True
+                                    else:
+                                        user_logger.info(
+                                            f"Starting analysis task (scheduled at {analysis_time})",
+                                            action="scheduler",
                                         )
 
-                                        if success:
-                                            service.tasks_completed["analysis"] = True
-                                            user_logger.info(
-                                                f"Analysis task triggered: {message}",
-                                                action="scheduler",
-                                            )
-                                        else:
-                                            user_logger.warning(
-                                                f"Failed to trigger analysis: {message}",
-                                                action="scheduler",
-                                            )
-                                    finally:
-                                        # Ensure any pending transactions are handled before closing
+                                        # Create fresh DB session for analysis (avoid session conflict)
+                                        analysis_db = SessionLocal()
                                         try:
-                                            # Rollback any pending transaction
-                                            analysis_db.rollback()
-                                        except Exception:  # noqa: S110
-                                            pass  # Ignore rollback errors (session may already be closed/rolled back)  # noqa: E501
-                                        try:
-                                            analysis_db.close()
-                                        except Exception:  # noqa: S110
-                                            pass  # Ignore close errors if session is in bad state
+                                            # Trigger analysis via Individual Service Manager
+                                            service_manager = IndividualServiceManager(
+                                                analysis_db
+                                            )
+                                            success, message, _ = service_manager.run_once(
+                                                user_id,
+                                                "analysis",
+                                                execution_type="scheduled",
+                                            )
+
+                                            if success:
+                                                service.tasks_completed["analysis"] = True
+                                                user_logger.info(
+                                                    f"Analysis task triggered: {message}",
+                                                    action="scheduler",
+                                                )
+                                            else:
+                                                user_logger.warning(
+                                                    f"Failed to trigger analysis: {message}",
+                                                    action="scheduler",
+                                                )
+                                        finally:
+                                            try:
+                                                analysis_db.rollback()
+                                            except Exception:  # noqa: S110
+                                                pass
+                                            try:
+                                                analysis_db.close()
+                                            except Exception:  # noqa: S110
+                                                pass
                                 except Exception as e:
                                     user_logger.error(
                                         f"Analysis failed: {e}", exc_info=True, action="scheduler"
