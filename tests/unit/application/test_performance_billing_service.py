@@ -11,6 +11,7 @@ from src.application.services.performance_billing_service import (
 from src.infrastructure.db.models import (
     BillingAdminSettings,
     PerformanceBillStatus,
+    Positions,
     PnlDaily,
     TradeMode,
     UserPerformanceBillingState,
@@ -49,12 +50,13 @@ def test_user_has_real_broker_configured(broker_user_and_settings):
 def test_generate_bill_sums_pnl_and_applies_fee(db_session, broker_user_and_settings):
     u, _ = broker_user_and_settings
     db_session.add(
-        PnlDaily(
+        Positions(
             user_id=u.id,
-            date=date(2026, 3, 10),
+            symbol="BILL-EQ",
+            quantity=0,
+            avg_price=100.0,
             realized_pnl=3000.0,
-            unrealized_pnl=0.0,
-            fees=0.0,
+            closed_at=datetime(2026, 3, 10, 12, 0, 0),
         )
     )
     db_session.add(BillingAdminSettings(id=1))
@@ -79,12 +81,13 @@ def test_generate_bill_sums_pnl_and_applies_fee(db_session, broker_user_and_sett
 def test_generate_bill_idempotent(db_session, broker_user_and_settings):
     u, _ = broker_user_and_settings
     db_session.add(
-        PnlDaily(
+        Positions(
             user_id=u.id,
-            date=date(2026, 2, 1),
+            symbol="BILL2-EQ",
+            quantity=0,
+            avg_price=10.0,
             realized_pnl=100.0,
-            unrealized_pnl=0.0,
-            fees=0.0,
+            closed_at=datetime(2026, 2, 1, 12, 0, 0),
         )
     )
     db_session.add(BillingAdminSettings(id=1))
@@ -99,12 +102,13 @@ def test_carry_forward_applied_next_month(db_session, broker_user_and_settings):
     u, _ = broker_user_and_settings
     db_session.add(BillingAdminSettings(id=1))
     db_session.add(
-        PnlDaily(
+        Positions(
             user_id=u.id,
-            date=date(2026, 1, 5),
+            symbol="LOSS-EQ",
+            quantity=0,
+            avg_price=100.0,
             realized_pnl=-2000.0,
-            unrealized_pnl=0.0,
-            fees=0.0,
+            closed_at=datetime(2026, 1, 5, 12, 0, 0),
         )
     )
     db_session.commit()
@@ -115,12 +119,13 @@ def test_carry_forward_applied_next_month(db_session, broker_user_and_settings):
     assert jan.new_carry_forward_loss == 2000.0
 
     db_session.add(
-        PnlDaily(
+        Positions(
             user_id=u.id,
-            date=date(2026, 2, 10),
+            symbol="WIN-EQ",
+            quantity=0,
+            avg_price=100.0,
             realized_pnl=3000.0,
-            unrealized_pnl=0.0,
-            fees=0.0,
+            closed_at=datetime(2026, 2, 10, 12, 0, 0),
         )
     )
     db_session.commit()
@@ -151,15 +156,6 @@ def test_admin_payment_days_config(db_session, broker_user_and_settings):
     s.performance_fee_payment_days_after_invoice = 7
     db_session.commit()
 
-    db_session.add(
-        PnlDaily(
-            user_id=u.id,
-            date=date(2026, 5, 1),
-            realized_pnl=0.0,
-            unrealized_pnl=0.0,
-            fees=0.0,
-        )
-    )
     db_session.commit()
 
     gen_at = datetime(2026, 6, 1, 0, 0, 0)
@@ -168,6 +164,42 @@ def test_admin_payment_days_config(db_session, broker_user_and_settings):
     )
     assert bill is not None
     assert bill.due_at == gen_at + timedelta(days=7)
+
+
+def test_generate_bill_from_closed_positions_when_pnldaily_empty(
+    db_session, broker_user_and_settings
+):
+    """Regression: broker closes wrote positions only; billing must not read empty pnldaily."""
+    u, _ = broker_user_and_settings
+    db_session.add(BillingAdminSettings(id=1))
+    db_session.add_all(
+        [
+            Positions(
+                user_id=u.id,
+                symbol="POWERGRID-EQ",
+                quantity=0,
+                avg_price=100.0,
+                realized_pnl=219.45,
+                closed_at=datetime(2026, 5, 21, 15, 0, 0),
+            ),
+            Positions(
+                user_id=u.id,
+                symbol="DMART-EQ",
+                quantity=0,
+                avg_price=200.0,
+                realized_pnl=8.60,
+                closed_at=datetime(2026, 5, 27, 15, 0, 0),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    bill = PerformanceBillingService(db_session).generate_bill_for_user_month(u.id, 2026, 5)
+    assert bill is not None
+    assert float(bill.current_month_pnl) == pytest.approx(228.05)
+    assert float(bill.chargeable_profit) == pytest.approx(228.05)
+    assert float(bill.fee_amount) == pytest.approx(22.8)
+    assert float(bill.payable_amount) == pytest.approx(22.8)
 
 
 def test_mark_overdue_bills(db_session, broker_user_and_settings):

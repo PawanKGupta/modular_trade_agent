@@ -334,6 +334,25 @@ class PositionsRepository:
         else:
             # Even with auto_commit=False, flush to ensure changes are visible in the same session
             self.db.flush()
+        if pos.realized_pnl is not None and pos.closed_at is not None:
+            try:
+                from src.application.services.pnl_daily_sync_service import (  # noqa: PLC0415
+                    PnlDailySyncService,
+                )
+
+                PnlDailySyncService(self.db).record_position_close(
+                    user_id,
+                    pos.closed_at,
+                    float(pos.realized_pnl),
+                )
+            except Exception as sync_err:
+                logger.warning(
+                    "Failed to sync pnldaily after closing %s for user %s: %s",
+                    symbol,
+                    user_id,
+                    sync_err,
+                    exc_info=True,
+                )
         logger.info(
             f"Position marked as closed: {symbol} (closed_at: {pos.closed_at}, "
             f"exit_price: {exit_price}, exit_reason: {exit_reason})"
