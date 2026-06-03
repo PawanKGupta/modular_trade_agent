@@ -292,6 +292,18 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
 
         log_ohlcv_cache(logger, "fetch_ohlcv_yf %s [%s]: cache bypass (%s)", ticker, interval, exc)
 
+    from src.application.services.ohlcv_cache_logging import log_ohlcv_cache  # noqa: PLC0415
+    from src.application.services.ohlcv_runtime import is_ohlcv_cache_read_only  # noqa: PLC0415
+
+    if is_ohlcv_cache_read_only():
+        log_ohlcv_cache(
+            logger,
+            "fetch_ohlcv_yf %s [%s]: read-only context — no Yahoo fallback",
+            ticker,
+            interval,
+        )
+        return None
+
     return fetch_ohlcv_yf_raw(
         ticker,
         days=days,

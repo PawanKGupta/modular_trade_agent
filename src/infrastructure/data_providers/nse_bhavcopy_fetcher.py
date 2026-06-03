@@ -1,7 +1,7 @@
 """
 NSE UDiFF daily bhavcopy fetcher (capital market EOD ``_F_0000`` files).
 
-Downloads one zip per calendar day, caches CSV on disk, parses EQ series OHLCV rows.
+Downloads one zip per calendar day, caches CSV on disk, parses tradeable equity OHLCV rows.
 """
 
 from __future__ import annotations
@@ -20,8 +20,10 @@ import urllib.request
 
 from config.settings import (
     NSE_BHAVCOPY_CACHE_DIR,
+    NSE_BHAVCOPY_EQUITY_SERIES,
     NSE_BHAVCOPY_REQUEST_DELAY_S,
     NSE_BHAVCOPY_REQUEST_TIMEOUT_S,
+    NSE_BHAVCOPY_USE_DISK_CACHE,
 )
 from utils.logger import logger
 
@@ -44,10 +46,21 @@ LOW_COL = "LwPric"
 CLOSE_COL = "ClsPric"
 VOLUME_COL = "TtlTradgVol"
 
+# When duplicate ``TckrSymb`` rows exist (rare), prefer regular EQ listing.
+NSE_EQUITY_SERIES_PREFERENCE = ("EQ", "BE", "BL", "BZ")
+
+
+def _normalize_series(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _is_allowed_equity_series(series: Any) -> bool:
+    return _normalize_series(series) in NSE_BHAVCOPY_EQUITY_SERIES
+
 
 @dataclass(frozen=True)
 class NseEquityBar:
-    """Single EQ series bar from NSE bhavcopy."""
+    """Single tradeable equity bar from NSE bhavcopy (EQ/BE/BL/BZ series)."""
 
     tckr_symb: str
     trade_date: date
@@ -85,9 +98,33 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+def _row_to_bar(row: pd.Series, *, date_col: str) -> NseEquityBar | None:
+    sym = str(row[SYM_COL]).strip()
+    if not sym:
+        return None
+    close = _safe_float(row.get(CLOSE_COL))
+    if close is None:
+        return None
+    try:
+        trade_date = pd.to_datetime(row[date_col]).date()
+    except (TypeError, ValueError):
+        return None
+    return NseEquityBar(
+        tckr_symb=sym,
+        trade_date=trade_date,
+        open=_safe_float(row.get(OPEN_COL)),
+        high=_safe_float(row.get(HIGH_COL)),
+        low=_safe_float(row.get(LOW_COL)),
+        close=close,
+        volume=_safe_int(row.get(VOLUME_COL)),
+    )
+
+
 def parse_equity_bars(df: pd.DataFrame) -> list[NseEquityBar]:
     """
-    Parse all EQ series rows from a bhavcopy DataFrame.
+    Parse tradeable equity rows from a bhavcopy DataFrame.
+
+    Includes ``SctySrs`` in ``NSE_BHAVCOPY_EQUITY_SERIES`` (default EQ, BE, BL, BZ).
 
     Args:
         df: Raw CSV loaded from NSE zip.
@@ -104,7 +141,7 @@ def parse_equity_bars(df: pd.DataFrame) -> list[NseEquityBar]:
 
     work = df
     if SERIES_COL in work.columns:
-        work = work[work[SERIES_COL].astype(str).str.upper().eq("EQ")]
+        work = work[work[SERIES_COL].map(_is_allowed_equity_series)]
 
     seen: set[str] = set()
     bars: list[NseEquityBar] = []
@@ -112,35 +149,41 @@ def parse_equity_bars(df: pd.DataFrame) -> list[NseEquityBar]:
         sym = str(row[SYM_COL]).strip()
         if not sym or sym in seen:
             continue
-        close = _safe_float(row.get(CLOSE_COL))
-        if close is None:
-            continue
-        try:
-            trade_date = pd.to_datetime(row[date_col]).date()
-        except (TypeError, ValueError):
+        bar = _row_to_bar(row, date_col=date_col)
+        if bar is None:
             continue
         seen.add(sym)
-        bars.append(
-            NseEquityBar(
-                tckr_symb=sym,
-                trade_date=trade_date,
-                open=_safe_float(row.get(OPEN_COL)),
-                high=_safe_float(row.get(HIGH_COL)),
-                low=_safe_float(row.get(LOW_COL)),
-                close=close,
-                volume=_safe_int(row.get(VOLUME_COL)),
-            )
-        )
+        bars.append(bar)
     return bars
 
 
 def find_equity_bar(df: pd.DataFrame, tckr_symb: str) -> NseEquityBar | None:
-    """Return the EQ bar for ``tckr_symb`` on this bhavcopy file, if present."""
+    """Return the tradeable equity bar for ``tckr_symb`` on this bhavcopy file, if present."""
+    if df is None or df.empty or SYM_COL not in df.columns or CLOSE_COL not in df.columns:
+        return None
+
+    date_col = DATE_COL_PRIMARY if DATE_COL_PRIMARY in df.columns else DATE_COL_FALLBACK
+    if date_col not in df.columns:
+        return None
+
     base = tckr_symb.strip().upper()
-    for bar in parse_equity_bars(df):
-        if bar.tckr_symb.upper() == base:
-            return bar
-    return None
+    rows = df[df[SYM_COL].astype(str).str.upper().eq(base)]
+    if rows.empty:
+        return None
+
+    if SERIES_COL in rows.columns:
+        allowed = rows[rows[SERIES_COL].map(_is_allowed_equity_series)]
+        if allowed.empty:
+            return None
+        rows = allowed
+        for pref in NSE_EQUITY_SERIES_PREFERENCE:
+            if pref not in NSE_BHAVCOPY_EQUITY_SERIES:
+                continue
+            match = rows[rows[SERIES_COL].map(_normalize_series).eq(pref)]
+            if not match.empty:
+                return _row_to_bar(match.iloc[0], date_col=date_col)
+
+    return _row_to_bar(rows.iloc[0], date_col=date_col)
 
 
 class NseBhavcopyFetcher:
@@ -162,6 +205,7 @@ class NseBhavcopyFetcher:
             if request_timeout_s is None
             else request_timeout_s
         )
+        self.use_disk_cache = NSE_BHAVCOPY_USE_DISK_CACHE
         self._last_request_at = 0.0
 
     def _cache_path(self, trade_date: date) -> Path:
@@ -194,15 +238,20 @@ class NseBhavcopyFetcher:
             logger.warning("NSE bhavcopy network error for %s: %s", url, exc)
             return None
 
-    def download_bhavcopy(self, trade_date: date, *, use_disk_cache: bool = True) -> pd.DataFrame | None:
+    def download_bhavcopy(
+        self, trade_date: date, *, use_disk_cache: bool | None = None
+    ) -> pd.DataFrame | None:
         """
-        Load bhavcopy CSV for ``trade_date`` (disk cache or HTTP download).
+        Load bhavcopy CSV for ``trade_date`` (optional disk cache or HTTP download).
+
+        When disk cache is disabled, parses the NSE zip in memory and does not write CSV.
 
         Returns:
             DataFrame or None if file unavailable (holiday / not published).
         """
+        use_disk = self.use_disk_cache if use_disk_cache is None else use_disk_cache
         cache_path = self._cache_path(trade_date)
-        if use_disk_cache and cache_path.exists():
+        if use_disk and cache_path.exists():
             try:
                 return pd.read_csv(cache_path)
             except Exception as exc:
@@ -218,6 +267,7 @@ class NseBhavcopyFetcher:
             name = zf.namelist()[0]
             df = pd.read_csv(zf.open(name))
 
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(cache_path, index=False)
+        if use_disk:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(cache_path, index=False)
         return df

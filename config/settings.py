@@ -194,8 +194,21 @@ CHUNK_DELAY_SECONDS = float(os.getenv("CHUNK_DELAY_SECONDS", "30"))
 # Daily OHLCV source for price_cache gap-fill (1d interval): nse | yahoo | nse_with_yahoo_fallback
 OHLCV_DAILY_SOURCE = os.getenv("OHLCV_DAILY_SOURCE", "nse").strip().lower()
 NSE_BHAVCOPY_CACHE_DIR = os.getenv("NSE_BHAVCOPY_CACHE_DIR", ".cache/nse_bhavcopy")
+NSE_BHAVCOPY_USE_DISK_CACHE = os.getenv("NSE_BHAVCOPY_USE_DISK_CACHE", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 NSE_BHAVCOPY_REQUEST_DELAY_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_DELAY_S", "0.15"))
 NSE_BHAVCOPY_REQUEST_TIMEOUT_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_TIMEOUT_S", "30"))
+# NSE ``SctySrs`` codes treated as tradeable equity EOD (not just ``EQ``).
+# Stocks move to ``BE``/``BL``/``BZ`` (T2T / B-group) while remaining the same ``TckrSymb``.
+NSE_BHAVCOPY_EQUITY_SERIES = frozenset(
+    s.strip().upper()
+    for s in os.getenv("NSE_BHAVCOPY_EQUITY_SERIES", "EQ,BE,BL,BZ").split(",")
+    if s.strip()
+)
 
 
 def daily_ohlcv_uses_nse() -> bool:

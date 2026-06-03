@@ -23,7 +23,6 @@ from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_PRICE_BASIS,
     PriceCacheRepository,
 )
-from src.infrastructure.utils.holiday_calendar import iter_trading_days
 from utils.logger import logger
 
 NSE_SOURCE = "nse"
@@ -72,7 +71,32 @@ class NseBhavcopyIngestService:
         total = 0
         missing_days = 0
 
-        for trade_day in iter_trading_days(start_date, end_date):
+        days_to_fetch = self.repo.get_missing_trading_dates(
+            cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+        )
+        if not days_to_fetch:
+            logger.info(
+                "NSE fill_symbol_range %s: no missing trading days in [%s, %s]; skipping bhavcopy fetch",
+                cache_ticker,
+                start_date,
+                end_date,
+            )
+            self.repo.refresh_symbol_meta(cache_ticker, interval=DEFAULT_INTERVAL)
+            from src.application.services.ohlcv_fetch_validation import validate_cached_symbol
+
+            post = validate_cached_symbol(
+                self.repo, cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+            )
+            self.repo.record_fetch_validation(
+                cache_ticker,
+                DEFAULT_INTERVAL,
+                fetch_status=post.status,
+                coverage_pct=post.coverage_pct,
+                message=post.message,
+            )
+            return 0
+
+        for trade_day in days_to_fetch:
             df = self.fetcher.download_bhavcopy(trade_day)
             if df is None or df.empty:
                 missing_days += 1

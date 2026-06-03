@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from config.settings import (
     OHLCV_CACHE_MIN_COVERAGE_PCT,
     OHLCV_CACHE_TAIL_OVERLAP_TRADING_DAYS,
+    OHLCV_DAILY_SOURCE,
     OHLCV_ENFORCE_INDICATOR_MIN_BARS,
     OHLCV_MIN_DAILY_BARS_FOR_INDICATORS,
     OHLCV_REJECT_INVALID_FETCH,
@@ -23,6 +24,7 @@ from src.application.services.ohlcv_fetch_validation import (
     validate_cached_symbol,
     validate_yahoo_ohlcv_frame,
 )
+from src.application.services.ohlcv_runtime import is_ohlcv_cache_read_only
 from src.infrastructure.persistence.price_cache_repository import (
     DEFAULT_INTERVAL,
     DEFAULT_PRICE_BASIS,
@@ -94,6 +96,61 @@ def _bars_to_dataframe(bars: list) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df["date"] = pd.to_datetime(df["date"])
     return df.sort_values("date").reset_index(drop=True)
+
+
+NSE_BAR_SOURCE = "nse"
+
+
+def _filter_daily_bars_for_source_policy(
+    bars: list,
+    *,
+    symbol: str,
+    interval: str,
+) -> list:
+    """
+    Apply ``OHLCV_DAILY_SOURCE`` read policy for daily bars returned to indicators.
+
+    Legacy ``yfinance`` rows often remain for dates before NSE backfill. Mixing them
+    into one series skews EMA/RSI even when recent NSE closes match TradingView.
+    """
+    if interval != DEFAULT_INTERVAL or not daily_ohlcv_uses_nse() or not bars:
+        return bars
+
+    nse_bars = [b for b in bars if getattr(b, "source", None) == NSE_BAR_SOURCE]
+
+    if OHLCV_DAILY_SOURCE == "nse":
+        dropped = len(bars) - len(nse_bars)
+        if dropped:
+            log_ohlcv_cache(
+                logger,
+                "OHLCV source_filter %s [%s]: nse-only %s/%s bars (excluded %s yfinance)",
+                symbol,
+                interval,
+                len(nse_bars),
+                len(bars),
+                dropped,
+            )
+        return nse_bars
+
+    # nse_with_yahoo_fallback: keep Yahoo rows only for dates without NSE coverage
+    nse_dates = {b.date for b in nse_bars}
+    yf_fill = [
+        b
+        for b in bars
+        if getattr(b, "source", None) != NSE_BAR_SOURCE and b.date not in nse_dates
+    ]
+    if yf_fill:
+        log_ohlcv_cache(
+            logger,
+            "OHLCV source_filter %s [%s]: nse=%s yahoo_gap_fill=%s",
+            symbol,
+            interval,
+            len(nse_bars),
+            len(yf_fill),
+        )
+    combined = nse_bars + yf_fill
+    combined.sort(key=lambda b: b.date)
+    return combined
 
 
 def _dataframe_to_upsert_rows(
@@ -240,26 +297,37 @@ class OhlcvCacheService:
         )
         coverage = self.repo.get_coverage_pct(symbol, start_d, end_d, interval=interval)
         if missing:
-            log_ohlcv_cache(
-                logger,
-                "OHLCV gap_fill %s [%s]: cached=%s gaps=%s coverage=%.1f%% range=%s..%s",
-                symbol,
-                interval,
-                len(bars_before),
-                len(missing),
-                coverage,
-                start_d,
-                end_d,
-            )
-            self.gap_fill(
-                symbol,
-                start_d,
-                end_d,
-                interval=interval,
-                days=days,
-                yf_end_date=end_date,
-                add_current_day=include_live_today,
-            )
+            if is_ohlcv_cache_read_only():
+                log_ohlcv_cache(
+                    logger,
+                    "OHLCV read-only skip gap_fill %s [%s]: cached=%s gaps=%s coverage=%.1f%%",
+                    symbol,
+                    interval,
+                    len(bars_before),
+                    len(missing),
+                    coverage,
+                )
+            else:
+                log_ohlcv_cache(
+                    logger,
+                    "OHLCV gap_fill %s [%s]: cached=%s gaps=%s coverage=%.1f%% range=%s..%s",
+                    symbol,
+                    interval,
+                    len(bars_before),
+                    len(missing),
+                    coverage,
+                    start_d,
+                    end_d,
+                )
+                self.gap_fill(
+                    symbol,
+                    start_d,
+                    end_d,
+                    interval=interval,
+                    days=days,
+                    yf_end_date=end_date,
+                    add_current_day=include_live_today,
+                )
         else:
             log_ohlcv_cache(
                 logger,
@@ -284,6 +352,18 @@ class OhlcvCacheService:
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         if not bars:
+            return None
+
+        bars = _filter_daily_bars_for_source_policy(
+            bars, symbol=symbol, interval=interval
+        )
+        if not bars:
+            logger.warning(
+                "OHLCV no bars after source filter for %s [%s] (source=%s)",
+                symbol,
+                interval,
+                OHLCV_DAILY_SOURCE,
+            )
             return None
 
         meta = self.repo.get_symbol_meta(symbol, interval=interval)
@@ -532,6 +612,16 @@ class OhlcvCacheService:
         Returns:
             Number of rows upserted.
         """
+        if is_ohlcv_cache_read_only():
+            logger.warning(
+                "OHLCV gap_fill blocked (read-only trading context) for %s [%s] %s..%s",
+                symbol,
+                interval,
+                start_date,
+                end_date,
+            )
+            return 0
+
         if interval == MINUTE_INTERVAL:
             logger.debug(
                 "gap_fill skipped for %s [%s] (intraday not stored in price_cache)",

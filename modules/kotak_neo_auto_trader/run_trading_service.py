@@ -1503,7 +1503,15 @@ class TradingService:
                 f"Starting async execution of {task_name} (timeout: {timeout_seconds}s)",
                 action="scheduler",
             )
-            future = self.task_executor.submit(task_func)
+            from src.application.services.ohlcv_runtime import (  # noqa: PLC0415
+                OHLCV_READ_ONLY_TASK_NAMES,
+                run_with_ohlcv_cache_read_only,
+            )
+
+            task_runner = task_func
+            if task_name in OHLCV_READ_ONLY_TASK_NAMES:
+                task_runner = lambda: run_with_ohlcv_cache_read_only(task_func)
+            future = self.task_executor.submit(task_runner)
             # Track future so subsequent scheduler ticks won't queue duplicates.
             with self._task_futures_lock:
                 self._task_futures[task_name] = future
@@ -1688,7 +1696,7 @@ class TradingService:
                                         self._execute_task_async(
                                             self.run_sell_monitor,
                                             "sell_monitor",
-                                            timeout_seconds=60,  # 1 minute (should be quick)
+                                            timeout_seconds=180,  # 3 minutes (DB read-only; was 60s)
                                         )
 
                             # Analysis (uses DB schedule) - 30 minute timeout
