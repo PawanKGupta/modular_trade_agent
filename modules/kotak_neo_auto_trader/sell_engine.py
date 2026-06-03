@@ -6521,13 +6521,13 @@ class SellOrderManager:
         circuit_retried = self._check_and_retry_circuit_expansion()
         stats["circuit_retried"] = circuit_retried
 
-        # Rehydrate broker sells after restart; otherwise we exit without EMA monitoring.
-        if not self.active_sell_orders:
-            rehydrated = self._sync_active_sell_orders_from_broker_for_monitoring()
-            if rehydrated:
-                logger.info(
-                    f"Sell monitor resumed for {rehydrated} symbol(s) from broker pending sells"
-                )
+        # Rehydrate untracked broker sells (post-restart empty map or partial tracking).
+        # Sync skips symbols already in active_sell_orders; cheap no-op when fully synced.
+        rehydrated = self._sync_active_sell_orders_from_broker_for_monitoring()
+        if rehydrated:
+            logger.info(
+                f"Sell monitor resumed for {rehydrated} symbol(s) from broker pending sells"
+            )
 
         # Issue #5 Fix: Check for positions without sell orders even when active_sell_orders is empty
         if not self.active_sell_orders:
