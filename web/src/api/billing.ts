@@ -78,6 +78,7 @@ export type RazorpayCreateOrderResponse = {
 	amount: number;
 	currency: string;
 	key_id: string;
+	razorpay_test_mode?: boolean;
 };
 
 export async function createRazorpayOrder(body: {

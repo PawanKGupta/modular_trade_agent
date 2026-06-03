@@ -16,6 +16,15 @@ declare global {
 	}
 }
 
+const RAZORPAY_TEST_MODE_MSG =
+	'Razorpay is in TEST mode. Do not scan the QR with a real UPI app — verification will fail. ' +
+	'In checkout: open UPI, choose “UPI ID / VPA”, enter success@razorpay, and pay. ' +
+	'Or use Razorpay test cards. For real QR/UPI, set rzp_live_ keys on the server.';
+
+function razorpayTestModeMessage(testMode?: boolean): string | null {
+	return testMode ? RAZORPAY_TEST_MODE_MSG : null;
+}
+
 function loadRazorpayScript(): Promise<void> {
 	if (typeof window === 'undefined') return Promise.resolve();
 	if (window.Razorpay) return Promise.resolve();
@@ -55,11 +64,7 @@ export function BillingPage() {
 					setMsg('Razorpay is not available or checkout data is incomplete.');
 					return;
 				}
-				const testModeMsg = data.razorpay_test_mode
-					? 'Razorpay is in TEST mode. Real UPI apps cannot verify the QR code. ' +
-						'In checkout, choose UPI and enter success@razorpay, or use a test card. ' +
-						'For live UPI/card payments, configure rzp_live_ keys on the server.'
-					: null;
+				const testModeMsg = razorpayTestModeMessage(data.razorpay_test_mode);
 				const rzp = new Ctor({
 					key: data.razorpay_key_id,
 					amount: data.amount_paise,
@@ -106,6 +111,13 @@ export function BillingPage() {
 						},
 					},
 				});
+				(rzp as unknown as { on?: (ev: string, cb: (r: unknown) => void) => void }).on?.(
+					'payment.failed',
+					(r) => {
+						const base = testModeMsg ? `${testModeMsg}\n\n` : '';
+						setMsg(`${base}Payment failed: ${JSON.stringify(r)}`);
+					}
+				);
 				setMsg(testModeMsg);
 				rzp.open();
 			} catch (e) {
@@ -131,6 +143,7 @@ export function BillingPage() {
 					setMsg('Razorpay is not available or checkout data is incomplete.');
 					return;
 				}
+				const testModeMsg = razorpayTestModeMessage(o.razorpay_test_mode ?? o.key_id.startsWith('rzp_test_'));
 				const rzp = new Ctor({
 					key: o.key_id,
 					amount: o.amount,
@@ -164,10 +177,13 @@ export function BillingPage() {
 						},
 					},
 				});
-				setMsg(null);
+				setMsg(testModeMsg);
 				(rzp as unknown as { on?: (ev: string, cb: (r: unknown) => void) => void }).on?.(
 					'payment.failed',
-					(r) => setMsg(`Payment failed: ${JSON.stringify(r)}`)
+					(r) => {
+						const base = testModeMsg ? `${testModeMsg}\n\n` : '';
+						setMsg(`${base}Payment failed: ${JSON.stringify(r)}`);
+					}
 				);
 				rzp.open();
 			} catch (e) {
@@ -250,7 +266,12 @@ export function BillingPage() {
 					<div>
 						<h2 className="font-medium">Dev — Test Razorpay checkout</h2>
 						<p className="text-xs text-[var(--muted)]">
-							Creates a generic Razorpay order and verifies the callback signature server-side. Minimum 100 paise.
+							Creates a generic Razorpay order and verifies the callback signature server-side. Minimum 100
+							paise.
+						</p>
+						<p className="text-xs text-amber-300/90 mt-1">
+							With test keys (rzp_test_*), never scan the checkout QR with PhonePe/GPay/Paytm — use UPI ID{' '}
+							<code className="text-amber-200">success@razorpay</code> inside the modal instead.
 						</p>
 					</div>
 					<div className="flex flex-col sm:flex-row gap-2 sm:items-end">

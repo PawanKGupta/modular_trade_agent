@@ -10,6 +10,7 @@ from src.application.services.performance_fee_arrears_service import Performance
 from src.application.services.performance_fee_checkout_service import (
     PerformanceFeeCheckoutError,
     PerformanceFeeCheckoutService,
+    is_razorpay_test_key,
 )
 from src.application.services.razorpay_credentials import (
     get_razorpay_gateway,
@@ -166,6 +167,7 @@ def razorpay_create_order(
         amount=int(order.get("amount") or body.amount_paise),
         currency=str(order.get("currency") or body.currency or "INR"),
         key_id=key_id,
+        razorpay_test_mode=is_razorpay_test_key(key_id),
     )
 
 

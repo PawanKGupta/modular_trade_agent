@@ -350,7 +350,7 @@ class TestBillingUserRouter:
         with (
             patch(
                 "server.app.routers.billing_user.resolve_razorpay_key_id",
-                return_value="kid",
+                return_value="rzp_test_abc",
             ),
             patch(
                 "server.app.routers.billing_user.resolve_razorpay_key_secret",
@@ -367,7 +367,9 @@ class TestBillingUserRouter:
                 json={"amount_paise": 500, "currency": "INR", "receipt": "rcpt1"},
             )
             assert r.status_code == 200
-            assert r.json()["order_id"] == "ord1"
+            data = r.json()
+            assert data["order_id"] == "ord1"
+            assert data["razorpay_test_mode"] is True
 
             gw.create_order.side_effect = Exception("Authentication failed from API")
             r2 = client.post(

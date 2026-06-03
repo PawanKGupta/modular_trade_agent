@@ -95,6 +95,7 @@ class RazorpayCreateOrderResponse(BaseModel):
     amount: int
     currency: str
     key_id: str
+    razorpay_test_mode: bool = False
 
 
 class RazorpayVerifyPaymentRequest(BaseModel):
