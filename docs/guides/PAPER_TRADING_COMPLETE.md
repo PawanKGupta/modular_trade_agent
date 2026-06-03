@@ -448,7 +448,8 @@ Paper trading and live Kotak use the same helper at **sell placement**:
 
 1. **LTP source** — Paper uses Yahoo; live prefers Kotak live quotes when configured. Same formula, different input price.
 2. **Tick size** — Live may use Kotak scrip-master tick; paper uses exchange fallback rules unless scrip is passed.
-3. **After placement** — Live sell monitor can **lower** the limit when EMA9 drops; paper keeps the **frozen** target until re-entry or exit (see `test_frozen_target_never_updates`).
+3. **Circuit limits** — Live uses `prepare_broker_sell_limit_price` (defer-only when EMA9 > upper circuit from Kotak quotes); paper does not apply this gate. See [Sell Order Implementation](../kotak_neo_trader/SELL_ORDER_IMPLEMENTATION_COMPLETE.md#circuit-limits-and-defer-only-placement).
+4. **After placement** — Live sell monitor can **lower** the limit when EMA9 drops; paper keeps the **frozen** target until re-entry or exit (see `test_frozen_target_never_updates`).
 
 ### Target exit: paper vs integrated backtest
 

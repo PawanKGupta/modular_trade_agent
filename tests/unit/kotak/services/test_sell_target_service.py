@@ -67,11 +67,23 @@ class TestPrepareBrokerSellLimitPrice:
         assert prepared.action == "invalid_tick"
         assert prepared.price is None
 
-    def test_caps_ema9_to_upper_circuit_axiscades_case(self):
-        """Regression: 2 Jun AXISCADES EMA9 1860.40 vs upper 1859.20."""
+    def test_defers_when_ema9_above_upper_circuit_axiscades_case(self):
+        """Regression: 2 Jun AXISCADES EMA9 1860.40 vs upper 1859.20 — defer, do not cap."""
         limits = {"upper": 1859.20, "lower": 1682.20}
         prepared = prepare_broker_sell_limit_price(
             1860.40,
+            exchange="NSE",
+            symbol="AXISCADES-EQ",
+            circuit_limits=limits,
+        )
+        assert prepared.action == "defer_circuit"
+        assert prepared.price is None
+        assert any("circuit_defer" in adj for adj in prepared.adjustments)
+
+    def test_places_when_ema9_within_upper_circuit(self):
+        limits = {"upper": 1900.0, "lower": 1600.0}
+        prepared = prepare_broker_sell_limit_price(
+            1847.40,
             exchange="NSE",
             symbol="AXISCADES-EQ",
             circuit_limits=limits,

@@ -6093,8 +6093,11 @@ class SellOrderManager:
 
     def _check_and_retry_circuit_expansion(self) -> int:
         """
-        Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
-        Only retries when EMA9 is within the stored upper circuit limit.
+        Retry deferred sells when full EMA9 can be placed within circuit (no cap-priced substitute).
+
+        Runs on each sell_monitor cycle (~60s scheduler loop during market hours).
+        Refetches Kotak circuit limits per symbol; recomputes EMA9 from latest LTP (not a
+        cached price). Places only when prepare_broker_sell_limit_price accepts full target.
 
         Returns:
             Number of orders successfully retried
@@ -6124,30 +6127,43 @@ class SellOrderManager:
                     logger.debug(f"{full_symbol}: No ticker available for circuit check")
                     continue
 
-                # Get current EMA9
+                exchange = (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                )
+                placed_symbol = trade.get("placed_symbol", trade.get("symbol", full_symbol))
+
+                # Fresh circuit limits from Kotak quotes (upper band can change intraday)
+                fresh_limits = self._get_circuit_limits_for_symbol(placed_symbol, exchange)
+                upper_circuit = (
+                    float(fresh_limits["upper"])
+                    if fresh_limits and fresh_limits.get("upper")
+                    else float(wait_info["upper_circuit"])
+                )
+                if fresh_limits:
+                    wait_info["upper_circuit"] = upper_circuit
+                    if fresh_limits.get("lower") is not None:
+                        wait_info["lower_circuit"] = float(fresh_limits["lower"])
+
+                # EMA9 from latest LTP via price/indicator services (not stored at defer time)
                 current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
                 if not current_ema9:
                     continue
 
-                upper_circuit = wait_info["upper_circuit"]
                 ema9_target = wait_info["ema9_target"]
+                target_price = min(current_ema9, ema9_target)
 
-                # Check if current EMA9 is now within the upper circuit limit
-                if current_ema9 > upper_circuit:
-                    # EMA9 still exceeds circuit - wait
+                if target_price > upper_circuit:
                     logger.debug(
-                        f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
-                        f"(Rs {upper_circuit:.2f}). Waiting..."
+                        f"{full_symbol}: Deferred — EMA9 Rs {target_price:.2f} still above "
+                        f"upper circuit Rs {upper_circuit:.2f} (Kotak quotes + live LTP)"
                     )
                     continue
 
-                # EMA9 is now within circuit limits - retry placing order
-                # Use current EMA9 if it's lower than stored target (better price), otherwise use stored target
-                target_price = min(current_ema9, ema9_target)
-
                 logger.info(
-                    f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
-                    f"(Rs {upper_circuit:.2f}). Retrying order placement at Rs {target_price:.2f}..."
+                    f"{full_symbol}: EMA9 Rs {target_price:.2f} within upper circuit Rs {upper_circuit:.2f}. "
+                    "Retrying full-target sell placement..."
                 )
 
                 # Place order - if it succeeds, remove from waiting list

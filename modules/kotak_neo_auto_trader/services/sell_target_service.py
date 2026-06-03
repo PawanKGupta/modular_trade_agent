@@ -355,10 +355,11 @@ def prepare_broker_sell_limit_price(
     circuit_limits: CircuitLimits | None = None,
 ) -> PreparedSellLimit:
     """
-    Normalize a raw EMA9 target for Kotak limit-sell submission (tick grid + circuit cap).
+    Normalize a raw EMA9 target for Kotak limit-sell submission (tick grid + circuit guard).
 
-    When circuit limits are known and EMA9 exceeds the upper band, caps to upper circuit
-    (tick-rounded down). If still above upper after cap, returns defer_circuit.
+    When circuit limits are known and tick-rounded EMA9 exceeds the upper band, returns
+    defer_circuit (no placement at a capped price below full EMA9). Caller should queue
+    and retry via sell monitor when EMA9 or exchange upper circuit allows full target.
     """
     if raw_target <= 0:
         return PreparedSellLimit(
@@ -385,28 +386,15 @@ def prepare_broker_sell_limit_price(
 
     upper = limits.get("upper") if limits else None
     if upper is not None and upper > 0 and rounded > upper:
-        capped = cap_sell_price_to_upper_circuit(
-            rounded,
-            upper,
-            exchange=exchange,
-            symbol=symbol,
-            scrip_master=scrip_master,
+        adjustments.append(f"circuit_defer:ema9={rounded:.2f}>upper={upper:.2f}")
+        return PreparedSellLimit(
+            price=None,
+            action="defer_circuit",
+            raw_target=raw_target,
+            tick_size=tick_size,
+            circuit_limits=limits,
+            adjustments=tuple(adjustments),
         )
-        adjustments.append(f"circuit_cap:{rounded:.2f}->{capped:.2f}@upper={upper:.2f}")
-        final_price = capped
-        tick_size, _ = resolve_tick_size(
-            final_price, exchange=exchange, symbol=symbol, scrip_master=scrip_master
-        )
-
-        if final_price > upper + 1e-9:
-            return PreparedSellLimit(
-                price=None,
-                action="defer_circuit",
-                raw_target=raw_target,
-                tick_size=tick_size,
-                circuit_limits=limits,
-                adjustments=tuple(adjustments + ["still_above_upper_after_cap"]),
-            )
 
     if not is_price_on_tick_grid(final_price, tick_size):
         return PreparedSellLimit(
