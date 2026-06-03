@@ -91,6 +91,7 @@ class TestSyncOrderStatusSnapshot:
         mock_db_order = Mock()
         mock_db_order.id = 1
         mock_db_order.broker_order_id = order_id
+        mock_db_order.placed_at = datetime(2026, 1, 1, 10, 0, 0)
         auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
         auto_trade_engine.orders_repo.mark_executed = Mock()
 
@@ -102,6 +103,30 @@ class TestSyncOrderStatusSnapshot:
         call_args = auto_trade_engine.orders_repo.mark_executed.call_args[1]
         assert call_args["execution_price"] == 2450.50
         assert call_args["execution_qty"] == quantity
+
+    def test_sync_order_status_executed_deferred_when_recently_placed(self, auto_trade_engine):
+        """Executed status shortly after placement is deferred to order monitor."""
+        from src.infrastructure.db.timezone_utils import ist_now_naive
+
+        order_id = "ORDER123"
+        broker_order = {
+            "neoOrdNo": order_id,
+            "trdSym": "RELIANCE-EQ",
+            "orderStatus": "executed",
+            "transactionType": "BUY",
+            "price": 2450.50,
+            "quantity": 10,
+        }
+        auto_trade_engine.orders.get_orders.return_value = {"data": [broker_order]}
+
+        mock_db_order = Mock()
+        mock_db_order.placed_at = ist_now_naive()
+        auto_trade_engine.orders_repo.get_by_broker_order_id.return_value = mock_db_order
+        auto_trade_engine.orders_repo.mark_executed = Mock()
+
+        auto_trade_engine._sync_order_status_snapshot(order_id, "RELIANCE", quantity=10)
+
+        auto_trade_engine.orders_repo.mark_executed.assert_not_called()
 
     def test_sync_order_status_pending_execution(self, auto_trade_engine):
         """Test that pending order status is synced to PENDING in DB"""

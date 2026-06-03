@@ -236,6 +236,16 @@ class PriceCacheRepository:
             self.db.commit()
         return result.rowcount or len(payload)
 
+    def list_cached_symbols(self, interval: str = DEFAULT_INTERVAL) -> list[str]:
+        """Distinct ``price_cache`` symbols for an interval (e.g. all previously stored tickers)."""
+        stmt = (
+            select(PriceCache.symbol)
+            .where(PriceCache.interval == interval)
+            .distinct()
+            .order_by(PriceCache.symbol)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
     def get_bulk(
         self, symbols: list[str], bar_date: date, interval: str = DEFAULT_INTERVAL
     ) -> dict[str, PriceCache]:

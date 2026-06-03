@@ -3065,11 +3065,30 @@ class AutoTradeEngine:
                 execution_qty = (
                     OrderFieldExtractor.get_quantity(target) or quantity or db_order.quantity
                 )
-                self.orders_repo.mark_executed(
-                    db_order,
-                    execution_price=execution_price,
-                    execution_qty=execution_qty,
-                )
+                # Defer early fill sync: placement snapshot can mark executed before
+                # unified_order_monitor records the real fill time/price.
+                from src.infrastructure.db.timezone_utils import ist_now_naive
+
+                placed_at = getattr(db_order, "placed_at", None)
+                if placed_at is not None:
+                    placed_naive = (
+                        placed_at.replace(tzinfo=None)
+                        if getattr(placed_at, "tzinfo", None) is not None
+                        else placed_at
+                    )
+                    age_s = (ist_now_naive() - placed_naive).total_seconds()
+                    if age_s < 120:
+                        logger.debug(
+                            f"Deferring immediate execute sync for {order_id} "
+                            f"({age_s:.0f}s after placement) to order monitor"
+                        )
+                        return
+                if execution_price and execution_qty and execution_price > 0 and execution_qty > 0:
+                    self.orders_repo.mark_executed(
+                        db_order,
+                        execution_price=execution_price,
+                        execution_qty=execution_qty,
+                    )
             elif status_lower in {
                 "pending",
                 "open",

@@ -710,17 +710,34 @@ class IndividualServiceManager:
 
             def _run_task():
                 """Run task logic in separate thread for timeout control"""
+                from src.application.services.ohlcv_runtime import (  # noqa: PLC0415
+                    OHLCV_READ_ONLY_TASK_NAMES,
+                    ohlcv_cache_read_only,
+                )
+
                 try:
                     nonlocal result
-                    result = self._execute_task_logic(
-                        user_id=user_id,
-                        task_name=task_name,
-                        broker_creds=broker_creds,
-                        strategy_config=strategy_config,
-                        settings=settings,
-                        db_session=task_db,
-                        config_repo=task_config_repo,
-                    )
+                    if task_name in OHLCV_READ_ONLY_TASK_NAMES:
+                        with ohlcv_cache_read_only():
+                            result = self._execute_task_logic(
+                                user_id=user_id,
+                                task_name=task_name,
+                                broker_creds=broker_creds,
+                                strategy_config=strategy_config,
+                                settings=settings,
+                                db_session=task_db,
+                                config_repo=task_config_repo,
+                            )
+                    else:
+                        result = self._execute_task_logic(
+                            user_id=user_id,
+                            task_name=task_name,
+                            broker_creds=broker_creds,
+                            strategy_config=strategy_config,
+                            settings=settings,
+                            db_session=task_db,
+                            config_repo=task_config_repo,
+                        )
                 except Exception as e:
                     task_exception[0] = e
                 finally:

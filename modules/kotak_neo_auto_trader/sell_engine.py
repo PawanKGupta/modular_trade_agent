@@ -22,7 +22,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
+from src.infrastructure.db.timezone_utils import (  # noqa: E402
+    coerce_db_timestamp_to_ist,
+    ist_now,
+    ist_now_naive,
+)
 
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_indicator_service,
@@ -249,6 +253,30 @@ class SellOrderManager:
 
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
+    def _resolve_ticker_for_symbol(
+        self,
+        symbol: str,
+        *,
+        broker_symbol: str | None = None,
+        explicit_ticker: str | None = None,
+        position: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Resolve yfinance ticker for EMA9/LTP lookups.
+
+        Prefers explicit/position metadata, then derives from broker or DB symbol.
+        """
+        if explicit_ticker and str(explicit_ticker).strip():
+            return str(explicit_ticker).strip()
+        if position:
+            pos_ticker = position.get("ticker")
+            if pos_ticker and str(pos_ticker).strip():
+                return str(pos_ticker).strip()
+        sym = (broker_symbol or symbol or "").strip()
+        if not sym:
+            return ""
+        return get_ticker_from_full_symbol(sym)
+
     def _register_order(
         self,
         symbol: str,
@@ -269,6 +297,11 @@ class SellOrderManager:
             ticker: Optional ticker symbol
             **kwargs: Additional metadata
         """
+        ticker = self._resolve_ticker_for_symbol(
+            symbol,
+            broker_symbol=kwargs.get("placed_symbol"),
+            explicit_ticker=ticker,
+        )
         if self.state_manager:
             self.state_manager.register_sell_order(
                 symbol=symbol,
@@ -641,9 +674,169 @@ class SellOrderManager:
                 return True
             return False
 
+    def _get_circuit_limits_for_symbol(
+        self, symbol: str, exchange: str = "NSE"
+    ) -> dict[str, float] | None:
+        """Best-effort circuit limits from Kotak quotes (None → reactive rejection handling)."""
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            fetch_circuit_limits_for_symbol,
+        )
+
+        return fetch_circuit_limits_for_symbol(
+            market_data=self.market_data,
+            scrip_master=self.scrip_master,
+            symbol=symbol,
+            exchange=exchange,
+        )
+
+    def _queue_for_circuit_expansion(
+        self,
+        symbol: str,
+        trade: dict[str, Any],
+        ema9_target: float,
+        circuit_limits: dict[str, float],
+        *,
+        rejection_reason: str | None = None,
+    ) -> None:
+        """Park symbol until EMA9 is within upper circuit (avoids broker RMS rejection)."""
+        full_symbol = str(symbol).upper()
+        placed_symbol = trade.get("placed_symbol") or symbol
+        ticker = self._resolve_ticker_for_symbol(
+            symbol,
+            broker_symbol=placed_symbol,
+            explicit_ticker=trade.get("ticker"),
+            position=trade,
+        )
+        self.waiting_for_circuit_expansion[full_symbol] = {
+            "upper_circuit": circuit_limits["upper"],
+            "lower_circuit": circuit_limits.get("lower", 0.0),
+            "ema9_target": ema9_target,
+            "trade": {
+                "symbol": symbol,
+                "placed_symbol": placed_symbol,
+                "ticker": ticker,
+                "qty": trade.get("qty", 0),
+            },
+            "rejection_reason": rejection_reason
+            or "EMA9 exceeds upper circuit — deferred before broker placement",
+        }
+        logger.info(
+            f"{full_symbol}: Deferred sell placement — EMA9 Rs {ema9_target:.2f} "
+            f"above upper circuit Rs {circuit_limits['upper']:.2f}"
+        )
+        self._persist_circuit_defer_to_db(
+            full_symbol,
+            placed_symbol=placed_symbol,
+            ema9_target=ema9_target,
+            circuit_limits=circuit_limits,
+            trade=trade,
+            ticker=ticker,
+            rejection_reason=rejection_reason,
+        )
+
+    def _persist_circuit_defer_to_db(
+        self,
+        full_symbol: str,
+        *,
+        placed_symbol: str,
+        ema9_target: float,
+        circuit_limits: dict[str, float],
+        trade: dict[str, Any],
+        ticker: str | None,
+        rejection_reason: str | None,
+    ) -> None:
+        if not self.orders_repo or not self.user_id:
+            return
+
+        metadata = {
+            "circuit_defer": True,
+            "upper_circuit": circuit_limits.get("upper"),
+            "lower_circuit": circuit_limits.get("lower"),
+            "ema9_target": ema9_target,
+            "ticker": ticker,
+            "placed_symbol": placed_symbol,
+            "trade": {
+                "symbol": trade.get("symbol", full_symbol),
+                "placed_symbol": placed_symbol,
+                "ticker": ticker,
+                "qty": trade.get("qty", 0),
+            },
+            "rejection_reason": rejection_reason,
+        }
+        try:
+            self.orders_repo.upsert_circuit_defer_sell(
+                user_id=self.user_id,
+                symbol=placed_symbol,
+                quantity=float(trade.get("qty", 0) or 0),
+                price=float(ema9_target) if ema9_target else None,
+                order_metadata=metadata,
+                reason=rejection_reason
+                or "EMA9 exceeds upper circuit — deferred before broker placement",
+            )
+        except Exception as exc:
+            logger.warning(
+                "%s: Failed to persist circuit defer to DB: %s",
+                full_symbol,
+                exc,
+            )
+
+    def _clear_circuit_defer_from_db(self, symbol: str) -> None:
+        if not self.orders_repo or not self.user_id:
+            return
+
+        try:
+            self.orders_repo.clear_circuit_defer_sell(self.user_id, symbol)
+        except Exception as exc:
+            logger.debug("clear_circuit_defer_from_db(%s): %s", symbol, exc)
+
+    def _restore_circuit_defer_queue(self) -> int:
+        """Reload in-memory defer queue from DB after process restart."""
+        if not self.orders_repo or not self.user_id:
+            return 0
+        from src.infrastructure.persistence.orders_repository import (  # noqa: PLC0415
+            CIRCUIT_DEFER_ORIG_SOURCE,
+        )
+
+        restored = 0
+        try:
+            for order in self.orders_repo.list_circuit_deferred_sells(self.user_id):
+                meta = order.order_metadata if isinstance(order.order_metadata, dict) else {}
+                trade_meta = meta.get("trade") if isinstance(meta.get("trade"), dict) else {}
+                full_symbol = str(order.symbol or trade_meta.get("symbol", "")).upper()
+                if not full_symbol:
+                    continue
+                self.waiting_for_circuit_expansion[full_symbol] = {
+                    "upper_circuit": float(meta.get("upper_circuit") or order.price or 0),
+                    "lower_circuit": float(meta.get("lower_circuit") or 0.0),
+                    "ema9_target": float(meta.get("ema9_target") or order.price or 0),
+                    "trade": {
+                        "symbol": trade_meta.get("symbol", order.symbol),
+                        "placed_symbol": trade_meta.get("placed_symbol", order.symbol),
+                        "ticker": trade_meta.get("ticker") or meta.get("ticker"),
+                        "qty": trade_meta.get("qty", order.quantity),
+                    },
+                    "rejection_reason": meta.get("rejection_reason")
+                    or order.reason
+                    or "Restored circuit defer from DB",
+                }
+                restored += 1
+            if restored:
+                logger.info(
+                    "Restored %s circuit-deferred sell(s) from DB (orig_source=%s)",
+                    restored,
+                    CIRCUIT_DEFER_ORIG_SOURCE,
+                )
+        except Exception as exc:
+            logger.warning("Failed to restore circuit defer queue from DB: %s", exc)
+        return restored
+
     def round_to_tick_size(
-        self, price: float, exchange: str = "NSE", symbol: str | None = None
-    ) -> float:
+        self,
+        price: float,
+        exchange: str = "NSE",
+        symbol: str | None = None,
+        circuit_limits: dict[str, float] | None = None,
+    ) -> float | None:
         """
         Round price to exchange-specific tick size.
 
@@ -667,15 +860,36 @@ class SellOrderManager:
             Price rounded to valid tick size (rounded UP to next valid tick)
         """
         from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
-            round_sell_price,
+            prepare_broker_sell_limit_price,
         )
 
-        return round_sell_price(
+        prepared = prepare_broker_sell_limit_price(
             price,
             exchange=exchange,
             symbol=symbol,
             scrip_master=self.scrip_master,
+            circuit_limits=circuit_limits,
         )
+        if prepared.action == "place" and prepared.price is not None:
+            if prepared.price != price:
+                logger.info(
+                    f"Sell limit rounded {symbol or exchange}: Rs {price:.4f} -> Rs {prepared.price:.2f} "
+                    f"(tick={prepared.tick_size})"
+                )
+            return prepared.price
+
+        if prepared.action == "defer_circuit":
+            logger.info(
+                f"Sell limit deferred for {symbol or exchange}: EMA9 Rs {price:.4f} "
+                f"exceeds circuit (adjustments={prepared.adjustments})"
+            )
+            return None
+
+        logger.error(
+            f"Invalid sell limit price for {symbol or exchange}: raw Rs {price:.4f}, "
+            f"tick={prepared.tick_size}, adjustments={prepared.adjustments}"
+        )
+        return None
 
     def get_open_positions(self) -> list[dict[str, Any]]:
         """
@@ -923,6 +1137,16 @@ class SellOrderManager:
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
                 # But we still validate here as a safety check
                 sell_qty = min(positions_qty, broker_qty)
+                if (
+                    sell_qty <= 0
+                    and positions_qty > 0
+                    and self._position_opened_same_ist_day(pos)
+                ):
+                    sell_qty = positions_qty
+                    logger.info(
+                        f"{pos.symbol}: using positions qty {positions_qty} for sell "
+                        "(same-day open; broker holdings API is T+1)"
+                    )
 
                 # Issue #2 Fix: Filter zero quantity positions before adding to list
                 # Prevents positions from being added when sell_qty becomes 0 after validation
@@ -1799,13 +2023,20 @@ class SellOrderManager:
                 return stats
 
             # Build symbol to position mapping (only system positions)
-            symbol_to_position = {}
+            symbol_to_position: dict[str, dict[str, Any]] = {}
             for position in open_positions:
                 symbol = position.get("symbol", "").upper()
-                if symbol:
-                    symbol_to_position[symbol] = position
+                if not symbol:
+                    continue
+                symbol_to_position[symbol] = position
+                placed = (position.get("placed_symbol") or symbol).upper()
+                if placed:
+                    symbol_to_position[placed] = position
+                base = extract_base_symbol(symbol or placed)
+                if base:
+                    symbol_to_position[base.upper()] = position
 
-            stats["checked"] = len(symbol_to_position)
+            stats["checked"] = len({p.get("symbol", "").upper() for p in open_positions if p.get("symbol")})
 
             # Get pending orders from broker (includes manual pending sell orders)
             try:
@@ -1945,12 +2176,19 @@ class SellOrderManager:
                     if order_qty > 0:
                         # Track pending manual sell order
                         try:
+                            position_trade = symbol_to_position.get(full_symbol) or {}
+                            ticker = self._resolve_ticker_for_symbol(
+                                full_symbol,
+                                broker_symbol=trading_symbol,
+                                position=position_trade,
+                            )
                             self._register_order(
                                 symbol=trading_symbol,
                                 order_id=order_id,
                                 target_price=order_price,
                                 qty=int(order_qty),
-                                ticker=None,
+                                ticker=ticker,
+                                placed_symbol=trading_symbol,
                                 is_manual=True,  # Mark as manual sell order
                             )
                             stats["tracked"] += 1
@@ -1978,6 +2216,119 @@ class SellOrderManager:
 
         return stats
 
+    @staticmethod
+    def _extract_portfolio_data_rows(payload: Any) -> list[dict[str, Any]]:
+        """Normalize holdings/positions API payloads across Kotak response variants."""
+        if not payload:
+            return []
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return [row for row in data if isinstance(row, dict)]
+            if isinstance(data, dict):
+                nested = data.get("holdings") or data.get("data")
+                if isinstance(nested, list):
+                    return [row for row in nested if isinstance(row, dict)]
+            holdings = payload.get("holdings")
+            if isinstance(holdings, list):
+                return [row for row in holdings if isinstance(row, dict)]
+        return []
+
+    @staticmethod
+    def _portfolio_row_qty(value: Any) -> int:
+        try:
+            if value is None:
+                return 0
+            if isinstance(value, str):
+                cleaned = value.replace(",", "").replace("Rs", "").replace("INR", "").strip()
+                if cleaned == "":
+                    return 0
+                return int(float(cleaned))
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    def _build_reconcile_holdings_map(self, holdings_data: list[dict[str, Any]]) -> dict[str, int]:
+        """Demat holdings qty (reconciliation fields); only rows with qty > 0."""
+        broker_map: dict[str, int] = {}
+        for holding in holdings_data:
+            symbol = (
+                holding.get("tradingSymbol")
+                or holding.get("displaySymbol")
+                or holding.get("symbol")
+                or holding.get("securitySymbol")
+                or ""
+            )
+            if not symbol:
+                continue
+            full_symbol = symbol.upper()
+            qty = self._portfolio_row_qty(
+                holding.get("quantity")
+                or holding.get("qty")
+                or holding.get("netQuantity")
+                or holding.get("holdingsQuantity")
+                or 0
+            )
+            if qty <= 0:
+                continue
+            broker_map[full_symbol] = qty
+            base_symbol = extract_base_symbol(full_symbol)
+            if base_symbol and base_symbol != full_symbol:
+                broker_map[base_symbol] = qty
+        return broker_map
+
+    def _build_reconcile_positions_net_map(
+        self, positions_data: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Intraday positions net qty (same-day buys visible before T+1 holdings)."""
+        broker_map: dict[str, int] = {}
+        for pos in positions_data:
+            full_symbol = (
+                pos.get("trdSym")
+                or pos.get("tradingSymbol")
+                or pos.get("symbol")
+                or pos.get("sym")
+                or ""
+            )
+            if not full_symbol:
+                continue
+            full_symbol = str(full_symbol).upper()
+            qty = self._portfolio_row_qty(
+                pos.get("qty")
+                or pos.get("netQty")
+                or pos.get("netQuantity")
+                or pos.get("flBuyQty")
+                or 0
+            )
+            if qty <= 0:
+                continue
+            broker_map[full_symbol] = qty
+            base_symbol = extract_base_symbol(full_symbol)
+            if base_symbol and base_symbol != full_symbol:
+                broker_map[base_symbol] = max(broker_map.get(base_symbol, 0), qty)
+        return broker_map
+
+    @staticmethod
+    def _lookup_reconcile_broker_qty(
+        symbol: str, holdings_map: dict[str, int], positions_map: dict[str, int]
+    ) -> tuple[int, int, int]:
+        """Return (holdings_qty, positions_net_qty, effective_qty=max of both)."""
+        sym = symbol.upper()
+        base = extract_base_symbol(sym).upper()
+
+        def _from_map(m: dict[str, int]) -> int:
+            if sym in m:
+                return m[sym]
+            if base in m:
+                return m[base]
+            return 0
+
+        holdings_qty = _from_map(holdings_map)
+        positions_qty = _from_map(positions_map)
+        return holdings_qty, positions_qty, max(holdings_qty, positions_qty)
+
     def _reconcile_positions_with_broker_holdings(
         self, holdings_response: dict[str, Any] | None = None
     ) -> dict[str, int]:
@@ -1987,14 +2338,18 @@ class SellOrderManager:
         Edge Case #14, #15, #17 fix: Detects when manual trades affect system holdings
         and updates positions table accordingly.
 
+        Uses both holdings (demat/T+1) and positions (intraday net) APIs. A position is
+        only treated as manually sold out when **both** sources report zero quantity,
+        so same-day buys are not closed when holdings lag behind positions.
+
         NOTE: Holdings API only updates T+1 (next day after settlement), so this method
         is primarily useful at market open to catch yesterday's manual trades. For immediate
         detection during market hours, use _detect_manual_sells_from_orders() instead.
 
-        Logic:
-        - If broker_qty < positions_qty: Manual sell detected → Update positions table
-        - If broker_qty = 0: Manual full sell → Mark position as closed
-        - If broker_qty > positions_qty: Manual buy → IGNORE (don't update)
+        Logic (effective broker qty = max(holdings_qty, positions_net_qty)):
+        - If effective broker_qty < positions_qty and > 0: Manual partial sell → reduce DB
+        - If effective broker_qty = 0: Manual full sell → Mark position as closed
+        - If effective broker_qty > positions_qty: Manual buy → IGNORE (don't update)
 
         Returns:
             Dict with reconciliation stats: {
@@ -2063,48 +2418,37 @@ class SellOrderManager:
                 return stats
             # Note: Empty holdings_data list is valid - means all positions were sold
 
-            # Create broker holdings map: {symbol or base_symbol: quantity}
-            broker_holdings_map = {}
-            for holding in holdings_data:
-                # Extract symbol (handle various field names)
-                symbol = (
-                    holding.get("tradingSymbol")
-                    or holding.get("displaySymbol")
-                    or holding.get("symbol")
-                    or holding.get("securitySymbol")
-                    or ""
-                )
-                if not symbol:
-                    continue
+            broker_holdings_map = self._build_reconcile_holdings_map(holdings_data)
 
-                # Keep full symbol from broker (may be base like ASTERDM or full like EMKAY-BE)
-                full_symbol = symbol.upper()
-
-                # Extract quantity (handle various field names)
-                qty = int(
-                    holding.get("quantity")
-                    or holding.get("qty")
-                    or holding.get("netQuantity")
-                    or holding.get("holdingsQuantity")
-                    or 0
-                )
-
-                if not full_symbol or qty <= 0:
-                    continue
-
-                # Map full symbol
-                broker_holdings_map[full_symbol] = qty
-
-                # Also map base symbol so positions like ASTERDM-EQ or EMKAY-BE can match
-                base_symbol = extract_base_symbol(full_symbol)
-                if base_symbol and base_symbol != full_symbol:
-                    broker_holdings_map[base_symbol] = qty
+            broker_positions_map: dict[str, int] = {}
+            positions_valid = False
+            if self.portfolio and hasattr(self.portfolio, "get_positions"):
+                try:
+                    positions_response = self.portfolio.get_positions()
+                    if (
+                        positions_response is not None
+                        and isinstance(positions_response, dict)
+                        and "data" in positions_response
+                    ):
+                        positions_valid = True
+                        positions_data = self._extract_portfolio_data_rows(positions_response)
+                        broker_positions_map = self._build_reconcile_positions_net_map(
+                            positions_data
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch positions for reconciliation (holdings-only fallback): {e}"
+                    )
 
             # Get all open positions from database
             open_positions = self.positions_repo.list(self.user_id)
             open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
-            logger.info(f"Reconciling {len(open_positions)} open positions with broker holdings...")
+            logger.info(
+                f"Reconciling {len(open_positions)} open positions with broker "
+                f"holdings ({len(broker_holdings_map)} symbols) and positions "
+                f"({len(broker_positions_map)} symbols, valid={positions_valid})..."
+            )
 
             # Fetch broker orders once for exit-price fallback (manual sells may not be in our DB)
             broker_orders_response = None
@@ -2119,35 +2463,43 @@ class SellOrderManager:
                 symbol = pos.symbol.upper()
                 positions_qty = int(pos.quantity)
 
-                # Get broker quantity, trying both full symbol and base symbol
-                base_symbol = extract_base_symbol(symbol)
-                broker_qty = broker_holdings_map.get(symbol)
-                if broker_qty is None and base_symbol:
-                    broker_qty = broker_holdings_map.get(base_symbol, 0)
-                else:
-                    broker_qty = broker_qty or 0
+                holdings_qty, positions_net_qty, broker_qty = self._lookup_reconcile_broker_qty(
+                    symbol, broker_holdings_map, broker_positions_map
+                )
 
-                # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
+                if broker_qty != positions_qty and self._should_skip_broker_holdings_reconciliation(
+                    pos, symbol
+                ):
+                    logger.info(
+                        f"Skipping reconciliation for {symbol}: holdings mismatch likely stale "
+                        f"(db={positions_qty}, holdings={holdings_qty}, "
+                        f"positions_api={positions_net_qty}, effective={broker_qty}). "
+                        "Same-day buy, recent fill, or pending sell."
+                    )
+                    stats["ignored"] += 1
+                    continue
+
+                # Do not close on holdings=0 alone if positions API failed (cannot confirm flat)
+                if (
+                    positions_qty > 0
+                    and broker_qty == 0
+                    and holdings_qty == 0
+                    and not positions_valid
+                ):
+                    logger.warning(
+                        f"Skipping reconciliation close for {symbol}: holdings show 0 but "
+                        "positions API unavailable (cannot confirm manual full sell)."
+                    )
+                    stats["ignored"] += 1
+                    continue
+
+                # Case 1: Manual full sell (effective broker qty 0, DB still open)
                 if broker_qty == 0 and positions_qty > 0:
-                    # BUG FIX: Check for recent executed buy orders before marking as closed
-                    # This prevents incorrectly closing positions when broker holdings haven't
-                    # been updated yet after order execution (race condition fix)
-                    # Uses 5-minute window for executed orders, but also checks if position
-                    # was created within last 2 minutes (more precise)
-                    if self._has_recent_executed_buy_order(symbol, minutes=5):
-                        logger.info(
-                            f"Skipping reconciliation for {symbol}: "
-                            f"Recent executed buy order detected (within last 10 minutes). "
-                            f"Broker holdings may not be updated yet. "
-                            f"Will reconcile on next cycle."
-                        )
-                        stats["ignored"] += 1
-                        continue
-
                     logger.warning(
                         f"Manual full sell detected for {symbol}: "
-                        f"positions table shows {positions_qty} shares, "
-                        f"but broker has 0 shares. Marking position as closed."
+                        f"DB shows {positions_qty} shares, "
+                        f"holdings={holdings_qty}, positions_api={positions_net_qty}. "
+                        "Marking position as closed."
                     )
                     try:
                         resolved_exit_source = "manual"
@@ -2312,13 +2664,14 @@ class SellOrderManager:
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
-                # Case 2: Manual partial sell detected (broker_qty < positions_qty)
-                elif broker_qty < positions_qty:
+                # Case 2: Manual partial sell (effective broker qty lower than DB, but still > 0)
+                elif 0 < broker_qty < positions_qty:
                     sold_qty = positions_qty - broker_qty
                     logger.warning(
                         f"Manual partial sell detected for {symbol}: "
-                        f"positions table shows {positions_qty} shares, "
-                        f"but broker has {broker_qty} shares. "
+                        f"DB shows {positions_qty} shares, "
+                        f"holdings={holdings_qty}, positions_api={positions_net_qty}, "
+                        f"effective={broker_qty}. "
                         f"Updating positions table (sold {sold_qty} shares)."
                     )
                     try:
@@ -2364,7 +2717,47 @@ class SellOrderManager:
 
         return stats
 
-    def _has_recent_executed_buy_order(self, symbol: str, minutes: int = 5) -> bool:
+    def _position_opened_same_ist_day(self, position: Any) -> bool:
+        """True when the position was opened on the current IST calendar day."""
+        opened_at = getattr(position, "opened_at", None)
+        if not opened_at:
+            return False
+        from src.infrastructure.db.timezone_utils import as_ist_aware
+
+        return as_ist_aware(opened_at).date() == ist_now().date()
+
+    def _has_pending_sell_order(self, symbol: str) -> bool:
+        """True when a pending system sell exists for this symbol (broker may still be open)."""
+        if not self.orders_repo or not self.user_id:
+            return False
+        sym_u = symbol.upper()
+        base = extract_base_symbol(symbol).upper()
+        orders, _ = self.orders_repo.list(self.user_id)
+        for order in orders:
+            if order.side.lower() != "sell" or order.status != DbOrderStatus.PENDING:
+                continue
+            if (order.orig_source or "").strip().lower() == "circuit_defer":
+                continue
+            order_sym = order.symbol.upper()
+            order_base = extract_base_symbol(order_sym).upper()
+            if order_sym == sym_u or order_base == base:
+                return True
+        return False
+
+    def _should_skip_broker_holdings_reconciliation(self, position: Any, symbol: str) -> bool:
+        """
+        Skip holdings reconciliation when broker holdings are unreliable.
+
+        Kotak holdings update T+1; same-day buys often show broker_qty=0 while
+        shares are still held. Also skip when a recent fill or pending sell exists.
+        """
+        if self._position_opened_same_ist_day(position):
+            return True
+        if self._has_pending_sell_order(symbol):
+            return True
+        return self._has_recent_executed_buy_order(symbol, minutes=120)
+
+    def _has_recent_executed_buy_order(self, symbol: str, minutes: int = 120) -> bool:
         """
         Check if there's a recently executed buy order for this symbol.
 
@@ -2373,13 +2766,13 @@ class SellOrderManager:
         - Order executed recently but holdings fetch happened before execution
 
         Strategy:
-        1. First check if position was created very recently (within 2 minutes) - most precise
-        2. Fallback to checking executed orders within time window
+        1. Same IST calendar day as position open (holdings API is T+1)
+        2. Position opened within ``minutes`` (default 120)
+        3. Executed buy order within ``minutes`` (uses IST-naive timestamps)
 
         Args:
-            symbol: Base symbol to check (e.g., 'ASTERDM')
-            minutes: Time window in minutes to check executed orders (default: 5 minutes)
-                     Note: Position creation check uses 2 minutes (broker API typically updates within 1-2 min)
+            symbol: Full trading symbol (e.g., 'PFC-EQ')
+            minutes: Time window for recent fills (default: 120 minutes)
 
         Returns:
             True if there's a recent executed buy order or recently created position, False otherwise
@@ -2391,27 +2784,33 @@ class SellOrderManager:
             if not ist_now:
                 return False
 
-            now = ist_now()
+            now_naive = ist_now_naive()
 
-            # Strategy 1: Check if position was created very recently (most precise)
-            # Broker APIs typically update within 1-2 minutes, so 2 minutes is sufficient
+            from src.infrastructure.db.timezone_utils import as_ist_aware
+
             position = self.positions_repo.get_by_symbol(self.user_id, symbol)
             if position and position.opened_at:
-                position_age = (now - position.opened_at).total_seconds() / 60  # minutes
-                if position_age <= 2:  # Position created within last 2 minutes
+                opened = as_ist_aware(position.opened_at)
+                if opened.date() == ist_now().date():
+                    logger.debug(
+                        f"Position {symbol} opened today ({opened.date()}). "
+                        "Skipping reconciliation (holdings API is T+1)."
+                    )
+                    return True
+                position_age = (
+                    now_naive - as_ist_aware(position.opened_at).replace(tzinfo=None)
+                ).total_seconds() / 60
+                if position_age <= minutes:
                     logger.debug(
                         f"Position {symbol} was created {position_age:.1f} minutes ago. "
-                        f"Skipping reconciliation (broker holdings may not be updated yet)."
+                        "Skipping reconciliation (broker holdings may not be updated yet)."
                     )
                     return True
 
-            # Strategy 2: Check for executed buy orders within time window
-            # Use shorter window (5 minutes) since broker APIs usually update within 1-2 minutes
-            # 5 minutes provides safety margin without being too conservative
             if not self.orders_repo:
                 return False
 
-            cutoff_time = now - timedelta(minutes=minutes)
+            cutoff_time = now_naive - timedelta(minutes=minutes)
 
             # Get all buy orders for this user
             orders, _ = self.orders_repo.list(self.user_id)
@@ -2423,26 +2822,27 @@ class SellOrderManager:
                     continue
 
                 # Compare full symbols (orders already have full symbols, symbol is full after migration)
-                if order.symbol.upper() != symbol.upper():
+                order_sym = order.symbol.upper()
+                sym_u = symbol.upper()
+                base = extract_base_symbol(symbol).upper()
+                if order_sym != sym_u and extract_base_symbol(order_sym).upper() != base:
                     continue
 
                 # Check if order was executed recently (ONGOING legacy or CLOSED = filled)
                 if order.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
-                    # Check execution_time first (more accurate)
-                    if hasattr(order, "execution_time") and order.execution_time:
-                        if order.execution_time >= cutoff_time:
+                    for ts_attr in ("execution_time", "filled_at", "placed_at"):
+                        ts = getattr(order, ts_attr, None)
+                        if ts is None:
+                            continue
+                        ts_naive = (
+                            ts.replace(tzinfo=None)
+                            if getattr(ts, "tzinfo", None) is not None
+                            else ts
+                        )
+                        if ts_naive >= cutoff_time:
                             logger.debug(
                                 f"Found recent executed buy order for {symbol}: "
-                                f"order_id={order.id}, execution_time={order.execution_time}"
-                            )
-                            return True
-
-                    # Fallback to filled_at if execution_time not available
-                    if hasattr(order, "filled_at") and order.filled_at:
-                        if order.filled_at >= cutoff_time:
-                            logger.debug(
-                                f"Found recent executed buy order for {symbol}: "
-                                f"order_id={order.id}, filled_at={order.filled_at}"
+                                f"order_id={order.id}, {ts_attr}={ts_naive}"
                             )
                             return True
 
@@ -2502,17 +2902,7 @@ class SellOrderManager:
             recently_closed = {}
             for pos in all_positions:
                 if pos.closed_at:
-                    # Handle timezone mismatch: ensure both datetimes are timezone-aware
-                    closed_at = pos.closed_at
-                    if closed_at.tzinfo is None:
-                        # Naive datetime: assume it's in IST (database convention)
-                        from src.infrastructure.db.timezone_utils import IST
-
-                        closed_at = closed_at.replace(tzinfo=IST)
-                    elif closed_at.tzinfo != now.tzinfo:
-                        # Different timezone: convert to IST
-                        closed_at = closed_at.astimezone(now.tzinfo)
-
+                    closed_at = coerce_db_timestamp_to_ist(pos.closed_at, reference=now)
                     closed_age = (now - closed_at).total_seconds() / 60
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
@@ -2528,6 +2918,14 @@ class SellOrderManager:
                 stats["checked"] += 1
                 order_symbol = order.symbol.upper()
                 base_symbol = extract_base_symbol(order_symbol).upper()
+
+                if (order.orig_source or "").strip().lower() == "circuit_defer":
+                    logger.debug(
+                        "Skipping %s: circuit_defer placeholder (no broker order)",
+                        order_symbol,
+                    )
+                    stats["skipped"] += 1
+                    continue
 
                 # Safety check 1: Skip manual orders
                 if order.order_metadata and isinstance(order.order_metadata, dict):
@@ -2998,12 +3396,24 @@ class SellOrderManager:
                 logger.warning(f"Invalid quantity {qty} for {symbol}")
                 return None
 
-            # Round price to valid tick size (use symbol to get tick size from scrip master)
-            rounded_price = self.round_to_tick_size(target_price, exchange=exchange, symbol=symbol)
-            if rounded_price != target_price:
-                logger.debug(
-                    f"Rounded price from Rs {target_price:.4f} to Rs {rounded_price:.2f} (tick size)"
-                )
+            circuit_limits = self._get_circuit_limits_for_symbol(symbol, exchange)
+            rounded_price = self.round_to_tick_size(
+                target_price,
+                exchange=exchange,
+                symbol=symbol,
+                circuit_limits=circuit_limits,
+            )
+            if rounded_price is None or rounded_price <= 0:
+                if circuit_limits and target_price > circuit_limits.get("upper", 0):
+                    self._queue_for_circuit_expansion(
+                        symbol, trade, target_price, circuit_limits
+                    )
+                else:
+                    logger.error(
+                        f"Cannot place sell for {symbol}: invalid limit price "
+                        f"(raw Rs {target_price:.4f})"
+                    )
+                return None
 
             # Place limit sell order
             logger.info(f"Placing LIMIT SELL order: {symbol} x{qty} @ Rs {rounded_price:.2f}")
@@ -3176,12 +3586,19 @@ class SellOrderManager:
                 else config.DEFAULT_EXCHANGE
             )
 
-            # Round price to valid tick size (use symbol to get tick size from scrip master)
-            rounded_price = self.round_to_tick_size(new_price, exchange=exchange, symbol=symbol)
-            if rounded_price != new_price:
-                logger.debug(
-                    f"Rounded price from Rs {new_price:.4f} to Rs {rounded_price:.2f} (tick size)"
+            circuit_limits = self._get_circuit_limits_for_symbol(symbol, exchange)
+            rounded_price = self.round_to_tick_size(
+                new_price,
+                exchange=exchange,
+                symbol=symbol,
+                circuit_limits=circuit_limits,
+            )
+            if rounded_price is None or rounded_price <= 0:
+                logger.error(
+                    f"Cannot modify sell {order_id} for {symbol}: invalid limit price "
+                    f"(raw Rs {new_price:.4f})"
                 )
+                return False
 
             # Modify existing order directly (more efficient than cancel+replace)
             logger.info(f"Modifying order {order_id}: {symbol} x{qty} @ Rs {rounded_price:.2f}")
@@ -4044,32 +4461,12 @@ class SellOrderManager:
     def _parse_circuit_limits_from_rejection(
         self, rejection_reason: str
     ) -> dict[str, float] | None:
-        """
-        Parse circuit limits from rejection message.
+        """Parse circuit limits from broker rejection (delegates to sell_target_service)."""
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            parse_circuit_limits_from_rejection,
+        )
 
-        Example message: "RMS:Rule: Check circuit limit including square off order exceeds :
-        Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
-
-        Returns:
-            Dict with 'upper' and 'lower' circuit limits, or None if not found
-        """
-        if not rejection_reason:
-            return None
-
-        # Try to extract High Price Range and Low Price Range
-        # Pattern: "High Price Range:33.51" or "High Price Range: 33.51"
-        high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
-        low_match = re.search(r"Low Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
-
-        if high_match and low_match:
-            try:
-                upper = float(high_match.group(1))
-                lower = float(low_match.group(1))
-                return {"upper": upper, "lower": lower}
-            except (ValueError, AttributeError):
-                pass
-
-        return None
+        return parse_circuit_limits_from_rejection(rejection_reason)
 
     def _is_no_holdings_rejection(self, rejection_reason: str) -> bool:
         """
@@ -4412,14 +4809,20 @@ class SellOrderManager:
                                 full_symbol = (
                                     symbol.upper()
                                 )  # symbol is already full symbol from active_sell_orders
+                                placed_sym = order_info.get("placed_symbol", symbol)
+                                rej_ticker = self._resolve_ticker_for_symbol(
+                                    symbol,
+                                    broker_symbol=placed_sym,
+                                    explicit_ticker=order_info.get("ticker"),
+                                )
                                 self.waiting_for_circuit_expansion[full_symbol] = {
                                     "upper_circuit": circuit_limits["upper"],
                                     "lower_circuit": circuit_limits["lower"],
                                     "ema9_target": ema9_target,
                                     "trade": {
                                         "symbol": symbol,
-                                        "placed_symbol": order_info.get("placed_symbol", symbol),
-                                        "ticker": order_info.get("ticker", ""),
+                                        "placed_symbol": placed_sym,
+                                        "ticker": rej_ticker,
                                         "qty": order_info.get("qty", 0),
                                     },
                                     "rejection_reason": rejection_reason,
@@ -4455,38 +4858,39 @@ class SellOrderManager:
                 self._remove_from_tracking(symbol)
 
                 # Get current EMA9 for new order
-                ticker = order_info.get("ticker")
                 placed_symbol = order_info.get("placed_symbol", symbol)
+                ticker = self._resolve_ticker_for_symbol(
+                    symbol,
+                    broker_symbol=placed_symbol,
+                    explicit_ticker=order_info.get("ticker"),
+                )
+                if not ticker:
+                    logger.warning(f"No ticker available for {symbol} to re-place cancelled order")
+                    continue
 
-                if ticker:
-                    ema9 = self._get_ema9_with_retry(
-                        ticker, broker_symbol=placed_symbol, symbol=symbol
-                    )
-                    if ema9:
-                        # Re-create trade dict
-                        trade = {
-                            "symbol": symbol,
-                            "ticker": ticker,
-                            "qty": order_info.get("qty", 0),
-                            "placed_symbol": placed_symbol,
-                        }
-
-                        # Place new sell order
-                        new_order_id = self.place_sell_order(trade, ema9)
-                        if new_order_id:
-                            logger.info(
-                                f"Successfully re-placed sell order for {symbol} after cancellation: {new_order_id}"
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to re-place sell order for {symbol} after cancellation"
-                            )
+                ema9 = self._get_ema9_with_retry(
+                    ticker, broker_symbol=placed_symbol, symbol=symbol
+                )
+                if ema9:
+                    trade = {
+                        "symbol": symbol,
+                        "ticker": ticker,
+                        "qty": order_info.get("qty", 0),
+                        "placed_symbol": placed_symbol,
+                    }
+                    new_order_id = self.place_sell_order(trade, ema9)
+                    if new_order_id:
+                        logger.info(
+                            f"Successfully re-placed sell order for {symbol} after cancellation: {new_order_id}"
+                        )
                     else:
                         logger.warning(
-                            f"Failed to get EMA9 for {symbol} to re-place cancelled order"
+                            f"Failed to re-place sell order for {symbol} after cancellation"
                         )
                 else:
-                    logger.warning(f"No ticker available for {symbol} to re-place cancelled order")
+                    logger.warning(
+                        f"Failed to get EMA9 for {symbol} to re-place cancelled order"
+                    )
             except Exception as e:
                 logger.error(f"Error re-placing sell order for {symbol} after cancellation: {e}")
 
@@ -5122,7 +5526,12 @@ class SellOrderManager:
             logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
             return {}
 
-    def run_at_market_open(self) -> int:
+    def run_at_market_open(
+        self,
+        *,
+        reconcile_holdings: bool = True,
+        cancel_orphans: bool = True,
+    ) -> int:
         """
         Place sell orders for all open positions at market open
         Checks for existing orders to avoid duplicates
@@ -5130,28 +5539,40 @@ class SellOrderManager:
         Edge Case #14, #15, #17 fix: Reconciles positions with broker holdings
         before placing orders to detect manual sells.
 
+        Args:
+            reconcile_holdings: When False, skip holdings reconciliation (mid-session restart).
+            cancel_orphans: When False, skip orphaned sell cancellation (mid-session restart).
+
         Returns:
             Number of orders placed
         """
         logger.info("? Running sell order placement at market open...")
 
-        # Edge Case #14, #15, #17: Reconcile positions with broker holdings
-        # Detect and handle manual sells before placing orders
-        reconciliation_stats = self._reconcile_positions_with_broker_holdings()
-        if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+        self._restore_circuit_defer_queue()
+
+        if reconcile_holdings:
+            reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+            if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+                logger.info(
+                    f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
+                    f"and {reconciliation_stats['closed']} manual full sells. "
+                    f"Positions table updated accordingly."
+                )
+        else:
             logger.info(
-                f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
-                f"and {reconciliation_stats['closed']} manual full sells. "
-                f"Positions table updated accordingly."
+                "Skipping holdings reconciliation (mid-session startup; "
+                "holdings API is T+1 for same-day buys)"
             )
 
-        # Cleanup orphaned sell orders (no corresponding open positions)
-        orphaned_stats = self._cancel_orphaned_sell_orders()
-        if orphaned_stats["cancelled"] > 0:
-            logger.info(
-                f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
-                f"({orphaned_stats['skipped']} skipped due to safety checks)"
-            )
+        if cancel_orphans:
+            orphaned_stats = self._cancel_orphaned_sell_orders()
+            if orphaned_stats["cancelled"] > 0:
+                logger.info(
+                    f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
+                    f"({orphaned_stats['skipped']} skipped due to safety checks)"
+                )
+        else:
+            logger.info("Skipping orphaned sell cleanup (mid-session startup)")
 
         open_positions = self.get_open_positions()
         if not open_positions:
@@ -5616,12 +6037,21 @@ class SellOrderManager:
                     # Continue monitoring if position check fails (fail-safe)
 
             # Get current EMA9
-            ticker = order_info.get("ticker")
+            broker_sym = order_info.get("placed_symbol") or symbol
+            ticker = self._resolve_ticker_for_symbol(
+                symbol,
+                broker_symbol=broker_sym,
+                explicit_ticker=order_info.get("ticker"),
+            )
             if not ticker:
                 logger.warning(f"No ticker found for {symbol}")
                 return result
+            if not order_info.get("ticker"):
+                order_info["ticker"] = ticker
+                full_symbol = symbol.upper()
+                if full_symbol in self.active_sell_orders:
+                    self.active_sell_orders[full_symbol]["ticker"] = ticker
 
-            broker_sym = order_info.get("placed_symbol")
             current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_sym)
             if not current_ema9:
                 logger.warning(f"Failed to calculate EMA9 for {symbol}")
@@ -5637,9 +6067,23 @@ class SellOrderManager:
                 if self.strategy_config
                 else config.DEFAULT_EXCHANGE
             )
-            rounded_ema9 = self.round_to_tick_size(
-                current_ema9, exchange=exchange_for_tick_size, symbol=symbol_for_tick_size
+            circuit_limits = self._get_circuit_limits_for_symbol(
+                symbol_for_tick_size, exchange_for_tick_size
             )
+            rounded_ema9 = self.round_to_tick_size(
+                current_ema9,
+                exchange=exchange_for_tick_size,
+                symbol=symbol_for_tick_size,
+                circuit_limits=circuit_limits,
+            )
+            if rounded_ema9 is None or rounded_ema9 <= 0:
+                logger.warning(
+                    f"{symbol}: Skipping EMA9 monitor update — invalid rounded price "
+                    f"(raw EMA9={current_ema9})"
+                )
+                result["action"] = "skipped"
+                result["success"] = True
+                return result
 
             # Check if ROUNDED EMA9 is lower than lowest seen
             # Initialize lowest_ema9 from target_price if not set
@@ -5831,12 +6275,17 @@ class SellOrderManager:
 
     def _check_and_retry_circuit_expansion(self) -> int:
         """
-        Check if EMA9 has dropped within circuit limits for waiting symbols and retry placing orders.
-        Only retries when EMA9 is within the stored upper circuit limit.
+        Retry deferred sells when full EMA9 can be placed within circuit (no cap-priced substitute).
+
+        Runs on each sell_monitor cycle (~60s scheduler loop during market hours).
+        Refetches Kotak circuit limits per symbol; recomputes EMA9 from latest LTP (not a
+        cached price). Places only when prepare_broker_sell_limit_price accepts full target.
 
         Returns:
             Number of orders successfully retried
         """
+        if not self.waiting_for_circuit_expansion:
+            self._restore_circuit_defer_queue()
         if not self.waiting_for_circuit_expansion:
             return 0
 
@@ -5845,47 +6294,54 @@ class SellOrderManager:
         for full_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
             try:
                 trade = wait_info["trade"]
-                ticker = trade.get("ticker", "")
                 broker_symbol = trade.get("placed_symbol", trade.get("symbol", ""))
-
-                if not ticker and broker_symbol:
-                    # Try to extract ticker from symbol
-                    ticker = (
-                        broker_symbol.replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                        + ".NS"
-                    )
-
+                ticker = self._resolve_ticker_for_symbol(
+                    full_symbol,
+                    broker_symbol=broker_symbol,
+                    explicit_ticker=trade.get("ticker"),
+                    position=trade,
+                )
                 if not ticker:
                     logger.debug(f"{full_symbol}: No ticker available for circuit check")
                     continue
 
-                # Get current EMA9
+                exchange = (
+                    self.strategy_config.default_exchange
+                    if self.strategy_config
+                    else config.DEFAULT_EXCHANGE
+                )
+                placed_symbol = trade.get("placed_symbol", trade.get("symbol", full_symbol))
+
+                # Fresh circuit limits from Kotak quotes (upper band can change intraday)
+                fresh_limits = self._get_circuit_limits_for_symbol(placed_symbol, exchange)
+                upper_circuit = (
+                    float(fresh_limits["upper"])
+                    if fresh_limits and fresh_limits.get("upper")
+                    else float(wait_info["upper_circuit"])
+                )
+                if fresh_limits:
+                    wait_info["upper_circuit"] = upper_circuit
+                    if fresh_limits.get("lower") is not None:
+                        wait_info["lower_circuit"] = float(fresh_limits["lower"])
+
+                # EMA9 from latest LTP via price/indicator services (not stored at defer time)
                 current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_symbol)
                 if not current_ema9:
                     continue
 
-                upper_circuit = wait_info["upper_circuit"]
                 ema9_target = wait_info["ema9_target"]
+                target_price = min(current_ema9, ema9_target)
 
-                # Check if current EMA9 is now within the upper circuit limit
-                if current_ema9 > upper_circuit:
-                    # EMA9 still exceeds circuit - wait
+                if target_price > upper_circuit:
                     logger.debug(
-                        f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) still exceeds upper circuit "
-                        f"(Rs {upper_circuit:.2f}). Waiting..."
+                        f"{full_symbol}: Deferred — EMA9 Rs {target_price:.2f} still above "
+                        f"upper circuit Rs {upper_circuit:.2f} (Kotak quotes + live LTP)"
                     )
                     continue
 
-                # EMA9 is now within circuit limits - retry placing order
-                # Use current EMA9 if it's lower than stored target (better price), otherwise use stored target
-                target_price = min(current_ema9, ema9_target)
-
                 logger.info(
-                    f"{full_symbol}: EMA9 (Rs {current_ema9:.2f}) is now within circuit limit "
-                    f"(Rs {upper_circuit:.2f}). Retrying order placement at Rs {target_price:.2f}..."
+                    f"{full_symbol}: EMA9 Rs {target_price:.2f} within upper circuit Rs {upper_circuit:.2f}. "
+                    "Retrying full-target sell placement..."
                 )
 
                 # Place order - if it succeeds, remove from waiting list
@@ -5899,6 +6355,7 @@ class SellOrderManager:
                         f"Order ID: {order_id}"
                     )
                     del self.waiting_for_circuit_expansion[full_symbol]
+                    self._clear_circuit_defer_from_db(full_symbol)
                     retried_count += 1
 
                     # Register the order for tracking

@@ -7,8 +7,9 @@ also marked as CLOSED.
 """
 
 import sys
+from datetime import timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -18,9 +19,20 @@ import pytest  # noqa: E402
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager  # noqa: E402
 from src.infrastructure.db.models import Orders, OrderStatus  # noqa: E402
-from src.infrastructure.db.timezone_utils import ist_now  # noqa: E402
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
 from src.infrastructure.persistence.orders_repository import OrdersRepository  # noqa: E402
 from src.infrastructure.persistence.positions_repository import PositionsRepository  # noqa: E402
+
+
+def _position_opened_before_today():
+    """Avoid same-day reconciliation skip (holdings API is T+1 for today's opens)."""
+    return ist_now_naive() - timedelta(days=3)
+
+
+def _mock_broker_flat_for_reconcile(sell_manager):
+    """Empty holdings + valid positions API so manual full-sell close is allowed."""
+    sell_manager.portfolio.get_holdings = Mock(return_value={"data": []})
+    sell_manager.portfolio.get_positions = Mock(return_value={"data": []})
 
 
 @pytest.fixture
@@ -513,12 +525,13 @@ class TestReconciliationClosesBuyOrders:
         session = db_session
         user_id = test_user.id
 
-        # Create open position
+        # Create open position (opened before today so reconciliation may close on flat broker)
         position = positions_repo.upsert(
             user_id=user_id,
             symbol="RELIANCE-EQ",
             quantity=100.0,
             avg_price=2500.0,
+            opened_at=_position_opened_before_today(),
         )
         session.commit()
 
@@ -539,13 +552,11 @@ class TestReconciliationClosesBuyOrders:
         session.commit()
         session.refresh(buy_order1)
 
-        # Mock broker holdings to show 0 shares (position closed)
-        sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": []}  # No holdings = position closed
-        )
+        _mock_broker_flat_for_reconcile(sell_manager)
 
-        # Execute reconciliation
-        stats = sell_manager._reconcile_positions_with_broker_holdings()
+        # Execute reconciliation (stale-fill guard must not block close for old positions)
+        with patch.object(sell_manager, "_has_recent_executed_buy_order", return_value=False):
+            stats = sell_manager._reconcile_positions_with_broker_holdings()
 
         # Verify position is closed
         session.refresh(position)
@@ -570,13 +581,11 @@ class TestReconciliationClosesBuyOrders:
             symbol="RELIANCE-EQ",
             quantity=100.0,
             avg_price=2500.0,
+            opened_at=_position_opened_before_today(),
         )
         session.commit()
 
-        # Mock broker holdings to show 0 shares (position closed)
-        sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": []}  # No holdings = position closed
-        )
+        _mock_broker_flat_for_reconcile(sell_manager)
 
         # Execute reconciliation (should not raise error)
         stats = sell_manager._reconcile_positions_with_broker_holdings()
@@ -603,6 +612,7 @@ class TestSingleSymbolReconciliationClosesBuyOrders:
             symbol="RELIANCE-EQ",
             quantity=100.0,
             avg_price=2500.0,
+            opened_at=_position_opened_before_today(),
         )
         session.commit()
 
@@ -623,13 +633,11 @@ class TestSingleSymbolReconciliationClosesBuyOrders:
         session.commit()
         session.refresh(buy_order1)
 
-        # Mock broker holdings to show 0 shares (position closed)
-        sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": []}  # No holdings = position closed
-        )
+        _mock_broker_flat_for_reconcile(sell_manager)
 
-        # Execute single symbol reconciliation
-        result = sell_manager._reconcile_single_symbol("RELIANCE-EQ")
+        # Execute single symbol reconciliation (no recent-buy guard for stale fills)
+        with patch.object(sell_manager, "_has_recent_executed_buy_order", return_value=False):
+            result = sell_manager._reconcile_single_symbol("RELIANCE-EQ")
 
         # Verify position is closed
         session.refresh(position)
@@ -654,16 +662,15 @@ class TestSingleSymbolReconciliationClosesBuyOrders:
             symbol="RELIANCE-EQ",
             quantity=100.0,
             avg_price=2500.0,
+            opened_at=_position_opened_before_today(),
         )
         session.commit()
 
-        # Mock broker holdings to show 0 shares (position closed)
-        sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": []}  # No holdings = position closed
-        )
+        _mock_broker_flat_for_reconcile(sell_manager)
 
         # Execute single symbol reconciliation (should not raise error)
-        result = sell_manager._reconcile_single_symbol("RELIANCE-EQ")
+        with patch.object(sell_manager, "_has_recent_executed_buy_order", return_value=False):
+            result = sell_manager._reconcile_single_symbol("RELIANCE-EQ")
 
         # Verify position is closed
         session.refresh(position)
@@ -687,6 +694,7 @@ class TestErrorHandling:
             symbol="RELIANCE-EQ",
             quantity=100.0,
             avg_price=2500.0,
+            opened_at=_position_opened_before_today(),
         )
         session.commit()
 
@@ -719,13 +727,11 @@ class TestErrorHandling:
 
         sell_manager.orders_repo.update = failing_update
 
-        # Mock broker holdings to show 0 shares (position closed)
-        sell_manager.portfolio.get_holdings = Mock(
-            return_value={"data": []}  # No holdings = position closed
-        )
+        _mock_broker_flat_for_reconcile(sell_manager)
 
         # Execute reconciliation (should not raise error, position should still close)
-        stats = sell_manager._reconcile_positions_with_broker_holdings()
+        with patch.object(sell_manager, "_has_recent_executed_buy_order", return_value=False):
+            stats = sell_manager._reconcile_positions_with_broker_holdings()
 
         # Verify position is closed (even though buy order closure failed)
         session.refresh(position)

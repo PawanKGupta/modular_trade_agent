@@ -399,6 +399,13 @@ class TradingService:
             now = datetime.now().time()
         return dt_time(9, 15) <= now <= dt_time(15, 30)
 
+    def _is_sell_open_placement_window(self) -> bool:
+        """True during the first sell-monitor cycle window (9:15–9:35 IST)."""
+        if ist_now is None:
+            return False
+        now = ist_now().time()
+        return dt_time(9, 15) <= now <= dt_time(9, 35)
+
     def _initialize_live_prices(self):
         """
         Initialize LivePriceCache for Kotak REST quote polling (real-time LTP).
@@ -779,8 +786,17 @@ class TradingService:
                 if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
-                # Place sell orders at market open
-                orders_placed = self.sell_manager.run_at_market_open()
+                # Place sell orders at market open (or mid-session: sync only, no reconcile)
+                in_open_window = self._is_sell_open_placement_window()
+                orders_placed = self.sell_manager.run_at_market_open(
+                    reconcile_holdings=in_open_window,
+                    cancel_orphans=in_open_window,
+                )
+                if not in_open_window:
+                    logger.info(
+                        "Mid-session sell_monitor startup: skipped holdings reconciliation "
+                        "and orphan cleanup (restart safety for same-day positions)"
+                    )
                 logger.info(f"Placed {orders_placed} sell orders")
                 task_context["orders_placed"] = orders_placed
 
@@ -1503,7 +1519,15 @@ class TradingService:
                 f"Starting async execution of {task_name} (timeout: {timeout_seconds}s)",
                 action="scheduler",
             )
-            future = self.task_executor.submit(task_func)
+            from src.application.services.ohlcv_runtime import (  # noqa: PLC0415
+                OHLCV_READ_ONLY_TASK_NAMES,
+                run_with_ohlcv_cache_read_only,
+            )
+
+            task_runner = task_func
+            if task_name in OHLCV_READ_ONLY_TASK_NAMES:
+                task_runner = lambda: run_with_ohlcv_cache_read_only(task_func)
+            future = self.task_executor.submit(task_runner)
             # Track future so subsequent scheduler ticks won't queue duplicates.
             with self._task_futures_lock:
                 self._task_futures[task_name] = future
@@ -1688,7 +1712,7 @@ class TradingService:
                                         self._execute_task_async(
                                             self.run_sell_monitor,
                                             "sell_monitor",
-                                            timeout_seconds=60,  # 1 minute (should be quick)
+                                            timeout_seconds=180,  # 3 minutes (DB read-only; was 60s)
                                         )
 
                             # Analysis (uses DB schedule) - 30 minute timeout

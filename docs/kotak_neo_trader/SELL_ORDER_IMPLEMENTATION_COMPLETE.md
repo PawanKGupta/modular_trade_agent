@@ -1,7 +1,7 @@
 # Sell Order Implementation - Complete Documentation
 
 **Date**: 2025-01-27
-**Last Updated**: 2026-05-28
+**Last Updated**: 2026-06-03
 **Status**: ✅ Current Implementation
 **Version**: Database-Based (Post-Unified-Service)
 
@@ -47,6 +47,7 @@ The Sell Order Management System is an automated profit-taking system that:
 5. **Manual Trade Detection** - Reconciles positions with broker holdings to detect manual sells
 6. **Partial Execution Handling** - Updates position quantity and sell order quantity on partial fills
 7. **Unified Monitoring** - Integrates with UnifiedOrderMonitor for both buy and sell order tracking
+8. **Circuit-aware placement (defer-only)** - Defers limit sells when EMA9 exceeds upper circuit; retries full-target placement when EMA9 or limits allow (no capped substitute price)
 
 ### Exit Strategy
 
@@ -61,11 +62,13 @@ The Sell Order Management System is an automated profit-taking system that:
 
 Live sell placement and paper trading share one target pipeline:
 
-- **`compute_sell_target()`** and **`round_sell_price()`** in `modules/kotak_neo_auto_trader/services/sell_target_service.py`
-- Live: `_get_ema9_with_retry()` → `calculate_ema9_realtime`, then `SellOrderManager.round_to_tick_size()` → `round_sell_price`
-- Paper: `PaperTradingServiceAdapter._calculate_ema9()` → `compute_sell_target` (Yahoo LTP, no Kotak WebSocket)
+- **`compute_sell_target()`**, **`prepare_broker_sell_limit_price()`**, and **`round_sell_price()`** in `modules/kotak_neo_auto_trader/services/sell_target_service.py`
+- Live: `_get_ema9_with_retry()` → `calculate_ema9_realtime`, then `SellOrderManager.round_to_tick_size()` → `prepare_broker_sell_limit_price` (tick grid + **defer-only** circuit guard from Kotak quotes)
+- Paper: `PaperTradingServiceAdapter._calculate_ema9()` → `compute_sell_target` (Yahoo LTP, no Kotak WebSocket; **no** circuit defer — paper does not call `prepare_broker_sell_limit_price`)
 
-Targets should align at placement when LTP and tick rules match. After open, live orders may still be revised downward (lowest EMA9); paper targets stay frozen until re-entry. Details: [Paper Trading Complete Guide](../guides/PAPER_TRADING_COMPLETE.md#sell-target-parity-with-live-kotak-placement-time).
+**Circuit limits (live broker, defer-only):** There is **no config flag** and **no cap-to-upper placement**. Before `place_limit_sell`, the service fetches upper/lower circuit via Kotak quotes (`GET .../quotes/neosymbol/{segment|token}/circuit_limits`, then `all`) when possible. If tick-rounded EMA9 exceeds the upper band, `prepare_broker_sell_limit_price` returns `defer_circuit`, `place_sell_order` does **not** submit a broker order, and the symbol is queued in `waiting_for_circuit_expansion`. Retry runs on each sell-monitor cycle (~1 minute during market hours): refetch quotes, recompute EMA9 from latest LTP, and place **only** when full EMA9 fits under upper (same helper — never a substitute limit below full target). If quotes are unavailable, reactive handling still applies (broker RMS rejection text parsed into the same queue). **Note:** Kotak quotes upper/lower can differ from RMS “High/Low Price Range” on rejection messages; the queue may use the stricter RMS values after a rejection even when quotes still show a wider band.
+
+Targets should align at placement when LTP and tick rules match (paper has no circuit gate). After open, live orders may still be revised downward (lowest EMA9); paper targets stay frozen until re-entry. Details: [Paper Trading Complete Guide](../guides/PAPER_TRADING_COMPLETE.md#sell-target-parity-with-live-kotak-placement-time).
 
 ---
 
@@ -209,10 +212,29 @@ WHERE user_id = ? AND closed_at IS NULL
                └─> Track existing order with current quantity
        └─> If no existing order:
            └─> Place New Sell Order
-               ├─> Broker API: place_limit_order()
+               ├─> round_to_tick_size() → prepare_broker_sell_limit_price()
+               ├─> If EMA9 > upper circuit (quotes): defer — queue waiting_for_circuit_expansion (no broker order)
+               ├─> Else: Broker API place_limit_sell()
                ├─> Get broker_order_id
                └─> Register in OrderStateManager
 ```
+
+### Circuit limits and defer-only placement
+
+**Policy:** Full EMA9 target only. The system does **not** place a limit sell priced at the upper circuit when EMA9 is above that band.
+
+| Step | Behavior |
+|------|----------|
+| Fetch limits | `fetch_circuit_limits_for_symbol()` via Kotak quotes (best-effort) |
+| Prepare price | Tick round, then if rounded EMA9 > upper → `defer_circuit` |
+| Defer | `_queue_for_circuit_expansion()` — in-memory map per symbol; also persisted as `orders` row with `orig_source=circuit_defer` (no `broker_order_id`) when DB repo is available |
+| Restore | `_restore_circuit_defer_queue()` on market open and before circuit retry if the in-memory map is empty (survives process restart) |
+| Retry | `_check_and_retry_circuit_expansion()` each `monitor_and_update()` (~60s scheduler loop) |
+| Place on retry | `place_sell_order()` with `min(current_ema9, stored_ema9_target)` when ≤ refreshed upper |
+| RMS rejection | Parse “High/Low Price Range” from rejection; re-queue with stricter upper if needed |
+| Modify path | `update_sell_order()` uses same helper — modify fails if new price still above upper (no cap) |
+
+**Operational note:** Positions can remain **without** a live sell order until defer conditions clear. Orders placed under an older “cap to upper” policy are **not** auto-cancelled when defer-only code is deployed.
 
 ### Code Location
 
@@ -224,6 +246,13 @@ WHERE user_id = ? AND closed_at IS NULL
 - `_reconcile_positions_with_broker_holdings()`: Lines ~600-800
 - `get_current_ema9()`: Lines ~2190-2200
 - `place_sell_order()`: Lines ~900-1000
+- `_queue_for_circuit_expansion()`, `_check_and_retry_circuit_expansion()`: circuit defer queue and retry
+
+**File**: `modules/kotak_neo_auto_trader/services/sell_target_service.py`
+
+**Key Methods**:
+- `prepare_broker_sell_limit_price()` — tick grid + defer-only upper circuit check
+- `fetch_circuit_limits_for_symbol()` — Kotak quotes parser
 
 ### Database Updates
 
@@ -244,7 +273,15 @@ WHERE user_id = ? AND closed_at IS NULL
 ### Flow Diagram
 
 ```
-0. Detect and Track Manual Sell Orders (NEW):
+0. Circuit expansion retry (defer-only queue):
+   └─> _check_and_retry_circuit_expansion()
+   └─> For each symbol in waiting_for_circuit_expansion:
+       ├─> Refetch Kotak circuit limits (quotes)
+       ├─> Recompute EMA9 from latest LTP
+       ├─> If EMA9 still > upper: wait (no broker call)
+       └─> Else: place_sell_order() at full target; remove from queue on success
+
+1. Detect and Track Manual Sell Orders (NEW):
    ├─> Detect Pending Manual Sells
    │   └─> _detect_and_track_pending_manual_sell_orders()
    │       └─> Track in active_sell_orders (prevents duplicate placement)
@@ -255,7 +292,7 @@ WHERE user_id = ? AND closed_at IS NULL
            ├─> Track in active_sell_orders
            └─> Close position with exit_price and closed_at
 
-1. For Each Active Sell Order:
+2. For Each Active Sell Order:
    └─> Check if Position is Closed
        └─> If closed_at is set:
            └─> Skip monitoring
@@ -277,7 +314,7 @@ WHERE user_id = ? AND closed_at IS NULL
        └─> Broker API: has_completed_sell_order()
        └─> Returns: (filled_qty, order_qty)
 
-2. If Order Executed:
+3. If Order Executed:
    └─> Check if Full or Partial Execution
 
    └─> If Full Execution (filled_qty == order_qty):
@@ -929,20 +966,23 @@ python -m modules.kotak_neo_auto_trader.run_sell_orders \
 - Check holdings quantity
 - Review broker API error messages
 
-### "Skipping: EMA9 is too low"
+### "Deferred sell placement" / no sell while EMA9 above circuit
 
-**Cause**: EMA9 < 95% of entry price (safety check).
+**Cause**: Tick-rounded EMA9 exceeds upper circuit (defer-only policy). No broker order is submitted until EMA9 ≤ upper or limits widen.
 
 **Check**:
-1. Calculate: `EMA9 / entry_price < 0.95`
-2. Verify entry price in position
-3. Check current EMA9 value
+1. Logs: `Deferred sell placement` or `Sell limit deferred for ... exceeds circuit`
+2. In-memory queue: `waiting_for_circuit_expansion` (see sell-monitor DEBUG/INFO)
+3. Compare quotes upper vs RMS rejection “High Price Range” if a prior place failed
 
 **Fix**:
-- This is a safety feature to prevent selling at loss > 5%
-- Wait for price recovery
-- Manually adjust if needed
-- Consider adjusting threshold in configuration
+- Wait for EMA9 to fall or exchange/RMS band to allow full target (automatic retry ~1 min)
+- If a **capped** sell from an older run still exists on broker, cancel or manage manually when switching to defer-only
+- If quotes upper ≠ RMS upper, expect possible reject until rejection parser updates the queue
+
+### "Skipping: EMA9 is too low" (removed)
+
+**Historical:** Issue #4 removed the 95% entry-price safety check (2025-01-27). Sell orders are no longer skipped for this reason. If you see related messaging in old logs, ignore for current behavior.
 
 ### "Invalid quantity 0 for {symbol}"
 
@@ -1068,7 +1108,7 @@ All 5 issues identified in this document have been **FIXED** and **VERIFIED** wi
 
 1. **Database-Based**: All positions are stored in `positions` table (not JSON files)
 2. **Unified Service**: Sell orders are managed by `TradingService` via `SellOrderManager` or `UnifiedOrderMonitor`
-3. **EMA9 Target**: Sell orders are placed at EMA9 price and updated only if EMA9 drops
+3. **EMA9 Target**: Sell orders are placed at full EMA9 (tick-rounded); deferred—not capped—when above upper circuit; updated only if EMA9 drops while an order is live
 4. **All Issues Fixed**: All 5 blocking issues have been resolved with comprehensive tests (69 tests total)
 5. **Reconciliation**: Positions are reconciled with broker holdings to detect manual trades
 6. **Monitoring**: Continuous monitoring every 60 seconds during market hours
@@ -1125,22 +1165,25 @@ After comprehensive analysis of the sell order flow, **no critical blocking issu
 #### 2. Monitoring Flow (`monitor_and_update()`)
 
 ```
-1. Periodic reconciliation (every 30 minutes)
+1. Circuit defer retry
+   └─> _check_and_retry_circuit_expansion() (~each sell_monitor minute)
+
+2. Periodic reconciliation (every 30 minutes)
    └─> Detect manual trades
 
-2. Check for positions without sell orders (Issue #5 fix)
-   └─> Attempt to place missing orders
+3. Check for positions without sell orders (Issue #5 fix)
+   └─> Attempt to place missing orders (same defer-only rules via place_sell_order)
 
-3. Check for executed orders
+4. Check for executed orders
    └─> Update positions table (atomic transaction)
    └─> Close buy orders (atomic transaction)
    └─> Cancel reentry orders (outside transaction - broker API)
 
-4. Check RSI exit condition
+5. Check RSI exit condition
    └─> Convert to market order if RSI10 > 50
 
-5. Monitor EMA9 for remaining orders
-   └─> Update order price if EMA9 drops
+6. Monitor EMA9 for remaining orders
+   └─> Update order price if EMA9 drops (skipped if rounded EMA9 still above circuit)
 ```
 
 #### 3. Execution Handling
@@ -1329,6 +1372,6 @@ if transaction and ist_now:
 
 ---
 
-**Last Updated**: 2025-12-13 (Issue #5 Enhancements, Verification & Flow Analysis)
+**Last Updated**: 2026-06-03 (Defer-only circuit placement; circuit retry and troubleshooting)
 **Status**: ✅ All Issues Fixed and Verified, Flow Validated
 **Maintained By**: Trading System Team

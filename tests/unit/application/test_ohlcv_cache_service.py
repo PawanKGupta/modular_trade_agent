@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.application.services.ohlcv_cache_service import OhlcvCacheService, reset_ohlcv_cache_stats
+from src.application.services.ohlcv_runtime import ohlcv_cache_read_only
 from src.infrastructure.db.base import Base
 from src.infrastructure.persistence.price_cache_repository import PriceCacheRepository
 from src.infrastructure.utils.holiday_calendar import iter_trading_days
@@ -133,6 +134,59 @@ def test_get_ohlcv_cache_hit_refreshes_today_when_add_current_day(db_session, mo
     assert float(latest["high"]) == fresh_high
 
 
+def test_get_ohlcv_cache_hit_no_network_when_read_only(db_session, monkeypatch):
+    """Cache hit with add_current_day must not call Yahoo/NSE when read-only context is active."""
+    reset_ohlcv_cache_stats()
+    calls = {"n": 0}
+    stale_high = 4149.9
+    today = date(2026, 6, 1)
+
+    def counting_fetch(symbol, days=365, interval="1d", end_date=None, add_current_day=True):
+        calls["n"] += 1
+        return pd.DataFrame(
+            {
+                "date": [pd.Timestamp(today)],
+                "open": [4050.0],
+                "high": [4106.0],
+                "low": [4000.0],
+                "close": [4051.0],
+                "volume": [100000],
+            }
+        )
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
+    monkeypatch.setattr(
+        "core.data_fetcher.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
+
+    end = today
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end - timedelta(days=1)):
+        repo.create_or_update("DMART.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+    repo.create_or_update(
+        "DMART.NS",
+        today,
+        close=4051.0,
+        open=4050.0,
+        high=stale_high,
+        low=4000.0,
+        volume=2177691,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_fetch)
+    with ohlcv_cache_read_only():
+        df = svc.get_ohlcv("DMART.NS", days=60, end_date=today.isoformat(), add_current_day=True)
+    assert df is not None
+    assert calls["n"] == 0
+    latest = df.iloc[-1]
+    assert float(latest["high"]) == stale_high
+
+
 def test_get_ohlcv_backtest_window_excludes_live_today_and_skips_refresh(db_session, monkeypatch):
     """Historical end_date must not trigger today refresh or return live-session bars."""
     reset_ohlcv_cache_stats()
@@ -236,6 +290,133 @@ def test_cache_hit_revalidates_stale_partial_meta(db_session, monkeypatch):
     assert df is not None
     meta = repo.get_symbol_meta("E.NS")
     assert meta.fetch_status == "ok"
+
+
+def test_gap_fill_routes_to_nse_for_daily(db_session, monkeypatch):
+    """Daily gap_fill uses NSE ingest when OHLCV_DAILY_SOURCE=nse."""
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: False,
+    )
+
+    nse_called = {"n": 0}
+
+    class FakeIngest:
+        def __init__(self, _db):
+            pass
+
+        def fill_symbol_range(self, ticker, start, end):
+            nse_called["n"] += 1
+            assert ticker == "Z.NS"
+            return 3
+
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.NseBhavcopyIngestService",
+        FakeIngest,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    n = svc.gap_fill("Z.NS", date(2024, 1, 1), date(2024, 1, 31), interval="1d")
+    assert n == 3
+    assert nse_called["n"] == 1
+
+
+def test_gap_fill_weekly_still_yahoo(db_session, monkeypatch):
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    yahoo_calls = {"n": 0}
+
+    def counting_yahoo(*args, **kwargs):
+        yahoo_calls["n"] += 1
+        return _fake_yahoo(*args, **kwargs)
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_yahoo)
+    svc.gap_fill("W.NS", date(2024, 1, 1), date(2024, 1, 31), interval="1wk")
+    assert yahoo_calls["n"] >= 1
+
+
+def test_filter_daily_bars_nse_only_excludes_yfinance(db_session, monkeypatch):
+    from src.application.services.ohlcv_cache_service import _filter_daily_bars_for_source_policy
+
+    monkeypatch.setattr("src.application.services.ohlcv_cache_service.OHLCV_DAILY_SOURCE", "nse")
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse", lambda: True
+    )
+    repo = PriceCacheRepository(db_session)
+    repo.create_or_update("X.NS", date(2024, 1, 2), close=100.0, source="yfinance")
+    repo.create_or_update("X.NS", date(2024, 1, 3), close=200.0, source="nse")
+    bars = repo.get_range("X.NS", date(2024, 1, 1), date(2024, 1, 3))
+    filtered = _filter_daily_bars_for_source_policy(bars, symbol="X.NS", interval="1d")
+    assert len(filtered) == 1
+    assert filtered[0].source == "nse"
+    assert filtered[0].close == 200.0
+
+
+def test_filter_daily_bars_fallback_keeps_yahoo_gaps(db_session, monkeypatch):
+    from src.application.services.ohlcv_cache_service import _filter_daily_bars_for_source_policy
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.OHLCV_DAILY_SOURCE",
+        "nse_with_yahoo_fallback",
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse", lambda: True
+    )
+    repo = PriceCacheRepository(db_session)
+    repo.create_or_update("Y.NS", date(2024, 1, 2), close=100.0, source="yfinance")
+    repo.create_or_update("Y.NS", date(2024, 1, 3), close=200.0, source="nse")
+    bars = repo.get_range("Y.NS", date(2024, 1, 1), date(2024, 1, 3))
+    filtered = _filter_daily_bars_for_source_policy(bars, symbol="Y.NS", interval="1d")
+    assert len(filtered) == 2
+    assert {b.date for b in filtered} == {date(2024, 1, 2), date(2024, 1, 3)}
+
+
+def test_get_ohlcv_returns_nse_only_when_configured(db_session, monkeypatch):
+    monkeypatch.setattr("src.application.services.ohlcv_cache_service.OHLCV_DAILY_SOURCE", "nse")
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse", lambda: True
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: False,
+    )
+    repo = PriceCacheRepository(db_session)
+    end = date(2024, 1, 31)
+    start = date(2024, 1, 2)
+    for td in iter_trading_days(start, end):
+        repo.create_or_update(
+            "M.NS",
+            td,
+            close=10.0,
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            volume=100,
+            source="nse",
+        )
+    repo.create_or_update(
+        "M.NS",
+        date(2023, 12, 29),
+        close=999.0,
+        open=999.0,
+        high=999.0,
+        low=999.0,
+        volume=1,
+        source="yfinance",
+    )
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    df = svc.get_ohlcv("M.NS", days=60, end_date="2024-01-31", add_current_day=False)
+    assert df is not None
+    assert (df["close"] == 999.0).sum() == 0
+    assert len(df) == len(list(iter_trading_days(start, end)))
 
 
 def test_get_ohlcv_blocks_short_daily_history_on_long_lookback(db_session, monkeypatch):

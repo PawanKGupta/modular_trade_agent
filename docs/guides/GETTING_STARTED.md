@@ -100,6 +100,9 @@ CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
 
 # Timezone
 TZ=Asia/Kolkata
+
+# Daily OHLCV (NSE bhavcopy → price_cache): see docs/guides/BULK_ANALYSIS_RELIABILITY.md
+# OHLCV_DAILY_SOURCE=nse   # or nse_with_yahoo_fallback until backfill completes
 ```
 
 #### Step 4: Initialize Database

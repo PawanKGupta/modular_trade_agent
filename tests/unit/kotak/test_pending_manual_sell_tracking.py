@@ -119,6 +119,7 @@ class TestDetectPendingManualSellOrders:
         assert tracked_order["target_price"] == 2500.0
         assert tracked_order["qty"] == 100
         assert tracked_order.get("is_manual") is True
+        assert tracked_order.get("ticker") == "RELIANCE.NS"
 
     def test_tracks_pending_manual_sell_in_active_sell_orders(
         self, sell_manager, mock_positions_repo, mock_orders_repo, mock_orders

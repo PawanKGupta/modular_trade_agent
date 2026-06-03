@@ -155,3 +155,55 @@ def test_monitor_sell_skips_daily_high_when_bar_duplicates_prior(paper_monitor_a
 
     adapter.broker.fill_pending_sell_limits_on_daily_high.assert_not_called()
     assert "DMART" in adapter.active_sell_orders
+    adapter.logger.warning.assert_called_once()
+    args, kwargs = adapter.logger.warning.call_args
+    assert len(args) == 1
+    assert "DMART" in args[0]
+    assert kwargs.get("action") == "_monitor_sell_orders"
+
+
+def test_monitor_sell_skips_when_latest_bar_not_today(paper_monitor_adapter):
+    """Stale prior-day bar must skip exit checks without logger TypeError."""
+    adapter = paper_monitor_adapter
+    adapter.active_sell_orders = {
+        "PFC": {
+            "order_id": "SELL_3",
+            "target_price": 500.0,
+            "qty": 10,
+            "ticker": "PFC.NS",
+            "entry_price": 480.0,
+        }
+    }
+    adapter.broker.check_and_execute_pending_orders = MagicMock(
+        return_value={"executed": 0, "still_pending": 1}
+    )
+    holding = MagicMock()
+    holding.quantity = 10
+    adapter.broker.get_holding = MagicMock(return_value=holding)
+
+    yesterday = date(2026, 6, 2)
+    mock_data = pd.DataFrame(
+        {
+            "date": [pd.Timestamp(yesterday)],
+            "high": [510.0],
+            "low": [490.0],
+            "volume": [100000],
+            "close": [505.0],
+        }
+    )
+
+    with (
+        patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+        patch(
+            "src.application.services.paper_trading_service_adapter.ist_now",
+            return_value=pd.Timestamp("2026-06-03 09:15").to_pydatetime(),
+        ),
+    ):
+        adapter._monitor_sell_orders()
+
+    adapter.logger.debug.assert_called()
+    args, kwargs = adapter.logger.debug.call_args
+    assert len(args) == 1
+    assert "PFC" in args[0]
+    assert kwargs.get("action") == "_monitor_sell_orders"
+    assert "PFC" in adapter.active_sell_orders

@@ -20,12 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.application.services.nse_bhavcopy_ingest_service import NseBhavcopyIngestService  # noqa: E402
 from src.application.services.ohlcv_cache_health import (  # noqa: E402
     assess_price_cache_health,
     sync_corporate_actions,
 )
 from src.application.services.ohlcv_cache_service import OhlcvCacheService  # noqa: E402
 from src.infrastructure.db.session import SessionLocal  # noqa: E402
+from src.infrastructure.utils.holiday_calendar import iter_trading_days  # noqa: E402
 
 
 def _date_range(days: int) -> tuple[date, date]:
@@ -87,6 +89,31 @@ def cmd_tail_refresh(symbol: str, interval: str) -> int:
         db.close()
 
 
+def cmd_nse_gap_fill(symbol: str, days: int) -> int:
+    start_d, end_d = _date_range(days)
+    db = SessionLocal()
+    try:
+        svc = NseBhavcopyIngestService(db)
+        n = svc.fill_symbol_range(symbol, start_d, end_d)
+        print(f"nse-gap-fill upserted {n} rows for {symbol} ({start_d}..{end_d})")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_nse_backfill_dates(from_d: date, to_d: date, symbols: list[str]) -> int:
+    db = SessionLocal()
+    try:
+        svc = NseBhavcopyIngestService(db)
+        total = 0
+        for trade_day in iter_trading_days(from_d, to_d):
+            total += svc.ingest_trading_day(trade_day, symbols)
+        print(f"nse-backfill-dates upserted {total} rows for {len(symbols)} symbol(s)")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_preload(symbols: list[str], days: int) -> int:
     start_d, end_d = _date_range(days)
     db = SessionLocal()
@@ -127,6 +154,15 @@ def main() -> int:
     p_pre.add_argument("symbols", nargs="+")
     p_pre.add_argument("--days", type=int, default=400)
 
+    p_nse = sub.add_parser("nse-gap-fill", help="NSE bhavcopy fill for one symbol")
+    p_nse.add_argument("symbol")
+    p_nse.add_argument("--days", type=int, default=500)
+
+    p_nbd = sub.add_parser("nse-backfill-dates")
+    p_nbd.add_argument("--from", dest="from_date", required=True)
+    p_nbd.add_argument("--to", dest="to_date", required=True)
+    p_nbd.add_argument("symbols", nargs="+")
+
     args = parser.parse_args()
     if args.command == "health":
         return cmd_health(args.symbol, args.days)
@@ -138,6 +174,14 @@ def main() -> int:
         return cmd_tail_refresh(args.symbol, args.interval)
     if args.command == "preload-symbols":
         return cmd_preload(args.symbols, args.days)
+    if args.command == "nse-gap-fill":
+        return cmd_nse_gap_fill(args.symbol, args.days)
+    if args.command == "nse-backfill-dates":
+        return cmd_nse_backfill_dates(
+            date.fromisoformat(args.from_date),
+            date.fromisoformat(args.to_date),
+            args.symbols,
+        )
     return 1
 
 

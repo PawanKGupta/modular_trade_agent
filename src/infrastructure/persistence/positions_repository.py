@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Positions
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 # Import logger for sync operations
 try:
@@ -171,7 +171,7 @@ class PositionsRepository:
                 quantity=quantity,
                 avg_price=avg_price,
                 unrealized_pnl=0.0,
-                opened_at=opened_at or ist_now(),
+                opened_at=opened_at or ist_now_naive(),
                 reentry_count=reentry_count or 0,
                 reentries=reentries,
                 initial_entry_price=initial_price,
@@ -301,7 +301,7 @@ class PositionsRepository:
         # Store original quantity before setting to 0 (needed for P&L calculations)
         original_quantity = pos.quantity
 
-        pos.closed_at = closed_at or ist_now()
+        pos.closed_at = closed_at or ist_now_naive()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
 
         # Phase 0.2: Populate exit details
@@ -372,7 +372,7 @@ class PositionsRepository:
 
         # If quantity becomes 0, mark as closed
         if new_quantity == 0:
-            pos.closed_at = ist_now()
+            pos.closed_at = ist_now_naive()
             logger.info(
                 f"Position fully closed after partial sell: {symbol} "
                 f"(sold {sold_quantity}, remaining: {new_quantity})"
