@@ -5,9 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from modules.kotak_neo_auto_trader.services.sell_target_service import (
+    cap_sell_price_to_upper_circuit,
     compute_sell_target,
+    fetch_circuit_limits_for_symbol,
     is_price_on_tick_grid,
     nse_fallback_tick_size_by_price,
+    parse_circuit_limits_from_quote_payload,
+    parse_circuit_limits_from_rejection,
     prepare_broker_sell_limit_price,
     resolve_tick_size,
     round_sell_price,
@@ -62,6 +66,62 @@ class TestPrepareBrokerSellLimitPrice:
         prepared = prepare_broker_sell_limit_price(0.0, exchange="NSE")
         assert prepared.action == "invalid_tick"
         assert prepared.price is None
+
+    def test_caps_ema9_to_upper_circuit_axiscades_case(self):
+        """Regression: 2 Jun AXISCADES EMA9 1860.40 vs upper 1859.20."""
+        limits = {"upper": 1859.20, "lower": 1682.20}
+        prepared = prepare_broker_sell_limit_price(
+            1860.40,
+            exchange="NSE",
+            symbol="AXISCADES-EQ",
+            circuit_limits=limits,
+        )
+        assert prepared.action == "place"
+        assert prepared.price is not None
+        assert prepared.price <= limits["upper"]
+
+    def test_parse_circuit_limits_from_rejection_message(self):
+        msg = (
+            "RMS:Rule: Check circuit limit including square off order exceeds : "
+            "Circuit breach, Order Price :1860.40,  Low Price Range:1682.20 "
+            "High Price Range:1859.20"
+        )
+        limits = parse_circuit_limits_from_rejection(msg)
+        assert limits == {"upper": 1859.20, "lower": 1682.20}
+
+    def test_parse_circuit_limits_from_quote_payload(self):
+        payload = [
+            {
+                "upper_circuit_limit": "1859.20",
+                "lower_circuit_limit": "1682.20",
+                "trading_symbol": "AXISCADES-EQ",
+            }
+        ]
+        limits = parse_circuit_limits_from_quote_payload(payload)
+        assert limits == {"upper": 1859.20, "lower": 1682.20}
+
+    def test_fetch_circuit_limits_from_market_data(self):
+        scrip = MagicMock()
+        scrip.get_instrument.return_value = {"token": "12345"}
+        scrip.EXCHANGE_SEGMENT_MAP = {"NSE": "nse_cm"}
+        market = MagicMock()
+        market.get_quote.return_value = [
+            {"upper_circuit_limit": 1859.2, "lower_circuit_limit": 1682.2}
+        ]
+        limits = fetch_circuit_limits_for_symbol(
+            market_data=market,
+            scrip_master=scrip,
+            symbol="AXISCADES-EQ",
+            exchange="NSE",
+        )
+        assert limits == {"upper": 1859.2, "lower": 1682.2}
+        market.get_quote.assert_called()
+
+    def test_cap_sell_price_to_upper_circuit(self):
+        capped = cap_sell_price_to_upper_circuit(
+            1860.40, 1859.20, exchange="NSE", symbol="AXISCADES-EQ"
+        )
+        assert capped <= 1859.20
 
 
 class TestNseFallbackTickBands:

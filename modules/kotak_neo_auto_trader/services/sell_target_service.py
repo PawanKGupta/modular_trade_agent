@@ -8,8 +8,9 @@ Uses the same realtime EMA9 formula everywhere; LTP comes from PriceService
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from decimal import ROUND_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import TYPE_CHECKING, Any, Literal
 
 from utils.logger import logger
@@ -18,7 +19,9 @@ if TYPE_CHECKING:
     from modules.kotak_neo_auto_trader.services.indicator_service import IndicatorService
     from modules.kotak_neo_auto_trader.services.price_service import PriceService
 
-PreparedSellAction = Literal["place", "invalid_tick"]
+PreparedSellAction = Literal["place", "invalid_tick", "defer_circuit"]
+
+CircuitLimits = dict[str, float]  # keys: upper, lower
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,7 @@ class PreparedSellLimit:
     action: PreparedSellAction
     raw_target: float
     tick_size: float | None = None
+    circuit_limits: CircuitLimits | None = None
     adjustments: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -125,6 +129,121 @@ def _round_up_to_tick_paise(price_paise: int, tick_paise: int) -> int:
     return ((price_paise + tick_paise - 1) // tick_paise) * tick_paise
 
 
+def _round_down_to_tick_paise(price_paise: int, tick_paise: int) -> int:
+    if tick_paise <= 0:
+        return price_paise
+    return (price_paise // tick_paise) * tick_paise
+
+
+def parse_circuit_limits_from_rejection(rejection_reason: str) -> CircuitLimits | None:
+    """
+    Parse circuit limits from Kotak RMS rejection text.
+
+    Example: "... Low Price Range:30.32 High Price Range:33.51"
+    """
+    if not rejection_reason:
+        return None
+
+    high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+    low_match = re.search(r"Low Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
+
+    if high_match and low_match:
+        try:
+            return {"upper": float(high_match.group(1)), "lower": float(low_match.group(1))}
+        except (ValueError, AttributeError):
+            return None
+    return None
+
+
+def _parse_float_field(data: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key not in data or data[key] is None:
+            continue
+        try:
+            value = float(str(data[key]).replace(",", "").strip())
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def parse_circuit_limits_from_quote_payload(payload: Any) -> CircuitLimits | None:
+    """Extract upper/lower circuit from Kotak quotes API payload (filter all or circuit_limits)."""
+    items: list[dict[str, Any]] = []
+    if isinstance(payload, list):
+        items = [row for row in payload if isinstance(row, dict)]
+    elif isinstance(payload, dict):
+        nested = payload.get("data") or payload.get("message") or payload.get("result")
+        if isinstance(nested, list):
+            items = [row for row in nested if isinstance(row, dict)]
+        elif isinstance(nested, dict):
+            items = [nested]
+
+    for item in items:
+        upper = _parse_float_field(
+            item,
+            "upper_circuit_limit",
+            "upper_circuit",
+            "upper_ckt",
+            "highPriceRange",
+            "high_price_range",
+        )
+        lower = _parse_float_field(
+            item,
+            "lower_circuit_limit",
+            "lower_circuit",
+            "lower_ckt",
+            "lowPriceRange",
+            "low_price_range",
+        )
+        if upper is not None and lower is not None:
+            return {"upper": upper, "lower": lower}
+    return None
+
+
+def fetch_circuit_limits_for_symbol(
+    *,
+    market_data: Any | None,
+    scrip_master: Any | None,
+    symbol: str,
+    exchange: str = "NSE",
+) -> CircuitLimits | None:
+    """
+    Fetch day circuit limits via Kotak quotes API (best-effort).
+
+    Returns None when market data or instrument token is unavailable — callers fall back
+    to reactive handling on broker rejection.
+    """
+    if market_data is None or scrip_master is None or not symbol:
+        return None
+
+    try:
+        instrument = scrip_master.get_instrument(symbol, exchange=exchange)
+        if not instrument:
+            return None
+        token = instrument.get("token")
+        if not token:
+            return None
+        segment = getattr(scrip_master, "EXCHANGE_SEGMENT_MAP", {}).get(exchange.upper(), "nse_cm")
+        query = f"{segment}|{token}"
+        for filter_name in ("circuit_limits", "all"):
+            payload = market_data.get_quote(query, filter_name=filter_name)
+            limits = parse_circuit_limits_from_quote_payload(payload)
+            if limits:
+                logger.debug(
+                    "Circuit limits for %s via quotes (%s): upper=%.2f lower=%.2f",
+                    symbol,
+                    filter_name,
+                    limits["upper"],
+                    limits["lower"],
+                )
+                return limits
+    except Exception as e:
+        logger.debug(f"Circuit limit quote fetch failed for {symbol}: {e}")
+    return None
+
+
 def round_sell_price(
     price: float,
     *,
@@ -178,17 +297,68 @@ def round_sell_price(
     return rounded
 
 
+def round_sell_price_down(
+    price: float,
+    *,
+    exchange: str = "NSE",
+    symbol: str | None = None,
+    scrip_master: Any | None = None,
+) -> float:
+    """Round price down to tick grid (used when capping to upper circuit)."""
+    if price <= 0:
+        return price
+
+    tick_size, source = resolve_tick_size(
+        price, exchange=exchange, symbol=symbol, scrip_master=scrip_master
+    )
+    price_paise = _price_to_paise(price)
+    tick_paise = _tick_to_paise(tick_size)
+    rounded_paise = _round_down_to_tick_paise(price_paise, tick_paise)
+    rounded = _paise_to_rupees(rounded_paise)
+
+    if rounded != price:
+        logger.debug(
+            "Sell price rounded down %s: Rs %.4f -> Rs %.2f (tick=%s, source=%s)",
+            symbol or exchange,
+            price,
+            rounded,
+            tick_size,
+            source,
+        )
+    return rounded
+
+
+def cap_sell_price_to_upper_circuit(
+    price: float,
+    upper_circuit: float,
+    *,
+    exchange: str = "NSE",
+    symbol: str | None = None,
+    scrip_master: Any | None = None,
+) -> float:
+    """Cap limit sell price to upper circuit, rounding down to valid tick."""
+    if price <= upper_circuit:
+        return round_sell_price(
+            price, exchange=exchange, symbol=symbol, scrip_master=scrip_master
+        )
+    return round_sell_price_down(
+        upper_circuit, exchange=exchange, symbol=symbol, scrip_master=scrip_master
+    )
+
+
 def prepare_broker_sell_limit_price(
     raw_target: float,
     *,
     exchange: str = "NSE",
     symbol: str | None = None,
     scrip_master: Any | None = None,
+    circuit_limits: CircuitLimits | None = None,
 ) -> PreparedSellLimit:
     """
-    Normalize a raw EMA9 target for Kotak limit-sell submission (PR1: tick grid only).
+    Normalize a raw EMA9 target for Kotak limit-sell submission (tick grid + circuit cap).
 
-    Circuit capping is deferred to PR2; this helper is the single entry for live place/modify.
+    When circuit limits are known and EMA9 exceeds the upper band, caps to upper circuit
+    (tick-rounded down). If still above upper after cap, returns defer_circuit.
     """
     if raw_target <= 0:
         return PreparedSellLimit(
@@ -210,20 +380,50 @@ def prepare_broker_sell_limit_price(
         adjustments.append(f"tick_round:{raw_target:.4f}->{rounded:.2f}")
     adjustments.append(f"tick={tick_size}:{source}")
 
-    if not is_price_on_tick_grid(rounded, tick_size):
+    final_price = rounded
+    limits = circuit_limits
+
+    upper = limits.get("upper") if limits else None
+    if upper is not None and upper > 0 and rounded > upper:
+        capped = cap_sell_price_to_upper_circuit(
+            rounded,
+            upper,
+            exchange=exchange,
+            symbol=symbol,
+            scrip_master=scrip_master,
+        )
+        adjustments.append(f"circuit_cap:{rounded:.2f}->{capped:.2f}@upper={upper:.2f}")
+        final_price = capped
+        tick_size, _ = resolve_tick_size(
+            final_price, exchange=exchange, symbol=symbol, scrip_master=scrip_master
+        )
+
+        if final_price > upper + 1e-9:
+            return PreparedSellLimit(
+                price=None,
+                action="defer_circuit",
+                raw_target=raw_target,
+                tick_size=tick_size,
+                circuit_limits=limits,
+                adjustments=tuple(adjustments + ["still_above_upper_after_cap"]),
+            )
+
+    if not is_price_on_tick_grid(final_price, tick_size):
         return PreparedSellLimit(
             price=None,
             action="invalid_tick",
             raw_target=raw_target,
             tick_size=tick_size,
+            circuit_limits=limits,
             adjustments=tuple(adjustments + ["off_tick_grid_after_round"]),
         )
 
     return PreparedSellLimit(
-        price=rounded,
+        price=final_price,
         action="place",
         raw_target=raw_target,
         tick_size=tick_size,
+        circuit_limits=limits,
         adjustments=tuple(adjustments),
     )
 

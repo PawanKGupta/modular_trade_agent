@@ -641,9 +641,58 @@ class SellOrderManager:
                 return True
             return False
 
+    def _get_circuit_limits_for_symbol(
+        self, symbol: str, exchange: str = "NSE"
+    ) -> dict[str, float] | None:
+        """Best-effort circuit limits from Kotak quotes (None → reactive rejection handling)."""
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            fetch_circuit_limits_for_symbol,
+        )
+
+        return fetch_circuit_limits_for_symbol(
+            market_data=self.market_data,
+            scrip_master=self.scrip_master,
+            symbol=symbol,
+            exchange=exchange,
+        )
+
+    def _queue_for_circuit_expansion(
+        self,
+        symbol: str,
+        trade: dict[str, Any],
+        ema9_target: float,
+        circuit_limits: dict[str, float],
+        *,
+        rejection_reason: str | None = None,
+    ) -> None:
+        """Park symbol until EMA9 is within upper circuit (avoids broker RMS rejection)."""
+        full_symbol = str(symbol).upper()
+        placed_symbol = trade.get("placed_symbol") or symbol
+        self.waiting_for_circuit_expansion[full_symbol] = {
+            "upper_circuit": circuit_limits["upper"],
+            "lower_circuit": circuit_limits.get("lower", 0.0),
+            "ema9_target": ema9_target,
+            "trade": {
+                "symbol": symbol,
+                "placed_symbol": placed_symbol,
+                "ticker": trade.get("ticker", ""),
+                "qty": trade.get("qty", 0),
+            },
+            "rejection_reason": rejection_reason
+            or "EMA9 exceeds upper circuit — deferred before broker placement",
+        }
+        logger.info(
+            f"{full_symbol}: Deferred sell placement — EMA9 Rs {ema9_target:.2f} "
+            f"above upper circuit Rs {circuit_limits['upper']:.2f}"
+        )
+
     def round_to_tick_size(
-        self, price: float, exchange: str = "NSE", symbol: str | None = None
-    ) -> float:
+        self,
+        price: float,
+        exchange: str = "NSE",
+        symbol: str | None = None,
+        circuit_limits: dict[str, float] | None = None,
+    ) -> float | None:
         """
         Round price to exchange-specific tick size.
 
@@ -675,6 +724,7 @@ class SellOrderManager:
             exchange=exchange,
             symbol=symbol,
             scrip_master=self.scrip_master,
+            circuit_limits=circuit_limits,
         )
         if prepared.action == "place" and prepared.price is not None:
             if prepared.price != price:
@@ -683,6 +733,13 @@ class SellOrderManager:
                     f"(tick={prepared.tick_size})"
                 )
             return prepared.price
+
+        if prepared.action == "defer_circuit":
+            logger.info(
+                f"Sell limit deferred for {symbol or exchange}: EMA9 Rs {price:.4f} "
+                f"exceeds circuit (adjustments={prepared.adjustments})"
+            )
+            return None
 
         logger.error(
             f"Invalid sell limit price for {symbol or exchange}: raw Rs {price:.4f}, "
@@ -3011,12 +3068,23 @@ class SellOrderManager:
                 logger.warning(f"Invalid quantity {qty} for {symbol}")
                 return None
 
-            rounded_price = self.round_to_tick_size(target_price, exchange=exchange, symbol=symbol)
+            circuit_limits = self._get_circuit_limits_for_symbol(symbol, exchange)
+            rounded_price = self.round_to_tick_size(
+                target_price,
+                exchange=exchange,
+                symbol=symbol,
+                circuit_limits=circuit_limits,
+            )
             if rounded_price is None or rounded_price <= 0:
-                logger.error(
-                    f"Cannot place sell for {symbol}: invalid limit price after tick rounding "
-                    f"(raw Rs {target_price:.4f})"
-                )
+                if circuit_limits and target_price > circuit_limits.get("upper", 0):
+                    self._queue_for_circuit_expansion(
+                        symbol, trade, target_price, circuit_limits
+                    )
+                else:
+                    logger.error(
+                        f"Cannot place sell for {symbol}: invalid limit price "
+                        f"(raw Rs {target_price:.4f})"
+                    )
                 return None
 
             # Place limit sell order
@@ -3190,7 +3258,13 @@ class SellOrderManager:
                 else config.DEFAULT_EXCHANGE
             )
 
-            rounded_price = self.round_to_tick_size(new_price, exchange=exchange, symbol=symbol)
+            circuit_limits = self._get_circuit_limits_for_symbol(symbol, exchange)
+            rounded_price = self.round_to_tick_size(
+                new_price,
+                exchange=exchange,
+                symbol=symbol,
+                circuit_limits=circuit_limits,
+            )
             if rounded_price is None or rounded_price <= 0:
                 logger.error(
                     f"Cannot modify sell {order_id} for {symbol}: invalid limit price "
@@ -4059,32 +4133,12 @@ class SellOrderManager:
     def _parse_circuit_limits_from_rejection(
         self, rejection_reason: str
     ) -> dict[str, float] | None:
-        """
-        Parse circuit limits from rejection message.
+        """Parse circuit limits from broker rejection (delegates to sell_target_service)."""
+        from modules.kotak_neo_auto_trader.services.sell_target_service import (  # noqa: PLC0415
+            parse_circuit_limits_from_rejection,
+        )
 
-        Example message: "RMS:Rule: Check circuit limit including square off order exceeds :
-        Circuit breach, Order Price :34.65, Low Price Range:30.32 High Price Range:33.51"
-
-        Returns:
-            Dict with 'upper' and 'lower' circuit limits, or None if not found
-        """
-        if not rejection_reason:
-            return None
-
-        # Try to extract High Price Range and Low Price Range
-        # Pattern: "High Price Range:33.51" or "High Price Range: 33.51"
-        high_match = re.search(r"High Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
-        low_match = re.search(r"Low Price Range[:\s]+([\d.]+)", rejection_reason, re.IGNORECASE)
-
-        if high_match and low_match:
-            try:
-                upper = float(high_match.group(1))
-                lower = float(low_match.group(1))
-                return {"upper": upper, "lower": lower}
-            except (ValueError, AttributeError):
-                pass
-
-        return None
+        return parse_circuit_limits_from_rejection(rejection_reason)
 
     def _is_no_holdings_rejection(self, rejection_reason: str) -> bool:
         """
@@ -5652,8 +5706,14 @@ class SellOrderManager:
                 if self.strategy_config
                 else config.DEFAULT_EXCHANGE
             )
+            circuit_limits = self._get_circuit_limits_for_symbol(
+                symbol_for_tick_size, exchange_for_tick_size
+            )
             rounded_ema9 = self.round_to_tick_size(
-                current_ema9, exchange=exchange_for_tick_size, symbol=symbol_for_tick_size
+                current_ema9,
+                exchange=exchange_for_tick_size,
+                symbol=symbol_for_tick_size,
+                circuit_limits=circuit_limits,
             )
             if rounded_ema9 is None or rounded_ema9 <= 0:
                 logger.warning(

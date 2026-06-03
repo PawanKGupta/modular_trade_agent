@@ -61,9 +61,11 @@ The Sell Order Management System is an automated profit-taking system that:
 
 Live sell placement and paper trading share one target pipeline:
 
-- **`compute_sell_target()`** and **`round_sell_price()`** in `modules/kotak_neo_auto_trader/services/sell_target_service.py`
-- Live: `_get_ema9_with_retry()` → `calculate_ema9_realtime`, then `SellOrderManager.round_to_tick_size()` → `round_sell_price`
-- Paper: `PaperTradingServiceAdapter._calculate_ema9()` → `compute_sell_target` (Yahoo LTP, no Kotak WebSocket)
+- **`compute_sell_target()`**, **`prepare_broker_sell_limit_price()`**, and **`round_sell_price()`** in `modules/kotak_neo_auto_trader/services/sell_target_service.py`
+- Live: `_get_ema9_with_retry()` → `calculate_ema9_realtime`, then `SellOrderManager.round_to_tick_size()` → `prepare_broker_sell_limit_price` (tick grid + optional circuit cap from Kotak quotes)
+- Paper: `PaperTradingServiceAdapter._calculate_ema9()` → `compute_sell_target` (Yahoo LTP, no Kotak WebSocket; no circuit cap)
+
+**Circuit limits (live broker):** Before `place_limit_sell`, the service fetches upper/lower circuit via Kotak quotes when possible. If EMA9 exceeds the upper band, the limit is capped to the upper circuit (tick-rounded down). If still above upper after cap, the symbol is queued in `waiting_for_circuit_expansion` without submitting a broker order (reactive rejection handling remains as fallback when quotes are unavailable).
 
 Targets should align at placement when LTP and tick rules match. After open, live orders may still be revised downward (lowest EMA9); paper targets stay frozen until re-entry. Details: [Paper Trading Complete Guide](../guides/PAPER_TRADING_COMPLETE.md#sell-target-parity-with-live-kotak-placement-time).
 

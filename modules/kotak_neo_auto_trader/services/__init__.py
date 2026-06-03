@@ -16,9 +16,14 @@ from .position_loader import PositionLoader, get_position_loader
 from .price_service import PriceService, get_price_service
 from .sell_target_service import (
     PreparedSellLimit,
+    cap_sell_price_to_upper_circuit,
     compute_sell_target,
+    fetch_circuit_limits_for_symbol,
+    parse_circuit_limits_from_quote_payload,
+    parse_circuit_limits_from_rejection,
     prepare_broker_sell_limit_price,
     round_sell_price,
+    round_sell_price_down,
 )
 
 __all__ = [
@@ -34,7 +39,12 @@ __all__ = [
     "ValidationResult",
     "get_order_validation_service",
     "PreparedSellLimit",
+    "cap_sell_price_to_upper_circuit",
     "compute_sell_target",
+    "fetch_circuit_limits_for_symbol",
+    "parse_circuit_limits_from_quote_payload",
+    "parse_circuit_limits_from_rejection",
     "prepare_broker_sell_limit_price",
     "round_sell_price",
+    "round_sell_price_down",
 ]
