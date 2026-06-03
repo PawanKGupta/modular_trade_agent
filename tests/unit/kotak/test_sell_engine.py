@@ -574,8 +574,9 @@ class TestRemoveRejectedOrders:
         manager._remove_from_tracking = Mock()
         manager.place_sell_order = Mock()
 
-        # Call the method
-        manager._remove_rejected_orders()
+        # Call the method (ticker resolution may infer .NS; unresolved ticker must not re-place)
+        with patch.object(manager, "_resolve_ticker_for_symbol", return_value=None):
+            manager._remove_rejected_orders()
 
         # Verify order was removed
         manager._remove_from_tracking.assert_called_once_with("DREAMFOLKS")
