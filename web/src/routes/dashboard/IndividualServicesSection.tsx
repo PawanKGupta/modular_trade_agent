@@ -17,7 +17,13 @@ export function IndividualServicesSection({
 	const { data: individualStatus, isLoading } = useQuery<IndividualServicesStatus>({
 		queryKey: ['individualServicesStatus'],
 		queryFn: getIndividualServicesStatus,
-		refetchInterval: 5000, // Refresh every 5 seconds
+		refetchInterval: (query) => {
+			const services = query.state.data?.services ?? {};
+			const anyRunning = Object.values(services).some(
+				(s) => s.is_running || s.last_execution_status === 'running'
+			);
+			return anyRunning ? 3000 : 5000;
+		},
 	});
 
 	if (isLoading) {

@@ -19,7 +19,7 @@ export function ServiceStatusPage() {
 		refetchInterval: (query) => {
 			if (!autoRefresh) return false;
 			const data = query.state.data;
-			return data?.service_running ? 5000 : false; // Refresh every 5s if running
+			return data?.service_running ? 5000 : false;
 		},
 	});
 
@@ -41,7 +41,14 @@ export function ServiceStatusPage() {
 	const { data: individualStatus } = useQuery<IndividualServicesStatus>({
 		queryKey: ['individualServicesStatus'],
 		queryFn: getIndividualServicesStatus,
-		refetchInterval: autoRefresh ? 5000 : false, // Refresh every 5s
+		refetchInterval: (query) => {
+			if (!autoRefresh) return false;
+			const services = query.state.data?.services ?? {};
+			const anyRunning = Object.values(services).some(
+				(s) => s.is_running || s.last_execution_status === 'running'
+			);
+			return anyRunning ? 3000 : 5000;
+		},
 	});
 
 	// Start/stop mutations

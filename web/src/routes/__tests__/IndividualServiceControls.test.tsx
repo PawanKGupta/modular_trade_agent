@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { IndividualServiceControls } from '../dashboard/IndividualServiceControls';
 import { withProviders } from '@/test/utils';
 import * as serviceApi from '@/api/service';
@@ -21,6 +21,7 @@ const mockService: IndividualServiceStatus = {
 	is_running: false,
 	schedule_enabled: true,
 	last_execution_at: null,
+	current_run_started_at: null,
 	last_execution_status: null,
 	last_execution_duration: null,
 	last_execution_details: null,
@@ -31,6 +32,10 @@ const mockService: IndividualServiceStatus = {
 describe('IndividualServiceControls', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('Bug #74: Warning symbol fix', () => {
@@ -141,9 +146,94 @@ describe('IndividualServiceControls', () => {
 				)
 			);
 
-			const runningBadge = screen.getByText('Running');
-			expect(runningBadge.className).toContain('bg-green-500/20');
-			expect(runningBadge.className).toContain('text-green-400');
+			const runningBadges = screen.getAllByText('Running');
+			expect(runningBadges[0].className).toContain('bg-green-500/20');
+			expect(runningBadges[0].className).toContain('text-green-400');
+		});
+
+		it('displays running badge and disables actions when run-once is in progress', () => {
+			const runOnceService = {
+				...mockService,
+				last_execution_status: 'running' as const,
+			};
+
+			render(
+				withProviders(
+					<IndividualServiceControls service={runOnceService} unifiedServiceRunning={false} />
+				)
+			);
+
+			expect(screen.getAllByText('Running').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getByText('Current Run')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Start Service' })).toBeDisabled();
+			expect(screen.getByRole('button', { name: /Running\.\.\./ })).toBeDisabled();
+		});
+
+		it('shows elapsed current-run duration from current_run_started_at while running', () => {
+			vi.useFakeTimers();
+			try {
+				vi.setSystemTime(new Date('2026-06-03T16:00:45.000Z'));
+				const startedAt = new Date('2026-06-03T16:00:00.000Z').toISOString();
+				const runOnceService = {
+					...mockService,
+					last_execution_status: 'running' as const,
+					last_execution_at: new Date('2026-06-03T15:55:00.000Z').toISOString(),
+					current_run_started_at: startedAt,
+					last_execution_duration: 0,
+				};
+
+				render(
+					withProviders(
+						<IndividualServiceControls service={runOnceService} unifiedServiceRunning={false} />
+					)
+				);
+
+				expect(screen.getByText(/Running - 45\.0s/)).toBeInTheDocument();
+
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.getByText(/Running - 47\.0s/)).toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('keeps conflict warning visible while run is still active', async () => {
+			vi.mocked(serviceApi.runTaskOnce).mockResolvedValue({
+				success: true,
+				message: 'Task started',
+				has_conflict: true,
+				conflict_message: 'Task started recently as individual service',
+			});
+
+			const { rerender } = render(
+				withProviders(
+					<IndividualServiceControls service={mockService} unifiedServiceRunning={false} />
+				)
+			);
+
+			fireEvent.click(screen.getByText('Run Once'));
+			await waitFor(() => {
+				expect(screen.getByText(/Task started recently/i)).toBeInTheDocument();
+			});
+
+			// Simulate status poll while run is still active (no short auto-dismiss)
+			rerender(
+				withProviders(
+					<IndividualServiceControls
+						service={{
+							...mockService,
+							last_execution_status: 'running',
+							current_run_started_at: new Date().toISOString(),
+							last_execution_duration: 0,
+						}}
+						unifiedServiceRunning={false}
+					/>
+				)
+			);
+
+			expect(screen.getByText(/Task started recently/i)).toBeInTheDocument();
 		});
 
 		it('displays stopped badge when service is not running', () => {
