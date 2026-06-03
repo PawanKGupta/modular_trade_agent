@@ -927,6 +927,16 @@ class SellOrderManager:
                 # If broker_qty < positions_qty, reconciliation should have updated positions table
                 # But we still validate here as a safety check
                 sell_qty = min(positions_qty, broker_qty)
+                if (
+                    sell_qty <= 0
+                    and positions_qty > 0
+                    and self._position_opened_same_ist_day(pos)
+                ):
+                    sell_qty = positions_qty
+                    logger.info(
+                        f"{pos.symbol}: using positions qty {positions_qty} for sell "
+                        "(same-day open; broker holdings API is T+1)"
+                    )
 
                 # Issue #2 Fix: Filter zero quantity positions before adding to list
                 # Prevents positions from being added when sell_qty becomes 0 after validation
