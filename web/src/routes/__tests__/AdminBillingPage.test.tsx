@@ -7,9 +7,11 @@ import * as billingApi from '@/api/billing';
 vi.mock('@/api/billing', () => ({
 	getAdminBillingSettings: vi.fn(),
 	getAdminTransactions: vi.fn(),
+	getAdminOpenPerformanceBills: vi.fn(),
 	patchAdminBillingSettings: vi.fn(),
 	patchAdminRazorpayCredentials: vi.fn(),
 	postAdminRefund: vi.fn(),
+	recordAdminCashPayment: vi.fn(),
 	runBillingReconcile: vi.fn(),
 }));
 
@@ -30,6 +32,14 @@ describe('AdminBillingPage', () => {
 		vi.mocked(billingApi.patchAdminRazorpayCredentials).mockResolvedValue({} as never);
 		vi.mocked(billingApi.runBillingReconcile).mockResolvedValue({ updated: 1 } as never);
 		vi.mocked(billingApi.postAdminRefund).mockResolvedValue({} as never);
+		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([]);
+		vi.mocked(billingApi.recordAdminCashPayment).mockResolvedValue({
+			bill_id: 1,
+			user_id: 2,
+			billing_transaction_id: 9,
+			amount_paise: 2281,
+			paid_at: '2026-06-04T00:00:00',
+		} as never);
 	});
 
 	it('renders admin billing settings and transactions', async () => {

@@ -143,3 +143,30 @@ export async function postAdminRefund(body: {
 	const res = await api.post<{ ok: boolean }>('/admin/billing/refunds', body);
 	return res.data;
 }
+
+export type AdminPerformanceBill = PerformanceBill & {
+	user_id: number;
+	user_email: string;
+};
+
+export async function getAdminOpenPerformanceBills(params?: {
+	user_id?: number;
+	limit?: number;
+}): Promise<AdminPerformanceBill[]> {
+	const res = await api.get<AdminPerformanceBill[]>('/admin/billing/performance-bills', { params });
+	return res.data;
+}
+
+export async function recordAdminCashPayment(
+	billId: number,
+	body?: { note?: string | null }
+): Promise<{
+	bill_id: number;
+	user_id: number;
+	billing_transaction_id: number;
+	amount_paise: number;
+	paid_at: string;
+}> {
+	const res = await api.post(`/admin/billing/performance-bills/${billId}/record-cash-payment`, body ?? {});
+	return res.data;
+}

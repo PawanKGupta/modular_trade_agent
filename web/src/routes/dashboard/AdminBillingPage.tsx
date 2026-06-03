@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
 	getAdminBillingSettings,
+	getAdminOpenPerformanceBills,
 	getAdminTransactions,
 	patchAdminBillingSettings,
 	patchAdminRazorpayCredentials,
 	postAdminRefund,
+	recordAdminCashPayment,
 	runBillingReconcile,
+	type AdminPerformanceBill,
 	type BillingTransaction,
 } from '@/api/billing';
 
@@ -59,12 +62,43 @@ export function AdminBillingPage() {
 	const [refundAmount, setRefundAmount] = useState('');
 	const [refundReason, setRefundReason] = useState('');
 
+	const [cashUserId, setCashUserId] = useState('');
+	const [cashNote, setCashNote] = useState('');
+	const [cashBillsUserFilter, setCashBillsUserFilter] = useState<number | undefined>(undefined);
+	const [openBillsRequested, setOpenBillsRequested] = useState(false);
+
 	const settingsQ = useQuery({ queryKey: ['adminBillingSettings'], queryFn: getAdminBillingSettings });
 	const s = settingsQ.data;
 	const txQ = useQuery({ queryKey: ['adminTx'], queryFn: () => getAdminTransactions({ limit: 100 }) });
 	const failedQ = useQuery({
 		queryKey: ['adminTxFailed'],
 		queryFn: () => getAdminTransactions({ failed_only: true, limit: 50 }),
+	});
+
+	const openBillsQ = useQuery({
+		queryKey: ['adminOpenPerfBills', cashBillsUserFilter],
+		queryFn: () =>
+			getAdminOpenPerformanceBills({
+				user_id: cashBillsUserFilter,
+				limit: 100,
+			}),
+		enabled: openBillsRequested,
+	});
+
+	const recordCashM = useMutation({
+		mutationFn: ({ billId, note }: { billId: number; note?: string }) =>
+			recordAdminCashPayment(billId, note ? { note } : {}),
+		onSuccess: (r) => {
+			void qc.invalidateQueries({ queryKey: ['adminOpenPerfBills'] });
+			void qc.invalidateQueries({ queryKey: ['adminTx'] });
+			setAdminMsg(
+				`Cash payment recorded for bill #${r.bill_id} (user ${r.user_id}, ${formatInrPaise(r.amount_paise)}).`
+			);
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(typeof d === 'string' ? d : 'Could not record cash payment');
+		},
 	});
 
 	const patchM = useMutation({
@@ -270,6 +304,107 @@ export function AdminBillingPage() {
 						Save Razorpay credentials
 					</button>
 				</div>
+			</section>
+
+			<section className="p-4 rounded border border-[#1e293b] space-y-3 text-sm">
+				<h2 className="font-medium">Record cash payment</h2>
+				<p className="text-xs text-[var(--muted)] leading-relaxed">
+					When a user pays a performance fee offline (cash, bank transfer, etc.), mark their open invoice
+					paid here. This clears broker buy blocks and adds a captured transaction (no Razorpay).
+				</p>
+				<div className="flex flex-wrap gap-2 items-end">
+					<label className="flex flex-col gap-1">
+						<span className="text-xs text-[var(--muted)]">Filter by user id (optional)</span>
+						<input
+							className="w-28 px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							value={cashUserId}
+							onChange={(e) => setCashUserId(e.target.value)}
+							placeholder="e.g. 2"
+						/>
+					</label>
+					<button
+						type="button"
+						className="px-3 py-1.5 rounded bg-slate-600 text-white"
+						onClick={() => {
+							const trimmed = cashUserId.trim();
+							setCashBillsUserFilter(trimmed ? Number(trimmed) : undefined);
+							setOpenBillsRequested(true);
+						}}
+					>
+						Load open bills
+					</button>
+					<label className="flex flex-col gap-1 min-w-[12rem]">
+						<span className="text-xs text-[var(--muted)]">Memo (optional)</span>
+						<input
+							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+							value={cashNote}
+							onChange={(e) => setCashNote(e.target.value)}
+							placeholder="Receipt ref, date, etc."
+						/>
+					</label>
+				</div>
+				{openBillsQ.isFetching ? (
+					<p className="text-xs text-[var(--muted)]">Loading open bills…</p>
+				) : !openBillsRequested ? (
+					<p className="text-xs text-[var(--muted)]">Click “Load open bills” to list unpaid invoices.</p>
+				) : (openBillsQ.data ?? []).length === 0 ? (
+					<p className="text-xs text-[var(--muted)]">No open performance bills for this filter.</p>
+				) : (
+					<div className="max-h-56 overflow-auto text-xs">
+						<table className="w-full border-collapse">
+							<thead>
+								<tr className="text-left text-[var(--muted)]">
+									<th className="p-1">Bill</th>
+									<th className="p-1">User</th>
+									<th className="p-1">Month</th>
+									<th className="p-1">Due</th>
+									<th className="p-1">Payable</th>
+									<th className="p-1">Status</th>
+									<th className="p-1" />
+								</tr>
+							</thead>
+							<tbody>
+								{(openBillsQ.data ?? []).map((b: AdminPerformanceBill) => (
+									<tr key={b.id} className="border-t border-[#1e293b]/60">
+										<td className="p-1">{b.id}</td>
+										<td className="p-1">
+											{b.user_id}
+											<span className="text-[var(--muted)] block truncate max-w-[8rem]">
+												{b.user_email}
+											</span>
+										</td>
+										<td className="p-1">{String(b.bill_month).slice(0, 7)}</td>
+										<td className="p-1">{b.due_at.slice(0, 10)}</td>
+										<td className="p-1">₹{b.payable_amount.toFixed(2)}</td>
+										<td className="p-1">{b.status.replace(/_/g, ' ')}</td>
+										<td className="p-1">
+											<button
+												type="button"
+												className="px-2 py-0.5 rounded bg-emerald-800 text-white disabled:opacity-40"
+												disabled={recordCashM.isPending}
+												onClick={() => {
+													if (
+														!window.confirm(
+															`Record cash payment of ₹${b.payable_amount.toFixed(2)} for bill #${b.id} (${b.user_email})?`
+														)
+													) {
+														return;
+													}
+													recordCashM.mutate({
+														billId: b.id,
+														note: cashNote.trim() || undefined,
+													});
+												}}
+											>
+												Mark paid
+											</button>
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
 			</section>
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-2 text-sm">

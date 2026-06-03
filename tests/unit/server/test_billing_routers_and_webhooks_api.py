@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from server.app.main import app
 from src.infrastructure.db.models import (
+    BillingAdminSettings,
     BillingTransactionStatus,
     MonthlyPerformanceBill,
     PerformanceBillStatus,
@@ -152,6 +153,67 @@ class TestBillingAdminRouter:
         )
         assert r.status_code == 200
         assert r.json() == {"ok": True, "n": 1}
+
+    def test_admin_list_and_record_cash_payment(
+        self, client: TestClient, admin_user, normal_user, db_session
+    ):
+        db_session.add(BillingAdminSettings(id=1))
+        bill = MonthlyPerformanceBill(
+            user_id=normal_user.id,
+            bill_month=date(2026, 5, 1),
+            generated_at=datetime(2026, 5, 31, 12, 0, 0),
+            due_at=datetime(2026, 6, 15, 12, 0, 0),
+            previous_carry_forward_loss=0.0,
+            current_month_pnl=100.0,
+            fee_percentage=10.0,
+            chargeable_profit=100.0,
+            fee_amount=10.0,
+            new_carry_forward_loss=0.0,
+            payable_amount=10.0,
+            status=PerformanceBillStatus.OVERDUE,
+        )
+        db_session.add(bill)
+        db_session.commit()
+        db_session.refresh(bill)
+        token = _login(client, admin_user.email, "Admin@123")
+
+        r_list = client.get(
+            "/api/v1/admin/billing/performance-bills",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"user_id": normal_user.id},
+        )
+        assert r_list.status_code == 200
+        rows = r_list.json()
+        assert len(rows) == 1
+        assert rows[0]["user_email"] == normal_user.email
+        assert rows[0]["status"] == "overdue"
+
+        r_pay = client.post(
+            f"/api/v1/admin/billing/performance-bills/{bill.id}/record-cash-payment",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"note": "Cash at desk"},
+        )
+        assert r_pay.status_code == 200
+        body = r_pay.json()
+        assert body["bill_id"] == bill.id
+        assert body["amount_paise"] == 1000
+
+        db_session.refresh(bill)
+        assert bill.status == PerformanceBillStatus.PAID
+
+        r_empty = client.get(
+            "/api/v1/admin/billing/performance-bills",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"user_id": normal_user.id},
+        )
+        assert r_empty.json() == []
+
+        r_dup = client.post(
+            f"/api/v1/admin/billing/performance-bills/{bill.id}/record-cash-payment",
+            headers={"Authorization": f"Bearer {token}"},
+            json={},
+        )
+        assert r_dup.status_code == 400
 
     def test_admin_refund_not_found(self, client: TestClient, admin_user):
         token = _login(client, admin_user.email, "Admin@123")
