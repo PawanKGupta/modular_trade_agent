@@ -25,7 +25,7 @@ class FakeOrderRepo:
         self._sell_orders_map = {o.id: o for o in (sell_orders or [])}
 
     def list(self, user_id):
-        return self._buy_orders
+        return (self._buy_orders, len(self._buy_orders))
 
     def get(self, order_id):
         return self._sell_orders_map.get(order_id)
@@ -92,18 +92,16 @@ def _build_service(execute_results):
 
 
 def _normalize_orders_repo_list(service: PnlCalculationService) -> None:
-    """Ensure PnlCalculationService iterates a flat list of orders.
-
-    Some environments return `(items, total_count)` from OrdersRepository.list().
-    """
+    """Match production contract: OrdersRepository.list() -> (items, total_count)."""
 
     original_list = service.orders_repo.list
 
     def list_items(*args, **kwargs):
         result = original_list(*args, **kwargs)
         if isinstance(result, tuple) and len(result) == 2:
-            return result[0]
-        return result
+            return result
+        items = result or []
+        return (items, len(items))
 
     service.orders_repo.list = list_items
 
