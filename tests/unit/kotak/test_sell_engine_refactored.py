@@ -580,7 +580,7 @@ class TestRefactoredSellEngineMethods:
             assert sell_manager.lowest_ema9["RELIANCE"] == rounded_ema9
 
     def test_check_and_update_single_stock_preserves_existing_lowest_ema9(self, sell_manager):
-        """Test that _check_and_update_single_stock doesn't overwrite existing lowest_ema9"""
+        """No modify when rounded EMA9 is not below the current broker target."""
         order_info = {
             "order_id": "12345",
             "target_price": 2500.0,
@@ -588,21 +588,40 @@ class TestRefactoredSellEngineMethods:
             "ticker": "RELIANCE.NS",
             "placed_symbol": "RELIANCE-EQ",
         }
-        # Already has lower value
         sell_manager.lowest_ema9 = {"RELIANCE": 2480.0}
 
-        current_ema9 = 2500.0
-        rounded_ema9 = 2500.0
-
         with (
-            patch.object(sell_manager, "get_current_ema9", return_value=current_ema9),
-            patch.object(sell_manager, "round_to_tick_size", return_value=rounded_ema9),
-            patch.object(sell_manager, "update_sell_order", return_value=False),
+            patch.object(sell_manager, "get_current_ema9", return_value=2500.0),
+            patch.object(sell_manager, "round_to_tick_size", return_value=2500.0),
+            patch.object(sell_manager, "update_sell_order", return_value=False) as mock_update,
         ):
             result = sell_manager._check_and_update_single_stock("RELIANCE", order_info, [])
 
-            # Verify existing lowest_ema9 preserved (not overwritten)
+            mock_update.assert_not_called()
             assert sell_manager.lowest_ema9["RELIANCE"] == 2480.0
+            assert result["action"] == "checked"
+
+    def test_check_and_update_lowers_when_ema_below_current_target(self, sell_manager):
+        """Modify when EMA9 drops below live target even if above historical lowest_ema9."""
+        order_info = {
+            "order_id": "12345",
+            "target_price": 2500.0,
+            "qty": 10,
+            "ticker": "RELIANCE.NS",
+            "placed_symbol": "RELIANCE-EQ",
+        }
+        sell_manager.lowest_ema9 = {"RELIANCE": 2480.0}
+
+        with (
+            patch.object(sell_manager, "get_current_ema9", return_value=2495.0),
+            patch.object(sell_manager, "round_to_tick_size", return_value=2495.0),
+            patch.object(sell_manager, "update_sell_order", return_value=True) as mock_update,
+        ):
+            result = sell_manager._check_and_update_single_stock("RELIANCE", order_info, [])
+
+            mock_update.assert_called_once()
+            assert mock_update.call_args.kwargs["new_price"] == 2495.0
+            assert result["action"] == "updated"
 
 
 class TestCircuitLimitHandling:
