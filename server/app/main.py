@@ -315,26 +315,34 @@ def _can_rotate_logs():
         return False
 
 
-# Use rotating handler if rotation is possible, otherwise use simple file handler
-# This prevents permission errors in Docker environments
-if _can_rotate_logs():
-    file_handler = SafeRotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
-else:
-    # Use simple FileHandler if rotation is not possible
-    # External log rotation (logrotate) can be used instead
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+# File logging is optional: bind-mounted logs/ is often owned by the host user (not UID
+# 1000 `trader`). Console/docker logs still capture output (same pattern as utils/logger.py).
+def _configure_root_file_logging() -> None:
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    try:
+        if _can_rotate_logs():
+            file_handler = SafeRotatingFileHandler(
+                log_path, maxBytes=2 * 1024 * 1024, backupCount=3
+            )
+        else:
+            file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        if not any(
+            isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler, logging.FileHandler))
+            and getattr(h, "baseFilename", "") == log_path
+            for h in root_logger.handlers
+        ):
+            root_logger.addHandler(file_handler)
+    except OSError as exc:
+        logging.getLogger(__name__).warning(
+            "API file logging disabled (%s): %s", log_path, exc
+        )
+    root_logger.setLevel(logging.INFO)
 
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-file_handler.setFormatter(formatter)
-root_logger = logging.getLogger()
-if not any(
-    isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler, logging.FileHandler))
-    and getattr(h, "baseFilename", "") == log_path
-    for h in root_logger.handlers
-):
-    root_logger.addHandler(file_handler)
-root_logger.setLevel(logging.INFO)
+
+_configure_root_file_logging()
 
 app.add_middleware(
     CORSMiddleware,

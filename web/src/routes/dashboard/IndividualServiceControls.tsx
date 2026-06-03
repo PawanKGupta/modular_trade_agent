@@ -116,7 +116,7 @@ export function IndividualServiceControls({
 
 	const runOnceMutation = useMutation({
 		mutationFn: (taskName: string) => runTaskOnce({ task_name: taskName }),
-		onSuccess: (response) => {
+		onSuccess: (response, taskName) => {
 			// Handle backend rejection (e.g., unified service conflict)
 			if (!response.success) {
 				setConflictMessage(response.message || 'Task execution failed');
@@ -124,6 +124,24 @@ export function IndividualServiceControls({
 				setTimeout(() => setShowConflictWarning(false), 8000);
 				return;
 			}
+
+			// Optimistic running state until polling confirms completion
+			qc.setQueryData<IndividualServicesStatus>(['individualServicesStatus'], (old) => {
+				if (!old?.services?.[taskName]) {
+					return old;
+				}
+				return {
+					...old,
+					services: {
+						...old.services,
+						[taskName]: {
+							...old.services[taskName],
+							last_execution_status: 'running',
+							last_execution_at: new Date().toISOString(),
+						},
+					},
+				};
+			});
 
 			// Handle warning conflicts (still successful)
 			if (response.has_conflict) {
@@ -150,8 +168,9 @@ export function IndividualServiceControls({
 				}
 			| undefined) ?? undefined;
 
-	// "Run Once" is disabled if service is running OR if there's a "running" execution
-	const isRunOnceRunning = service.last_execution_status === 'running';
+	// Run-once in progress (API status or optimistic state right after click)
+	const isRunOnceRunning =
+		service.last_execution_status === 'running' || runOnceMutation.isPending;
 	// Service is considered "running" if either the scheduled service is running OR a run-once execution is in progress
 	const isServiceActive = service.is_running || isRunOnceRunning;
 	// Disable individual service start button if unified service is running, service is already running, or run-once is running
@@ -216,26 +235,28 @@ export function IndividualServiceControls({
 					</div>
 				)}
 			</div>
-			{service.last_execution_status && (
+			{(service.last_execution_status || isRunOnceRunning) && (
 				<div className="mb-3">
-					<div className="text-[var(--muted)] mb-1">Last Result</div>
+					<div className="text-[var(--muted)] mb-1">
+						{isRunOnceRunning ? 'Current Run' : 'Last Result'}
+					</div>
 					<div
 						className={`text-sm font-medium ${
-							service.last_execution_status === 'success'
-								? 'text-green-400'
-								: service.last_execution_status === 'failed'
-									? 'text-red-400'
-									: service.last_execution_status === 'running'
-										? 'text-blue-400'
+							isRunOnceRunning || service.last_execution_status === 'running'
+								? 'text-blue-400'
+								: service.last_execution_status === 'success'
+									? 'text-green-400'
+									: service.last_execution_status === 'failed'
+										? 'text-red-400'
 										: 'text-yellow-400'
 						}`}
 					>
-						{service.last_execution_status === 'success'
-							? 'Success'
-							: service.last_execution_status === 'failed'
-								? 'Failed'
-								: service.last_execution_status === 'running'
-									? 'Running'
+						{isRunOnceRunning || service.last_execution_status === 'running'
+							? 'Running'
+							: service.last_execution_status === 'success'
+								? 'Success'
+								: service.last_execution_status === 'failed'
+									? 'Failed'
 									: 'Skipped'}
 						{typeof service.last_execution_duration === 'number' &&
 							` - ${formatDuration(service.last_execution_duration)}`}

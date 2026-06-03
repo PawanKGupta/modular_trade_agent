@@ -141,9 +141,27 @@ describe('IndividualServiceControls', () => {
 				)
 			);
 
-			const runningBadge = screen.getByText('Running');
-			expect(runningBadge.className).toContain('bg-green-500/20');
-			expect(runningBadge.className).toContain('text-green-400');
+			const runningBadges = screen.getAllByText('Running');
+			expect(runningBadges[0].className).toContain('bg-green-500/20');
+			expect(runningBadges[0].className).toContain('text-green-400');
+		});
+
+		it('displays running badge and disables actions when run-once is in progress', () => {
+			const runOnceService = {
+				...mockService,
+				last_execution_status: 'running' as const,
+			};
+
+			render(
+				withProviders(
+					<IndividualServiceControls service={runOnceService} unifiedServiceRunning={false} />
+				)
+			);
+
+			expect(screen.getAllByText('Running').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getByText('Current Run')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Start Service' })).toBeDisabled();
+			expect(screen.getByRole('button', { name: /Running\.\.\./ })).toBeDisabled();
 		});
 
 		it('displays stopped badge when service is not running', () => {

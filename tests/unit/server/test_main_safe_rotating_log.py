@@ -113,3 +113,22 @@ def test_main_module_can_rotate_logs_failure(monkeypatch: pytest.MonkeyPatch, tm
 
     monkeypatch.setattr("builtins.open", _fail_open)
     assert main._can_rotate_logs() is False
+
+
+def test_configure_root_file_logging_skips_on_permission_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """API must start when logs/ is not writable (bind mount UID mismatch)."""
+    from server.app import main
+
+    log_path = str(tmp_path / "server_api.log")
+    monkeypatch.setattr(main, "log_path", log_path)
+    monkeypatch.setattr(main, "_can_rotate_logs", lambda: False)
+
+    def _deny_handler(*_a, **_k):
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr(logging, "FileHandler", _deny_handler)
+    before = len(logging.getLogger().handlers)
+    main._configure_root_file_logging()
+    assert len(logging.getLogger().handlers) == before
