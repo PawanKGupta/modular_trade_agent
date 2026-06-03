@@ -1322,27 +1322,23 @@ class PaperTradingServiceAdapter:
 
                 if latest_date_ist is None:
                     self.logger.debug(
-                        "Skipping exit checks for %s: cannot determine latest bar date",
-                        symbol,
+                        f"Skipping exit checks for {symbol}: cannot determine latest bar date",
                         action="_monitor_sell_orders",
                     )
                     continue
 
                 if latest_date_ist != today_ist:
                     self.logger.debug(
-                        "Skipping exit checks for %s: latest bar %s is not today %s",
-                        symbol,
-                        latest_date_ist,
-                        today_ist,
+                        f"Skipping exit checks for {symbol}: latest bar {latest_date_ist} "
+                        f"is not today {today_ist}",
                         action="_monitor_sell_orders",
                     )
                     continue
 
                 if _daily_bar_duplicates_prior_session(data):
                     self.logger.warning(
-                        "Skipping exit checks for %s: latest daily bar duplicates prior "
+                        f"Skipping exit checks for {symbol}: latest daily bar duplicates prior "
                         "session high/low/volume (stale today row)",
-                        symbol,
                         action="_monitor_sell_orders",
                     )
                     continue
