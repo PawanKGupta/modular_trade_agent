@@ -22,7 +22,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
+from src.infrastructure.db.timezone_utils import (  # noqa: E402
+    coerce_db_timestamp_to_ist,
+    ist_now,
+    ist_now_naive,
+)
 
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
     get_indicator_service,
@@ -2127,23 +2131,19 @@ class SellOrderManager:
                 else:
                     broker_qty = broker_qty or 0
 
+                if broker_qty != positions_qty and self._should_skip_broker_holdings_reconciliation(
+                    pos, symbol
+                ):
+                    logger.info(
+                        f"Skipping reconciliation for {symbol}: holdings mismatch likely stale "
+                        f"(db={positions_qty}, broker={broker_qty}). "
+                        "Same-day buy, recent fill, or pending sell."
+                    )
+                    stats["ignored"] += 1
+                    continue
+
                 # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
                 if broker_qty == 0 and positions_qty > 0:
-                    # BUG FIX: Check for recent executed buy orders before marking as closed
-                    # This prevents incorrectly closing positions when broker holdings haven't
-                    # been updated yet after order execution (race condition fix)
-                    # Uses 5-minute window for executed orders, but also checks if position
-                    # was created within last 2 minutes (more precise)
-                    if self._has_recent_executed_buy_order(symbol, minutes=5):
-                        logger.info(
-                            f"Skipping reconciliation for {symbol}: "
-                            f"Recent executed buy order detected (within last 10 minutes). "
-                            f"Broker holdings may not be updated yet. "
-                            f"Will reconcile on next cycle."
-                        )
-                        stats["ignored"] += 1
-                        continue
-
                     logger.warning(
                         f"Manual full sell detected for {symbol}: "
                         f"positions table shows {positions_qty} shares, "
@@ -2364,7 +2364,45 @@ class SellOrderManager:
 
         return stats
 
-    def _has_recent_executed_buy_order(self, symbol: str, minutes: int = 5) -> bool:
+    def _position_opened_same_ist_day(self, position: Any) -> bool:
+        """True when the position was opened on the current IST calendar day."""
+        opened_at = getattr(position, "opened_at", None)
+        if not opened_at:
+            return False
+        from src.infrastructure.db.timezone_utils import as_ist_aware
+
+        return as_ist_aware(opened_at).date() == ist_now().date()
+
+    def _has_pending_sell_order(self, symbol: str) -> bool:
+        """True when a pending system sell exists for this symbol (broker may still be open)."""
+        if not self.orders_repo or not self.user_id:
+            return False
+        sym_u = symbol.upper()
+        base = extract_base_symbol(symbol).upper()
+        orders, _ = self.orders_repo.list(self.user_id)
+        for order in orders:
+            if order.side.lower() != "sell" or order.status != DbOrderStatus.PENDING:
+                continue
+            order_sym = order.symbol.upper()
+            order_base = extract_base_symbol(order_sym).upper()
+            if order_sym == sym_u or order_base == base:
+                return True
+        return False
+
+    def _should_skip_broker_holdings_reconciliation(self, position: Any, symbol: str) -> bool:
+        """
+        Skip holdings reconciliation when broker holdings are unreliable.
+
+        Kotak holdings update T+1; same-day buys often show broker_qty=0 while
+        shares are still held. Also skip when a recent fill or pending sell exists.
+        """
+        if self._position_opened_same_ist_day(position):
+            return True
+        if self._has_pending_sell_order(symbol):
+            return True
+        return self._has_recent_executed_buy_order(symbol, minutes=120)
+
+    def _has_recent_executed_buy_order(self, symbol: str, minutes: int = 120) -> bool:
         """
         Check if there's a recently executed buy order for this symbol.
 
@@ -2373,13 +2411,13 @@ class SellOrderManager:
         - Order executed recently but holdings fetch happened before execution
 
         Strategy:
-        1. First check if position was created very recently (within 2 minutes) - most precise
-        2. Fallback to checking executed orders within time window
+        1. Same IST calendar day as position open (holdings API is T+1)
+        2. Position opened within ``minutes`` (default 120)
+        3. Executed buy order within ``minutes`` (uses IST-naive timestamps)
 
         Args:
-            symbol: Base symbol to check (e.g., 'ASTERDM')
-            minutes: Time window in minutes to check executed orders (default: 5 minutes)
-                     Note: Position creation check uses 2 minutes (broker API typically updates within 1-2 min)
+            symbol: Full trading symbol (e.g., 'PFC-EQ')
+            minutes: Time window for recent fills (default: 120 minutes)
 
         Returns:
             True if there's a recent executed buy order or recently created position, False otherwise
@@ -2391,27 +2429,33 @@ class SellOrderManager:
             if not ist_now:
                 return False
 
-            now = ist_now()
+            now_naive = ist_now_naive()
 
-            # Strategy 1: Check if position was created very recently (most precise)
-            # Broker APIs typically update within 1-2 minutes, so 2 minutes is sufficient
+            from src.infrastructure.db.timezone_utils import as_ist_aware
+
             position = self.positions_repo.get_by_symbol(self.user_id, symbol)
             if position and position.opened_at:
-                position_age = (now - position.opened_at).total_seconds() / 60  # minutes
-                if position_age <= 2:  # Position created within last 2 minutes
+                opened = as_ist_aware(position.opened_at)
+                if opened.date() == ist_now().date():
+                    logger.debug(
+                        f"Position {symbol} opened today ({opened.date()}). "
+                        "Skipping reconciliation (holdings API is T+1)."
+                    )
+                    return True
+                position_age = (
+                    now_naive - as_ist_aware(position.opened_at).replace(tzinfo=None)
+                ).total_seconds() / 60
+                if position_age <= minutes:
                     logger.debug(
                         f"Position {symbol} was created {position_age:.1f} minutes ago. "
-                        f"Skipping reconciliation (broker holdings may not be updated yet)."
+                        "Skipping reconciliation (broker holdings may not be updated yet)."
                     )
                     return True
 
-            # Strategy 2: Check for executed buy orders within time window
-            # Use shorter window (5 minutes) since broker APIs usually update within 1-2 minutes
-            # 5 minutes provides safety margin without being too conservative
             if not self.orders_repo:
                 return False
 
-            cutoff_time = now - timedelta(minutes=minutes)
+            cutoff_time = now_naive - timedelta(minutes=minutes)
 
             # Get all buy orders for this user
             orders, _ = self.orders_repo.list(self.user_id)
@@ -2423,26 +2467,27 @@ class SellOrderManager:
                     continue
 
                 # Compare full symbols (orders already have full symbols, symbol is full after migration)
-                if order.symbol.upper() != symbol.upper():
+                order_sym = order.symbol.upper()
+                sym_u = symbol.upper()
+                base = extract_base_symbol(symbol).upper()
+                if order_sym != sym_u and extract_base_symbol(order_sym).upper() != base:
                     continue
 
                 # Check if order was executed recently (ONGOING legacy or CLOSED = filled)
                 if order.status in (DbOrderStatus.ONGOING, DbOrderStatus.CLOSED):
-                    # Check execution_time first (more accurate)
-                    if hasattr(order, "execution_time") and order.execution_time:
-                        if order.execution_time >= cutoff_time:
+                    for ts_attr in ("execution_time", "filled_at", "placed_at"):
+                        ts = getattr(order, ts_attr, None)
+                        if ts is None:
+                            continue
+                        ts_naive = (
+                            ts.replace(tzinfo=None)
+                            if getattr(ts, "tzinfo", None) is not None
+                            else ts
+                        )
+                        if ts_naive >= cutoff_time:
                             logger.debug(
                                 f"Found recent executed buy order for {symbol}: "
-                                f"order_id={order.id}, execution_time={order.execution_time}"
-                            )
-                            return True
-
-                    # Fallback to filled_at if execution_time not available
-                    if hasattr(order, "filled_at") and order.filled_at:
-                        if order.filled_at >= cutoff_time:
-                            logger.debug(
-                                f"Found recent executed buy order for {symbol}: "
-                                f"order_id={order.id}, filled_at={order.filled_at}"
+                                f"order_id={order.id}, {ts_attr}={ts_naive}"
                             )
                             return True
 
@@ -2502,17 +2547,7 @@ class SellOrderManager:
             recently_closed = {}
             for pos in all_positions:
                 if pos.closed_at:
-                    # Handle timezone mismatch: ensure both datetimes are timezone-aware
-                    closed_at = pos.closed_at
-                    if closed_at.tzinfo is None:
-                        # Naive datetime: assume it's in IST (database convention)
-                        from src.infrastructure.db.timezone_utils import IST
-
-                        closed_at = closed_at.replace(tzinfo=IST)
-                    elif closed_at.tzinfo != now.tzinfo:
-                        # Different timezone: convert to IST
-                        closed_at = closed_at.astimezone(now.tzinfo)
-
+                    closed_at = coerce_db_timestamp_to_ist(pos.closed_at, reference=now)
                     closed_age = (now - closed_at).total_seconds() / 60
                     if closed_age < 5:  # Closed within last 5 minutes
                         recently_closed[pos.symbol.upper()] = closed_age
@@ -5122,7 +5157,12 @@ class SellOrderManager:
             logger.warning(f"Could not fetch existing orders: {e}. Will proceed with placement.")
             return {}
 
-    def run_at_market_open(self) -> int:
+    def run_at_market_open(
+        self,
+        *,
+        reconcile_holdings: bool = True,
+        cancel_orphans: bool = True,
+    ) -> int:
         """
         Place sell orders for all open positions at market open
         Checks for existing orders to avoid duplicates
@@ -5130,28 +5170,38 @@ class SellOrderManager:
         Edge Case #14, #15, #17 fix: Reconciles positions with broker holdings
         before placing orders to detect manual sells.
 
+        Args:
+            reconcile_holdings: When False, skip holdings reconciliation (mid-session restart).
+            cancel_orphans: When False, skip orphaned sell cancellation (mid-session restart).
+
         Returns:
             Number of orders placed
         """
         logger.info("? Running sell order placement at market open...")
 
-        # Edge Case #14, #15, #17: Reconcile positions with broker holdings
-        # Detect and handle manual sells before placing orders
-        reconciliation_stats = self._reconcile_positions_with_broker_holdings()
-        if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+        if reconcile_holdings:
+            reconciliation_stats = self._reconcile_positions_with_broker_holdings()
+            if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
+                logger.info(
+                    f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
+                    f"and {reconciliation_stats['closed']} manual full sells. "
+                    f"Positions table updated accordingly."
+                )
+        else:
             logger.info(
-                f"Reconciliation detected {reconciliation_stats['updated']} manual partial sells "
-                f"and {reconciliation_stats['closed']} manual full sells. "
-                f"Positions table updated accordingly."
+                "Skipping holdings reconciliation (mid-session startup; "
+                "holdings API is T+1 for same-day buys)"
             )
 
-        # Cleanup orphaned sell orders (no corresponding open positions)
-        orphaned_stats = self._cancel_orphaned_sell_orders()
-        if orphaned_stats["cancelled"] > 0:
-            logger.info(
-                f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
-                f"({orphaned_stats['skipped']} skipped due to safety checks)"
-            )
+        if cancel_orphans:
+            orphaned_stats = self._cancel_orphaned_sell_orders()
+            if orphaned_stats["cancelled"] > 0:
+                logger.info(
+                    f"Cleaned up {orphaned_stats['cancelled']} orphaned sell orders "
+                    f"({orphaned_stats['skipped']} skipped due to safety checks)"
+                )
+        else:
+            logger.info("Skipping orphaned sell cleanup (mid-session startup)")
 
         open_positions = self.get_open_positions()
         if not open_positions:

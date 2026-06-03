@@ -399,6 +399,13 @@ class TradingService:
             now = datetime.now().time()
         return dt_time(9, 15) <= now <= dt_time(15, 30)
 
+    def _is_sell_open_placement_window(self) -> bool:
+        """True during the first sell-monitor cycle window (9:15–9:35 IST)."""
+        if ist_now is None:
+            return False
+        now = ist_now().time()
+        return dt_time(9, 15) <= now <= dt_time(9, 35)
+
     def _initialize_live_prices(self):
         """
         Initialize LivePriceCache for Kotak REST quote polling (real-time LTP).
@@ -779,8 +786,17 @@ class TradingService:
                 if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
-                # Place sell orders at market open
-                orders_placed = self.sell_manager.run_at_market_open()
+                # Place sell orders at market open (or mid-session: sync only, no reconcile)
+                in_open_window = self._is_sell_open_placement_window()
+                orders_placed = self.sell_manager.run_at_market_open(
+                    reconcile_holdings=in_open_window,
+                    cancel_orphans=in_open_window,
+                )
+                if not in_open_window:
+                    logger.info(
+                        "Mid-session sell_monitor startup: skipped holdings reconciliation "
+                        "and orphan cleanup (restart safety for same-day positions)"
+                    )
                 logger.info(f"Placed {orders_placed} sell orders")
                 task_context["orders_placed"] = orders_placed
 
