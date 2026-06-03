@@ -342,13 +342,23 @@ class OhlcvCacheService:
                 symbol, start_d, end_d, interval, coverage
             )
             if include_live_today:
-                self._refresh_today_bar_from_yahoo(
-                    symbol,
-                    end_d,
-                    interval=interval,
-                    days=days,
-                    yf_end_date=end_date,
-                )
+                if is_ohlcv_cache_read_only():
+                    log_ohlcv_cache(
+                        logger,
+                        "OHLCV read-only skip today_refresh %s [%s]: cached=%s coverage=%.1f%%",
+                        symbol,
+                        interval,
+                        len(bars_before),
+                        coverage,
+                    )
+                else:
+                    self._refresh_today_bar_from_yahoo(
+                        symbol,
+                        end_d,
+                        interval=interval,
+                        days=days,
+                        yf_end_date=end_date,
+                    )
 
         bars = self.repo.get_range(symbol, start_d, end_d, interval=interval)
         if not bars:
@@ -438,6 +448,8 @@ class OhlcvCacheService:
         Caller must gate with ``live_current_day_scope_allowed`` first.
         NSE path runs only after market close; pre-EOD skips (no synthetic today bar).
         """
+        if is_ohlcv_cache_read_only():
+            return 0
         if interval != DEFAULT_INTERVAL:
             return 0
         today_ist = ist_now().date()

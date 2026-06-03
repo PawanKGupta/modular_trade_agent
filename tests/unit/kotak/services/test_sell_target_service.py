@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from modules.kotak_neo_auto_trader.services.sell_target_service import (
-    cap_sell_price_to_upper_circuit,
+    _cap_sell_price_to_upper_circuit_legacy,
     compute_sell_target,
     fetch_circuit_limits_for_symbol,
     is_price_on_tick_grid,
@@ -80,6 +80,17 @@ class TestPrepareBrokerSellLimitPrice:
         assert prepared.price is None
         assert any("circuit_defer" in adj for adj in prepared.adjustments)
 
+    def test_round_to_tick_size_returns_none_on_defer_circuit(self):
+        from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+
+        limits = {"upper": 1859.20, "lower": 1682.20}
+        mgr = MagicMock()
+        mgr.scrip_master = None
+        rounded = SellOrderManager.round_to_tick_size(
+            mgr, 1860.40, exchange="NSE", symbol="AXISCADES-EQ", circuit_limits=limits
+        )
+        assert rounded is None
+
     def test_places_when_ema9_within_upper_circuit(self):
         limits = {"upper": 1900.0, "lower": 1600.0}
         prepared = prepare_broker_sell_limit_price(
@@ -129,8 +140,8 @@ class TestPrepareBrokerSellLimitPrice:
         assert limits == {"upper": 1859.2, "lower": 1682.2}
         market.get_quote.assert_called()
 
-    def test_cap_sell_price_to_upper_circuit(self):
-        capped = cap_sell_price_to_upper_circuit(
+    def test_legacy_cap_sell_price_to_upper_circuit(self):
+        capped = _cap_sell_price_to_upper_circuit_legacy(
             1860.40, 1859.20, exchange="NSE", symbol="AXISCADES-EQ"
         )
         assert capped <= 1859.20
@@ -244,3 +255,32 @@ class TestSellTargetPlacementParity:
             broker_symbol="RELIANCE-EQ",
             current_ltp=ltp,
         )
+
+
+class TestPlaceSellOrderCircuitDefer:
+    """Broker is not called when EMA9 exceeds upper circuit (defer-only policy)."""
+
+    def test_place_sell_order_defers_without_broker_place_limit_sell(self):
+        from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager
+
+        auth = MagicMock()
+        with patch("modules.kotak_neo_auto_trader.sell_engine.KotakNeoScripMaster"):
+            mgr = SellOrderManager(auth=auth)
+        mgr.orders = MagicMock()
+        mgr.scrip_master = MagicMock()
+        mgr.scrip_master.symbol_map = {}
+        trade = {
+            "symbol": "AXISCADES-EQ",
+            "placed_symbol": "AXISCADES-EQ",
+            "qty": 5,
+            "ticker": "AXISCADES.NS",
+        }
+        limits = {"upper": 1859.20, "lower": 1682.20}
+        with (
+            patch.object(mgr, "_get_circuit_limits_for_symbol", return_value=limits),
+            patch.object(mgr, "_queue_for_circuit_expansion") as mock_queue,
+        ):
+            result = mgr.place_sell_order(trade, 1860.40)
+        assert result is None
+        mgr.orders.place_limit_sell.assert_not_called()
+        mock_queue.assert_called_once()

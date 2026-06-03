@@ -328,7 +328,7 @@ def round_sell_price_down(
     return rounded
 
 
-def cap_sell_price_to_upper_circuit(
+def _cap_sell_price_to_upper_circuit_legacy(
     price: float,
     upper_circuit: float,
     *,
@@ -336,7 +336,7 @@ def cap_sell_price_to_upper_circuit(
     symbol: str | None = None,
     scrip_master: Any | None = None,
 ) -> float:
-    """Cap limit sell price to upper circuit, rounding down to valid tick."""
+    """Legacy cap-to-upper helper (superseded by defer-only ``prepare_broker_sell_limit_price``)."""
     if price <= upper_circuit:
         return round_sell_price(
             price, exchange=exchange, symbol=symbol, scrip_master=scrip_master

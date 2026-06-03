@@ -44,6 +44,8 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
+CIRCUIT_DEFER_ORIG_SOURCE = "circuit_defer"
+
 
 class OrdersRepository:
     def __init__(self, db: Session):
@@ -605,6 +607,120 @@ class OrdersRepository:
         """Get order by internal order ID"""
         stmt = select(Orders).where(Orders.user_id == user_id, Orders.order_id == order_id)
         return self.db.execute(stmt).scalar_one_or_none()
+
+    @staticmethod
+    def _base_symbol_value(symbol: str) -> str:
+        try:
+            if extract_base_symbol is None:
+                raise ImportError("extract_base_symbol not available")
+            return extract_base_symbol(symbol).upper().strip()
+        except Exception:
+            return symbol.upper().split("-")[0].strip()
+
+    def list_circuit_deferred_sells(self, user_id: int) -> builtins.list[Orders]:
+        """Pending sell rows persisted for in-memory circuit defer queue (no broker order)."""
+        stmt = select(Orders).where(
+            Orders.user_id == user_id,
+            Orders.side == "sell",
+            Orders.status == OrderStatus.PENDING,
+            Orders.orig_source == CIRCUIT_DEFER_ORIG_SOURCE,
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def upsert_circuit_defer_sell(
+        self,
+        *,
+        user_id: int,
+        symbol: str,
+        quantity: float,
+        price: float | None,
+        order_metadata: dict,
+        reason: str | None = None,
+    ) -> Orders | None:
+        """
+        Persist circuit-defer intent without a broker order id.
+
+        Uses ``orig_source=circuit_defer`` so orphan cleanup and pending-sell checks
+        can ignore these rows. Returns None if a real active sell occupies the slot.
+        """
+        base_symbol_val = self._base_symbol_value(symbol)
+        stmt = select(Orders).where(
+            Orders.user_id == user_id,
+            Orders.base_symbol == base_symbol_val,
+            Orders.side == "sell",
+            Orders.status == OrderStatus.PENDING,
+            Orders.orig_source == CIRCUIT_DEFER_ORIG_SOURCE,
+        )
+        existing = self.db.execute(stmt).scalar_one_or_none()
+        now = ist_now_naive()
+        if existing:
+            existing.symbol = symbol
+            existing.quantity = quantity
+            existing.price = price
+            existing.order_metadata = order_metadata
+            existing.reason = reason or existing.reason
+            existing.updated_at = now
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing
+
+        trade_mode = TradeMode.PAPER
+        settings_repo = SettingsRepository(self.db)
+        user_settings = settings_repo.get_by_user_id(user_id)
+        if user_settings and user_settings.trade_mode:
+            trade_mode = user_settings.trade_mode
+
+        defer_order_id = f"circuit_defer_{base_symbol_val}"
+        order = Orders(
+            user_id=user_id,
+            symbol=symbol,
+            base_symbol=base_symbol_val,
+            side="sell",
+            order_type="limit",
+            quantity=quantity,
+            price=price,
+            status=OrderStatus.PENDING,
+            placed_at=now,
+            updated_at=now,
+            order_id=defer_order_id,
+            broker_order_id=None,
+            orig_source=CIRCUIT_DEFER_ORIG_SOURCE,
+            order_metadata=order_metadata,
+            reason=reason or "Sell deferred: EMA9 above upper circuit",
+            trade_mode=trade_mode,
+        )
+        self.db.add(order)
+        try:
+            self.db.commit()
+            self.db.refresh(order)
+            return order
+        except IntegrityError:
+            self.db.rollback()
+            logger.warning(
+                "Could not persist circuit_defer for %s (user_id=%s): active sell slot occupied",
+                symbol,
+                user_id,
+            )
+            return None
+
+    def clear_circuit_defer_sell(self, user_id: int, symbol: str) -> bool:
+        """Cancel persisted circuit-defer row for symbol (best-effort)."""
+        base_symbol_val = self._base_symbol_value(symbol)
+        stmt = select(Orders).where(
+            Orders.user_id == user_id,
+            Orders.base_symbol == base_symbol_val,
+            Orders.side == "sell",
+            Orders.status == OrderStatus.PENDING,
+            Orders.orig_source == CIRCUIT_DEFER_ORIG_SOURCE,
+        )
+        existing = self.db.execute(stmt).scalar_one_or_none()
+        if not existing:
+            return False
+        self.mark_cancelled(
+            existing,
+            cancelled_reason="Circuit defer cleared (sell placed or queue removed)",
+        )
+        return True
 
     def has_successful_buy_order(self, user_id: int, symbol: str) -> bool:
         """

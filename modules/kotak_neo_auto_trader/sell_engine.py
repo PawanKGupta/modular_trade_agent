@@ -724,6 +724,111 @@ class SellOrderManager:
             f"{full_symbol}: Deferred sell placement — EMA9 Rs {ema9_target:.2f} "
             f"above upper circuit Rs {circuit_limits['upper']:.2f}"
         )
+        self._persist_circuit_defer_to_db(
+            full_symbol,
+            placed_symbol=placed_symbol,
+            ema9_target=ema9_target,
+            circuit_limits=circuit_limits,
+            trade=trade,
+            ticker=ticker,
+            rejection_reason=rejection_reason,
+        )
+
+    def _persist_circuit_defer_to_db(
+        self,
+        full_symbol: str,
+        *,
+        placed_symbol: str,
+        ema9_target: float,
+        circuit_limits: dict[str, float],
+        trade: dict[str, Any],
+        ticker: str | None,
+        rejection_reason: str | None,
+    ) -> None:
+        if not self.orders_repo or not self.user_id:
+            return
+
+        metadata = {
+            "circuit_defer": True,
+            "upper_circuit": circuit_limits.get("upper"),
+            "lower_circuit": circuit_limits.get("lower"),
+            "ema9_target": ema9_target,
+            "ticker": ticker,
+            "placed_symbol": placed_symbol,
+            "trade": {
+                "symbol": trade.get("symbol", full_symbol),
+                "placed_symbol": placed_symbol,
+                "ticker": ticker,
+                "qty": trade.get("qty", 0),
+            },
+            "rejection_reason": rejection_reason,
+        }
+        try:
+            self.orders_repo.upsert_circuit_defer_sell(
+                user_id=self.user_id,
+                symbol=placed_symbol,
+                quantity=float(trade.get("qty", 0) or 0),
+                price=float(ema9_target) if ema9_target else None,
+                order_metadata=metadata,
+                reason=rejection_reason
+                or "EMA9 exceeds upper circuit — deferred before broker placement",
+            )
+        except Exception as exc:
+            logger.warning(
+                "%s: Failed to persist circuit defer to DB: %s",
+                full_symbol,
+                exc,
+            )
+
+    def _clear_circuit_defer_from_db(self, symbol: str) -> None:
+        if not self.orders_repo or not self.user_id:
+            return
+
+        try:
+            self.orders_repo.clear_circuit_defer_sell(self.user_id, symbol)
+        except Exception as exc:
+            logger.debug("clear_circuit_defer_from_db(%s): %s", symbol, exc)
+
+    def _restore_circuit_defer_queue(self) -> int:
+        """Reload in-memory defer queue from DB after process restart."""
+        if not self.orders_repo or not self.user_id:
+            return 0
+        from src.infrastructure.persistence.orders_repository import (  # noqa: PLC0415
+            CIRCUIT_DEFER_ORIG_SOURCE,
+        )
+
+        restored = 0
+        try:
+            for order in self.orders_repo.list_circuit_deferred_sells(self.user_id):
+                meta = order.order_metadata if isinstance(order.order_metadata, dict) else {}
+                trade_meta = meta.get("trade") if isinstance(meta.get("trade"), dict) else {}
+                full_symbol = str(order.symbol or trade_meta.get("symbol", "")).upper()
+                if not full_symbol:
+                    continue
+                self.waiting_for_circuit_expansion[full_symbol] = {
+                    "upper_circuit": float(meta.get("upper_circuit") or order.price or 0),
+                    "lower_circuit": float(meta.get("lower_circuit") or 0.0),
+                    "ema9_target": float(meta.get("ema9_target") or order.price or 0),
+                    "trade": {
+                        "symbol": trade_meta.get("symbol", order.symbol),
+                        "placed_symbol": trade_meta.get("placed_symbol", order.symbol),
+                        "ticker": trade_meta.get("ticker") or meta.get("ticker"),
+                        "qty": trade_meta.get("qty", order.quantity),
+                    },
+                    "rejection_reason": meta.get("rejection_reason")
+                    or order.reason
+                    or "Restored circuit defer from DB",
+                }
+                restored += 1
+            if restored:
+                logger.info(
+                    "Restored %s circuit-deferred sell(s) from DB (orig_source=%s)",
+                    restored,
+                    CIRCUIT_DEFER_ORIG_SOURCE,
+                )
+        except Exception as exc:
+            logger.warning("Failed to restore circuit defer queue from DB: %s", exc)
+        return restored
 
     def round_to_tick_size(
         self,
@@ -2631,6 +2736,8 @@ class SellOrderManager:
         for order in orders:
             if order.side.lower() != "sell" or order.status != DbOrderStatus.PENDING:
                 continue
+            if (order.orig_source or "").strip().lower() == "circuit_defer":
+                continue
             order_sym = order.symbol.upper()
             order_base = extract_base_symbol(order_sym).upper()
             if order_sym == sym_u or order_base == base:
@@ -2811,6 +2918,14 @@ class SellOrderManager:
                 stats["checked"] += 1
                 order_symbol = order.symbol.upper()
                 base_symbol = extract_base_symbol(order_symbol).upper()
+
+                if (order.orig_source or "").strip().lower() == "circuit_defer":
+                    logger.debug(
+                        "Skipping %s: circuit_defer placeholder (no broker order)",
+                        order_symbol,
+                    )
+                    stats["skipped"] += 1
+                    continue
 
                 # Safety check 1: Skip manual orders
                 if order.order_metadata and isinstance(order.order_metadata, dict):
@@ -5433,6 +5548,8 @@ class SellOrderManager:
         """
         logger.info("? Running sell order placement at market open...")
 
+        self._restore_circuit_defer_queue()
+
         if reconcile_holdings:
             reconciliation_stats = self._reconcile_positions_with_broker_holdings()
             if reconciliation_stats["updated"] > 0 or reconciliation_stats["closed"] > 0:
@@ -6168,6 +6285,8 @@ class SellOrderManager:
             Number of orders successfully retried
         """
         if not self.waiting_for_circuit_expansion:
+            self._restore_circuit_defer_queue()
+        if not self.waiting_for_circuit_expansion:
             return 0
 
         retried_count = 0
@@ -6236,6 +6355,7 @@ class SellOrderManager:
                         f"Order ID: {order_id}"
                     )
                     del self.waiting_for_circuit_expansion[full_symbol]
+                    self._clear_circuit_defer_from_db(full_symbol)
                     retried_count += 1
 
                     # Register the order for tracking

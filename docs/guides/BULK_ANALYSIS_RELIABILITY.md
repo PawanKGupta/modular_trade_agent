@@ -140,6 +140,7 @@ For bulk universes, prefer `backfill-cached` or `backfill-dates` (one NSE zip pe
 
 - `invalidate_symbol` resets `ohlcv_symbol_meta` (`fetch_status=unknown`, zero counts).
 - On `cache_hit`, stale `partial` meta is re-validated when listing-aware coverage ≥ `OHLCV_CACHE_MIN_COVERAGE_PCT`.
+- **Morning read-only tasks** (`buy_orders`, `sell_monitor`, `premarket_retry`, `premarket_amo_adjustment`): gap-fill, Yahoo fallback, and cache-hit **today refresh** are skipped so EMA9 uses cached bars only (no NSE/Yahoo during 9:00–9:15).
 - Daily `get_ohlcv` returns nothing when `OHLCV_ENFORCE_INDICATOR_MIN_BARS=true` and the window has fewer than `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` bars **and** listing age &lt; `OHLCV_MIN_LISTING_YEARS_FOR_INDICATORS` years.
 - If ≥ `OHLCV_LISTING_START_GAP_MIN_MISSING` trading days are missing between `ohlcv_symbol_meta.first_date` and the earliest cached bar (first N days of the listing window), one gap-fill is triggered. Uses calendar coverage 85–95% **or** listing-aware coverage already ≥ threshold.
 

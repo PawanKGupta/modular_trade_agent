@@ -227,7 +227,8 @@ WHERE user_id = ? AND closed_at IS NULL
 |------|----------|
 | Fetch limits | `fetch_circuit_limits_for_symbol()` via Kotak quotes (best-effort) |
 | Prepare price | Tick round, then if rounded EMA9 > upper → `defer_circuit` |
-| Defer | `_queue_for_circuit_expansion()` — in-memory map per symbol |
+| Defer | `_queue_for_circuit_expansion()` — in-memory map per symbol; also persisted as `orders` row with `orig_source=circuit_defer` (no `broker_order_id`) when DB repo is available |
+| Restore | `_restore_circuit_defer_queue()` on market open and before circuit retry if the in-memory map is empty (survives process restart) |
 | Retry | `_check_and_retry_circuit_expansion()` each `monitor_and_update()` (~60s scheduler loop) |
 | Place on retry | `place_sell_order()` with `min(current_ema9, stored_ema9_target)` when ≤ refreshed upper |
 | RMS rejection | Parse “High/Low Price Range” from rejection; re-queue with stricter upper if needed |

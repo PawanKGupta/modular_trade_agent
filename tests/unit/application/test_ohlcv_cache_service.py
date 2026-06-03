@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from src.application.services.ohlcv_cache_service import OhlcvCacheService, reset_ohlcv_cache_stats
+from src.application.services.ohlcv_runtime import ohlcv_cache_read_only
 from src.infrastructure.db.base import Base
 from src.infrastructure.persistence.price_cache_repository import PriceCacheRepository
 from src.infrastructure.utils.holiday_calendar import iter_trading_days
@@ -131,6 +132,59 @@ def test_get_ohlcv_cache_hit_refreshes_today_when_add_current_day(db_session, mo
     assert calls["n"] == 1
     latest = df.iloc[-1]
     assert float(latest["high"]) == fresh_high
+
+
+def test_get_ohlcv_cache_hit_no_network_when_read_only(db_session, monkeypatch):
+    """Cache hit with add_current_day must not call Yahoo/NSE when read-only context is active."""
+    reset_ohlcv_cache_stats()
+    calls = {"n": 0}
+    stale_high = 4149.9
+    today = date(2026, 6, 1)
+
+    def counting_fetch(symbol, days=365, interval="1d", end_date=None, add_current_day=True):
+        calls["n"] += 1
+        return pd.DataFrame(
+            {
+                "date": [pd.Timestamp(today)],
+                "open": [4050.0],
+                "high": [4106.0],
+                "low": [4000.0],
+                "close": [4051.0],
+                "volume": [100000],
+            }
+        )
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
+    monkeypatch.setattr(
+        "core.data_fetcher.ist_now",
+        lambda: datetime(2026, 6, 1, 9, 15),
+    )
+
+    end = today
+    start = end - timedelta(days=65)
+    repo = PriceCacheRepository(db_session)
+    for td in iter_trading_days(start, end - timedelta(days=1)):
+        repo.create_or_update("DMART.NS", td, close=10.0, open=10.0, high=11.0, low=9.0, volume=100)
+    repo.create_or_update(
+        "DMART.NS",
+        today,
+        close=4051.0,
+        open=4050.0,
+        high=stale_high,
+        low=4000.0,
+        volume=2177691,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=counting_fetch)
+    with ohlcv_cache_read_only():
+        df = svc.get_ohlcv("DMART.NS", days=60, end_date=today.isoformat(), add_current_day=True)
+    assert df is not None
+    assert calls["n"] == 0
+    latest = df.iloc[-1]
+    assert float(latest["high"]) == stale_high
 
 
 def test_get_ohlcv_backtest_window_excludes_live_today_and_skips_refresh(db_session, monkeypatch):
