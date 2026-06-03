@@ -13,7 +13,7 @@ import pytest
 from src.application.services.individual_service_manager import (
     IndividualServiceManager,
 )
-from src.infrastructure.db.models import Users
+from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
@@ -26,6 +26,7 @@ def sample_user(db_session):
     user = Users(
         email="test@example.com",
         password_hash="hashed_password",
+        role=UserRole.ADMIN,
         created_at=ist_now(),
     )
     db_session.add(user)
@@ -170,3 +171,21 @@ class TestIndividualServiceManagerSchedules:
         schedule_repo = ServiceScheduleRepository(db_session)
         schedules = schedule_repo.get_all()
         assert len(schedules) == 7  # position_monitor removed in Phase 3
+
+    def test_get_status_excludes_analysis_for_non_admin(self, db_session):
+        """Non-admin users do not see analysis in get_status (admin-only operator)."""
+        user = Users(
+            email="user@example.com",
+            password_hash="hashed_password",
+            role=UserRole.USER,
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        manager = IndividualServiceManager(db_session)
+        status = manager.get_status(user.id)
+
+        assert "analysis" not in status
+        assert len(status) == 6

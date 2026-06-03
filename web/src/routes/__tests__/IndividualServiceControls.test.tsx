@@ -1,5 +1,5 @@
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { IndividualServiceControls } from '../dashboard/IndividualServiceControls';
 import { withProviders } from '@/test/utils';
 import * as serviceApi from '@/api/service';
@@ -32,6 +32,10 @@ const mockService: IndividualServiceStatus = {
 describe('IndividualServiceControls', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	describe('Bug #74: Warning symbol fix', () => {
@@ -167,33 +171,35 @@ describe('IndividualServiceControls', () => {
 
 		it('shows elapsed current-run duration from current_run_started_at while running', () => {
 			vi.useFakeTimers();
-			vi.setSystemTime(new Date('2026-06-03T16:00:45.000Z'));
-			const startedAt = new Date('2026-06-03T16:00:00.000Z').toISOString();
-			const runOnceService = {
-				...mockService,
-				last_execution_status: 'running' as const,
-				last_execution_at: new Date('2026-06-03T15:55:00.000Z').toISOString(),
-				current_run_started_at: startedAt,
-				last_execution_duration: 0,
-			};
+			try {
+				vi.setSystemTime(new Date('2026-06-03T16:00:45.000Z'));
+				const startedAt = new Date('2026-06-03T16:00:00.000Z').toISOString();
+				const runOnceService = {
+					...mockService,
+					last_execution_status: 'running' as const,
+					last_execution_at: new Date('2026-06-03T15:55:00.000Z').toISOString(),
+					current_run_started_at: startedAt,
+					last_execution_duration: 0,
+				};
 
-			render(
-				withProviders(
-					<IndividualServiceControls service={runOnceService} unifiedServiceRunning={false} />
-				)
-			);
+				render(
+					withProviders(
+						<IndividualServiceControls service={runOnceService} unifiedServiceRunning={false} />
+					)
+				);
 
-			expect(screen.getByText(/Running - 45\.0s/)).toBeInTheDocument();
+				expect(screen.getByText(/Running - 45\.0s/)).toBeInTheDocument();
 
-			act(() => {
-				vi.advanceTimersByTime(2000);
-			});
-			expect(screen.getByText(/Running - 47\.0s/)).toBeInTheDocument();
-			vi.useRealTimers();
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+				expect(screen.getByText(/Running - 47\.0s/)).toBeInTheDocument();
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it('keeps conflict warning visible while run is still active', async () => {
-			vi.useFakeTimers();
 			vi.mocked(serviceApi.runTaskOnce).mockResolvedValue({
 				success: true,
 				message: 'Task started',
@@ -212,10 +218,7 @@ describe('IndividualServiceControls', () => {
 				expect(screen.getByText(/Task started recently/i)).toBeInTheDocument();
 			});
 
-			act(() => {
-				vi.advanceTimersByTime(10_000);
-			});
-
+			// Simulate status poll while run is still active (no short auto-dismiss)
 			rerender(
 				withProviders(
 					<IndividualServiceControls
@@ -231,7 +234,6 @@ describe('IndividualServiceControls', () => {
 			);
 
 			expect(screen.getByText(/Task started recently/i)).toBeInTheDocument();
-			vi.useRealTimers();
 		});
 
 		it('displays stopped badge when service is not running', () => {
