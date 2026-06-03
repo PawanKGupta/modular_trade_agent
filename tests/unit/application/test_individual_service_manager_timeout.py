@@ -258,6 +258,58 @@ class TestIndividualServiceManagerTimeout:
             alive_thread.join(timeout=5)
             _RUN_ONCE_THREADS.pop((sample_user.id, "analysis"), None)
 
+    def test_get_status_current_run_started_at_uses_in_flight_execution(
+        self, db_session, sample_user
+    ):
+        """current_run_started_at reflects the active run, not service.last_execution_at."""
+        from src.infrastructure.persistence.individual_service_status_repository import (  # noqa: PLC0415
+            IndividualServiceStatusRepository,
+        )
+
+        manager = IndividualServiceManager(db_session)
+        status_repo = IndividualServiceStatusRepository(db_session)
+
+        previous_run = ist_now() - timedelta(minutes=4)
+        status_repo.update_last_execution(sample_user.id, "analysis", previous_run)
+
+        current_run_start = ist_now() - timedelta(seconds=30)
+        execution = IndividualServiceTaskExecution(
+            user_id=sample_user.id,
+            task_name="analysis",
+            executed_at=current_run_start,
+            status="running",
+            duration_seconds=0.0,
+            execution_type="run_once",
+        )
+        db_session.add(execution)
+        db_session.commit()
+
+        hold = Event()
+
+        def _block() -> None:
+            hold.wait(timeout=30)
+
+        alive_thread = Thread(target=_block, daemon=True)
+        alive_thread.start()
+        _RUN_ONCE_THREADS[(sample_user.id, "analysis")] = alive_thread
+
+        try:
+            status = manager.get_status(sample_user.id)["analysis"]
+            assert status["last_execution_status"] == "running"
+            assert status["current_run_started_at"] is not None
+            assert status["last_execution_at"] is not None
+            current_started = status["current_run_started_at"].replace("Z", "+00:00")
+            last_completed = status["last_execution_at"].replace("Z", "+00:00")
+            from datetime import datetime  # noqa: PLC0415
+
+            assert datetime.fromisoformat(current_started) > datetime.fromisoformat(
+                last_completed
+            )
+        finally:
+            hold.set()
+            alive_thread.join(timeout=5)
+            _RUN_ONCE_THREADS.pop((sample_user.id, "analysis"), None)
+
     def test_run_once_cleans_stale_executions_before_checking(self, db_session, sample_user):
         """run_once() cleans orphan running rows before starting a new execution."""
         manager = IndividualServiceManager(db_session)

@@ -2081,6 +2081,16 @@ class IndividualServiceManager:
                 else:
                     result_data["last_execution_duration"] = None
                     result_data["last_execution_details"] = None
+                # Timer must use the in-flight execution start, not service.last_execution_at
+                # (which still reflects the previous completed run until it finishes).
+                current_run_started = None
+                if latest_execution_raw and latest_execution_raw.get("executed_at"):
+                    current_run_started = latest_execution_raw["executed_at"]
+                elif latest_execution and latest_execution.executed_at:
+                    current_run_started = latest_execution.executed_at
+                result_data["current_run_started_at"] = (
+                    _executed_at_iso(current_run_started) if current_run_started else None
+                )
             elif use_unified_for_display and unified_latest:
                 result_data["last_execution_status"] = unified_latest.status
                 result_data["last_execution_duration"] = unified_latest.duration_seconds
@@ -2093,6 +2103,9 @@ class IndividualServiceManager:
                 result_data["last_execution_status"] = None
                 result_data["last_execution_duration"] = None
                 result_data["last_execution_details"] = None
+
+            if not individual_run_in_progress:
+                result_data["current_run_started_at"] = None
 
             result[task_name] = result_data
 

@@ -89,6 +89,7 @@ class IndividualServiceStatus(BaseModel):
     is_running: bool
     started_at: datetime | None = None
     last_execution_at: datetime | None = None
+    current_run_started_at: datetime | None = None
     next_execution_at: datetime | None = None
     process_id: int | None = None
     schedule_enabled: bool = True

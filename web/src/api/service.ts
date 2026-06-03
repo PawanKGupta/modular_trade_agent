@@ -149,6 +149,7 @@ export interface IndividualServiceStatus {
 	is_running: boolean;
 	started_at: string | null;
 	last_execution_at: string | null;
+	current_run_started_at: string | null;
 	next_execution_at: string | null;
 	process_id: number | null;
 	schedule_enabled: boolean;

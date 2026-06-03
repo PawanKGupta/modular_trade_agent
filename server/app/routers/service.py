@@ -232,6 +232,7 @@ def get_individual_services_status(
                 is_running=info["is_running"],
                 started_at=ensure_utc_datetime(info["started_at"]),
                 last_execution_at=ensure_utc_datetime(info["last_execution_at"]),
+                current_run_started_at=ensure_utc_datetime(info.get("current_run_started_at")),
                 next_execution_at=ensure_utc_datetime(info["next_execution_at"]),
                 process_id=info["process_id"],
                 schedule_enabled=info["schedule_enabled"],
