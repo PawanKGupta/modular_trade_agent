@@ -7,7 +7,14 @@ from datetime import date, datetime
 import pytest
 
 from src.application.services.pnl_daily_sync_service import PnlDailySyncService
-from src.infrastructure.db.models import PnlDaily, Positions, TradeMode, UserRole, Users, UserSettings
+from src.infrastructure.db.models import (
+    PnlDaily,
+    Positions,
+    TradeMode,
+    UserRole,
+    Users,
+    UserSettings,
+)
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
@@ -90,3 +97,65 @@ def test_mark_closed_syncs_pnldaily(db_session, broker_user):
         .one()
     )
     assert row.realized_pnl == pytest.approx(50.0)  # (55-50)*10
+
+
+def test_reduce_quantity_full_close_syncs_pnldaily(db_session, broker_user):
+    """Full close via reduce_quantity with exit_price updates pnldaily."""
+    repo = PositionsRepository(db_session)
+    db_session.add(
+        Positions(
+            user_id=broker_user.id,
+            symbol="PARTIAL-EQ",
+            quantity=5,
+            avg_price=100.0,
+            opened_at=datetime(2026, 5, 10, 10, 0, 0),
+        )
+    )
+    db_session.commit()
+
+    repo.reduce_quantity(
+        broker_user.id,
+        "PARTIAL-EQ",
+        sold_quantity=5.0,
+        exit_price=110.0,
+    )
+
+    row = db_session.query(PnlDaily).filter(PnlDaily.user_id == broker_user.id).one()
+    assert row.realized_pnl == pytest.approx(50.0)  # (110-100)*5
+
+
+def test_materialize_clears_stale_pnldaily_without_positions(db_session, broker_user):
+    """Month materialize zeros orphan realized rows not backed by closed positions."""
+    db_session.add(
+        Positions(
+            user_id=broker_user.id,
+            symbol="REAL-EQ",
+            quantity=0,
+            avg_price=100.0,
+            realized_pnl=100.0,
+            closed_at=datetime(2026, 5, 21, 15, 0, 0),
+        )
+    )
+    db_session.add(
+        PnlDaily(
+            user_id=broker_user.id,
+            date=date(2026, 5, 15),
+            realized_pnl=999.0,
+            unrealized_pnl=0.0,
+            fees=0.0,
+        )
+    )
+    db_session.commit()
+
+    total = PnlDailySyncService(db_session).materialize_calendar_month(broker_user.id, 2026, 5)
+    assert total == pytest.approx(100.0)
+
+    stale = (
+        db_session.query(PnlDaily)
+        .filter(
+            PnlDaily.user_id == broker_user.id,
+            PnlDaily.date == date(2026, 5, 15),
+        )
+        .one()
+    )
+    assert stale.realized_pnl == pytest.approx(0.0)

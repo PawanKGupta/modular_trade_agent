@@ -81,6 +81,17 @@ class PnlDailySyncService:
                 continue
             by_date[closed_at.date()] += float(pos.realized_pnl)
 
+        existing_rows = list(
+            self.db.execute(
+                select(PnlDaily).where(
+                    PnlDaily.user_id == user_id,
+                    PnlDaily.date >= start,
+                    PnlDaily.date <= end,
+                )
+            ).scalars()
+        )
+
+        dirty = False
         for day, amount in by_date.items():
             existing = self.db.execute(
                 select(PnlDaily).where(PnlDaily.user_id == user_id, PnlDaily.date == day)
@@ -97,8 +108,14 @@ class PnlDailySyncService:
                         fees=0.0,
                     )
                 )
+            dirty = True
 
-        if by_date:
+        for row in existing_rows:
+            if row.date not in by_date and float(row.realized_pnl or 0.0) != 0.0:
+                row.realized_pnl = 0.0
+                dirty = True
+
+        if dirty:
             self.db.commit()
 
         month_total = sum(by_date.values())
