@@ -1992,6 +1992,119 @@ class SellOrderManager:
 
         return stats
 
+    @staticmethod
+    def _extract_portfolio_data_rows(payload: Any) -> list[dict[str, Any]]:
+        """Normalize holdings/positions API payloads across Kotak response variants."""
+        if not payload:
+            return []
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                return [row for row in data if isinstance(row, dict)]
+            if isinstance(data, dict):
+                nested = data.get("holdings") or data.get("data")
+                if isinstance(nested, list):
+                    return [row for row in nested if isinstance(row, dict)]
+            holdings = payload.get("holdings")
+            if isinstance(holdings, list):
+                return [row for row in holdings if isinstance(row, dict)]
+        return []
+
+    @staticmethod
+    def _portfolio_row_qty(value: Any) -> int:
+        try:
+            if value is None:
+                return 0
+            if isinstance(value, str):
+                cleaned = value.replace(",", "").replace("Rs", "").replace("INR", "").strip()
+                if cleaned == "":
+                    return 0
+                return int(float(cleaned))
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+    def _build_reconcile_holdings_map(self, holdings_data: list[dict[str, Any]]) -> dict[str, int]:
+        """Demat holdings qty (reconciliation fields); only rows with qty > 0."""
+        broker_map: dict[str, int] = {}
+        for holding in holdings_data:
+            symbol = (
+                holding.get("tradingSymbol")
+                or holding.get("displaySymbol")
+                or holding.get("symbol")
+                or holding.get("securitySymbol")
+                or ""
+            )
+            if not symbol:
+                continue
+            full_symbol = symbol.upper()
+            qty = self._portfolio_row_qty(
+                holding.get("quantity")
+                or holding.get("qty")
+                or holding.get("netQuantity")
+                or holding.get("holdingsQuantity")
+                or 0
+            )
+            if qty <= 0:
+                continue
+            broker_map[full_symbol] = qty
+            base_symbol = extract_base_symbol(full_symbol)
+            if base_symbol and base_symbol != full_symbol:
+                broker_map[base_symbol] = qty
+        return broker_map
+
+    def _build_reconcile_positions_net_map(
+        self, positions_data: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Intraday positions net qty (same-day buys visible before T+1 holdings)."""
+        broker_map: dict[str, int] = {}
+        for pos in positions_data:
+            full_symbol = (
+                pos.get("trdSym")
+                or pos.get("tradingSymbol")
+                or pos.get("symbol")
+                or pos.get("sym")
+                or ""
+            )
+            if not full_symbol:
+                continue
+            full_symbol = str(full_symbol).upper()
+            qty = self._portfolio_row_qty(
+                pos.get("qty")
+                or pos.get("netQty")
+                or pos.get("netQuantity")
+                or pos.get("flBuyQty")
+                or 0
+            )
+            if qty <= 0:
+                continue
+            broker_map[full_symbol] = qty
+            base_symbol = extract_base_symbol(full_symbol)
+            if base_symbol and base_symbol != full_symbol:
+                broker_map[base_symbol] = max(broker_map.get(base_symbol, 0), qty)
+        return broker_map
+
+    @staticmethod
+    def _lookup_reconcile_broker_qty(
+        symbol: str, holdings_map: dict[str, int], positions_map: dict[str, int]
+    ) -> tuple[int, int, int]:
+        """Return (holdings_qty, positions_net_qty, effective_qty=max of both)."""
+        sym = symbol.upper()
+        base = extract_base_symbol(sym).upper()
+
+        def _from_map(m: dict[str, int]) -> int:
+            if sym in m:
+                return m[sym]
+            if base in m:
+                return m[base]
+            return 0
+
+        holdings_qty = _from_map(holdings_map)
+        positions_qty = _from_map(positions_map)
+        return holdings_qty, positions_qty, max(holdings_qty, positions_qty)
+
     def _reconcile_positions_with_broker_holdings(
         self, holdings_response: dict[str, Any] | None = None
     ) -> dict[str, int]:
@@ -2001,14 +2114,18 @@ class SellOrderManager:
         Edge Case #14, #15, #17 fix: Detects when manual trades affect system holdings
         and updates positions table accordingly.
 
+        Uses both holdings (demat/T+1) and positions (intraday net) APIs. A position is
+        only treated as manually sold out when **both** sources report zero quantity,
+        so same-day buys are not closed when holdings lag behind positions.
+
         NOTE: Holdings API only updates T+1 (next day after settlement), so this method
         is primarily useful at market open to catch yesterday's manual trades. For immediate
         detection during market hours, use _detect_manual_sells_from_orders() instead.
 
-        Logic:
-        - If broker_qty < positions_qty: Manual sell detected → Update positions table
-        - If broker_qty = 0: Manual full sell → Mark position as closed
-        - If broker_qty > positions_qty: Manual buy → IGNORE (don't update)
+        Logic (effective broker qty = max(holdings_qty, positions_net_qty)):
+        - If effective broker_qty < positions_qty and > 0: Manual partial sell → reduce DB
+        - If effective broker_qty = 0: Manual full sell → Mark position as closed
+        - If effective broker_qty > positions_qty: Manual buy → IGNORE (don't update)
 
         Returns:
             Dict with reconciliation stats: {
@@ -2077,48 +2194,37 @@ class SellOrderManager:
                 return stats
             # Note: Empty holdings_data list is valid - means all positions were sold
 
-            # Create broker holdings map: {symbol or base_symbol: quantity}
-            broker_holdings_map = {}
-            for holding in holdings_data:
-                # Extract symbol (handle various field names)
-                symbol = (
-                    holding.get("tradingSymbol")
-                    or holding.get("displaySymbol")
-                    or holding.get("symbol")
-                    or holding.get("securitySymbol")
-                    or ""
-                )
-                if not symbol:
-                    continue
+            broker_holdings_map = self._build_reconcile_holdings_map(holdings_data)
 
-                # Keep full symbol from broker (may be base like ASTERDM or full like EMKAY-BE)
-                full_symbol = symbol.upper()
-
-                # Extract quantity (handle various field names)
-                qty = int(
-                    holding.get("quantity")
-                    or holding.get("qty")
-                    or holding.get("netQuantity")
-                    or holding.get("holdingsQuantity")
-                    or 0
-                )
-
-                if not full_symbol or qty <= 0:
-                    continue
-
-                # Map full symbol
-                broker_holdings_map[full_symbol] = qty
-
-                # Also map base symbol so positions like ASTERDM-EQ or EMKAY-BE can match
-                base_symbol = extract_base_symbol(full_symbol)
-                if base_symbol and base_symbol != full_symbol:
-                    broker_holdings_map[base_symbol] = qty
+            broker_positions_map: dict[str, int] = {}
+            positions_valid = False
+            if self.portfolio and hasattr(self.portfolio, "get_positions"):
+                try:
+                    positions_response = self.portfolio.get_positions()
+                    if (
+                        positions_response is not None
+                        and isinstance(positions_response, dict)
+                        and "data" in positions_response
+                    ):
+                        positions_valid = True
+                        positions_data = self._extract_portfolio_data_rows(positions_response)
+                        broker_positions_map = self._build_reconcile_positions_net_map(
+                            positions_data
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch positions for reconciliation (holdings-only fallback): {e}"
+                    )
 
             # Get all open positions from database
             open_positions = self.positions_repo.list(self.user_id)
             open_positions = [pos for pos in open_positions if pos.closed_at is None]
 
-            logger.info(f"Reconciling {len(open_positions)} open positions with broker holdings...")
+            logger.info(
+                f"Reconciling {len(open_positions)} open positions with broker "
+                f"holdings ({len(broker_holdings_map)} symbols) and positions "
+                f"({len(broker_positions_map)} symbols, valid={positions_valid})..."
+            )
 
             # Fetch broker orders once for exit-price fallback (manual sells may not be in our DB)
             broker_orders_response = None
@@ -2133,31 +2239,43 @@ class SellOrderManager:
                 symbol = pos.symbol.upper()
                 positions_qty = int(pos.quantity)
 
-                # Get broker quantity, trying both full symbol and base symbol
-                base_symbol = extract_base_symbol(symbol)
-                broker_qty = broker_holdings_map.get(symbol)
-                if broker_qty is None and base_symbol:
-                    broker_qty = broker_holdings_map.get(base_symbol, 0)
-                else:
-                    broker_qty = broker_qty or 0
+                holdings_qty, positions_net_qty, broker_qty = self._lookup_reconcile_broker_qty(
+                    symbol, broker_holdings_map, broker_positions_map
+                )
 
                 if broker_qty != positions_qty and self._should_skip_broker_holdings_reconciliation(
                     pos, symbol
                 ):
                     logger.info(
                         f"Skipping reconciliation for {symbol}: holdings mismatch likely stale "
-                        f"(db={positions_qty}, broker={broker_qty}). "
+                        f"(db={positions_qty}, holdings={holdings_qty}, "
+                        f"positions_api={positions_net_qty}, effective={broker_qty}). "
                         "Same-day buy, recent fill, or pending sell."
                     )
                     stats["ignored"] += 1
                     continue
 
-                # Case 1: Manual full sell detected (broker_qty = 0, positions_qty > 0)
+                # Do not close on holdings=0 alone if positions API failed (cannot confirm flat)
+                if (
+                    positions_qty > 0
+                    and broker_qty == 0
+                    and holdings_qty == 0
+                    and not positions_valid
+                ):
+                    logger.warning(
+                        f"Skipping reconciliation close for {symbol}: holdings show 0 but "
+                        "positions API unavailable (cannot confirm manual full sell)."
+                    )
+                    stats["ignored"] += 1
+                    continue
+
+                # Case 1: Manual full sell (effective broker qty 0, DB still open)
                 if broker_qty == 0 and positions_qty > 0:
                     logger.warning(
                         f"Manual full sell detected for {symbol}: "
-                        f"positions table shows {positions_qty} shares, "
-                        f"but broker has 0 shares. Marking position as closed."
+                        f"DB shows {positions_qty} shares, "
+                        f"holdings={holdings_qty}, positions_api={positions_net_qty}. "
+                        "Marking position as closed."
                     )
                     try:
                         resolved_exit_source = "manual"
@@ -2322,13 +2440,14 @@ class SellOrderManager:
                     except Exception as e:
                         logger.error(f"Error marking position {symbol} as closed: {e}")
 
-                # Case 2: Manual partial sell detected (broker_qty < positions_qty)
-                elif broker_qty < positions_qty:
+                # Case 2: Manual partial sell (effective broker qty lower than DB, but still > 0)
+                elif 0 < broker_qty < positions_qty:
                     sold_qty = positions_qty - broker_qty
                     logger.warning(
                         f"Manual partial sell detected for {symbol}: "
-                        f"positions table shows {positions_qty} shares, "
-                        f"but broker has {broker_qty} shares. "
+                        f"DB shows {positions_qty} shares, "
+                        f"holdings={holdings_qty}, positions_api={positions_net_qty}, "
+                        f"effective={broker_qty}. "
                         f"Updating positions table (sold {sold_qty} shares)."
                     )
                     try:

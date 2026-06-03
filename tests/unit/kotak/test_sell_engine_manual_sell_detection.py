@@ -39,6 +39,7 @@ class TestManualSellDetection:
     def mock_portfolio(self):
         """Mock KotakNeoPortfolio."""
         portfolio = Mock()
+        portfolio.get_positions.return_value = {"data": []}
         return portfolio
 
     @pytest.fixture
@@ -71,8 +72,9 @@ class TestManualSellDetection:
         mock_positions_repo.list.return_value = [position]
         mock_positions_repo.get_by_symbol.return_value = position
 
-        # Broker holdings: 0 shares (manual full sell)
+        # Broker holdings: 0 shares (manual full sell); positions flat too
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
 
         # Execute reconciliation
         stats = sell_manager._reconcile_positions_with_broker_holdings()
@@ -106,6 +108,7 @@ class TestManualSellDetection:
                 }
             ]
         }
+        mock_portfolio.get_positions.return_value = {"data": []}
 
         # Execute reconciliation
         stats = sell_manager._reconcile_positions_with_broker_holdings()
@@ -348,11 +351,34 @@ class TestManualSellDetection:
 
         mock_positions_repo.list.return_value = [position]
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
 
         stats = sell_manager._reconcile_positions_with_broker_holdings()
 
         assert stats["checked"] == 1
         assert stats["ignored"] == 1
+        assert stats["closed"] == 0
+        mock_positions_repo.mark_closed.assert_not_called()
+
+    def test_reconcile_does_not_close_when_positions_api_shows_qty(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Holdings 0 but Kotak positions net qty > 0 must not close DB position."""
+        position = Mock(spec=Positions)
+        position.symbol = "PFC-EQ"
+        position.quantity = 24.0
+        position.closed_at = None
+        position.opened_at = datetime(2026, 6, 1, 10, 0, 0)
+
+        mock_positions_repo.list.return_value = [position]
+        mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "PFC-EQ", "qty": 24}]
+        }
+
+        stats = sell_manager._reconcile_positions_with_broker_holdings()
+
+        assert stats["checked"] == 1
         assert stats["closed"] == 0
         mock_positions_repo.mark_closed.assert_not_called()
 
@@ -436,8 +462,9 @@ class TestManualSellDetection:
         db_session.commit()
         db_session.refresh(sell_order)
 
-        # Mock portfolio to return empty holdings (manual sell detected)
+        # Mock portfolio: flat holdings and positions (manual sell detected)
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
         mock_positions_repo.list.return_value = [position]
 
         # Mock ist_now function for the reconciliation
@@ -515,8 +542,9 @@ class TestManualSellDetection:
         db_session.commit()
         db_session.refresh(recent_sell_order)
 
-        # Mock portfolio to return empty holdings
+        # Mock portfolio: flat holdings and positions
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
         mock_positions_repo.list.return_value = [position]
 
         # Mock ist_now function
