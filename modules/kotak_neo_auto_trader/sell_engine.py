@@ -253,6 +253,30 @@ class SellOrderManager:
 
         logger.info(f"SellOrderManager initialized with {max_workers} worker threads")
 
+    def _resolve_ticker_for_symbol(
+        self,
+        symbol: str,
+        *,
+        broker_symbol: str | None = None,
+        explicit_ticker: str | None = None,
+        position: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Resolve yfinance ticker for EMA9/LTP lookups.
+
+        Prefers explicit/position metadata, then derives from broker or DB symbol.
+        """
+        if explicit_ticker and str(explicit_ticker).strip():
+            return str(explicit_ticker).strip()
+        if position:
+            pos_ticker = position.get("ticker")
+            if pos_ticker and str(pos_ticker).strip():
+                return str(pos_ticker).strip()
+        sym = (broker_symbol or symbol or "").strip()
+        if not sym:
+            return ""
+        return get_ticker_from_full_symbol(sym)
+
     def _register_order(
         self,
         symbol: str,
@@ -273,6 +297,11 @@ class SellOrderManager:
             ticker: Optional ticker symbol
             **kwargs: Additional metadata
         """
+        ticker = self._resolve_ticker_for_symbol(
+            symbol,
+            broker_symbol=kwargs.get("placed_symbol"),
+            explicit_ticker=ticker,
+        )
         if self.state_manager:
             self.state_manager.register_sell_order(
                 symbol=symbol,
@@ -672,6 +701,12 @@ class SellOrderManager:
         """Park symbol until EMA9 is within upper circuit (avoids broker RMS rejection)."""
         full_symbol = str(symbol).upper()
         placed_symbol = trade.get("placed_symbol") or symbol
+        ticker = self._resolve_ticker_for_symbol(
+            symbol,
+            broker_symbol=placed_symbol,
+            explicit_ticker=trade.get("ticker"),
+            position=trade,
+        )
         self.waiting_for_circuit_expansion[full_symbol] = {
             "upper_circuit": circuit_limits["upper"],
             "lower_circuit": circuit_limits.get("lower", 0.0),
@@ -679,7 +714,7 @@ class SellOrderManager:
             "trade": {
                 "symbol": symbol,
                 "placed_symbol": placed_symbol,
-                "ticker": trade.get("ticker", ""),
+                "ticker": ticker,
                 "qty": trade.get("qty", 0),
             },
             "rejection_reason": rejection_reason
@@ -1883,13 +1918,20 @@ class SellOrderManager:
                 return stats
 
             # Build symbol to position mapping (only system positions)
-            symbol_to_position = {}
+            symbol_to_position: dict[str, dict[str, Any]] = {}
             for position in open_positions:
                 symbol = position.get("symbol", "").upper()
-                if symbol:
-                    symbol_to_position[symbol] = position
+                if not symbol:
+                    continue
+                symbol_to_position[symbol] = position
+                placed = (position.get("placed_symbol") or symbol).upper()
+                if placed:
+                    symbol_to_position[placed] = position
+                base = extract_base_symbol(symbol or placed)
+                if base:
+                    symbol_to_position[base.upper()] = position
 
-            stats["checked"] = len(symbol_to_position)
+            stats["checked"] = len({p.get("symbol", "").upper() for p in open_positions if p.get("symbol")})
 
             # Get pending orders from broker (includes manual pending sell orders)
             try:
@@ -2029,12 +2071,19 @@ class SellOrderManager:
                     if order_qty > 0:
                         # Track pending manual sell order
                         try:
+                            position_trade = symbol_to_position.get(full_symbol) or {}
+                            ticker = self._resolve_ticker_for_symbol(
+                                full_symbol,
+                                broker_symbol=trading_symbol,
+                                position=position_trade,
+                            )
                             self._register_order(
                                 symbol=trading_symbol,
                                 order_id=order_id,
                                 target_price=order_price,
                                 qty=int(order_qty),
-                                ticker=None,
+                                ticker=ticker,
+                                placed_symbol=trading_symbol,
                                 is_manual=True,  # Mark as manual sell order
                             )
                             stats["tracked"] += 1
@@ -4645,14 +4694,20 @@ class SellOrderManager:
                                 full_symbol = (
                                     symbol.upper()
                                 )  # symbol is already full symbol from active_sell_orders
+                                placed_sym = order_info.get("placed_symbol", symbol)
+                                rej_ticker = self._resolve_ticker_for_symbol(
+                                    symbol,
+                                    broker_symbol=placed_sym,
+                                    explicit_ticker=order_info.get("ticker"),
+                                )
                                 self.waiting_for_circuit_expansion[full_symbol] = {
                                     "upper_circuit": circuit_limits["upper"],
                                     "lower_circuit": circuit_limits["lower"],
                                     "ema9_target": ema9_target,
                                     "trade": {
                                         "symbol": symbol,
-                                        "placed_symbol": order_info.get("placed_symbol", symbol),
-                                        "ticker": order_info.get("ticker", ""),
+                                        "placed_symbol": placed_sym,
+                                        "ticker": rej_ticker,
                                         "qty": order_info.get("qty", 0),
                                     },
                                     "rejection_reason": rejection_reason,
@@ -4688,38 +4743,39 @@ class SellOrderManager:
                 self._remove_from_tracking(symbol)
 
                 # Get current EMA9 for new order
-                ticker = order_info.get("ticker")
                 placed_symbol = order_info.get("placed_symbol", symbol)
+                ticker = self._resolve_ticker_for_symbol(
+                    symbol,
+                    broker_symbol=placed_symbol,
+                    explicit_ticker=order_info.get("ticker"),
+                )
+                if not ticker:
+                    logger.warning(f"No ticker available for {symbol} to re-place cancelled order")
+                    continue
 
-                if ticker:
-                    ema9 = self._get_ema9_with_retry(
-                        ticker, broker_symbol=placed_symbol, symbol=symbol
-                    )
-                    if ema9:
-                        # Re-create trade dict
-                        trade = {
-                            "symbol": symbol,
-                            "ticker": ticker,
-                            "qty": order_info.get("qty", 0),
-                            "placed_symbol": placed_symbol,
-                        }
-
-                        # Place new sell order
-                        new_order_id = self.place_sell_order(trade, ema9)
-                        if new_order_id:
-                            logger.info(
-                                f"Successfully re-placed sell order for {symbol} after cancellation: {new_order_id}"
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to re-place sell order for {symbol} after cancellation"
-                            )
+                ema9 = self._get_ema9_with_retry(
+                    ticker, broker_symbol=placed_symbol, symbol=symbol
+                )
+                if ema9:
+                    trade = {
+                        "symbol": symbol,
+                        "ticker": ticker,
+                        "qty": order_info.get("qty", 0),
+                        "placed_symbol": placed_symbol,
+                    }
+                    new_order_id = self.place_sell_order(trade, ema9)
+                    if new_order_id:
+                        logger.info(
+                            f"Successfully re-placed sell order for {symbol} after cancellation: {new_order_id}"
+                        )
                     else:
                         logger.warning(
-                            f"Failed to get EMA9 for {symbol} to re-place cancelled order"
+                            f"Failed to re-place sell order for {symbol} after cancellation"
                         )
                 else:
-                    logger.warning(f"No ticker available for {symbol} to re-place cancelled order")
+                    logger.warning(
+                        f"Failed to get EMA9 for {symbol} to re-place cancelled order"
+                    )
             except Exception as e:
                 logger.error(f"Error re-placing sell order for {symbol} after cancellation: {e}")
 
@@ -5864,12 +5920,21 @@ class SellOrderManager:
                     # Continue monitoring if position check fails (fail-safe)
 
             # Get current EMA9
-            ticker = order_info.get("ticker")
+            broker_sym = order_info.get("placed_symbol") or symbol
+            ticker = self._resolve_ticker_for_symbol(
+                symbol,
+                broker_symbol=broker_sym,
+                explicit_ticker=order_info.get("ticker"),
+            )
             if not ticker:
                 logger.warning(f"No ticker found for {symbol}")
                 return result
+            if not order_info.get("ticker"):
+                order_info["ticker"] = ticker
+                full_symbol = symbol.upper()
+                if full_symbol in self.active_sell_orders:
+                    self.active_sell_orders[full_symbol]["ticker"] = ticker
 
-            broker_sym = order_info.get("placed_symbol")
             current_ema9 = self.get_current_ema9(ticker, broker_symbol=broker_sym)
             if not current_ema9:
                 logger.warning(f"Failed to calculate EMA9 for {symbol}")
@@ -6110,19 +6175,13 @@ class SellOrderManager:
         for full_symbol, wait_info in list(self.waiting_for_circuit_expansion.items()):
             try:
                 trade = wait_info["trade"]
-                ticker = trade.get("ticker", "")
                 broker_symbol = trade.get("placed_symbol", trade.get("symbol", ""))
-
-                if not ticker and broker_symbol:
-                    # Try to extract ticker from symbol
-                    ticker = (
-                        broker_symbol.replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                        + ".NS"
-                    )
-
+                ticker = self._resolve_ticker_for_symbol(
+                    full_symbol,
+                    broker_symbol=broker_symbol,
+                    explicit_ticker=trade.get("ticker"),
+                    position=trade,
+                )
                 if not ticker:
                     logger.debug(f"{full_symbol}: No ticker available for circuit check")
                     continue
