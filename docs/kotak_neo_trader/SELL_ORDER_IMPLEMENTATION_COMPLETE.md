@@ -54,7 +54,7 @@ The Sell Order Management System is an automated profit-taking system that:
 **Target**: EMA9 (Exponential Moving Average 9) - Daily timeframe
 **Order Type**: LIMIT orders (not market orders)
 **Order Variety**: REGULAR (placed during market hours, not AMO)
-**Update Rule**: Only lower the price (never raise) - tracks lowest EMA9 seen
+**Update Rule**: Only lower the price (never raise) when tick-rounded EMA9 is below the **current broker limit** (`target_price`); `lowest_ema9` records the intraday low but does not block lowering toward the live target
 
 **Safety Check**: EMA9 must be >= 95% of entry price (prevents selling at loss > 5%)
 
@@ -281,6 +281,12 @@ WHERE user_id = ? AND closed_at IS NULL
        ├─> If EMA9 still > upper: wait (no broker call)
        └─> Else: place_sell_order() at full target; remove from queue on success
 
+0b. Rehydrate in-memory sell tracking (post-restart / partial state):
+   └─> _sync_active_sell_orders_from_broker_for_monitoring()
+   └─> Joins DB open positions with broker pending sells (`get_existing_sell_orders`)
+   └─> Registers missing symbols in `active_sell_orders` (skips already tracked)
+   └─> Without this, an empty map after API restart skips EMA lowering until rehydrate succeeds
+
 1. Detect and Track Manual Sell Orders (NEW):
    ├─> Detect Pending Manual Sells
    │   └─> _detect_and_track_pending_manual_sell_orders()
@@ -303,12 +309,12 @@ WHERE user_id = ? AND closed_at IS NULL
        └─> get_current_ema9(ticker, broker_symbol)
        └─> Real-time calculation with LTP
 
-   └─> If EMA9 < current_target_price:
+   └─> If rounded EMA9 < current_target_price (live broker limit, not only historical lowest):
        └─> Update Sell Order Price
-           └─> update_sell_order()
+           └─> update_sell_order() via `placed_symbol`
            └─> Modify broker order with new price
            └─> Lower price (never raise)
-           └─> Track lowest EMA9 seen
+           └─> Update `lowest_ema9` after successful modify
 
    └─> Check Order Execution
        └─> Broker API: has_completed_sell_order()

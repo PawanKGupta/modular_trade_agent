@@ -1190,6 +1190,90 @@ class SellOrderManager:
         logger.debug(f"Loaded {len(open_positions)} open positions from database")
         return open_positions
 
+    def _sync_active_sell_orders_from_broker_for_monitoring(self) -> int:
+        """
+        Rehydrate ``active_sell_orders`` from open positions + broker pending sells.
+
+        After API restart, in-memory tracking is empty while Kotak still has live sell
+        limits. Without this, ``monitor_and_update()`` returns early and never lowers
+        prices when EMA9 falls.
+        """
+        if not self.positions_repo or not self.user_id:
+            return 0
+
+        synced = 0
+        try:
+            open_positions = self.get_open_positions()
+            if not open_positions:
+                return 0
+
+            existing_orders = self.get_existing_sell_orders()
+            if not existing_orders:
+                return 0
+
+            for trade in open_positions:
+                symbol = str(trade.get("symbol", "") or "").upper()
+                if not symbol:
+                    continue
+                base_symbol = extract_base_symbol(symbol).upper()
+                if symbol in self.active_sell_orders or base_symbol in self.active_sell_orders:
+                    continue
+
+                existing = existing_orders.get(symbol) or existing_orders.get(base_symbol)
+                if not existing or not existing.get("order_id"):
+                    continue
+
+                ticker = trade.get("ticker")
+                placed_symbol = trade.get("placed_symbol") or symbol
+                existing_qty = int(existing.get("qty") or trade.get("qty") or 0)
+                if existing_qty <= 0:
+                    continue
+
+                tracked_price = existing.get("price")
+                try:
+                    tracked_price = float(tracked_price) if tracked_price is not None else 0.0
+                except (TypeError, ValueError):
+                    tracked_price = 0.0
+                if tracked_price <= 0:
+                    fallback_ema9 = self._get_ema9_with_retry(
+                        ticker, broker_symbol=placed_symbol, symbol=symbol
+                    )
+                    if fallback_ema9:
+                        tracked_price = float(fallback_ema9)
+
+                self._persist_existing_broker_sell_order(
+                    symbol=symbol,
+                    ticker=ticker,
+                    order_id=str(existing.get("order_id")),
+                    qty=existing_qty,
+                    price=tracked_price,
+                    source="sell_engine_monitor_rehydrate",
+                )
+                self._register_order(
+                    symbol=symbol,
+                    order_id=str(existing.get("order_id")),
+                    target_price=tracked_price,
+                    qty=existing_qty,
+                    ticker=ticker,
+                    placed_symbol=placed_symbol,
+                )
+                if tracked_price > 0:
+                    self.lowest_ema9[symbol] = tracked_price
+                synced += 1
+                logger.info(
+                    f"Rehydrated sell monitor tracking for {symbol}: "
+                    f"order_id={existing.get('order_id')}, qty={existing_qty}, "
+                    f"target=Rs {tracked_price:.2f}"
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to rehydrate active sell orders from broker: {exc}")
+
+        if synced:
+            logger.info(
+                f"Rehydrated {synced} broker sell order(s) into active_sell_orders for EMA monitoring"
+            )
+        return synced
+
     def _check_positions_without_sell_orders(self) -> int:
         """
         Issue #5 Fix: Check how many open positions don't have active sell orders.
@@ -6120,20 +6204,30 @@ class SellOrderManager:
                 f"{symbol}: Current EMA9=Rs {rounded_ema9:.2f}, Target=Rs {current_target:.2f}, Lowest=Rs {lowest_so_far:.2f}"
             )
 
-            if rounded_ema9 < lowest_so_far:
+            # Lower broker limit only when tick-rounded EMA9 is below the current order price
+            # (never raise). Compare to current_target, not only lowest_ema9 — otherwise a
+            # prior intraday low can block lowering back toward the live broker price.
+            should_lower = (
+                current_target > 0
+                and rounded_ema9 > 0
+                and rounded_ema9 < current_target
+            )
+            if should_lower:
                 logger.info(
-                    f"{symbol}: New lower EMA9 found - Rs {rounded_ema9:.2f} (was Rs {lowest_so_far:.2f})"
+                    f"{symbol}: Lowering sell limit Rs {current_target:.2f} -> Rs {rounded_ema9:.2f} "
+                    f"(EMA9 below current target; lowest seen Rs {lowest_so_far:.2f})"
                 )
 
-                # Update sell order
+                modify_symbol = order_info.get("placed_symbol") or symbol
                 success = self.update_sell_order(
                     order_id=order_id,
-                    symbol=order_info.get("placed_symbol"),
+                    symbol=modify_symbol,
                     qty=order_info.get("qty"),
                     new_price=rounded_ema9,
                 )
 
                 if success:
+                    self.lowest_ema9[symbol] = min(lowest_so_far, rounded_ema9)
                     result["action"] = "updated"
                     result["success"] = True
                     return result
@@ -6426,6 +6520,14 @@ class SellOrderManager:
         # Check for circuit expansion and retry waiting orders
         circuit_retried = self._check_and_retry_circuit_expansion()
         stats["circuit_retried"] = circuit_retried
+
+        # Rehydrate untracked broker sells (post-restart empty map or partial tracking).
+        # Sync skips symbols already in active_sell_orders; cheap no-op when fully synced.
+        rehydrated = self._sync_active_sell_orders_from_broker_for_monitoring()
+        if rehydrated:
+            logger.info(
+                f"Sell monitor resumed for {rehydrated} symbol(s) from broker pending sells"
+            )
 
         # Issue #5 Fix: Check for positions without sell orders even when active_sell_orders is empty
         if not self.active_sell_orders:
