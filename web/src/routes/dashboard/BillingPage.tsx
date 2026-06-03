@@ -55,6 +55,11 @@ export function BillingPage() {
 					setMsg('Razorpay is not available or checkout data is incomplete.');
 					return;
 				}
+				const testModeMsg = data.razorpay_test_mode
+					? 'Razorpay is in TEST mode. Real UPI apps cannot verify the QR code. ' +
+						'In checkout, choose UPI and enter success@razorpay, or use a test card. ' +
+						'For live UPI/card payments, configure rzp_live_ keys on the server.'
+					: null;
 				const rzp = new Ctor({
 					key: data.razorpay_key_id,
 					amount: data.amount_paise,
@@ -101,7 +106,7 @@ export function BillingPage() {
 						},
 					},
 				});
-				setMsg(null);
+				setMsg(testModeMsg);
 				rzp.open();
 			} catch (e) {
 				setMsg(e instanceof Error ? e.message : 'Performance fee checkout failed');

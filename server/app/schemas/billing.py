@@ -61,6 +61,7 @@ class PerformanceBillOut(BaseModel):
 
 class PerformanceFeeCheckoutResponse(BaseModel):
     razorpay_key_id: str
+    razorpay_test_mode: bool = False
     order_id: str
     amount_paise: int
     currency: str

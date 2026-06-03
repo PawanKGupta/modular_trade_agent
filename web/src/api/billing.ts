@@ -60,6 +60,7 @@ export async function getPerformanceBills(limit = 36): Promise<PerformanceBill[]
 
 export type PerformanceFeeCheckout = {
 	razorpay_key_id: string;
+	razorpay_test_mode?: boolean;
 	order_id: string;
 	amount_paise: number;
 	currency: string;

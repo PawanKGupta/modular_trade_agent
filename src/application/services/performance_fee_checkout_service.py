@@ -18,6 +18,11 @@ class PerformanceFeeCheckoutError(Exception):
     """User-facing checkout validation errors."""
 
 
+def is_razorpay_test_key(key_id: str | None) -> bool:
+    """True when Checkout uses Razorpay test mode (real UPI QR apps will fail)."""
+    return bool(key_id and key_id.strip().lower().startswith("rzp_test_"))
+
+
 def payable_amount_paise(payable_rupees: float) -> int:
     """Convert bill payable (INR) to integer paise for Razorpay."""
     d = Decimal(str(payable_rupees)) * 100
@@ -72,6 +77,7 @@ class PerformanceFeeCheckoutService:
         key_id = gw.key_id or ""
         return {
             "razorpay_key_id": key_id,
+            "razorpay_test_mode": is_razorpay_test_key(key_id),
             "order_id": str(oid),
             "amount_paise": amount_paise,
             "currency": "INR",
