@@ -114,6 +114,145 @@ describe('AdminBillingPage', () => {
 		});
 	});
 
+	it('loads open performance bills and records cash payment', async () => {
+		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([
+			{
+				id: 5,
+				user_id: 2,
+				user_email: 'user2@test.com',
+				bill_month: '2026-05-01',
+				generated_at: '2026-05-31T12:00:00',
+				due_at: '2026-06-15T12:00:00',
+				status: 'overdue',
+				payable_amount: 22.81,
+				fee_amount: 22.81,
+				chargeable_profit: 228.05,
+				current_month_pnl: 228.05,
+				previous_carry_forward_loss: 0,
+				new_carry_forward_loss: 0,
+				fee_percentage: 10,
+				paid_at: null,
+				razorpay_order_id: null,
+			},
+		] as never);
+		vi.mocked(billingApi.recordAdminCashPayment).mockResolvedValue({
+			bill_id: 5,
+			user_id: 2,
+			billing_transaction_id: 9,
+			amount_paise: 2281,
+			paid_at: '2026-06-04T00:00:00',
+		} as never);
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+		render(withProviders(<AdminBillingPage />));
+		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+
+		fireEvent.change(screen.getByPlaceholderText('e.g. 2'), { target: { value: '2' } });
+		fireEvent.change(screen.getByPlaceholderText('Receipt ref, date, etc.'), {
+			target: { value: 'Desk cash' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
+
+		await waitFor(() => {
+			expect(billingApi.getAdminOpenPerformanceBills).toHaveBeenCalledWith({
+				user_id: 2,
+				limit: 100,
+			});
+			expect(screen.getByText('user2@test.com')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));
+
+		await waitFor(() => {
+			expect(billingApi.recordAdminCashPayment).toHaveBeenCalledWith(5, { note: 'Desk cash' });
+			expect(screen.getByText(/Cash payment recorded for bill #5/i)).toBeInTheDocument();
+		});
+
+		confirmSpy.mockRestore();
+	});
+
+	it('does not record cash payment when confirm is cancelled', async () => {
+		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([
+			{
+				id: 3,
+				user_id: 1,
+				user_email: 'u@test.com',
+				bill_month: '2026-04-01',
+				generated_at: '2026-04-30T12:00:00',
+				due_at: '2026-05-15T12:00:00',
+				status: 'pending_payment',
+				payable_amount: 10,
+				fee_amount: 10,
+				chargeable_profit: 100,
+				current_month_pnl: 100,
+				previous_carry_forward_loss: 0,
+				new_carry_forward_loss: 0,
+				fee_percentage: 10,
+				paid_at: null,
+				razorpay_order_id: null,
+			},
+		] as never);
+		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+		render(withProviders(<AdminBillingPage />));
+		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Mark paid' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));
+
+		expect(billingApi.recordAdminCashPayment).not.toHaveBeenCalled();
+		confirmSpy.mockRestore();
+	});
+
+	it('shows empty message when no open bills after load', async () => {
+		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([]);
+
+		render(withProviders(<AdminBillingPage />));
+		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/No open performance bills/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows error when cash payment fails', async () => {
+		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([
+			{
+				id: 9,
+				user_id: 2,
+				user_email: 'u2@test.com',
+				bill_month: '2026-05-01',
+				generated_at: '2026-05-31T12:00:00',
+				due_at: '2026-06-15T12:00:00',
+				status: 'overdue',
+				payable_amount: 5,
+				fee_amount: 5,
+				chargeable_profit: 50,
+				current_month_pnl: 50,
+				previous_carry_forward_loss: 0,
+				new_carry_forward_loss: 0,
+				fee_percentage: 10,
+				paid_at: null,
+				razorpay_order_id: null,
+			},
+		] as never);
+		vi.mocked(billingApi.recordAdminCashPayment).mockRejectedValue({
+			response: { data: { detail: 'Bill already paid' } },
+		});
+		vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+		render(withProviders(<AdminBillingPage />));
+		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Mark paid' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Bill already paid')).toBeInTheDocument();
+		});
+	});
+
 	it('updates razorpay clear flags and refund form fields', async () => {
 		render(withProviders(<AdminBillingPage />));
 		await waitFor(() => expect(screen.getByText('Refund')).toBeInTheDocument());
