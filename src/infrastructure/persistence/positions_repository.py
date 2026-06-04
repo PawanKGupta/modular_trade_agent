@@ -17,17 +17,33 @@ except ImportError:
 
     logger = logging.getLogger(__name__)
 
-try:
-    from utils.logger import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
-
 
 class PositionsRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def _sync_pnldaily_after_close(self, user_id: int, pos: Positions, *, symbol: str) -> None:
+        """Best-effort pnldaily increment when a position closes with realized PnL."""
+        if pos.realized_pnl is None or pos.closed_at is None:
+            return
+        try:
+            from src.application.services.pnl_daily_sync_service import (  # noqa: PLC0415
+                PnlDailySyncService,
+            )
+
+            PnlDailySyncService(self.db).record_position_close(
+                user_id,
+                pos.closed_at,
+                float(pos.realized_pnl),
+            )
+        except Exception as sync_err:
+            logger.warning(
+                "Failed to sync pnldaily after closing %s for user %s: %s",
+                symbol,
+                user_id,
+                sync_err,
+                exc_info=True,
+            )
 
     def get_by_symbol(self, user_id: int, symbol: str) -> Positions | None:
         """
@@ -334,6 +350,7 @@ class PositionsRepository:
         else:
             # Even with auto_commit=False, flush to ensure changes are visible in the same session
             self.db.flush()
+        self._sync_pnldaily_after_close(user_id, pos, symbol=symbol)
         logger.info(
             f"Position marked as closed: {symbol} (closed_at: {pos.closed_at}, "
             f"exit_price: {exit_price}, exit_reason: {exit_reason})"
@@ -345,6 +362,7 @@ class PositionsRepository:
         user_id: int,
         symbol: str,
         sold_quantity: float,
+        exit_price: float | None = None,
         auto_commit: bool = True,
     ) -> Positions | None:
         """
@@ -356,6 +374,7 @@ class PositionsRepository:
             user_id: User ID
             symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             sold_quantity: Quantity sold (to subtract from current quantity)
+            exit_price: Optional fill price when this sell fully closes the position
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
@@ -367,12 +386,18 @@ class PositionsRepository:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
 
-        new_quantity = max(0.0, pos.quantity - sold_quantity)
+        qty_before = float(pos.quantity)
+        new_quantity = max(0.0, qty_before - sold_quantity)
         pos.quantity = new_quantity
 
         # If quantity becomes 0, mark as closed
         if new_quantity == 0:
             pos.closed_at = ist_now_naive()
+            if exit_price is not None and pos.realized_pnl is None:
+                realized = (float(exit_price) - float(pos.avg_price)) * qty_before
+                pos.realized_pnl = realized
+                cost_basis = float(pos.avg_price) * qty_before
+                pos.realized_pnl_pct = (realized / cost_basis * 100) if cost_basis > 0 else 0.0
             logger.info(
                 f"Position fully closed after partial sell: {symbol} "
                 f"(sold {sold_quantity}, remaining: {new_quantity})"
@@ -387,4 +412,9 @@ class PositionsRepository:
         if auto_commit:
             self.db.commit()
             self.db.refresh(pos)
+        elif new_quantity == 0:
+            self.db.flush()
+
+        if new_quantity == 0:
+            self._sync_pnldaily_after_close(user_id, pos, symbol=symbol)
         return pos

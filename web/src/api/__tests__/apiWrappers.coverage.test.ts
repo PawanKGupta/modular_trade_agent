@@ -85,6 +85,8 @@ describe('api wrappers (mocked client)', () => {
 		await billing.getAdminTransactions({ user_id: 1, failed_only: true });
 		await billing.runBillingReconcile();
 		await billing.postAdminRefund({ billing_transaction_id: 1 });
+		await billing.getAdminOpenPerformanceBills({ user_id: 2, limit: 50 });
+		await billing.recordAdminCashPayment(7, { note: 'cash' });
 	});
 
 	it('broker', async () => {

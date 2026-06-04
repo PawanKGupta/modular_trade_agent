@@ -8,19 +8,53 @@ from server.app.core.crypto import (
     encrypt_blob,
 )
 from src.application.services.billing_reconciliation_service import BillingReconciliationService
+from src.application.services.performance_bill_payment_service import (
+    PerformanceBillPaymentError,
+    PerformanceBillPaymentService,
+)
 from src.application.services.razorpay_credentials import get_razorpay_gateway, razorpay_admin_meta
-from src.infrastructure.db.models import BillingTransaction, BillingTransactionStatus, Users
+from src.infrastructure.db.models import BillingTransaction, BillingTransactionStatus, MonthlyPerformanceBill, Users
 from src.infrastructure.persistence.billing_repository import BillingRepository
+from src.infrastructure.persistence.performance_billing_repository import PerformanceBillingRepository
 
 from ..core.deps import get_db, require_admin
 from ..schemas.billing import (
     AdminBillingSettingsUpdate,
+    AdminPerformanceBillOut,
     AdminRazorpayCredentialsPatch,
+    AdminRecordCashPaymentRequest,
+    AdminRecordCashPaymentResponse,
     AdminRefundRequest,
+    PerformanceBillOut,
     TransactionOut,
 )
 
 router = APIRouter(dependencies=[Depends(require_admin)])
+
+
+def _performance_bill_out(b: MonthlyPerformanceBill) -> PerformanceBillOut:
+    st = b.status.value if hasattr(b.status, "value") else str(b.status)
+    return PerformanceBillOut(
+        id=b.id,
+        bill_month=b.bill_month,
+        generated_at=b.generated_at,
+        due_at=b.due_at,
+        status=st,
+        payable_amount=float(b.payable_amount),
+        fee_amount=float(b.fee_amount),
+        chargeable_profit=float(b.chargeable_profit),
+        current_month_pnl=float(b.current_month_pnl),
+        previous_carry_forward_loss=float(b.previous_carry_forward_loss),
+        new_carry_forward_loss=float(b.new_carry_forward_loss),
+        fee_percentage=float(b.fee_percentage),
+        paid_at=b.paid_at,
+        razorpay_order_id=b.razorpay_order_id,
+    )
+
+
+def _admin_performance_bill_out(b: MonthlyPerformanceBill, user_email: str) -> AdminPerformanceBillOut:
+    base = _performance_bill_out(b)
+    return AdminPerformanceBillOut(**base.model_dump(), user_id=b.user_id, user_email=user_email)
 
 
 @router.get("/billing/settings")
@@ -151,3 +185,39 @@ def admin_refund(
 @router.post("/billing/reconcile")
 def run_reconcile(db: Session = Depends(get_db)):
     return BillingReconciliationService(db).run()
+
+
+@router.get("/billing/performance-bills", response_model=list[AdminPerformanceBillOut])
+def admin_list_open_performance_bills(
+    db: Session = Depends(get_db),
+    user_id: int | None = None,
+    limit: int = 100,
+):
+    """Open performance-fee bills (pending or overdue, payable > 0) for admin cash recording."""
+    rows = PerformanceBillingRepository(db).list_open_payable_bills(user_id=user_id, limit=limit)
+    out: list[AdminPerformanceBillOut] = []
+    for b in rows:
+        user = db.get(Users, b.user_id)
+        email = user.email if user else f"user#{b.user_id}"
+        out.append(_admin_performance_bill_out(b, email))
+    return out
+
+
+@router.post(
+    "/billing/performance-bills/{bill_id}/record-cash-payment",
+    response_model=AdminRecordCashPaymentResponse,
+)
+def admin_record_cash_payment(
+    bill_id: int,
+    body: AdminRecordCashPaymentRequest,
+    db: Session = Depends(get_db),
+    admin: Users = Depends(require_admin),
+):
+    """Mark a performance bill paid when the user paid offline (cash / bank transfer)."""
+    try:
+        data = PerformanceBillPaymentService(db).record_cash_payment(
+            bill_id, admin, note=body.note
+        )
+    except PerformanceBillPaymentError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return AdminRecordCashPaymentResponse(**data)

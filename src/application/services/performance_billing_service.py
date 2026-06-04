@@ -22,6 +22,7 @@ from src.infrastructure.persistence.billing_repository import BillingRepository
 from src.infrastructure.persistence.performance_billing_repository import (
     PerformanceBillingRepository,
 )
+from src.application.services.pnl_daily_sync_service import PnlDailySyncService
 from src.infrastructure.persistence.pnl_repository import PnlRepository
 
 
@@ -82,7 +83,10 @@ class PerformanceBillingService:
         fee_pct = float(admin.performance_fee_default_percentage)
         pay_days = int(admin.performance_fee_payment_days_after_invoice)
 
-        current_month_pnl = self._pnl.sum_realized_pnl_calendar_month(user_id, year, month)
+        # Source of truth: closed positions (pnldaily is not populated by broker sell path).
+        current_month_pnl = PnlDailySyncService(self.db).materialize_calendar_month(
+            user_id, year, month
+        )
         state = self._perf.get_or_create_state(user_id)
         prev_carry = float(state.carry_forward_loss or 0.0)
 

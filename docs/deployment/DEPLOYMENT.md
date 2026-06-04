@@ -42,6 +42,7 @@ For cloud provider specific deployment instructions:
   - VM creation and configuration
   - Firewall setup
   - Complete Docker deployment on Oracle Cloud
+- **[HTTPS + DuckDNS](HTTPS_ORACLE_DUCKDNS.md)** - Let's Encrypt on `reboundsignals.duckdns.org` (host nginx → Docker)
 
 ### Supporting Guides
 

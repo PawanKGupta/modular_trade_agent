@@ -42,6 +42,18 @@ class AdminRefundRequest(BaseModel):
     reason: str | None = None
 
 
+class AdminRecordCashPaymentRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=480, description="Optional admin memo")
+
+
+class AdminRecordCashPaymentResponse(BaseModel):
+    bill_id: int
+    user_id: int
+    billing_transaction_id: int
+    amount_paise: int
+    paid_at: datetime
+
+
 class PerformanceBillOut(BaseModel):
     id: int
     bill_month: date
@@ -59,8 +71,14 @@ class PerformanceBillOut(BaseModel):
     razorpay_order_id: str | None = None
 
 
+class AdminPerformanceBillOut(PerformanceBillOut):
+    user_id: int
+    user_email: str
+
+
 class PerformanceFeeCheckoutResponse(BaseModel):
     razorpay_key_id: str
+    razorpay_test_mode: bool = False
     order_id: str
     amount_paise: int
     currency: str
@@ -94,6 +112,7 @@ class RazorpayCreateOrderResponse(BaseModel):
     amount: int
     currency: str
     key_id: str
+    razorpay_test_mode: bool = False
 
 
 class RazorpayVerifyPaymentRequest(BaseModel):

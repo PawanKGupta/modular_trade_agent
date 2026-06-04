@@ -60,6 +60,7 @@ export async function getPerformanceBills(limit = 36): Promise<PerformanceBill[]
 
 export type PerformanceFeeCheckout = {
 	razorpay_key_id: string;
+	razorpay_test_mode?: boolean;
 	order_id: string;
 	amount_paise: number;
 	currency: string;
@@ -77,6 +78,7 @@ export type RazorpayCreateOrderResponse = {
 	amount: number;
 	currency: string;
 	key_id: string;
+	razorpay_test_mode?: boolean;
 };
 
 export async function createRazorpayOrder(body: {
@@ -139,5 +141,32 @@ export async function postAdminRefund(body: {
 	reason?: string | null;
 }): Promise<{ ok: boolean }> {
 	const res = await api.post<{ ok: boolean }>('/admin/billing/refunds', body);
+	return res.data;
+}
+
+export type AdminPerformanceBill = PerformanceBill & {
+	user_id: number;
+	user_email: string;
+};
+
+export async function getAdminOpenPerformanceBills(params?: {
+	user_id?: number;
+	limit?: number;
+}): Promise<AdminPerformanceBill[]> {
+	const res = await api.get<AdminPerformanceBill[]>('/admin/billing/performance-bills', { params });
+	return res.data;
+}
+
+export async function recordAdminCashPayment(
+	billId: number,
+	body?: { note?: string | null }
+): Promise<{
+	bill_id: number;
+	user_id: number;
+	billing_transaction_id: number;
+	amount_paise: number;
+	paid_at: string;
+}> {
+	const res = await api.post(`/admin/billing/performance-bills/${billId}/record-cash-payment`, body ?? {});
 	return res.data;
 }
