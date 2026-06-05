@@ -12,11 +12,13 @@ from services.ml_training_metadata import (
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="bulk-guard-admin@example.com",
         password="Admin@123",
         role=UserRole.ADMIN,

@@ -22,26 +22,27 @@ from src.infrastructure.db.models import (
 )
 from src.infrastructure.persistence.billing_repository import BillingRepository
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 @pytest.fixture
 def admin_user(db_session):
-    repo = UserRepository(db_session)
-    user = repo.create_user(
-        email="billing-admin@example.com", password="Admin@123", role=UserRole.ADMIN
+    return create_verified_user(
+        UserRepository(db_session),
+        email="billing-admin@example.com",
+        password="Admin@123",
+        role=UserRole.ADMIN,
     )
-    repo.mark_email_verified(user)
-    return user
 
 
 @pytest.fixture
 def normal_user(db_session):
-    repo = UserRepository(db_session)
-    user = repo.create_user(
-        email="billing-user@example.com", password="User@123", role=UserRole.USER
+    return create_verified_user(
+        UserRepository(db_session),
+        email="billing-user@example.com",
+        password="User@123",
+        role=UserRole.USER,
     )
-    repo.mark_email_verified(user)
-    return user
 
 
 @pytest.fixture

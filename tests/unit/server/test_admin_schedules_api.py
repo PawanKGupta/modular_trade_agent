@@ -20,6 +20,7 @@ from server.app.main import app
 from src.infrastructure.db.models import ServiceSchedule, UserRole
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 @pytest.fixture
@@ -38,29 +39,25 @@ def client(db_session):
 @pytest.fixture
 def admin_user(db_session):
     """Create an admin user for testing"""
-    repo = UserRepository(db_session)
-    user = repo.create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="admin@example.com",
         password="Password123!",
         name="Admin User",
         role=UserRole.ADMIN,
     )
-    repo.mark_email_verified(user)
-    return user
 
 
 @pytest.fixture
 def normal_user(db_session):
     """Create a normal user for testing"""
-    repo = UserRepository(db_session)
-    user = repo.create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="user@example.com",
         password="Password123!",
         name="Normal User",
         role=UserRole.USER,
     )
-    repo.mark_email_verified(user)
-    return user
 
 
 @pytest.fixture

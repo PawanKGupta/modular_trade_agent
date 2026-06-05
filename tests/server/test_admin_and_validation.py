@@ -34,16 +34,17 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal
     from src.infrastructure.persistence.user_repository import UserRepository
+    from tests.support.test_users import create_verified_user
 
     db = SessionLocal()
     repo = UserRepository(db)
-    admin = repo.create_user(
+    admin = create_verified_user(
+        repo,
         f"adm{random.randint(1, 1_000_000)}@example.com",
         "Admin123!",
         name="Admin User",
         role=UserRole.ADMIN,
     )
-    repo.mark_email_verified(admin)
     admin_id = admin.id
     db.close()
     admin_token = create_jwt_token(str(admin_id), extra={"uid": admin_id, "roles": ["admin"]})

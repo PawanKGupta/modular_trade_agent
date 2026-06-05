@@ -98,23 +98,24 @@ def test_admin_endpoints_and_constraints():
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal
     from src.infrastructure.persistence.user_repository import UserRepository
+    from tests.support.test_users import create_verified_user
 
     db = SessionLocal()
     repo = UserRepository(db)
-    a1 = repo.create_user(
+    a1 = create_verified_user(
+        repo,
         f"a{random.randint(1, 1_000_000)}@example.com",
         "Admin123!",
         name="Admin One",
         role=UserRole.ADMIN,
     )
-    a2 = repo.create_user(
+    a2 = create_verified_user(
+        repo,
         f"a{random.randint(1, 1_000_000)}@example.com",
         "Admin123!",
         name="Admin Two",
         role=UserRole.ADMIN,
     )
-    repo.mark_email_verified(a1)
-    repo.mark_email_verified(a2)
     a1_id, a2_id = a1.id, a2.id
     db.close()
     # token for a1

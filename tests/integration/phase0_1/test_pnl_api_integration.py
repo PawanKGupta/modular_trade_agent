@@ -44,13 +44,14 @@ def db_session():
     Session = sessionmaker(bind=engine)
     session = Session()
 
-    # Create test user
+    # Create test user (verified — required for JWT auth via get_current_user)
     user = Users(
         email="test@example.com",
         name="Test User",
         password_hash="dummy_hash",
         role=UserRole.USER,
         is_active=True,
+        email_verified_at=ist_now(),
     )
     session.add(user)
     session.commit()

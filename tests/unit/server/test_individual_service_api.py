@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from server.app.main import app
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 @pytest.fixture
@@ -36,14 +37,12 @@ def client(db_session):
 @pytest.fixture
 def sample_user(db_session):
     """Create a sample user for testing"""
-    repo = UserRepository(db_session)
-    user = repo.create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="test@example.com",
         password="Password123!",
         role=UserRole.USER,
     )
-    repo.mark_email_verified(user)
-    return user
 
 
 def login(client: TestClient, db_session, email: str, password: str) -> str:

@@ -30,6 +30,7 @@ def test_user_repo_create_and_password_hashing_truncation():
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal as Sess
     from src.infrastructure.persistence.user_repository import UserRepository
+    from tests.support.test_users import create_verified_user
 
     db: Session = Sess()
     try:
@@ -37,8 +38,12 @@ def test_user_repo_create_and_password_hashing_truncation():
         long_pw = "x" * 500
         import random
 
-        user = repo.create_user(
-            f"long{random.randint(1, 1_000_000)}@example.com", long_pw, name="L", role=UserRole.USER
+        user = create_verified_user(
+            repo,
+            f"long{random.randint(1, 1_000_000)}@example.com",
+            long_pw,
+            name="L",
+            role=UserRole.USER,
         )
         assert user.id is not None
         # verify uses bcrypt with truncation, so should succeed

@@ -125,6 +125,16 @@ def test_get_current_user_inactive(monkeypatch, stub_user):
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
+def test_get_current_user_unverified_email(monkeypatch, stub_user):
+    stub_user.user.email_verified_at = None
+
+    monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "1"})
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "verify your email" in exc.value.detail.lower()
+
+
 def test_require_admin_success(stub_user):
     stub_user.user.role = deps.UserRole.ADMIN
     assert deps.require_admin(stub_user.user) is stub_user.user
