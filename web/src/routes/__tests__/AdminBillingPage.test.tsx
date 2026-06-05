@@ -272,6 +272,9 @@ describe('AdminBillingPage', () => {
 			ok: true,
 			offline_payment_qr_uploaded: true,
 		} as never);
+		vi.mocked(billingApi.fetchOfflinePaymentQrBlob).mockResolvedValue(
+			new Blob(['preview'], { type: 'image/png' })
+		);
 
 		render(withProviders(<AdminBillingPage />));
 		await waitFor(() =>
@@ -283,7 +286,7 @@ describe('AdminBillingPage', () => {
 		fireEvent.change(fileInput, { target: { files: [file] } });
 
 		await waitFor(() => {
-			expect(billingApi.uploadAdminOfflinePaymentQr).toHaveBeenCalledWith(file);
+			expect(billingApi.uploadAdminOfflinePaymentQr).toHaveBeenCalledWith(file, expect.anything());
 			expect(screen.getByText('QR image uploaded.')).toBeInTheDocument();
 		});
 	});
