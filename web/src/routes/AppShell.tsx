@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSessionStore } from '@/state/sessionStore';
+import { resendVerification } from '@/api/auth';
 import { getNotificationCount } from '@/api/notifications';
 import { getPerformanceFeeArrears } from '@/api/billing';
 import { clsx } from 'clsx';
@@ -25,6 +26,16 @@ export function AppShell() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { user, isAdmin, logout, refresh } = useSessionStore();
+	const [verifyBannerDismissed, setVerifyBannerDismissed] = useState(false);
+	const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
+	const [verifySending, setVerifySending] = useState(false);
+
+	useEffect(() => {
+		if (user?.id && typeof window !== 'undefined') {
+			const dismissed = sessionStorage.getItem(`verify-banner-dismissed-${user.id}`) === '1';
+			setVerifyBannerDismissed(dismissed);
+		}
+	}, [user?.id]);
 
 	const { data: notificationCount } = useQuery({
 		queryKey: ['notificationCount'],
@@ -437,6 +448,52 @@ export function AppShell() {
 							>
 								Open Billing to pay
 							</Link>
+						</div>
+					</div>
+				) : null}
+				{user && user.email_verified === false && !verifyBannerDismissed ? (
+					<div className="px-3 sm:px-6 pt-3">
+						<div className="rounded-lg border border-blue-500/40 bg-blue-500/10 px-4 py-3 text-sm text-blue-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+							<div>
+								<p className="font-medium text-blue-200">Verify your email</p>
+								<p className="mt-1 text-blue-100/90">
+									Please check your inbox for a verification link, or resend the email.
+								</p>
+								{verifyMsg && <p className="mt-1 text-xs text-blue-200/80">{verifyMsg}</p>}
+							</div>
+							<div className="flex gap-2 shrink-0">
+								<button
+									type="button"
+									disabled={verifySending}
+									onClick={async () => {
+										setVerifySending(true);
+										setVerifyMsg(null);
+										try {
+											await resendVerification();
+											setVerifyMsg('Verification email sent.');
+										} catch {
+											setVerifyMsg('Could not send verification email. Try again later.');
+										} finally {
+											setVerifySending(false);
+										}
+									}}
+									className="px-3 py-2 rounded bg-blue-500/20 text-blue-200 hover:bg-blue-500/30 text-xs font-medium disabled:opacity-60"
+								>
+									{verifySending ? 'Sending...' : 'Resend email'}
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										setVerifyBannerDismissed(true);
+										if (user?.id) {
+											sessionStorage.setItem(`verify-banner-dismissed-${user.id}`, '1');
+										}
+									}}
+									className="px-3 py-2 rounded text-blue-200/80 hover:text-blue-100 text-xs"
+								>
+									Dismiss
+								</button>
+							</div>
 						</div>
 					</div>
 				) : null}

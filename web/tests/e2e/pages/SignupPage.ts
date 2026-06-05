@@ -9,6 +9,7 @@ export class SignupPage extends BasePage {
 	private readonly emailInput: Locator;
 	private readonly nameInput: Locator;
 	private readonly passwordInput: Locator;
+	private readonly confirmPasswordInput: Locator;
 	private readonly signupButton: Locator;
 	private readonly loginLink: Locator;
 	private readonly errorMessage: Locator;
@@ -19,7 +20,8 @@ export class SignupPage extends BasePage {
 
 		this.emailInput = page.locator('input[type="email"], input#email, input[name="email"]').first();
 		this.nameInput = page.locator('input[type="text"], input#name, input[name="name"]').first();
-		this.passwordInput = page.locator('input[type="password"], input#password, input[name="password"]').first();
+		this.passwordInput = page.locator('input#password, input[name="password"]').first();
+		this.confirmPasswordInput = page.locator('input#confirmPassword, input[name="confirmPassword"]').first();
 		this.signupButton = page.getByRole('button', { name: /sign up|register|create account/i });
 		this.loginLink = page.getByRole('link', { name: /login/i });
 		this.errorMessage = page.locator('.text-red-400, [role="alert"]');
@@ -44,6 +46,9 @@ export class SignupPage extends BasePage {
 			await this.fillWithRetry(this.nameInput, name);
 		}
 		await this.fillWithRetry(this.passwordInput, password);
+		if (await this.isVisible(this.confirmPasswordInput)) {
+			await this.fillWithRetry(this.confirmPasswordInput, password);
+		}
 	}
 
 	/**

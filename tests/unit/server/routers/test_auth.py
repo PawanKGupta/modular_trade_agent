@@ -2,8 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 
 from server.app.routers import auth
+from server.app.schemas.auth import SignupRequest
 from src.infrastructure.db.models import UserRole
 
 
@@ -16,7 +18,20 @@ class DummyUser(SimpleNamespace):
             role=kwargs.get("role", UserRole.USER),
             is_active=kwargs.get("is_active", True),
             password_hash=kwargs.get("password_hash", "$2b$12$dummy.hash.here"),
+            email_verified_at=kwargs.get("email_verified_at", None),
+            email_verification_token_hash=kwargs.get("email_verification_token_hash", None),
+            email_verification_sent_at=kwargs.get("email_verification_sent_at", None),
+            password_reset_token_hash=kwargs.get("password_reset_token_hash", None),
+            password_reset_expires_at=kwargs.get("password_reset_expires_at", None),
         )
+
+
+class DummyDB:
+    def commit(self):
+        return None
+
+    def refresh(self, _obj):
+        return None
 
 
 class DummyUserRepo:
@@ -36,13 +51,51 @@ class DummyUserRepo:
 
     def create_user(self, email, password, name, role):
         self.created_user = SimpleNamespace(
-            id=42, email=email, name=name, role=role, password_hash="hashed"
+            id=42,
+            email=email,
+            name=name,
+            role=role,
+            password_hash="hashed",
+            email_verified_at=None,
+            email_verification_token_hash=None,
+            email_verification_sent_at=None,
+            password_reset_token_hash=None,
+            password_reset_expires_at=None,
         )
         return self.created_user
 
     def set_password(self, user, password):
         self.password_set_user = user
         self.password_set_value = password
+
+    def set_password_reset_token(self, user, token_hash, expires_at):
+        user.password_reset_token_hash = token_hash
+        user.password_reset_expires_at = expires_at
+
+    def clear_password_reset_token(self, user):
+        user.password_reset_token_hash = None
+        user.password_reset_expires_at = None
+
+    def find_by_reset_token_hash(self, token_hash):
+        if self.by_email and getattr(self.by_email, "password_reset_token_hash", None) == token_hash:
+            return self.by_email
+        return None
+
+    def set_verification_token(self, user, token_hash, sent_at):
+        user.email_verification_token_hash = token_hash
+        user.email_verification_sent_at = sent_at
+
+    def clear_verification(self, user):
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user.email_verified_at = ist_now()
+        user.email_verification_token_hash = None
+        user.email_verification_sent_at = None
+
+    def find_by_verification_token_hash(self, token_hash):
+        if self.by_email and getattr(self.by_email, "email_verification_token_hash", None) == token_hash:
+            return self.by_email
+        return None
 
 
 class DummySettingsRepo:
@@ -115,12 +168,36 @@ def mock_settings(monkeypatch):
     monkeypatch.setattr(auth, "settings", DummySettings())
 
 
+@pytest.fixture
+def mock_auth_email(monkeypatch):
+    sent = SimpleNamespace(reset=[], verify=[])
+
+    class MockEmailService:
+        def send_password_reset_email(self, to_email, token):
+            sent.reset.append((to_email, token))
+            return True
+
+        def send_verification_email(self, to_email, token):
+            sent.verify.append((to_email, token))
+            return True
+
+    monkeypatch.setattr(auth, "AuthEmailService", MockEmailService)
+    return sent
+
+
+@pytest.fixture
+def dummy_db():
+    return DummyDB()
+
+
 # Signup tests
-def test_signup_success(user_repo, settings_repo, mock_jwt_creation, mock_settings):
+def test_signup_success(
+    user_repo, settings_repo, mock_jwt_creation, mock_settings, mock_auth_email, dummy_db
+):
     user_repo.by_email = None  # No existing user
     payload = auth.SignupRequest(email="new@example.com", password="password123", name="New User")
 
-    result = auth.signup(payload, db=None)
+    result = auth.signup(payload, db=dummy_db)
 
     assert result.access_token == "access_token_123"
     assert result.refresh_token == "refresh_token_456"
@@ -135,7 +212,7 @@ def test_signup_duplicate_email(user_repo, settings_repo):
     payload = auth.SignupRequest(email="existing@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == status.HTTP_409_CONFLICT
     assert "Email already registered" in exc.value.detail
@@ -152,7 +229,7 @@ def test_signup_exception_handling(user_repo, settings_repo, mock_settings):
     payload = auth.SignupRequest(email="new@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == 500
     assert "Signup failed" in exc.value.detail
@@ -249,7 +326,15 @@ def test_login_exception_handling(user_repo, mock_settings):
 
 # Me endpoint tests
 def test_me_success():
-    user = DummyUser(id=5, email="me@example.com", name="Me User", role=UserRole.ADMIN)
+    from src.infrastructure.db.timezone_utils import ist_now
+
+    user = DummyUser(
+        id=5,
+        email="me@example.com",
+        name="Me User",
+        role=UserRole.ADMIN,
+        email_verified_at=ist_now(),
+    )
 
     result = auth.me(current=user)
 
@@ -257,6 +342,7 @@ def test_me_success():
     assert result.email == "me@example.com"
     assert result.name == "Me User"
     assert result.roles == ["admin"]
+    assert result.email_verified is True
 
 
 def test_me_user_role():
@@ -385,7 +471,7 @@ def test_signup_exception_from_settings_repo(
     payload = auth.SignupRequest(email="new@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == 500
     assert "Signup failed" in exc.value.detail
@@ -401,7 +487,7 @@ def test_signup_exception_from_jwt_creation(user_repo, settings_repo, mock_setti
     payload = auth.SignupRequest(email="new@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == 500
     assert "Signup failed" in exc.value.detail
@@ -415,7 +501,7 @@ def test_signup_exception_from_get_by_email(user_repo, settings_repo, mock_setti
     payload = auth.SignupRequest(email="new@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == 500
     assert "Signup failed" in exc.value.detail
@@ -576,7 +662,111 @@ def test_signup_http_exception_propagation(user_repo, settings_repo):
     payload = auth.SignupRequest(email="new@example.com", password="password123")
 
     with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=None)
+        auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert "Service down" in exc.value.detail
+
+
+def test_signup_rejects_weak_password():
+    with pytest.raises(ValidationError):
+        SignupRequest(email="new@example.com", password="short1")
+
+
+def test_login_rejects_inactive_user(user_repo, mock_settings):
+    user = DummyUser(is_active=False)
+    user_repo.by_email = user
+    payload = auth.LoginRequest(email="test@example.com", password="password")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.login(payload, db=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Invalid credentials" in exc.value.detail
+
+
+def test_change_password_success(user_repo, mock_verify_password):
+    user = DummyUser(password_hash="$pbkdf2-sha256$hashed")
+    mock_verify_password.verified = True
+    payload = auth.ChangePasswordRequest(
+        current_password="OldPass123",
+        new_password="NewPass456",
+    )
+
+    result = auth.change_password(payload, current=user, db=DummyDB())
+
+    assert result.message == "Password updated successfully"
+    assert user_repo.password_set_value == "NewPass456"
+
+
+def test_change_password_wrong_current(user_repo, mock_verify_password):
+    user = DummyUser(password_hash="$pbkdf2-sha256$hashed")
+    mock_verify_password.verified = False
+    payload = auth.ChangePasswordRequest(
+        current_password="wrong",
+        new_password="NewPass456",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.change_password(payload, current=user, db=DummyDB())
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Current password is incorrect" in exc.value.detail
+
+
+def test_forgot_password_always_200(user_repo, mock_auth_email, dummy_db):
+    user_repo.by_email = None
+    payload = auth.ForgotPasswordRequest(email="missing@example.com")
+
+    result = auth.forgot_password(payload, db=dummy_db)
+
+    assert "If an account exists" in result.message
+
+
+def test_forgot_password_sends_email_when_user_exists(user_repo, mock_auth_email, dummy_db):
+    user = DummyUser(email="user@example.com")
+    user_repo.by_email = user
+    payload = auth.ForgotPasswordRequest(email="user@example.com")
+
+    auth.forgot_password(payload, db=dummy_db)
+
+    assert len(mock_auth_email.reset) == 1
+    assert mock_auth_email.reset[0][0] == "user@example.com"
+
+
+def test_reset_password_valid_token(user_repo, mock_verify_password, dummy_db):
+    from server.app.core.auth_tokens import hash_token, reset_expiry
+
+    token = "reset-token-value"
+    user = DummyUser(email="user@example.com")
+    user.password_reset_token_hash = hash_token(token)
+    user.password_reset_expires_at = reset_expiry()
+    user_repo.by_email = user
+    user_repo.find_by_reset_token_hash = lambda h: user if h == hash_token(token) else None
+
+    payload = auth.ResetPasswordRequest(token=token, new_password="NewPass456")
+    result = auth.reset_password(payload, db=dummy_db)
+
+    assert result.message == "Password reset successfully"
+    assert user_repo.password_set_value == "NewPass456"
+
+
+def test_verify_email_success(user_repo, dummy_db):
+    from server.app.core.auth_tokens import hash_token
+
+    token = "verify-token"
+    user = DummyUser(email="user@example.com")
+    user.email_verification_token_hash = hash_token(token)
+    user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
+
+    payload = auth.VerifyEmailRequest(token=token)
+    result = auth.verify_email(payload, db=dummy_db)
+
+    assert result.message == "Email verified successfully"
+    assert user.email_verified_at is not None
+
+
+def test_me_unverified_user():
+    user = DummyUser(email="user@example.com", email_verified_at=None)
+    result = auth.me(current=user)
+    assert result.email_verified is False

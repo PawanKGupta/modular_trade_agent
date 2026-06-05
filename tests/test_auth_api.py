@@ -19,6 +19,7 @@ def test_signup_and_login_flow(client):
     me = resp.json()
     assert me["email"] == "t1@example.com"
     assert me["roles"] == ["user"]
+    assert me["email_verified"] is False
 
     # Login
     resp = client.post(

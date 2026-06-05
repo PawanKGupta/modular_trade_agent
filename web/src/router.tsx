@@ -1,6 +1,9 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { LoginPage } from './routes/LoginPage';
 import { SignupPage } from './routes/SignupPage';
+import { ForgotPasswordPage } from './routes/ForgotPasswordPage';
+import { ResetPasswordPage } from './routes/ResetPasswordPage';
+import { VerifyEmailPage } from './routes/VerifyEmailPage';
 import { AppShell } from './routes/AppShell';
 import { DashboardHome } from './routes/dashboard/DashboardHome';
 import { BuyingZonePage } from './routes/dashboard/BuyingZonePage';
@@ -31,6 +34,9 @@ export function createAppRouter() {
 		{ path: '/', element: <LoginPage /> },
 		{ path: '/login', element: <LoginPage /> },
 		{ path: '/signup', element: <SignupPage /> },
+		{ path: '/forgot-password', element: <ForgotPasswordPage /> },
+		{ path: '/reset-password', element: <ResetPasswordPage /> },
+		{ path: '/verify-email', element: <VerifyEmailPage /> },
 		{
 			path: '/dashboard',
 			element: (

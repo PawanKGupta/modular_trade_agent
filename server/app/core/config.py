@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     ]
     log_retention_days: int = 90
     jwt_refresh_days: int = 30
+    frontend_base_url: str = "http://localhost:5173"
 
     # Billing (Razorpay). Enforcement off => non-admin users keep full access (backward compatible).
     subscription_enforcement_enabled: bool = False

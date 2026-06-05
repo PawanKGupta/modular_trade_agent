@@ -737,12 +737,12 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 #### Features
 - Email/password login
-- Remember me option (if implemented)
-- Forgot password link (if implemented)
+- **Forgot password** link to `/forgot-password` (sends reset email when SMTP is configured)
 - Link to signup page
 
 #### Actions
 - **Login:** Authenticate and access dashboard
+- **Forgot password:** Request a password reset email
 - **Sign Up:** Navigate to signup page
 
 ---
@@ -753,13 +753,41 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 #### Features
 - Email input
-- Password input (with requirements)
-- Name input
-- Terms acceptance (if implemented)
+- Password input (minimum 8 characters, at least one letter and one number)
+- Confirm password field
+- Name input (optional)
+- After signup, a verification email is sent (login is not blocked; unverified users see a banner in the dashboard)
 
 #### Actions
 - **Sign Up:** Create new account
 - **Login:** Navigate to login page
+
+---
+
+### 18. Forgot password (`/forgot-password`)
+
+**Purpose:** Request a password reset link by email.
+
+#### Features
+- Email input
+- Generic success message (does not reveal whether the email is registered)
+- Reset links expire after one hour
+
+---
+
+### 19. Reset password (`/reset-password?token=...`)
+
+**Purpose:** Set a new password from the email reset link.
+
+---
+
+### 20. Verify email (`/verify-email?token=...`)
+
+**Purpose:** Confirm email ownership from the verification link sent after signup.
+
+#### Dashboard banner
+
+If `email_verified` is false, the app shell shows a dismissible banner with **Resend verification email**.
 
 ---
 

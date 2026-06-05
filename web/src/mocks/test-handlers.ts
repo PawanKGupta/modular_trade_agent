@@ -208,7 +208,22 @@ http.post(API('/auth/refresh'), async () => {
 		});
 	}),
 	http.get(API('/auth/me'), async () => {
-		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'] });
+		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'], email_verified: true });
+	}),
+	http.post(API('/auth/forgot-password'), async () => {
+		return HttpResponse.json({ message: 'If an account exists for that email, we sent password reset instructions.' });
+	}),
+	http.post(API('/auth/reset-password'), async () => {
+		return HttpResponse.json({ message: 'Password reset successfully' });
+	}),
+	http.post(API('/auth/verify-email'), async () => {
+		return HttpResponse.json({ message: 'Email verified successfully' });
+	}),
+	http.post(API('/auth/change-password'), async () => {
+		return HttpResponse.json({ message: 'Password updated successfully' });
+	}),
+	http.post(API('/auth/resend-verification'), async () => {
+		return HttpResponse.json({ message: 'If your email is unverified, we sent a verification link.' });
 	}),
 	// settings
 	http.get(API('/user/settings'), async () => {

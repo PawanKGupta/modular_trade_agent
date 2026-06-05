@@ -76,6 +76,43 @@ class UserRepository:
         user.password_hash = hash_password(new_password)
         self.db.commit()
 
+    def set_password_reset_token(self, user: Users, token_hash: str, expires_at) -> None:
+        user.password_reset_token_hash = token_hash
+        user.password_reset_expires_at = expires_at
+        self.db.commit()
+
+    def clear_password_reset_token(self, user: Users) -> None:
+        user.password_reset_token_hash = None
+        user.password_reset_expires_at = None
+        self.db.commit()
+
+    def find_by_reset_token_hash(self, token_hash: str) -> Users | None:
+        return (
+            self.db.query(Users)
+            .filter(Users.password_reset_token_hash == token_hash)
+            .first()
+        )
+
+    def set_verification_token(self, user: Users, token_hash: str, sent_at) -> None:
+        user.email_verification_token_hash = token_hash
+        user.email_verification_sent_at = sent_at
+        self.db.commit()
+
+    def clear_verification(self, user: Users) -> None:
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        user.email_verified_at = ist_now()
+        user.email_verification_token_hash = None
+        user.email_verification_sent_at = None
+        self.db.commit()
+
+    def find_by_verification_token_hash(self, token_hash: str) -> Users | None:
+        return (
+            self.db.query(Users)
+            .filter(Users.email_verification_token_hash == token_hash)
+            .first()
+        )
+
     def update_user(
         self,
         user: Users,

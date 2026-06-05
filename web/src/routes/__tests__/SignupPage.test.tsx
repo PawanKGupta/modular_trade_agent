@@ -31,12 +31,27 @@ describe('SignupPage', () => {
 		renderWithRouter(<SignupPage />);
 		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
 		const name = document.querySelector('input[type="text"]') as HTMLInputElement;
-		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
+		const passwords = document.querySelectorAll('input[type="password"]');
 		fireEvent.change(email, { target: { value: 'new@example.com' } });
 		fireEvent.change(name, { target: { value: 'New User' } });
-		fireEvent.change(password, { target: { value: 'Secret123' } });
+		fireEvent.change(passwords[0], { target: { value: 'Secret123' } });
+		fireEvent.change(passwords[1], { target: { value: 'Secret123' } });
 		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
 		await screen.findByText('Dashboard');
+	});
+
+	it('shows validation error for weak password', async () => {
+		renderWithRouter(<SignupPage />);
+		fireEvent.change(document.querySelector('input[type="email"]')!, {
+			target: { value: 'new@example.com' },
+		});
+		const passwords = document.querySelectorAll('input[type="password"]');
+		fireEvent.change(passwords[0], { target: { value: 'short1' } });
+		fireEvent.change(passwords[1], { target: { value: 'short1' } });
+		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+		await waitFor(() => {
+			expect(screen.getByText(/at least 8 characters/i)).toBeInTheDocument();
+		});
 	});
 
 	it('shows signup error when API rejects', async () => {
@@ -50,9 +65,9 @@ describe('SignupPage', () => {
 		fireEvent.change(document.querySelector('input[type="email"]')!, {
 			target: { value: 'dup@example.com' },
 		});
-		fireEvent.change(document.querySelector('input[type="password"]')!, {
-			target: { value: 'Secret123' },
-		});
+		const passwords = document.querySelectorAll('input[type="password"]');
+		fireEvent.change(passwords[0], { target: { value: 'Secret123' } });
+		fireEvent.change(passwords[1], { target: { value: 'Secret123' } });
 		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
 
 		await waitFor(() => {

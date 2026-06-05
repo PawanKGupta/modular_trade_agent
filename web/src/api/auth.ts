@@ -5,12 +5,17 @@ export type MeResponse = {
 	email: string;
 	name?: string | null;
 	roles: ('admin' | 'user')[];
+	email_verified: boolean;
 };
 
 type TokenResponse = {
 	access_token: string;
 	refresh_token?: string | null;
 	token_type?: string;
+};
+
+type MessageResponse = {
+	message: string;
 };
 
 function persistTokens(tokens: TokenResponse) {
@@ -37,6 +42,29 @@ export async function login(email: string, password: string) {
 export async function me(): Promise<MeResponse> {
 	const res = await api.get('/auth/me');
 	return res.data as MeResponse;
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+	await api.post('/auth/change-password', {
+		current_password: currentPassword,
+		new_password: newPassword,
+	});
+}
+
+export async function forgotPassword(email: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/forgot-password', { email });
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/reset-password', { token, new_password: newPassword });
+}
+
+export async function verifyEmail(token: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/verify-email', { token });
+}
+
+export async function resendVerification(): Promise<void> {
+	await api.post<MessageResponse>('/auth/resend-verification');
 }
 
 export function logout() {

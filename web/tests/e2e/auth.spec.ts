@@ -78,6 +78,13 @@ test.describe('Authentication', () => {
 		await expect(page.locator('main, [role="main"]')).toBeVisible();
 	});
 
+	test('forgot password form shows generic success message', async ({ page }) => {
+		await page.goto('/forgot-password');
+		await page.locator('input[type="email"]').fill('test@example.com');
+		await page.getByRole('button', { name: /send reset link/i }).click();
+		await expect(page.getByText(/If an account exists/i)).toBeVisible({ timeout: 10000 });
+	});
+
 	test('user can logout and session is cleared', async ({ loginPage, page }) => {
 		// Login first
 		await loginPage.loginAsAdmin();

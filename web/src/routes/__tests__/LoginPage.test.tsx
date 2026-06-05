@@ -12,6 +12,7 @@ function renderWithRouter(ui: React.ReactElement) {
 			<MemoryRouter initialEntries={['/login']}>
 				<Routes>
 					<Route path="/login" element={ui} />
+					<Route path="/forgot-password" element={<div>Forgot password page</div>} />
 					<Route path="/dashboard" element={<div>Dashboard</div>} />
 				</Routes>
 			</MemoryRouter>,
@@ -27,8 +28,15 @@ describe('LoginPage', () => {
 		expect(screen.getByText(`v${APP_VERSION}`)).toBeInTheDocument();
 	});
 
+	it('shows forgot password link', () => {
+		renderWithRouter(<LoginPage />);
+		expect(screen.getByRole('link', { name: /forgot password/i })).toHaveAttribute(
+			'href',
+			'/forgot-password',
+		);
+	});
+
 	it('logs in successfully and navigates to dashboard', async () => {
-		// default MSW handlers return 200 and token + me
 		renderWithRouter(<LoginPage />);
 		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
 		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
