@@ -3,6 +3,7 @@ import { useState } from 'react';
 import {
 	checkoutPerformanceBill,
 	createRazorpayOrder,
+	getBillingPaymentOptions,
 	getMyBillingTransactions,
 	getPerformanceBills,
 	verifyRazorpayPayment,
@@ -38,6 +39,55 @@ function loadRazorpayScript(): Promise<void> {
 	});
 }
 
+function OfflinePaymentPanel({
+	upiId,
+	instructions,
+	qrUrl,
+	bill,
+}: {
+	upiId: string | null;
+	instructions: string | null;
+	qrUrl: string | null;
+	bill?: PerformanceBill;
+}) {
+	const hasBill = bill && (bill.status === 'pending_payment' || bill.status === 'overdue') && bill.payable_amount > 0;
+	return (
+		<div className="mt-2 p-3 rounded bg-[#0f1720] border border-amber-900/40 space-y-2 text-xs">
+			<p className="text-amber-200/90 font-medium">Pay via UPI</p>
+			<p className="text-[var(--muted)] leading-relaxed">
+				Pay the exact amount below. We’ll mark your bill paid after confirmation.
+			</p>
+			{hasBill ? (
+				<p className="text-sm">
+					Amount: <span className="font-medium text-[var(--text)]">₹{bill.payable_amount.toFixed(2)}</span>
+					<span className="text-[var(--muted)]"> · Bill #{bill.id}</span>
+				</p>
+			) : null}
+			{upiId ? (
+				<p>
+					UPI ID:{' '}
+					<code className="text-amber-100 bg-[#1e293b] px-1.5 py-0.5 rounded select-all">{upiId}</code>
+				</p>
+			) : null}
+			{qrUrl ? (
+				<div className="space-y-1">
+					<p className="text-[var(--muted)]">Scan QR</p>
+					<img
+						src={qrUrl}
+						alt="Payment QR code"
+						className="max-w-[12rem] rounded border border-[#1e293b] bg-white p-1"
+					/>
+				</div>
+			) : null}
+			{instructions ? (
+				<p className="text-[var(--muted)] whitespace-pre-wrap leading-relaxed">{instructions}</p>
+			) : (
+				<p className="text-[var(--muted)]">Add bill # and email in the UPI note.</p>
+			)}
+		</div>
+	);
+}
+
 export function BillingPage() {
 	const qc = useQueryClient();
 	const { isAdmin } = useSessionStore();
@@ -50,6 +100,12 @@ export function BillingPage() {
 			(typeof window !== 'undefined' &&
 				(new URLSearchParams(window.location.search).has('testCheckout') ||
 					import.meta.env.DEV)));
+
+	const paymentOptsQ = useQuery({
+		queryKey: ['billingPaymentOptions'],
+		queryFn: getBillingPaymentOptions,
+	});
+	const onlinePay = paymentOptsQ.data?.online_payments_enabled ?? false;
 
 	const txQ = useQuery({ queryKey: ['billingTx'], queryFn: () => getMyBillingTransactions(50) });
 	const perfBillsQ = useQuery({ queryKey: ['performanceBills'], queryFn: () => getPerformanceBills(36) });
@@ -196,14 +252,27 @@ export function BillingPage() {
 		},
 	});
 
+	const offlineUpi = paymentOptsQ.data?.offline_upi_id ?? null;
+	const offlineInstructions = paymentOptsQ.data?.offline_instructions ?? null;
+	const offlineQr = paymentOptsQ.data?.offline_qr_image_url ?? null;
+
 	return (
 		<div className="p-4 sm:p-6 max-w-4xl space-y-6 text-[var(--text)]">
 			<div>
 				<h1 className="text-xl font-semibold">Billing</h1>
 				<p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
-					Broker performance fee invoices and your Razorpay payment history for this account.
+					Broker performance fee invoices and payment history for this account.
+					{onlinePay ? ' Pay open invoices online via Razorpay.' : ' Pay via UPI below.'}
 				</p>
 			</div>
+
+			{!onlinePay && !paymentOptsQ.isLoading ? (
+				<OfflinePaymentPanel
+					upiId={offlineUpi}
+					instructions={offlineInstructions}
+					qrUrl={offlineQr}
+				/>
+			) : null}
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-2">
 				<h2 className="font-medium">Broker performance fees</h2>
@@ -215,7 +284,7 @@ export function BillingPage() {
 				) : (perfBillsQ.data ?? []).length === 0 ? (
 					<div className="space-y-2">
 						<p className="text-sm text-[var(--muted)]">No performance fee bills yet.</p>
-						{isAdmin ? (
+						{isAdmin && onlinePay ? (
 							<button
 								type="button"
 								className="px-3 py-2 rounded bg-indigo-700 hover:bg-indigo-600 text-white text-sm disabled:opacity-40"
@@ -227,41 +296,55 @@ export function BillingPage() {
 					</div>
 				) : (
 					<ul className="text-sm space-y-2 max-h-72 overflow-auto">
-						{(perfBillsQ.data ?? []).map((b: PerformanceBill) => (
-							<li
-								key={b.id}
-								className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-2 rounded bg-[#0f1720] border border-[#1e293b]/80"
-							>
-								<div>
-									<p className="font-medium">
-										{b.bill_month} — {b.status.replace(/_/g, ' ')}
-									</p>
-									<p className="text-xs text-[var(--muted)]">
-										Due {b.due_at.slice(0, 10)}
-										{b.paid_at ? ` · Paid ${b.paid_at.slice(0, 10)}` : ''}
-									</p>
-									<p className="text-xs text-[var(--muted)] mt-1">
-										PnL {b.current_month_pnl.toFixed(2)} · Fee {b.fee_percentage}% · Payable ₹
-										{b.payable_amount.toFixed(2)}
-									</p>
-								</div>
-								{(b.status === 'pending_payment' || b.status === 'overdue') && b.payable_amount > 0 ? (
-									<button
-										type="button"
-										className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-sm self-start sm:self-center disabled:opacity-40"
-										disabled={perfPayM.isPending}
-										onClick={() => perfPayM.mutate(b.id)}
-									>
-										Pay now
-									</button>
-								) : null}
-							</li>
-						))}
+						{(perfBillsQ.data ?? []).map((b: PerformanceBill) => {
+							const unpaid =
+								(b.status === 'pending_payment' || b.status === 'overdue') && b.payable_amount > 0;
+							return (
+								<li
+									key={b.id}
+									className="flex flex-col gap-2 p-2 rounded bg-[#0f1720] border border-[#1e293b]/80"
+								>
+									<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+										<div>
+											<p className="font-medium">
+												{b.bill_month} — {b.status.replace(/_/g, ' ')}
+											</p>
+											<p className="text-xs text-[var(--muted)]">
+												Due {b.due_at.slice(0, 10)}
+												{b.paid_at ? ` · Paid ${b.paid_at.slice(0, 10)}` : ''}
+											</p>
+											<p className="text-xs text-[var(--muted)] mt-1">
+												PnL {b.current_month_pnl.toFixed(2)} · Fee {b.fee_percentage}% · Payable ₹
+												{b.payable_amount.toFixed(2)}
+											</p>
+										</div>
+										{unpaid && onlinePay ? (
+											<button
+												type="button"
+												className="px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-sm self-start sm:self-center disabled:opacity-40"
+												disabled={perfPayM.isPending}
+												onClick={() => perfPayM.mutate(b.id)}
+											>
+												Pay now (online)
+											</button>
+										) : null}
+									</div>
+									{unpaid && !onlinePay ? (
+										<OfflinePaymentPanel
+											upiId={offlineUpi}
+											instructions={offlineInstructions}
+											qrUrl={offlineQr}
+											bill={b}
+										/>
+									) : null}
+								</li>
+							);
+						})}
 					</ul>
 				)}
 			</section>
 
-			{showTestCheckout ? (
+			{showTestCheckout && onlinePay ? (
 				<section className="p-4 rounded border border-[#1e293b] space-y-3">
 					<div>
 						<h2 className="font-medium">Dev — Test Razorpay checkout</h2>

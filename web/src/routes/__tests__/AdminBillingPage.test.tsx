@@ -21,6 +21,10 @@ describe('AdminBillingPage', () => {
 		vi.mocked(billingApi.getAdminBillingSettings).mockResolvedValue({
 			payment_card_enabled: true,
 			payment_upi_enabled: false,
+			online_payments_enabled: false,
+			offline_payment_upi_id: 'beta@paytm',
+			offline_payment_instructions: 'Pay exact amount',
+			offline_payment_qr_image_url: 'https://example.com/qr.png',
 			razorpay_key_id_preview: 'rzp_test',
 			razorpay_api_configured: true,
 			razorpay_webhook_configured: false,
@@ -55,9 +59,7 @@ describe('AdminBillingPage', () => {
 	it('toggles payment methods', async () => {
 		render(withProviders(<AdminBillingPage />));
 
-		await waitFor(() => expect(screen.getByText('UPI')).toBeInTheDocument());
-		const checkboxes = screen.getAllByRole('checkbox');
-		const upi = checkboxes.find((cb) => cb.closest('label')?.textContent?.includes('UPI'));
+		const upi = await screen.findByRole('checkbox', { name: /UPI in Razorpay modal/i });
 		expect(upi).toBeTruthy();
 		fireEvent.click(upi!);
 
@@ -145,7 +147,9 @@ describe('AdminBillingPage', () => {
 		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
 		render(withProviders(<AdminBillingPage />));
-		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		await waitFor(() =>
+			expect(screen.getByRole('heading', { name: 'Record cash payment' })).toBeInTheDocument()
+		);
 
 		fireEvent.change(screen.getByPlaceholderText('e.g. 2'), { target: { value: '2' } });
 		fireEvent.change(screen.getByPlaceholderText('Receipt ref, date, etc.'), {
@@ -195,7 +199,9 @@ describe('AdminBillingPage', () => {
 		const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
 
 		render(withProviders(<AdminBillingPage />));
-		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		await waitFor(() =>
+			expect(screen.getByRole('heading', { name: 'Record cash payment' })).toBeInTheDocument()
+		);
 		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Mark paid' })).toBeInTheDocument());
 		fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));
@@ -208,7 +214,9 @@ describe('AdminBillingPage', () => {
 		vi.mocked(billingApi.getAdminOpenPerformanceBills).mockResolvedValue([]);
 
 		render(withProviders(<AdminBillingPage />));
-		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		await waitFor(() =>
+			expect(screen.getByRole('heading', { name: 'Record cash payment' })).toBeInTheDocument()
+		);
 		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
 
 		await waitFor(() => {
@@ -243,7 +251,9 @@ describe('AdminBillingPage', () => {
 		vi.spyOn(window, 'confirm').mockReturnValue(true);
 
 		render(withProviders(<AdminBillingPage />));
-		await waitFor(() => expect(screen.getByText('Record cash payment')).toBeInTheDocument());
+		await waitFor(() =>
+			expect(screen.getByRole('heading', { name: 'Record cash payment' })).toBeInTheDocument()
+		);
 		fireEvent.click(screen.getByRole('button', { name: 'Load open bills' }));
 		await waitFor(() => expect(screen.getByRole('button', { name: 'Mark paid' })).toBeInTheDocument());
 		fireEvent.click(screen.getByRole('button', { name: 'Mark paid' }));

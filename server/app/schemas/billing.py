@@ -18,9 +18,22 @@ class TransactionOut(BaseModel):
     created_at: datetime
 
 
+class UserBillingPaymentOptionsOut(BaseModel):
+    """How users may pay performance-fee bills (Razorpay vs offline UPI/QR)."""
+
+    online_payments_enabled: bool
+    offline_upi_id: str | None = None
+    offline_instructions: str | None = None
+    offline_qr_image_url: str | None = None
+
+
 class AdminBillingSettingsUpdate(BaseModel):
     payment_card_enabled: bool | None = None
     payment_upi_enabled: bool | None = None
+    online_payments_enabled: bool | None = None
+    offline_payment_upi_id: str | None = Field(default=None, max_length=128)
+    offline_payment_instructions: str | None = Field(default=None, max_length=2048)
+    offline_payment_qr_image_url: str | None = Field(default=None, max_length=512)
     performance_fee_payment_days_after_invoice: int | None = Field(default=None, ge=0, le=90)
     performance_fee_default_percentage: float | None = Field(default=None, ge=0, le=100)
 

@@ -58,6 +58,18 @@ export async function getPerformanceBills(limit = 36): Promise<PerformanceBill[]
 	return res.data;
 }
 
+export type BillingPaymentOptions = {
+	online_payments_enabled: boolean;
+	offline_upi_id: string | null;
+	offline_instructions: string | null;
+	offline_qr_image_url: string | null;
+};
+
+export async function getBillingPaymentOptions(): Promise<BillingPaymentOptions> {
+	const res = await api.get<BillingPaymentOptions>('/user/billing/payment-options');
+	return res.data;
+}
+
 export type PerformanceFeeCheckout = {
 	razorpay_key_id: string;
 	razorpay_test_mode?: boolean;

@@ -6,6 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from server.app.core.crypto import encryption_uses_dedicated_env_key
+from src.application.services.billing_payment_modes import (
+    OFFLINE_PAYMENTS_DISABLED_DETAIL,
+    get_admin_settings,
+    offline_payment_info,
+    online_payments_enabled,
+)
 from src.application.services.performance_fee_arrears_service import PerformanceFeeArrearsService
 from src.application.services.performance_fee_checkout_service import (
     PerformanceFeeCheckoutError,
@@ -36,6 +42,7 @@ from ..schemas.billing import (
     RazorpayVerifyPaymentRequest,
     RazorpayVerifyPaymentResponse,
     TransactionOut,
+    UserBillingPaymentOptionsOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,21 @@ logger = logging.getLogger(__name__)
 _MAX_GENERIC_ORDER_PAISE = 10_000_00  # ₹1,00,000
 
 router = APIRouter()
+
+
+def _reject_if_online_payments_disabled(db: Session) -> None:
+    if not online_payments_enabled(get_admin_settings(db)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=OFFLINE_PAYMENTS_DISABLED_DETAIL,
+        )
+
+
+@router.get("/billing/payment-options", response_model=UserBillingPaymentOptionsOut)
+def billing_payment_options(db: Session = Depends(get_db), current: Users = Depends(get_current_user)):
+    """How this deployment accepts performance-fee payments (online checkout vs offline UPI/QR)."""
+    del current
+    return UserBillingPaymentOptionsOut(**offline_payment_info(get_admin_settings(db)))
 
 
 @router.get("/billing/performance-fee-arrears", response_model=PerformanceFeeArrearsOut)
@@ -97,6 +119,7 @@ def checkout_performance_bill(
     db: Session = Depends(get_db),
     current: Users = Depends(get_current_user),
 ):
+    _reject_if_online_payments_disabled(db)
     try:
         data = PerformanceFeeCheckoutService(db).create_order_for_bill(current, bill_id)
     except PerformanceFeeCheckoutError as e:
@@ -120,6 +143,7 @@ def razorpay_create_order(
     Create a generic Razorpay order (Standard Checkout step 1).
     For performance-fee payments prefer ``POST .../performance-bills/{id}/checkout``.
     """
+    _reject_if_online_payments_disabled(db)
     if body.amount_paise > _MAX_GENERIC_ORDER_PAISE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -182,6 +206,7 @@ def razorpay_verify_payment(
     If ``performance_bill_id`` is set, the order id must match that bill for the current user.
     This does not replace webhooks; it confirms the client callback before you rely on it in UI.
     """
+    _reject_if_online_payments_disabled(db)
     o = (body.razorpay_order_id or "").strip()
     p = (body.razorpay_payment_id or "").strip()
     s = (body.razorpay_signature or "").strip()
