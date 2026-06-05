@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from server.app.core.security import hash_password
 from src.infrastructure.db.models import UserRole, Users
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository:
@@ -66,9 +71,46 @@ class UserRepository:
         try:
             self.db.commit()
         except Exception as e:
-            # Print to stdout so it appears in simple logs
-            print(f"[UserRepository] commit failed: {e}")
+            logger.exception("UserRepository create_user commit failed")
             raise
+        self.db.refresh(user)
+        return user
+
+    def create_pending_verification_user(
+        self,
+        email: str,
+        password: str,
+        name: str,
+        token_hash: str,
+        sent_at: datetime,
+        role: UserRole = UserRole.USER,
+    ) -> Users:
+        """Create an unverified user with a pending verification token in one commit."""
+        user = Users(
+            email=email,
+            name=name,
+            role=role,
+            is_active=True,
+            password_hash=hash_password(password),
+            email_verified_at=None,
+            email_verification_token_hash=token_hash,
+            email_verification_sent_at=sent_at,
+        )
+        self.db.add(user)
+        try:
+            self.db.commit()
+        except Exception:
+            logger.exception("UserRepository create_pending_verification_user commit failed")
+            raise
+        self.db.refresh(user)
+        return user
+
+    def update_unverified_signup_credentials(
+        self, user: Users, *, password: str, name: str
+    ) -> Users:
+        user.name = name.strip()
+        user.password_hash = hash_password(password)
+        self.db.commit()
         self.db.refresh(user)
         return user
 

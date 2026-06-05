@@ -26,6 +26,14 @@ class DummyUser(SimpleNamespace):
         )
 
 
+def verified_dummy(**kwargs):
+    from src.infrastructure.db.timezone_utils import ist_now
+
+    if "email_verified_at" not in kwargs:
+        kwargs["email_verified_at"] = ist_now()
+    return DummyUser(**kwargs)
+
+
 class DummyDB:
     def commit(self):
         return None
@@ -42,6 +50,7 @@ class DummyUserRepo:
         self.created_user = None
         self.password_set_user = None
         self.password_set_value = None
+        self.updated_unverified_user = None
 
     def get_by_email(self, email):
         return self.by_email
@@ -63,6 +72,30 @@ class DummyUserRepo:
             password_reset_expires_at=None,
         )
         return self.created_user
+
+    def create_pending_verification_user(
+        self, email, password, name, token_hash, sent_at, role=UserRole.USER
+    ):
+        self.created_user = SimpleNamespace(
+            id=42,
+            email=email,
+            name=name,
+            role=role,
+            password_hash="hashed",
+            email_verified_at=None,
+            email_verification_token_hash=token_hash,
+            email_verification_sent_at=sent_at,
+            password_reset_token_hash=None,
+            password_reset_expires_at=None,
+        )
+        return self.created_user
+
+    def update_unverified_signup_credentials(self, user, *, password, name):
+        user.name = name
+        self.updated_unverified_user = user
+        self.password_set_user = user
+        self.password_set_value = password
+        return user
 
     def set_password(self, user, password):
         self.password_set_user = user
@@ -202,6 +235,8 @@ def test_signup_success(
     assert "verification link" in result.message.lower()
     assert user_repo.created_user.email == "new@example.com"
     assert user_repo.created_user.name == "New User"
+    assert user_repo.created_user.email_verification_token_hash is not None
+    assert user_repo.created_user.email_verification_sent_at is not None
     assert settings_repo.ensured_user_ids == [42]
     assert len(mock_auth_email.verify) == 1
 
@@ -234,6 +269,10 @@ def test_signup_unverified_duplicate_resends(user_repo, settings_repo, mock_auth
 
     assert "verification link" in result.message.lower()
     assert user_repo.created_user is None
+    assert user_repo.updated_unverified_user is existing_user
+    assert existing_user.name == "Pending"
+    assert user_repo.password_set_value == "Password123!"
+    assert len(mock_auth_email.verify) == 1
 
 
 def test_signup_exception_handling(user_repo, settings_repo, mock_settings):
@@ -242,7 +281,7 @@ def test_signup_exception_handling(user_repo, settings_repo, mock_settings):
     def boom(*_, **__):
         raise RuntimeError("Database error")
 
-    user_repo.create_user = boom
+    user_repo.create_pending_verification_user = boom
     payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
@@ -270,7 +309,7 @@ def test_login_blocks_unverified_user(user_repo, mock_verify_password, mock_sett
 
 
 def test_login_success(user_repo, mock_jwt_creation, mock_verify_password, mock_settings):
-    user = DummyUser(id=1, email="test@example.com", password_hash="$2b$12$hashed.password")
+    user = verified_dummy(id=1, email="test@example.com", password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
 
     payload = auth.LoginRequest(email="test@example.com", password="correct_password")
@@ -306,7 +345,7 @@ def test_login_invalid_password_bcrypt(user_repo, mock_verify_password, mock_set
 
 
 def test_login_legacy_password_upgrade(user_repo, mock_jwt_creation, mock_settings):
-    user = DummyUser(id=1, password_hash="plaintext_password")  # Non-bcrypt hash
+    user = verified_dummy(id=1, password_hash="plaintext_password")  # Non-bcrypt hash
     user_repo.by_email = user
 
     payload = auth.LoginRequest(email="test@example.com", password="plaintext_password")
@@ -388,7 +427,7 @@ def test_me_user_role():
 
 # Refresh token tests
 def test_refresh_success(user_repo, mock_jwt_creation, mock_jwt_decode, mock_settings):
-    user = DummyUser(id=1, is_active=True)
+    user = verified_dummy(id=1, is_active=True)
     user_repo.by_id = user
 
     payload = auth.RefreshRequest(refresh_token="valid_refresh_token")
@@ -512,7 +551,7 @@ def test_signup_exception_from_settings_repo(
 
 def test_signup_exception_from_jwt_creation(user_repo, mock_settings, monkeypatch):
     """verify-email issues JWT; failure surfaces from token creation."""
-    from server.app.core.auth_tokens import hash_token
+    from server.app.core.auth_tokens import auth_sent_at, hash_token
 
     def boom(*_, **__):
         raise RuntimeError("JWT error")
@@ -521,6 +560,7 @@ def test_signup_exception_from_jwt_creation(user_repo, mock_settings, monkeypatc
     token = "verify-token"
     user = DummyUser(email="user@example.com")
     user.email_verification_token_hash = hash_token(token)
+    user.email_verification_sent_at = auth_sent_at()
     user_repo = DummyUserRepo(db=None)
     user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
     monkeypatch.setattr(auth, "UserRepository", lambda db: user_repo)
@@ -547,7 +587,7 @@ def test_signup_exception_from_get_by_email(user_repo, settings_repo, mock_setti
 def test_login_bcrypt_hash_prefix_2a(
     user_repo, mock_jwt_creation, mock_verify_password, mock_settings
 ):
-    user = DummyUser(id=1, password_hash="$2a$12$hashed.password")  # Different bcrypt prefix
+    user = verified_dummy(id=1, password_hash="$2a$12$hashed.password")  # Different bcrypt prefix
     user_repo.by_email = user
 
     payload = auth.LoginRequest(email="test@example.com", password="correct_password")
@@ -559,7 +599,7 @@ def test_login_bcrypt_hash_prefix_2a(
 def test_login_bcrypt_hash_prefix_2y(
     user_repo, mock_jwt_creation, mock_verify_password, mock_settings
 ):
-    user = DummyUser(id=1, password_hash="$2y$12$hashed.password")  # Different bcrypt prefix
+    user = verified_dummy(id=1, password_hash="$2y$12$hashed.password")  # Different bcrypt prefix
     user_repo.by_email = user
 
     payload = auth.LoginRequest(email="test@example.com", password="correct_password")
@@ -584,7 +624,7 @@ def test_login_none_password_hash(user_repo, mock_settings):
 def test_login_exception_from_jwt_creation(
     user_repo, mock_verify_password, mock_settings, monkeypatch
 ):
-    user = DummyUser(id=1, password_hash="$2b$12$hashed.password")
+    user = verified_dummy(id=1, password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
 
     def boom(*_, **__):
@@ -645,7 +685,7 @@ def test_refresh_exception_from_get_by_id(user_repo, mock_jwt_decode, mock_setti
 def test_refresh_exception_from_jwt_creation(
     user_repo, mock_jwt_decode, mock_settings, monkeypatch
 ):
-    user = DummyUser(id=1, is_active=True)
+    user = verified_dummy(id=1, is_active=True)
     user_repo.by_id = user
 
     def boom(*_, **__):
@@ -695,7 +735,7 @@ def test_signup_http_exception_propagation(user_repo, settings_repo):
     def create_with_http_error(*_, **__):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service down")
 
-    user_repo.create_user = create_with_http_error
+    user_repo.create_pending_verification_user = create_with_http_error
     payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
@@ -796,11 +836,12 @@ def test_reset_password_valid_token(user_repo, mock_verify_password, dummy_db):
 
 
 def test_verify_email_success(user_repo, mock_jwt_creation, dummy_db):
-    from server.app.core.auth_tokens import hash_token
+    from server.app.core.auth_tokens import auth_sent_at, hash_token
 
     token = "verify-token"
     user = DummyUser(email="user@example.com")
     user.email_verification_token_hash = hash_token(token)
+    user.email_verification_sent_at = auth_sent_at()
     user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
 
     payload = auth.VerifyEmailRequest(token=token)
@@ -809,6 +850,27 @@ def test_verify_email_success(user_repo, mock_jwt_creation, dummy_db):
     assert result.access_token == "access_token_123"
     assert result.refresh_token == "refresh_token_456"
     assert user.email_verified_at is not None
+
+
+def test_verify_email_expired_token(user_repo, dummy_db):
+    from datetime import timedelta
+
+    from server.app.core.auth_tokens import VERIFICATION_TOKEN_HOURS, hash_token
+    from src.infrastructure.db.timezone_utils import ist_now_naive
+
+    token = "expired-verify-token"
+    user = DummyUser(email="user@example.com")
+    user.email_verification_token_hash = hash_token(token)
+    user.email_verification_sent_at = ist_now_naive() - timedelta(hours=VERIFICATION_TOKEN_HOURS + 1)
+    user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
+
+    payload = auth.VerifyEmailRequest(token=token)
+
+    with pytest.raises(HTTPException) as exc:
+        auth.verify_email(payload, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid or expired verification link" in exc.value.detail
 
 
 def test_resend_verification_public(user_repo, mock_auth_email, dummy_db):
@@ -854,8 +916,16 @@ def test_me_unverified_user():
     assert result.email_verified is False
 
 
-def test_me_legacy_user_grandfathered_without_verified_at():
-    user = DummyUser(email="legacy@example.com", email_verified_at=None)
-    user.email_verification_token_hash = None
+def test_me_legacy_user_grandfathered_via_migration_backfill():
+    from src.infrastructure.db.timezone_utils import ist_now
+
+    user = DummyUser(email="legacy@example.com", email_verified_at=ist_now())
     result = auth.me(current=user)
     assert result.email_verified is True
+
+
+def test_me_user_without_verified_at_is_not_verified():
+    user = DummyUser(email="broken@example.com", email_verified_at=None)
+    user.email_verification_token_hash = None
+    result = auth.me(current=user)
+    assert result.email_verified is False

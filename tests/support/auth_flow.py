@@ -7,7 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from server.app.core.auth_tokens import generate_token, hash_token
+from server.app.core.auth_tokens import auth_sent_at, generate_token, hash_token
 from src.infrastructure.db.models import Users
 
 
@@ -26,6 +26,7 @@ def verify_user_email(client: TestClient, db: Session | None, email: str) -> dic
         user = session.query(Users).filter(Users.email == email).one()
         raw_token = generate_token()
         user.email_verification_token_hash = hash_token(raw_token)
+        user.email_verification_sent_at = auth_sent_at()
         session.commit()
         response = client.post("/api/v1/auth/verify-email", json={"token": raw_token})
         assert response.status_code == 200, response.text

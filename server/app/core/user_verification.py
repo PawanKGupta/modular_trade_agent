@@ -8,10 +8,8 @@ EMAIL_NOT_VERIFIED_DETAIL = (
 
 
 def user_is_email_verified(user: Users) -> bool:
-    """True when verified, or legacy/admin account without a pending verification token."""
-    if user.email_verified_at is not None:
-        return True
-    return user.email_verification_token_hash is None
+    """True only when email_verified_at is set (verify link, admin mark, or migration backfill)."""
+    return user.email_verified_at is not None
 
 
 def require_verified_email(user: Users) -> None:

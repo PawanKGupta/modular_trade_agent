@@ -44,9 +44,11 @@ def test_signup_and_verify_returns_tokens(client, db_session):
 
 
 def test_admin_users_requires_admin(client, db_session):
-    u = UserRepository(db_session).create_user(
-        email="admin@example.com", password="Secret123!", role=UserRole.ADMIN
+    repo = UserRepository(db_session)
+    u = repo.create_user(
+        email="admin-users-test@example.com", password="Secret123!", role=UserRole.ADMIN
     )
+    repo.mark_email_verified(u)
     admin_token = create_jwt_token(str(u.id), extra={"uid": u.id, "roles": [u.role.value]})
 
     resp = client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {admin_token}"})

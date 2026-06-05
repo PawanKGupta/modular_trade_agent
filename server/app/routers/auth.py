@@ -11,12 +11,14 @@ from src.infrastructure.persistence.settings_repository import SettingsRepositor
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from ..core.auth_tokens import (
+    RESET_TOKEN_HOURS,
     auth_sent_at,
     generate_token,
     hash_token,
     is_expired,
     is_rate_limited,
     is_still_valid,
+    is_verification_expired,
     reset_expiry,
 )
 from ..core.config import settings
@@ -80,7 +82,6 @@ def _signup_message_response() -> SignupResponse:
 @router.post("/signup", response_model=SignupResponse)
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     try:
-        logger.info(f"Signup request for {payload.email}")
         user_repo = UserRepository(db)
         existing = user_repo.get_by_email(payload.email)
         email_service = AuthEmailService()
@@ -93,19 +94,25 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
                 )
+            user_repo.update_unverified_signup_credentials(
+                existing, password=payload.password, name=payload.name
+            )
             _send_verification(user_repo, existing, email_service)
+            logger.info("Unverified signup refresh user_id=%s — verification email sent", existing.id)
             return _signup_message_response()
-        logger.info("Creating user...")
-        user = user_repo.create_user(
-            email=payload.email, password=payload.password, name=payload.name, role=UserRole.USER
+        token = generate_token()
+        user = user_repo.create_pending_verification_user(
+            email=payload.email,
+            password=payload.password,
+            name=payload.name,
+            token_hash=hash_token(token),
+            sent_at=auth_sent_at(),
+            role=UserRole.USER,
         )
-        user.email_verified_at = None
-        db.commit()
-        db.refresh(user)
-        logger.info(f"User created id={user.id}, creating default settings...")
+        logger.info("User created id=%s, creating default settings...", user.id)
         SettingsRepository(db).ensure_default(user.id)
-        _send_verification(user_repo, user, email_service)
-        logger.info("Signup success — verification email sent")
+        email_service.send_verification_email(user.email, token)
+        logger.info("Signup success user_id=%s — verification email sent", user.id)
         return _signup_message_response()
     except HTTPException:
         raise
@@ -194,7 +201,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     user = user_repo.get_by_email(payload.email)
     if user and user.is_active:
         if is_still_valid(user.password_reset_expires_at):
-            sent_at = user.password_reset_expires_at - timedelta(hours=1)
+            sent_at = user.password_reset_expires_at - timedelta(hours=RESET_TOKEN_HOURS)
             if is_rate_limited(sent_at):
                 return MessageResponse(message=FORGOT_PASSWORD_MESSAGE)
         token = generate_token()
@@ -236,6 +243,11 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
             detail="Invalid or expired verification link",
         )
     if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification link",
+        )
+    if is_verification_expired(user.email_verification_sent_at):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification link",
