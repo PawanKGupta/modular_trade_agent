@@ -18,6 +18,10 @@ const sampleUsers = [
 	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, created_at: '', updated_at: '' },
 ];
 
+function getCreatePasswordInput() {
+	return document.getElementById('admin-create-password') as HTMLInputElement;
+}
+
 describe('AdminUsersPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -49,7 +53,7 @@ describe('AdminUsersPage', () => {
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'New User');
-		await userEvent.type(screen.getByLabelText(/^Password/i), 'Secret123!');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 		await waitFor(() => {
@@ -64,7 +68,7 @@ describe('AdminUsersPage', () => {
 		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
-		await userEvent.type(screen.getByLabelText(/^Password/i), 'Secret123!');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 		await waitFor(() => {
@@ -127,11 +131,11 @@ describe('AdminUsersPage', () => {
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'bad@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'Bad User');
-		await userEvent.type(screen.getByLabelText(/^Password/i), 'Secret123!');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 		await waitFor(() => {
-			expect(screen.getByText('Create failed')).toBeInTheDocument();
+			expect(screen.getByText('fail')).toBeInTheDocument();
 		});
 	});
 });

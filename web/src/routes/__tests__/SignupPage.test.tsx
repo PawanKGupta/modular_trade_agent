@@ -19,6 +19,36 @@ function renderWithRouter(ui: React.ReactElement) {
 	);
 }
 
+function getSignupForm() {
+	return screen.getByRole('button', { name: /sign up/i }).closest('form')!;
+}
+
+function submitSignupForm() {
+	fireEvent.submit(getSignupForm());
+}
+
+function fillSignupForm(options: {
+	email?: string;
+	name?: string;
+	password?: string;
+	confirmPassword?: string;
+} = {}) {
+	const email = options.email ?? 'new@example.com';
+	const name = options.name ?? 'New User';
+	const password = options.password ?? 'Secret123!';
+	const confirmPassword = options.confirmPassword ?? password;
+
+	fireEvent.change(document.querySelector('input[type="email"]')!, {
+		target: { value: email },
+	});
+	fireEvent.change(document.getElementById('name')!, {
+		target: { value: name },
+	});
+	const passwords = document.querySelectorAll('input[type="password"]');
+	fireEvent.change(passwords[0], { target: { value: password } });
+	fireEvent.change(passwords[1], { target: { value: confirmPassword } });
+}
+
 describe('SignupPage', () => {
 	it('shows product branding and version', () => {
 		renderWithRouter(<SignupPage />);
@@ -29,27 +59,16 @@ describe('SignupPage', () => {
 
 	it('shows check your email after successful signup', async () => {
 		renderWithRouter(<SignupPage />);
-		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
-		const name = document.querySelector('input[type="text"]') as HTMLInputElement;
-		const passwords = document.querySelectorAll('input[type="password"]');
-		fireEvent.change(email, { target: { value: 'new@example.com' } });
-		fireEvent.change(name, { target: { value: 'New User' } });
-		fireEvent.change(passwords[0], { target: { value: 'Secret123!' } });
-		fireEvent.change(passwords[1], { target: { value: 'Secret123!' } });
-		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
-		await screen.findByText('Check your email');
-		expect(screen.getByText(/verification link/i)).toBeInTheDocument();
+		fillSignupForm();
+		submitSignupForm();
+		await screen.findByRole('heading', { name: /check your email/i });
+		expect(screen.getByText(/We sent a verification link to/i)).toBeInTheDocument();
 	});
 
 	it('shows validation error for invalid email on submit', async () => {
 		renderWithRouter(<SignupPage />);
-		fireEvent.change(document.querySelector('input[type="email"]')!, {
-			target: { value: 'not-an-email' },
-		});
-		const passwords = document.querySelectorAll('input[type="password"]');
-		fireEvent.change(passwords[0], { target: { value: 'Secret123!' } });
-		fireEvent.change(passwords[1], { target: { value: 'Secret123!' } });
-		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+		fillSignupForm({ email: 'not-an-email', name: 'New User' });
+		submitSignupForm();
 		await waitFor(() => {
 			expect(screen.getByText('Enter a valid email address')).toBeInTheDocument();
 		});
@@ -67,13 +86,8 @@ describe('SignupPage', () => {
 
 	it('shows validation error when name is empty', async () => {
 		renderWithRouter(<SignupPage />);
-		fireEvent.change(document.querySelector('input[type="email"]')!, {
-			target: { value: 'new@example.com' },
-		});
-		const passwords = document.querySelectorAll('input[type="password"]');
-		fireEvent.change(passwords[0], { target: { value: 'Secret123!' } });
-		fireEvent.change(passwords[1], { target: { value: 'Secret123!' } });
-		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+		fillSignupForm({ name: '' });
+		submitSignupForm();
 		await waitFor(() => {
 			expect(screen.getByText('Name is required')).toBeInTheDocument();
 		});
@@ -81,33 +95,23 @@ describe('SignupPage', () => {
 
 	it('shows validation error for weak password', async () => {
 		renderWithRouter(<SignupPage />);
-		fireEvent.change(document.querySelector('input[type="email"]')!, {
-			target: { value: 'new@example.com' },
-		});
-		const passwords = document.querySelectorAll('input[type="password"]');
-		fireEvent.change(passwords[0], { target: { value: 'short1' } });
-		fireEvent.change(passwords[1], { target: { value: 'short1' } });
-		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+		fillSignupForm({ password: 'short1', confirmPassword: 'short1' });
+		submitSignupForm();
 		await waitFor(() => {
-			expect(screen.getByText(/at least 8 characters/i)).toBeInTheDocument();
+			expect(screen.getByText(/Password must include at least 8 characters/i)).toBeInTheDocument();
 		});
 	});
 
 	it('shows signup error when API rejects', async () => {
 		server.use(
 			http.post('http://localhost:8000/api/v1/auth/signup', () =>
-				HttpResponse.json({ detail: 'Email already registered' }, { status: 400 })
-			)
+				HttpResponse.json({ detail: 'Email already registered' }, { status: 400 }),
+			),
 		);
 
 		renderWithRouter(<SignupPage />);
-		fireEvent.change(document.querySelector('input[type="email"]')!, {
-			target: { value: 'dup@example.com' },
-		});
-		const passwords = document.querySelectorAll('input[type="password"]');
-		fireEvent.change(passwords[0], { target: { value: 'Secret123!' } });
-		fireEvent.change(passwords[1], { target: { value: 'Secret123!' } });
-		fireEvent.click(screen.getByRole('button', { name: /sign up/i }));
+		fillSignupForm({ email: 'dup@example.com' });
+		submitSignupForm();
 
 		await waitFor(() => {
 			expect(screen.getByText('Email already registered')).toBeInTheDocument();
