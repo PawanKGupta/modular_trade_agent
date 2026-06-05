@@ -18,14 +18,14 @@ export class SignupPage extends BasePage {
 	constructor(page: Page) {
 		super(page);
 
-		this.emailInput = page.locator('input[type="email"], input#email, input[name="email"]').first();
-		this.nameInput = page.locator('input[type="text"], input#name, input[name="name"]').first();
-		this.passwordInput = page.locator('input#password, input[name="password"]').first();
-		this.confirmPasswordInput = page.locator('input#confirmPassword, input[name="confirmPassword"]').first();
-		this.signupButton = page.getByRole('button', { name: /sign up|register|create account/i });
+		this.emailInput = page.locator('#email');
+		this.nameInput = page.locator('#name');
+		this.passwordInput = page.locator('#password');
+		this.confirmPasswordInput = page.locator('#confirmPassword');
+		this.signupButton = page.getByRole('button', { name: /^sign up$/i });
 		this.loginLink = page.getByRole('link', { name: /login/i });
-		this.errorMessage = page.locator('.text-red-400, [role="alert"]');
-		this.heading = page.getByRole('heading', { name: /create account|sign up/i });
+		this.errorMessage = page.locator('form div.text-red-400.mb-3');
+		this.heading = page.getByRole('heading', { name: /create account/i });
 	}
 
 	/**
@@ -42,13 +42,11 @@ export class SignupPage extends BasePage {
 	 */
 	async fillForm(email: string, password: string, name?: string): Promise<void> {
 		await this.fillWithRetry(this.emailInput, email);
-		if (name && (await this.isVisible(this.nameInput))) {
+		if (name) {
 			await this.fillWithRetry(this.nameInput, name);
 		}
 		await this.fillWithRetry(this.passwordInput, password);
-		if (await this.isVisible(this.confirmPasswordInput)) {
-			await this.fillWithRetry(this.confirmPasswordInput, password);
-		}
+		await this.fillWithRetry(this.confirmPasswordInput, password);
 	}
 
 	/**
@@ -64,7 +62,16 @@ export class SignupPage extends BasePage {
 	async signup(email: string, password: string, name?: string): Promise<void> {
 		await this.goto();
 		await this.fillForm(email, password, name);
-		await this.clickSignup();
+		await Promise.all([
+			this.page.waitForResponse(
+				(response) => response.url().includes('/auth/signup') && response.status() < 500,
+			),
+			this.clickSignup(),
+		]);
+		await this.page.getByRole('heading', { name: /check your email/i }).waitFor({
+			state: 'visible',
+			timeout: this.config.timeouts.navigation,
+		});
 	}
 
 	/**

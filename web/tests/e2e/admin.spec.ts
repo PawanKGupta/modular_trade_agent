@@ -56,41 +56,24 @@ test.describe('Admin Features', () => {
 		// Track user for cleanup BEFORE creating
 		testDataTracker.trackUser(email);
 
-		// Inputs use placeholders, not labels - use getByPlaceholder
-		const emailInput = authenticatedPage.getByPlaceholder(/Email/i);
-		await emailInput.fill(email);
+		await authenticatedPage.locator('#admin-create-email').fill(email);
+		await authenticatedPage.locator('#admin-create-name').fill(name);
+		await authenticatedPage.locator('#admin-create-password').fill(password);
 
-		const passwordInput = authenticatedPage.getByPlaceholder(/Password/i);
-		await passwordInput.fill(password);
+		const createButton = authenticatedPage.getByRole('button', { name: /^Create$/i });
+		await Promise.all([
+			authenticatedPage.waitForResponse(
+				(response) =>
+					response.url().includes('/admin/users') &&
+					response.request().method() === 'POST' &&
+					response.ok(),
+			),
+			createButton.click(),
+		]);
 
-		const nameInput = authenticatedPage.getByPlaceholder(/Name/i);
-		if (await nameInput.isVisible().catch(() => false)) {
-			await nameInput.fill(name);
-		}
-
-		// Wait for Create button to be enabled (button is enabled when email and password are filled)
-		const createButton = authenticatedPage.getByRole('button', { name: /Create/i });
-		await createButton.waitFor({ state: 'visible', timeout: 5000 });
-
-		// Wait for button to be enabled
-		await createButton.waitFor({ state: 'attached' });
-		await authenticatedPage.waitForTimeout(300); // Give React time to update button state
-
-		// Submit form
-		await createButton.click();
-
-		await authenticatedPage.waitForTimeout(2000);
-		await authenticatedPage.waitForLoadState('networkidle');
-
-		// Verify user was created (should appear in list or show success message)
-		const successMessage = authenticatedPage.getByText(/success|created|user/i);
-		const userInTable = authenticatedPage.getByText(email);
-
-		const hasSuccess = await successMessage.isVisible().catch(() => false);
-		const hasUser = await userInTable.isVisible().catch(() => false);
-
-		// Either success message or user in table should be visible
-		expect(hasSuccess || hasUser).toBe(true);
+		await expect(authenticatedPage.locator('table tbody').getByText(email, { exact: true })).toBeVisible({
+			timeout: 15000,
+		});
 	});
 
 	test('ML Training page is accessible to admin', async ({ authenticatedPage }) => {
