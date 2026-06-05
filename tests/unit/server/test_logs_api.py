@@ -15,29 +15,41 @@ from src.infrastructure.persistence.user_repository import UserRepository
 from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="admin-logs@example.com",
         password="Admin@123",
+        name="Admin Logs",
         role=UserRole.ADMIN,
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 @pytest.fixture
 def normal_user(db_session):
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="user-logs@example.com",
         password="User@123",
+        name="User Logs",
         role=UserRole.USER,
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 @pytest.fixture
 def other_user(db_session):
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="other-logs@example.com",
         password="Other@123",
+        name="Other Logs",
         role=UserRole.USER,
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 @pytest.fixture

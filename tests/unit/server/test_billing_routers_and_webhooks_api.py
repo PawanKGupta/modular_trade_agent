@@ -26,16 +26,22 @@ from src.infrastructure.persistence.user_repository import UserRepository
 
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="billing-admin@example.com", password="Admin@123", role=UserRole.ADMIN
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 @pytest.fixture
 def normal_user(db_session):
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="billing-user@example.com", password="User@123", role=UserRole.USER
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 @pytest.fixture

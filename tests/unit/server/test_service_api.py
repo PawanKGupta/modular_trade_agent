@@ -52,6 +52,7 @@ def test_user(db_session):
         name="Test User",
         role=UserRole.USER,
     )
+    repo.mark_email_verified(user)
     return user
 
 

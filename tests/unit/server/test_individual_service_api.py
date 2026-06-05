@@ -36,11 +36,14 @@ def client(db_session):
 @pytest.fixture
 def sample_user(db_session):
     """Create a sample user for testing"""
-    return UserRepository(db_session).create_user(
+    repo = UserRepository(db_session)
+    user = repo.create_user(
         email="test@example.com",
         password="Password123!",
         role=UserRole.USER,
     )
+    repo.mark_email_verified(user)
+    return user
 
 
 def login(client: TestClient, db_session, email: str, password: str) -> str:
