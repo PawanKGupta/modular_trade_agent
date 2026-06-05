@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+	deleteAdminOfflinePaymentQr,
 	getAdminBillingSettings,
 	getAdminOpenPerformanceBills,
 	getAdminTransactions,
@@ -9,8 +10,10 @@ import {
 	postAdminRefund,
 	recordAdminCashPayment,
 	runBillingReconcile,
+	uploadAdminOfflinePaymentQr,
 	type AdminPerformanceBill,
 	type BillingTransaction,
+	fetchOfflinePaymentQrBlob,
 } from '@/api/billing';
 
 function formatInrPaise(paise: number): string {
@@ -47,6 +50,33 @@ function TxTable({ rows, empty }: { rows: BillingTransaction[]; empty: string })
 	);
 }
 
+function OfflinePaymentQrPreview() {
+	const [src, setSrc] = useState<string | null>(null);
+
+	useEffect(() => {
+		let objectUrl: string | null = null;
+		let cancelled = false;
+		void fetchOfflinePaymentQrBlob().then((blob) => {
+			if (cancelled || !blob) return;
+			objectUrl = URL.createObjectURL(blob);
+			setSrc(objectUrl);
+		});
+		return () => {
+			cancelled = true;
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+		};
+	}, []);
+
+	if (!src) return null;
+	return (
+		<img
+			src={src}
+			alt="Uploaded payment QR preview"
+			className="max-w-[10rem] rounded border border-[#1e293b] bg-white p-1"
+		/>
+	);
+}
+
 export function AdminBillingPage() {
 	const qc = useQueryClient();
 	const [adminMsg, setAdminMsg] = useState<string | null>(null);
@@ -70,6 +100,8 @@ export function AdminBillingPage() {
 	const [offlineUpi, setOfflineUpi] = useState('');
 	const [offlineInstructions, setOfflineInstructions] = useState('');
 	const [offlineQrUrl, setOfflineQrUrl] = useState('');
+	const [offlineQrUploaded, setOfflineQrUploaded] = useState(false);
+	const qrFileInputRef = useRef<HTMLInputElement>(null);
 
 	const settingsQ = useQuery({ queryKey: ['adminBillingSettings'], queryFn: getAdminBillingSettings });
 	const s = settingsQ.data;
@@ -79,6 +111,7 @@ export function AdminBillingPage() {
 		setOfflineUpi(String(row.offline_payment_upi_id ?? ''));
 		setOfflineInstructions(String(row.offline_payment_instructions ?? ''));
 		setOfflineQrUrl(String(row.offline_payment_qr_image_url ?? ''));
+		setOfflineQrUploaded(Boolean(row.offline_payment_qr_uploaded));
 	}, [s]);
 
 	const txQ = useQuery({ queryKey: ['adminTx'], queryFn: () => getAdminTransactions({ limit: 100 }) });
@@ -122,6 +155,33 @@ export function AdminBillingPage() {
 		onError: (e: unknown) => {
 			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
 			setAdminMsg(d ?? 'Save failed');
+		},
+	});
+
+	const uploadQrM = useMutation({
+		mutationFn: uploadAdminOfflinePaymentQr,
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingSettings'] });
+			setOfflineQrUploaded(true);
+			setOfflineQrUrl('');
+			setAdminMsg('QR image uploaded.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(typeof d === 'string' ? d : 'QR upload failed');
+		},
+	});
+
+	const deleteQrM = useMutation({
+		mutationFn: deleteAdminOfflinePaymentQr,
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: ['adminBillingSettings'] });
+			setOfflineQrUploaded(false);
+			setAdminMsg('Uploaded QR removed.');
+		},
+		onError: (e: unknown) => {
+			const d = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+			setAdminMsg(typeof d === 'string' ? d : 'Could not remove QR');
 		},
 	});
 
@@ -232,12 +292,58 @@ export function AdminBillingPage() {
 								/>
 							</label>
 							<label className="flex flex-col gap-1">
-								<span className="text-xs text-[var(--muted)]">QR image URL (Paytm static QR hosted link)</span>
+								<span className="text-xs text-[var(--muted)]">Payment QR code</span>
+								<p className="text-[11px] text-[var(--muted)] leading-relaxed">
+									Upload a PNG/JPEG/WebP/GIF (max 2 MB). Shown on user Billing when offline checkout is
+									active. Upload replaces any hosted URL below.
+								</p>
+								<div className="flex flex-wrap items-center gap-2 mt-1">
+									<input
+										ref={qrFileInputRef}
+										type="file"
+										accept="image/png,image/jpeg,image/webp,image/gif"
+										className="hidden"
+										onChange={(e) => {
+											const file = e.target.files?.[0];
+											e.target.value = '';
+											if (file) uploadQrM.mutate(file);
+										}}
+									/>
+									<button
+										type="button"
+										className="px-3 py-1.5 rounded bg-slate-600 text-white text-sm disabled:opacity-40"
+										disabled={uploadQrM.isPending}
+										onClick={() => qrFileInputRef.current?.click()}
+									>
+										{uploadQrM.isPending ? 'Uploading…' : 'Upload QR image'}
+									</button>
+									{offlineQrUploaded ? (
+										<button
+											type="button"
+											className="px-3 py-1.5 rounded border border-[#1e293b] text-sm text-[var(--muted)] hover:text-[var(--text)]"
+											disabled={deleteQrM.isPending}
+											onClick={() => deleteQrM.mutate()}
+										>
+											Remove uploaded QR
+										</button>
+									) : null}
+								</div>
+								{offlineQrUploaded ? (
+									<div className="mt-2">
+										<OfflinePaymentQrPreview key={String(settingsQ.dataUpdatedAt ?? 'qr')} />
+									</div>
+								) : null}
+							</label>
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">
+									Or hosted QR image URL (optional if you uploaded above)
+								</span>
 								<input
 									className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
 									value={offlineQrUrl}
 									onChange={(e) => setOfflineQrUrl(e.target.value)}
 									placeholder="https://…/paytm-qr.png"
+									disabled={offlineQrUploaded}
 								/>
 							</label>
 							<label className="flex flex-col gap-1">

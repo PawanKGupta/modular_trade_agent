@@ -13,6 +13,9 @@ vi.mock('@/api/billing', () => ({
 	postAdminRefund: vi.fn(),
 	recordAdminCashPayment: vi.fn(),
 	runBillingReconcile: vi.fn(),
+	uploadAdminOfflinePaymentQr: vi.fn(),
+	deleteAdminOfflinePaymentQr: vi.fn(),
+	fetchOfflinePaymentQrBlob: vi.fn(),
 }));
 
 describe('AdminBillingPage', () => {
@@ -25,6 +28,7 @@ describe('AdminBillingPage', () => {
 			offline_payment_upi_id: 'beta@paytm',
 			offline_payment_instructions: 'Pay exact amount',
 			offline_payment_qr_image_url: 'https://example.com/qr.png',
+			offline_payment_qr_uploaded: false,
 			razorpay_key_id_preview: 'rzp_test',
 			razorpay_api_configured: true,
 			razorpay_webhook_configured: false,

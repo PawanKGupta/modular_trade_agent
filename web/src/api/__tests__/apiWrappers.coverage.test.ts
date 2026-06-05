@@ -73,6 +73,7 @@ describe('api wrappers (mocked client)', () => {
 		await billing.getPerformanceFeeArrears();
 		await billing.getPerformanceBills(10);
 		await billing.getBillingPaymentOptions();
+		await billing.fetchOfflinePaymentQrBlob();
 		await billing.checkoutPerformanceBill(3);
 		await billing.createRazorpayOrder({ amount_paise: 100 });
 		await billing.verifyRazorpayPayment({
@@ -82,6 +83,8 @@ describe('api wrappers (mocked client)', () => {
 		});
 		await billing.getAdminBillingSettings();
 		await billing.patchAdminBillingSettings({ payment_card_enabled: true });
+		await billing.uploadAdminOfflinePaymentQr(new File(['x'], 'qr.png', { type: 'image/png' }));
+		await billing.deleteAdminOfflinePaymentQr();
 		await billing.patchAdminRazorpayCredentials({ razorpay_key_id: 'k' });
 		await billing.getAdminTransactions({ user_id: 1, failed_only: true });
 		await billing.runBillingReconcile();

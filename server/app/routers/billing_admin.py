@@ -1,11 +1,16 @@
 # ruff: noqa: B008, PLR0911
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from server.app.core.crypto import (
     MissingDedicatedEncryptionKeyError,
     assert_db_secret_encryption_allowed,
     encrypt_blob,
+)
+from src.application.services.billing_offline_qr_storage import (
+    OfflinePaymentQrValidationError,
+    delete_offline_payment_qr,
+    save_offline_payment_qr,
 )
 from src.application.services.billing_reconciliation_service import BillingReconciliationService
 from src.application.services.performance_bill_payment_service import (
@@ -78,6 +83,8 @@ def patch_billing_settings(
     db: Session = Depends(get_db),
 ):
     data = payload.model_dump(exclude_unset=True)
+    if data.get("offline_payment_qr_image_url"):
+        delete_offline_payment_qr()
     s = BillingRepository(db).update_admin_settings(**data)
     return {
         "payment_card_enabled": s.payment_card_enabled,
@@ -87,6 +94,28 @@ def patch_billing_settings(
         "performance_fee_default_percentage": float(s.performance_fee_default_percentage),
         **razorpay_admin_meta(s),
     }
+
+
+@router.post("/billing/offline-payment-qr")
+async def upload_offline_payment_qr(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Store an offline payment QR image (PNG/JPEG/WebP/GIF, max 2 MB). Replaces any prior upload."""
+    content = await file.read()
+    try:
+        save_offline_payment_qr(content, file.content_type)
+    except OfflinePaymentQrValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    BillingRepository(db).update_admin_settings(offline_payment_qr_image_url=None)
+    return {"ok": True, "offline_payment_qr_uploaded": True}
+
+
+@router.delete("/billing/offline-payment-qr")
+def remove_offline_payment_qr_upload():
+    """Remove the admin-uploaded offline payment QR image."""
+    delete_offline_payment_qr()
+    return {"ok": True, "offline_payment_qr_uploaded": False}
 
 
 @router.patch("/billing/razorpay-credentials")

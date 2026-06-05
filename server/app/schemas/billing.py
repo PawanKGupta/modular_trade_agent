@@ -24,6 +24,7 @@ class UserBillingPaymentOptionsOut(BaseModel):
     online_payments_enabled: bool
     offline_upi_id: str | None = None
     offline_instructions: str | None = None
+    offline_qr_uploaded: bool = False
     offline_qr_image_url: str | None = None
 
 

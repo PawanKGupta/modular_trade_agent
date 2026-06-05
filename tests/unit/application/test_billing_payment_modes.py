@@ -16,6 +16,7 @@ def test_online_payments_default_false(db_session):
     assert info["offline_upi_id"] is None
     assert info["offline_instructions"] is None
     assert info["offline_qr_image_url"] is None
+    assert info["offline_qr_uploaded"] is False
 
 
 def test_admin_offline_payment_settings_uses_db_field_names(db_session):
@@ -31,6 +32,7 @@ def test_admin_offline_payment_settings_uses_db_field_names(db_session):
     assert admin["offline_payment_upi_id"] == "merchant@paytm"
     assert "bill #" in (admin["offline_payment_instructions"] or "")
     assert admin["offline_payment_qr_image_url"] == "https://example.com/qr.png"
+    assert admin["offline_payment_qr_uploaded"] is False
 
 
 def test_offline_payment_info_payload(db_session):

@@ -62,12 +62,23 @@ export type BillingPaymentOptions = {
 	online_payments_enabled: boolean;
 	offline_upi_id: string | null;
 	offline_instructions: string | null;
+	offline_qr_uploaded: boolean;
 	offline_qr_image_url: string | null;
 };
 
 export async function getBillingPaymentOptions(): Promise<BillingPaymentOptions> {
 	const res = await api.get<BillingPaymentOptions>('/user/billing/payment-options');
 	return res.data;
+}
+
+/** Authenticated fetch of admin-uploaded offline payment QR (use with object URL). */
+export async function fetchOfflinePaymentQrBlob(): Promise<Blob | null> {
+	try {
+		const res = await api.get<Blob>('/user/billing/offline-payment-qr', { responseType: 'blob' });
+		return res.data;
+	} catch {
+		return null;
+	}
 }
 
 export type PerformanceFeeCheckout = {
@@ -124,6 +135,26 @@ export async function patchAdminBillingSettings(
 	body: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
 	const res = await api.patch('/admin/billing/settings', body);
+	return res.data;
+}
+
+export async function uploadAdminOfflinePaymentQr(
+	file: File
+): Promise<{ ok: boolean; offline_payment_qr_uploaded: boolean }> {
+	const form = new FormData();
+	form.append('file', file);
+	const res = await api.post<{ ok: boolean; offline_payment_qr_uploaded: boolean }>(
+		'/admin/billing/offline-payment-qr',
+		form,
+		{ headers: { 'Content-Type': 'multipart/form-data' } }
+	);
+	return res.data;
+}
+
+export async function deleteAdminOfflinePaymentQr(): Promise<{ ok: boolean; offline_payment_qr_uploaded: boolean }> {
+	const res = await api.delete<{ ok: boolean; offline_payment_qr_uploaded: boolean }>(
+		'/admin/billing/offline-payment-qr'
+	);
 	return res.data;
 }
 
