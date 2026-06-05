@@ -8,10 +8,33 @@ import { useSessionStore } from '@/state/sessionStore';
 vi.mock('@/api/billing', () => ({
 	getMyBillingTransactions: vi.fn(),
 	getPerformanceBills: vi.fn(),
+	getBillingPaymentOptions: vi.fn(),
 	checkoutPerformanceBill: vi.fn(),
 	createRazorpayOrder: vi.fn(),
 	verifyRazorpayPayment: vi.fn(),
 }));
+
+const onlinePaymentOptions = {
+	online_payments_enabled: true,
+	offline_upi_id: null,
+	offline_instructions: null,
+	offline_qr_image_url: null,
+};
+
+function mockOnlineCheckoutEnabled() {
+	vi.mocked(billingApi.getBillingPaymentOptions).mockResolvedValue(onlinePaymentOptions as never);
+}
+
+const offlinePaymentOptions = {
+	online_payments_enabled: false,
+	offline_upi_id: 'beta@paytm',
+	offline_instructions: 'Include bill # in note',
+	offline_qr_image_url: null,
+};
+
+function mockOfflinePaymentEnabled() {
+	vi.mocked(billingApi.getBillingPaymentOptions).mockResolvedValue(offlinePaymentOptions as never);
+}
 
 describe('BillingPage', () => {
 	beforeEach(() => {
@@ -21,6 +44,7 @@ describe('BillingPage', () => {
 			{ id: 1, status: 'paid', amount_paise: 50000, created_at: '2025-01-01' },
 		] as never);
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([]);
+		mockOfflinePaymentEnabled();
 	});
 
 	it('renders billing sections with transaction history', async () => {
@@ -34,7 +58,32 @@ describe('BillingPage', () => {
 		});
 	});
 
-	it('shows performance bills with pay button for pending bills', async () => {
+	it('shows offline UPI instructions instead of Pay now when online checkout disabled', async () => {
+		mockOfflinePaymentEnabled();
+		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
+			{
+				id: 10,
+				bill_month: '2025-01',
+				status: 'pending_payment',
+				due_at: '2025-02-01T00:00:00',
+				paid_at: null,
+				current_month_pnl: 1000,
+				fee_percentage: 10,
+				payable_amount: 100,
+			},
+		] as never);
+
+		render(withProviders(<BillingPage />));
+
+		await waitFor(() => {
+			expect(screen.getAllByText('beta@paytm').length).toBeGreaterThan(0);
+			expect(screen.getAllByText(/Pay via UPI/i).length).toBeGreaterThan(0);
+		});
+		expect(screen.queryByRole('button', { name: /Pay now/i })).not.toBeInTheDocument();
+	});
+
+	it('shows performance bills with pay button for pending bills when online enabled', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 10,
@@ -52,11 +101,12 @@ describe('BillingPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getAllByText(/2025-01/).length).toBeGreaterThan(0);
-			expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument();
 		});
 	});
 
 	it('starts performance fee checkout and verifies payment', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 10,
@@ -90,9 +140,9 @@ describe('BillingPage', () => {
 		window.Razorpay = RazorpayMock as never;
 
 		render(withProviders(<BillingPage />));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument());
 
-		fireEvent.click(screen.getByRole('button', { name: 'Pay now' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Pay now (online)' }));
 		await waitFor(() => {
 			expect(billingApi.checkoutPerformanceBill).toHaveBeenCalledWith(10);
 			expect(openMock).toHaveBeenCalled();
@@ -110,6 +160,7 @@ describe('BillingPage', () => {
 	});
 
 	it('shows checkout error when performance payment fails to start', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 11,
@@ -127,8 +178,8 @@ describe('BillingPage', () => {
 		});
 
 		render(withProviders(<BillingPage />));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: 'Pay now' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Pay now (online)' }));
 
 		await waitFor(() => {
 			expect(screen.getByText(/Checkout unavailable/i)).toBeInTheDocument();
@@ -136,6 +187,7 @@ describe('BillingPage', () => {
 	});
 
 	it('opens test checkout panel via admin button when no bills', async () => {
+		mockOnlineCheckoutEnabled();
 		useSessionStore.setState({ isAdmin: true, user: { id: 1, email: 'a@x.com', roles: ['admin'] } as never });
 		render(withProviders(<BillingPage />));
 
@@ -145,6 +197,7 @@ describe('BillingPage', () => {
 	});
 
 	it('runs admin test checkout and reports unverified payment', async () => {
+		mockOnlineCheckoutEnabled();
 		useSessionStore.setState({ isAdmin: true, user: { id: 1, email: 'a@x.com', roles: ['admin'] } as never });
 		const openMock = vi.fn();
 		let capturedHandler: ((response: Record<string, string>) => void) | undefined;
@@ -181,6 +234,7 @@ describe('BillingPage', () => {
 	});
 
 	it('shows checkout dismissed message for performance fee payment', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 10,
@@ -209,8 +263,8 @@ describe('BillingPage', () => {
 		window.Razorpay = RazorpayMock as never;
 
 		render(withProviders(<BillingPage />));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: 'Pay now' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Pay now (online)' }));
 		await waitFor(() => expect(onDismiss).toBeDefined());
 
 		onDismiss?.();
@@ -220,6 +274,7 @@ describe('BillingPage', () => {
 	});
 
 	it('shows verification error when performance payment verify fails', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 10,
@@ -248,8 +303,8 @@ describe('BillingPage', () => {
 		window.Razorpay = RazorpayMock as never;
 
 		render(withProviders(<BillingPage />));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: 'Pay now' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Pay now (online)' }));
 		await waitFor(() => expect(capturedHandler).toBeDefined());
 
 		vi.mocked(billingApi.verifyRazorpayPayment).mockRejectedValue({
@@ -266,6 +321,7 @@ describe('BillingPage', () => {
 	});
 
 	it('displays paid bill details and handles test payment failure event', async () => {
+		mockOnlineCheckoutEnabled();
 		useSessionStore.setState({ isAdmin: true, user: { id: 1, email: 'a@x.com', roles: ['admin'] } as never });
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
@@ -309,6 +365,7 @@ describe('BillingPage', () => {
 	});
 
 	it('reports when checkout data is incomplete for performance payment', async () => {
+		mockOnlineCheckoutEnabled();
 		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
 			{
 				id: 10,
@@ -330,14 +387,15 @@ describe('BillingPage', () => {
 		} as never);
 
 		render(withProviders(<BillingPage />));
-		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now' })).toBeInTheDocument());
-		fireEvent.click(screen.getByRole('button', { name: 'Pay now' }));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Pay now (online)' })).toBeInTheDocument());
+		fireEvent.click(screen.getByRole('button', { name: 'Pay now (online)' }));
 		await waitFor(() => {
 			expect(screen.getByText(/Razorpay is not available or checkout data is incomplete/i)).toBeInTheDocument();
 		});
 	});
 
 	it('updates test checkout amount input', async () => {
+		mockOnlineCheckoutEnabled();
 		useSessionStore.setState({ isAdmin: true, user: { id: 1, email: 'a@x.com', roles: ['admin'] } as never });
 		render(withProviders(<BillingPage />));
 		await waitFor(() => expect(screen.getByText(/Dev — Test Razorpay checkout/i)).toBeInTheDocument());
@@ -348,6 +406,7 @@ describe('BillingPage', () => {
 	});
 
 	it('shows error when test checkout order creation fails', async () => {
+		mockOnlineCheckoutEnabled();
 		useSessionStore.setState({ isAdmin: true, user: { id: 1, email: 'a@x.com', roles: ['admin'] } as never });
 		vi.mocked(billingApi.createRazorpayOrder).mockRejectedValue({
 			response: { data: { detail: 'Order create failed' } },

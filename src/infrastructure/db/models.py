@@ -1390,6 +1390,10 @@ class BillingAdminSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     payment_card_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     payment_upi_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    online_payments_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    offline_payment_upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    offline_payment_instructions: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    offline_payment_qr_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Broker performance fee: bill due N days after invoice generation (admin configurable).
     performance_fee_payment_days_after_invoice: Mapped[int] = mapped_column(
         Integer, default=15, nullable=False

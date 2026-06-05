@@ -302,6 +302,41 @@ class TestBillingAdminRouter:
 
 
 class TestBillingUserRouter:
+    def test_payment_options_offline_by_default(self, client: TestClient, normal_user):
+        token = _login(client, normal_user.email, "User@123")
+        r = client.get(
+            "/api/v1/user/billing/payment-options",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["online_payments_enabled"] is False
+
+    def test_checkout_forbidden_when_online_disabled(self, client: TestClient, normal_user, db_session):
+        bill = MonthlyPerformanceBill(
+            user_id=normal_user.id,
+            bill_month=date(2026, 6, 1),
+            generated_at=datetime(2026, 6, 5, 12, 0, 0),
+            due_at=datetime(2026, 6, 30, 12, 0, 0),
+            previous_carry_forward_loss=0.0,
+            current_month_pnl=500.0,
+            fee_percentage=10.0,
+            chargeable_profit=200.0,
+            fee_amount=20.0,
+            new_carry_forward_loss=0.0,
+            payable_amount=20.0,
+            status=PerformanceBillStatus.PENDING_PAYMENT,
+        )
+        db_session.add(bill)
+        db_session.commit()
+        db_session.refresh(bill)
+        token = _login(client, normal_user.email, "User@123")
+        r = client.post(
+            f"/api/v1/user/billing/performance-bills/{bill.id}/checkout",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
     def test_performance_fee_arrears_and_bills(self, client: TestClient, normal_user):
         token = _login(client, normal_user.email, "User@123")
         r = client.get(
@@ -337,6 +372,7 @@ class TestBillingUserRouter:
         db_session.commit()
         db_session.refresh(bill)
         token = _login(client, normal_user.email, "User@123")
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         with patch(
             "src.application.services.performance_fee_checkout_service.get_razorpay_gateway"
         ) as m_gw:
@@ -368,6 +404,7 @@ class TestBillingUserRouter:
         db_session.commit()
         db_session.refresh(bill)
         token = _login(client, normal_user.email, "User@123")
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         with patch(
             "src.application.services.performance_fee_checkout_service.get_razorpay_gateway"
         ) as m_gw:
@@ -385,7 +422,8 @@ class TestBillingUserRouter:
         assert data["order_id"] == "order_123"
         assert data["bill_id"] == bill.id
 
-    def test_razorpay_create_order_amount_too_large(self, client: TestClient, normal_user):
+    def test_razorpay_create_order_amount_too_large(self, client: TestClient, normal_user, db_session):
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         token = _login(client, normal_user.email, "User@123")
         r = client.post(
             "/api/v1/user/billing/razorpay/create-order",
@@ -394,7 +432,8 @@ class TestBillingUserRouter:
         )
         assert r.status_code == 400
 
-    def test_razorpay_create_order_no_keys_503(self, client: TestClient, normal_user):
+    def test_razorpay_create_order_no_keys_503(self, client: TestClient, normal_user, db_session):
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         token = _login(client, normal_user.email, "User@123")
         with (
             patch("server.app.routers.billing_user.resolve_razorpay_key_id", return_value=None),
@@ -407,7 +446,8 @@ class TestBillingUserRouter:
             )
         assert r.status_code == 503
 
-    def test_razorpay_create_order_success_and_auth_error(self, client: TestClient, normal_user):
+    def test_razorpay_create_order_success_and_auth_error(self, client: TestClient, normal_user, db_session):
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         token = _login(client, normal_user.email, "User@123")
         with (
             patch(
@@ -459,6 +499,7 @@ class TestBillingUserRouter:
             assert r4.status_code == 500
 
     def test_razorpay_verify_payment_paths(self, client: TestClient, normal_user, db_session):
+        BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
         token = _login(client, normal_user.email, "User@123")
         r = client.post(
             "/api/v1/user/billing/razorpay/verify-payment",

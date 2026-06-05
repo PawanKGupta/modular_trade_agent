@@ -7,6 +7,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from src.application.services.billing_payment_modes import (
+    OFFLINE_PAYMENTS_DISABLED_DETAIL,
+    get_admin_settings,
+    online_payments_enabled,
+)
 from src.application.services.razorpay_credentials import get_razorpay_gateway
 from src.infrastructure.db.models import PerformanceBillStatus, Users
 from src.infrastructure.persistence.performance_billing_repository import (
@@ -35,6 +40,10 @@ class PerformanceFeeCheckoutService:
         self._repo = PerformanceBillingRepository(db)
 
     def create_order_for_bill(self, user: Users, bill_id: int) -> dict[str, Any]:
+        admin_settings = get_admin_settings(self.db)
+        if not online_payments_enabled(admin_settings):
+            raise PerformanceFeeCheckoutError(OFFLINE_PAYMENTS_DISABLED_DETAIL)
+
         bill = self._repo.get_bill_owned_by_user(bill_id, user.id)
         if not bill:
             raise PerformanceFeeCheckoutError("Bill not found")

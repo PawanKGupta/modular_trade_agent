@@ -72,6 +72,7 @@ describe('api wrappers (mocked client)', () => {
 		await billing.getMyBillingTransactions(5);
 		await billing.getPerformanceFeeArrears();
 		await billing.getPerformanceBills(10);
+		await billing.getBillingPaymentOptions();
 		await billing.checkoutPerformanceBill(3);
 		await billing.createRazorpayOrder({ amount_paise: 100 });
 		await billing.verifyRazorpayPayment({

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
 	getAdminBillingSettings,
 	getAdminOpenPerformanceBills,
@@ -67,8 +67,20 @@ export function AdminBillingPage() {
 	const [cashBillsUserFilter, setCashBillsUserFilter] = useState<number | undefined>(undefined);
 	const [openBillsRequested, setOpenBillsRequested] = useState(false);
 
+	const [offlineUpi, setOfflineUpi] = useState('');
+	const [offlineInstructions, setOfflineInstructions] = useState('');
+	const [offlineQrUrl, setOfflineQrUrl] = useState('');
+
 	const settingsQ = useQuery({ queryKey: ['adminBillingSettings'], queryFn: getAdminBillingSettings });
 	const s = settingsQ.data;
+	useEffect(() => {
+		if (!s) return;
+		const row = s as Record<string, unknown>;
+		setOfflineUpi(String(row.offline_payment_upi_id ?? ''));
+		setOfflineInstructions(String(row.offline_payment_instructions ?? ''));
+		setOfflineQrUrl(String(row.offline_payment_qr_image_url ?? ''));
+	}, [s]);
+
 	const txQ = useQuery({ queryKey: ['adminTx'], queryFn: () => getAdminTransactions({ limit: 100 }) });
 	const failedQ = useQuery({
 		queryKey: ['adminTxFailed'],
@@ -174,27 +186,84 @@ export function AdminBillingPage() {
 			{adminMsg ? <p className="text-sm text-amber-300 whitespace-pre-wrap">{adminMsg}</p> : null}
 
 			<section className="p-4 rounded border border-[#1e293b] space-y-3">
-				<h2 className="font-medium">Payment toggles</h2>
+				<h2 className="font-medium">Customer payments (beta)</h2>
+				<p className="text-xs text-[var(--muted)] leading-relaxed">
+					When checkout is off, users pay via UPI/QR. Use{' '}
+					<strong className="font-normal text-[var(--text)]">Record cash payment</strong> below after they pay.
+				</p>
 				{settingsQ.isLoading ? (
 					<p className="text-sm text-[var(--muted)]">Loading…</p>
 				) : (
-					<div className="flex flex-wrap gap-4 text-sm">
+					<div className="space-y-4 text-sm">
 						<label className="flex items-center gap-2">
 							<input
 								type="checkbox"
-								checked={Boolean(s?.payment_card_enabled)}
-								onChange={(e) => patchM.mutate({ payment_card_enabled: e.target.checked })}
+								checked={Boolean((s as Record<string, unknown>)?.online_payments_enabled)}
+								onChange={(e) => patchM.mutate({ online_payments_enabled: e.target.checked })}
 							/>
-							Card
+							Enable Razorpay checkout on user Billing page
 						</label>
-						<label className="flex items-center gap-2">
-							<input
-								type="checkbox"
-								checked={Boolean(s?.payment_upi_enabled)}
-								onChange={(e) => patchM.mutate({ payment_upi_enabled: e.target.checked })}
-							/>
-							UPI
-						</label>
+						<div className="flex flex-wrap gap-4 text-xs text-[var(--muted)]">
+							<label className="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={Boolean(s?.payment_card_enabled)}
+									onChange={(e) => patchM.mutate({ payment_card_enabled: e.target.checked })}
+								/>
+								Card (Razorpay, when online enabled)
+							</label>
+							<label className="flex items-center gap-2">
+								<input
+									type="checkbox"
+									checked={Boolean(s?.payment_upi_enabled)}
+									onChange={(e) => patchM.mutate({ payment_upi_enabled: e.target.checked })}
+								/>
+								UPI in Razorpay modal (when online enabled)
+							</label>
+						</div>
+						<div className="grid gap-3 max-w-lg">
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">Offline UPI ID (VPA)</span>
+								<input
+									className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+									value={offlineUpi}
+									onChange={(e) => setOfflineUpi(e.target.value)}
+									placeholder="8565859556@apl"
+								/>
+							</label>
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">QR image URL (Paytm static QR hosted link)</span>
+								<input
+									className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
+									value={offlineQrUrl}
+									onChange={(e) => setOfflineQrUrl(e.target.value)}
+									placeholder="https://…/paytm-qr.png"
+								/>
+							</label>
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">Instructions (shown on user Billing)</span>
+								<textarea
+									className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b] min-h-[4rem]"
+									value={offlineInstructions}
+									onChange={(e) => setOfflineInstructions(e.target.value)}
+									placeholder="Pay exact amount; bill # and email in note."
+								/>
+							</label>
+							<button
+								type="button"
+								className="px-3 py-1.5 rounded bg-slate-600 text-white w-fit text-sm"
+								disabled={patchM.isPending}
+								onClick={() =>
+									patchM.mutate({
+										offline_payment_upi_id: offlineUpi.trim() || null,
+										offline_payment_instructions: offlineInstructions.trim() || null,
+										offline_payment_qr_image_url: offlineQrUrl.trim() || null,
+									})
+								}
+							>
+								Save offline payment details
+							</button>
+						</div>
 					</div>
 				)}
 			</section>
