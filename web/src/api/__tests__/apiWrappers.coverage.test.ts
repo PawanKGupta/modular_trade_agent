@@ -74,6 +74,8 @@ describe('api wrappers (mocked client)', () => {
 		await billing.getPerformanceBills(10);
 		await billing.getBillingPaymentOptions();
 		await billing.fetchOfflinePaymentQrBlob();
+		hoisted.api.get.mockRejectedValueOnce(new Error('not found'));
+		expect(await billing.fetchOfflinePaymentQrBlob()).toBeNull();
 		await billing.checkoutPerformanceBill(3);
 		await billing.createRazorpayOrder({ amount_paise: 100 });
 		await billing.verifyRazorpayPayment({
