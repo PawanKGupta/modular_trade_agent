@@ -787,11 +787,15 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 **Purpose:** Confirm email ownership from the verification link sent after signup. On success, the app stores auth tokens and redirects to the dashboard (auto-login).
 
+Verification links expire **72 hours** after they are sent; use resend verification if the link is older than that.
+
 ---
 
 ### 21. Resend verification (`/resend-verification`)
 
 **Purpose:** Public form to request a new verification email when signup succeeded but the link was lost or expired. Linked from login and the post-signup “check your email” screen.
+
+Each new link is valid for **72 hours** from when the email is sent (same window as the original signup verification email).
 
 ---
 

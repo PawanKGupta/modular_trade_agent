@@ -88,7 +88,11 @@ def test_admin_endpoints_and_constraints():
 
     client.post(
         "/api/v1/auth/signup",
-        json={"email": f"n{random.randint(1, 1_000_000)}@example.com", "password": "Secret123!"},
+        json={
+            "email": f"n{random.randint(1, 1_000_000)}@example.com",
+            "password": "Secret123!",
+            "name": "Normal User",
+        },
     )
     from server.app.core.security import create_jwt_token
     from src.infrastructure.db.models import UserRole
@@ -98,11 +102,19 @@ def test_admin_endpoints_and_constraints():
     db = SessionLocal()
     repo = UserRepository(db)
     a1 = repo.create_user(
-        f"a{random.randint(1, 1_000_000)}@example.com", "Admin123!", role=UserRole.ADMIN
+        f"a{random.randint(1, 1_000_000)}@example.com",
+        "Admin123!",
+        name="Admin One",
+        role=UserRole.ADMIN,
     )
     a2 = repo.create_user(
-        f"a{random.randint(1, 1_000_000)}@example.com", "Admin123!", role=UserRole.ADMIN
+        f"a{random.randint(1, 1_000_000)}@example.com",
+        "Admin123!",
+        name="Admin Two",
+        role=UserRole.ADMIN,
     )
+    repo.mark_email_verified(a1)
+    repo.mark_email_verified(a2)
     a1_id, a2_id = a1.id, a2.id
     db.close()
     # token for a1
