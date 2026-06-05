@@ -9,6 +9,7 @@ vi.mock('@/api/billing', () => ({
 	getMyBillingTransactions: vi.fn(),
 	getPerformanceBills: vi.fn(),
 	getBillingPaymentOptions: vi.fn(),
+	fetchOfflinePaymentQrBlob: vi.fn(),
 	checkoutPerformanceBill: vi.fn(),
 	createRazorpayOrder: vi.fn(),
 	verifyRazorpayPayment: vi.fn(),
@@ -18,6 +19,7 @@ const onlinePaymentOptions = {
 	online_payments_enabled: true,
 	offline_upi_id: null,
 	offline_instructions: null,
+	offline_qr_uploaded: false,
 	offline_qr_image_url: null,
 };
 
@@ -29,11 +31,13 @@ const offlinePaymentOptions = {
 	online_payments_enabled: false,
 	offline_upi_id: 'beta@paytm',
 	offline_instructions: 'Include bill # in note',
+	offline_qr_uploaded: false,
 	offline_qr_image_url: null,
 };
 
 function mockOfflinePaymentEnabled() {
 	vi.mocked(billingApi.getBillingPaymentOptions).mockResolvedValue(offlinePaymentOptions as never);
+	vi.mocked(billingApi.fetchOfflinePaymentQrBlob).mockResolvedValue(null);
 }
 
 describe('BillingPage', () => {
@@ -76,10 +80,65 @@ describe('BillingPage', () => {
 		render(withProviders(<BillingPage />));
 
 		await waitFor(() => {
-			expect(screen.getAllByText('beta@paytm').length).toBeGreaterThan(0);
-			expect(screen.getAllByText(/Pay via UPI/i).length).toBeGreaterThan(0);
+			expect(screen.getByText('beta@paytm')).toBeInTheDocument();
+			expect(screen.getByRole('heading', { name: 'Pay via UPI' })).toBeInTheDocument();
 		});
 		expect(screen.queryByRole('button', { name: /Pay now/i })).not.toBeInTheDocument();
+	});
+
+	it('shows uploaded offline QR image when configured', async () => {
+		vi.mocked(billingApi.getBillingPaymentOptions).mockResolvedValue({
+			...offlinePaymentOptions,
+			offline_qr_uploaded: true,
+		} as never);
+		vi.mocked(billingApi.fetchOfflinePaymentQrBlob).mockResolvedValue(
+			new Blob(['qr'], { type: 'image/png' })
+		);
+		const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:qr-preview');
+
+		render(withProviders(<BillingPage />));
+
+		await waitFor(() => {
+			expect(screen.getByAltText('Payment QR code')).toHaveAttribute('src', 'blob:qr-preview');
+		});
+		createObjectUrl.mockRestore();
+	});
+
+	it('shows hosted QR URL when no upload is configured', async () => {
+		vi.mocked(billingApi.getBillingPaymentOptions).mockResolvedValue({
+			...offlinePaymentOptions,
+			offline_qr_uploaded: false,
+			offline_qr_image_url: 'https://example.com/qr.png',
+		} as never);
+
+		render(withProviders(<BillingPage />));
+
+		await waitFor(() => {
+			expect(screen.getByAltText('Payment QR code')).toHaveAttribute('src', 'https://example.com/qr.png');
+		});
+	});
+
+	it('shows per-invoice offline pay hint for open bills', async () => {
+		mockOfflinePaymentEnabled();
+		vi.mocked(billingApi.getPerformanceBills).mockResolvedValue([
+			{
+				id: 10,
+				bill_month: '2025-01',
+				status: 'pending_payment',
+				due_at: '2025-02-01T00:00:00',
+				paid_at: null,
+				current_month_pnl: 1000,
+				fee_percentage: 10,
+				payable_amount: 100,
+			},
+		] as never);
+
+		render(withProviders(<BillingPage />));
+
+		await waitFor(() => {
+			expect(screen.getByText(/via UPI\/QR above/)).toBeInTheDocument();
+			expect(screen.getByText(/Bill #10/)).toBeInTheDocument();
+		});
 	});
 
 	it('shows performance bills with pay button for pending bills when online enabled', async () => {

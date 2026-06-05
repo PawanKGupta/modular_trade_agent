@@ -33,7 +33,7 @@ This matrix maps product requirements to **this repository** after **legacy subs
 | 23 | User can view billing history | ✓ | `GET /user/billing/transactions` · `BillingPage.tsx` | |
 | 24 | User can update payment method (subscription) in app | ✗ | N/A | Pay-link / first-party subscription card flows removed from user router. |
 | 25 | Updated payment method used for next subscription charge | ~ | Razorpay | Only if customer completes Razorpay-side flows; not wired through this app’s user APIs. |
-| 26 | User can pay broker performance fee invoices | ~ | `GET /user/billing/performance-bills` · offline `GET /user/billing/payment-options` · optional `POST …/checkout` when `online_payments_enabled` · admin cash payment | **Beta:** offline UPI/QR on Billing; Razorpay when admin enables online checkout. |
+| 26 | User can pay broker performance fee invoices | ~ | `GET /user/billing/performance-bills` · offline `GET /user/billing/payment-options` · `GET /user/billing/offline-payment-qr` (uploaded QR) · optional `POST …/checkout` when `online_payments_enabled` · admin cash payment | **Beta:** one shared offline UPI/QR block on Billing (admin upload or hosted URL); per-invoice amount only; Razorpay when admin enables online checkout. |
 
 ## Related files (quick index)
 
@@ -57,7 +57,7 @@ This matrix maps product requirements to **this repository** after **legacy subs
 | `subscription_enforcement_enabled` | When **false**, non-admin users get **full feature entitlements** regardless of subscription. |
 | `subscription_grandfather_until` | ISO date: full access until that instant (UTC). |
 | `billing_admin_settings.online_payments_enabled` | When **false** (default), user Billing hides Razorpay; shows offline UPI/QR; checkout APIs return 403. |
-| `offline_payment_*` (admin settings) | UPI ID, instructions, QR image URL shown on user Billing when online checkout is off. |
+| `offline_payment_*` (admin settings) | UPI ID, instructions, optional hosted QR URL, or admin-uploaded QR (`data/billing/offline_payment_qr.*`) served at `GET /user/billing/offline-payment-qr` when online checkout is off. |
 
 ## Remaining product gaps (intentionally not claimed above)
 

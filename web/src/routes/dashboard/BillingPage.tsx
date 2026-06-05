@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
 	checkoutPerformanceBill,
 	createRazorpayOrder,
+	fetchOfflinePaymentQrBlob,
 	getBillingPaymentOptions,
 	getMyBillingTransactions,
 	getPerformanceBills,
@@ -39,44 +40,63 @@ function loadRazorpayScript(): Promise<void> {
 	});
 }
 
+function OfflinePaymentQrImage({ className }: { className?: string }) {
+	const [src, setSrc] = useState<string | null>(null);
+
+	useEffect(() => {
+		let objectUrl: string | null = null;
+		let cancelled = false;
+		void fetchOfflinePaymentQrBlob().then((blob) => {
+			if (cancelled || !blob) return;
+			objectUrl = URL.createObjectURL(blob);
+			setSrc(objectUrl);
+		});
+		return () => {
+			cancelled = true;
+			if (objectUrl) URL.revokeObjectURL(objectUrl);
+		};
+	}, []);
+
+	if (!src) return null;
+	return <img src={src} alt="Payment QR code" className={className} />;
+}
+
 function OfflinePaymentPanel({
 	upiId,
 	instructions,
-	qrUrl,
-	bill,
+	qrUploaded,
+	qrExternalUrl,
 }: {
 	upiId: string | null;
 	instructions: string | null;
-	qrUrl: string | null;
-	bill?: PerformanceBill;
+	qrUploaded: boolean;
+	qrExternalUrl: string | null;
 }) {
-	const hasBill = bill && (bill.status === 'pending_payment' || bill.status === 'overdue') && bill.payable_amount > 0;
 	return (
-		<div className="mt-2 p-3 rounded bg-[#0f1720] border border-amber-900/40 space-y-2 text-xs">
-			<p className="text-amber-200/90 font-medium">Pay via UPI</p>
+		<section className="p-4 rounded border border-[#1e293b] space-y-2 text-xs">
+			<h2 className="font-medium text-sm text-[var(--text)]">Pay via UPI</h2>
 			<p className="text-[var(--muted)] leading-relaxed">
-				Pay the exact amount below. We’ll mark your bill paid after confirmation.
+				Pay the exact amount on each open invoice below. Include the bill # and your account email in the UPI
+				note.
 			</p>
-			{hasBill ? (
-				<p className="text-sm">
-					Amount: <span className="font-medium text-[var(--text)]">₹{bill.payable_amount.toFixed(2)}</span>
-					<span className="text-[var(--muted)]"> · Bill #{bill.id}</span>
-				</p>
-			) : null}
 			{upiId ? (
 				<p>
 					UPI ID:{' '}
 					<code className="text-amber-100 bg-[#1e293b] px-1.5 py-0.5 rounded select-all">{upiId}</code>
 				</p>
 			) : null}
-			{qrUrl ? (
+			{qrUploaded || qrExternalUrl ? (
 				<div className="space-y-1">
 					<p className="text-[var(--muted)]">Scan QR</p>
-					<img
-						src={qrUrl}
-						alt="Payment QR code"
-						className="max-w-[12rem] rounded border border-[#1e293b] bg-white p-1"
-					/>
+					{qrUploaded ? (
+						<OfflinePaymentQrImage className="max-w-[12rem] rounded border border-[#1e293b] bg-white p-1" />
+					) : (
+						<img
+							src={qrExternalUrl!}
+							alt="Payment QR code"
+							className="max-w-[12rem] rounded border border-[#1e293b] bg-white p-1"
+						/>
+					)}
 				</div>
 			) : null}
 			{instructions ? (
@@ -84,7 +104,7 @@ function OfflinePaymentPanel({
 			) : (
 				<p className="text-[var(--muted)]">Add bill # and email in the UPI note.</p>
 			)}
-		</div>
+		</section>
 	);
 }
 
@@ -254,7 +274,8 @@ export function BillingPage() {
 
 	const offlineUpi = paymentOptsQ.data?.offline_upi_id ?? null;
 	const offlineInstructions = paymentOptsQ.data?.offline_instructions ?? null;
-	const offlineQr = paymentOptsQ.data?.offline_qr_image_url ?? null;
+	const offlineQrUploaded = paymentOptsQ.data?.offline_qr_uploaded ?? false;
+	const offlineQrExternalUrl = paymentOptsQ.data?.offline_qr_image_url ?? null;
 
 	return (
 		<div className="p-4 sm:p-6 max-w-4xl space-y-6 text-[var(--text)]">
@@ -270,7 +291,8 @@ export function BillingPage() {
 				<OfflinePaymentPanel
 					upiId={offlineUpi}
 					instructions={offlineInstructions}
-					qrUrl={offlineQr}
+					qrUploaded={offlineQrUploaded}
+					qrExternalUrl={offlineQrExternalUrl}
 				/>
 			) : null}
 
@@ -330,12 +352,14 @@ export function BillingPage() {
 										) : null}
 									</div>
 									{unpaid && !onlinePay ? (
-										<OfflinePaymentPanel
-											upiId={offlineUpi}
-											instructions={offlineInstructions}
-											qrUrl={offlineQr}
-											bill={b}
-										/>
+										<p className="text-xs text-amber-200/90">
+											Pay{' '}
+											<span className="font-medium text-[var(--text)]">
+												₹{b.payable_amount.toFixed(2)}
+											</span>{' '}
+											via UPI/QR above
+											<span className="text-[var(--muted)]"> · Bill #{b.id}</span>
+										</p>
 									) : null}
 								</li>
 							);

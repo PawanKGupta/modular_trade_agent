@@ -17,6 +17,9 @@ For user-facing billing, see [`BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md`](./B
 | 7 | Admin Razorpay credentials | ✓ | `PATCH /admin/billing/razorpay-credentials` · `AdminBillingPage.tsx` | |
 | 8 | Admin list transactions & refunds | ✓ | `GET /admin/billing/transactions`, `POST /admin/billing/refunds` · `AdminBillingPage.tsx` | |
 | 9 | Reconcile overdue performance bills | ✓ | `POST /admin/billing/reconcile` · `BillingReconciliationService` · `AdminBillingPage.tsx` | Returns `{ performance_bills_marked_overdue: n }`. |
+| 10 | Admin offline payment settings (UPI, instructions) | ✓ | `GET`/`PATCH /admin/billing/settings` · `AdminBillingPage.tsx` | Shown when online checkout is off (`online_payments_enabled=false`). |
+| 11 | Admin upload offline payment QR image | ✓ | `POST`/`DELETE /admin/billing/offline-payment-qr` · `billing_offline_qr_storage.py` · `AdminBillingPage.tsx` | PNG/JPEG/WebP/GIF, max 2 MB; stored under `data/billing/`; replaces hosted QR URL. |
+| 12 | Admin record cash payment on open performance bills | ✓ | `POST /admin/billing/performance-bills/{id}/record-cash-payment` · `AdminBillingPage.tsx` | For offline UPI settlements after manual confirmation. |
 
 ## Admin API summary (`billing_admin.py`)
 
@@ -28,10 +31,13 @@ For user-facing billing, see [`BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md`](./B
 | GET | `/admin/billing/transactions` | List / filter transactions |
 | POST | `/admin/billing/refunds` | Razorpay refund + local row |
 | POST | `/admin/billing/reconcile` | Mark overdue performance-fee bills |
+| POST | `/admin/billing/offline-payment-qr` | Upload offline payment QR image (multipart) |
+| DELETE | `/admin/billing/offline-payment-qr` | Remove uploaded QR image |
+| POST | `/admin/billing/performance-bills/{id}/record-cash-payment` | Mark performance bill paid (offline/cash) |
 
 ## Admin UI (`web/src/routes/dashboard/AdminBillingPage.tsx`)
 
-Payment toggles, Razorpay credentials, **Reconciliation** (run reconcile), refund form, failed + recent transaction tables.
+Payment toggles, offline UPI/instructions, **QR upload** (or optional hosted URL), Razorpay credentials, **Reconciliation** (run reconcile), **Record cash payment**, refund form, failed + recent transaction tables.
 
 ---
 

@@ -1,7 +1,8 @@
 """Tests for online vs offline billing payment mode helpers."""
 
 from src.application.services.billing_payment_modes import (
-    OFFLINE_PAYMENTS_DISABLED_DETAIL,
+    ONLINE_CHECKOUT_DISABLED_MESSAGE,
+    admin_offline_payment_settings,
     offline_payment_info,
     online_payments_enabled,
 )
@@ -12,7 +13,26 @@ def test_online_payments_default_false(db_session):
     s = BillingRepository(db_session).get_admin_settings()
     assert online_payments_enabled(s) is False
     info = offline_payment_info(s)
-    assert info["offline_upi_id"] == "8565859556@apl"
+    assert info["offline_upi_id"] is None
+    assert info["offline_instructions"] is None
+    assert info["offline_qr_image_url"] is None
+    assert info["offline_qr_uploaded"] is False
+
+
+def test_admin_offline_payment_settings_uses_db_field_names(db_session):
+    repo = BillingRepository(db_session)
+    s = repo.update_admin_settings(
+        online_payments_enabled=False,
+        offline_payment_upi_id="merchant@paytm",
+        offline_payment_instructions="Include bill # in note",
+        offline_payment_qr_image_url="https://example.com/qr.png",
+    )
+    admin = admin_offline_payment_settings(s)
+    assert admin["online_payments_enabled"] is False
+    assert admin["offline_payment_upi_id"] == "merchant@paytm"
+    assert "bill #" in (admin["offline_payment_instructions"] or "")
+    assert admin["offline_payment_qr_image_url"] == "https://example.com/qr.png"
+    assert admin["offline_payment_qr_uploaded"] is False
 
 
 def test_offline_payment_info_payload(db_session):
@@ -33,4 +53,4 @@ def test_offline_payment_info_payload(db_session):
 def test_online_enabled_after_admin_patch(db_session):
     s = BillingRepository(db_session).update_admin_settings(online_payments_enabled=True)
     assert online_payments_enabled(s) is True
-    assert OFFLINE_PAYMENTS_DISABLED_DETAIL
+    assert ONLINE_CHECKOUT_DISABLED_MESSAGE

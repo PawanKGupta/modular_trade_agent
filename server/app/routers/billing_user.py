@@ -3,11 +3,16 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from server.app.core.crypto import encryption_uses_dedicated_env_key
+from src.application.services.billing_offline_qr_storage import (
+    find_uploaded_qr_path,
+    media_type_for_path,
+)
 from src.application.services.billing_payment_modes import (
-    OFFLINE_PAYMENTS_DISABLED_DETAIL,
+    ONLINE_CHECKOUT_DISABLED_MESSAGE,
     get_admin_settings,
     offline_payment_info,
     online_payments_enabled,
@@ -57,7 +62,7 @@ def _reject_if_online_payments_disabled(db: Session) -> None:
     if not online_payments_enabled(get_admin_settings(db)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=OFFLINE_PAYMENTS_DISABLED_DETAIL,
+            detail=ONLINE_CHECKOUT_DISABLED_MESSAGE,
         )
 
 
@@ -66,6 +71,17 @@ def billing_payment_options(db: Session = Depends(get_db), current: Users = Depe
     """How this deployment accepts performance-fee payments (online checkout vs offline UPI/QR)."""
     del current
     return UserBillingPaymentOptionsOut(**offline_payment_info(get_admin_settings(db)))
+
+
+@router.get("/billing/offline-payment-qr")
+def billing_offline_payment_qr(
+    current: Users = Depends(get_current_user),  # noqa: ARG001
+):
+    """Serve the admin-uploaded offline payment QR (requires login)."""
+    path = find_uploaded_qr_path()
+    if path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No QR image uploaded")
+    return FileResponse(path, media_type=media_type_for_path(path))
 
 
 @router.get("/billing/performance-fee-arrears", response_model=PerformanceFeeArrearsOut)

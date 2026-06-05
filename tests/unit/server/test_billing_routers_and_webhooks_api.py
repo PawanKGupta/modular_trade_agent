@@ -78,6 +78,10 @@ class TestBillingAdminRouter:
         assert r.status_code == 200
         body = r.json()
         assert "payment_card_enabled" in body
+        assert "offline_payment_upi_id" in body
+        assert "offline_payment_instructions" in body
+        assert "offline_payment_qr_image_url" in body
+        assert "offline_upi_id" not in body
 
         r2 = client.patch(
             "/api/v1/admin/billing/settings",
@@ -86,6 +90,78 @@ class TestBillingAdminRouter:
         )
         assert r2.status_code == 200
         assert r2.json()["performance_fee_payment_days_after_invoice"] == 7
+
+    def test_upload_and_serve_offline_payment_qr(
+        self, client: TestClient, admin_user, normal_user, tmp_path, monkeypatch
+    ):
+        from src.application.services import billing_offline_qr_storage as storage
+
+        monkeypatch.setattr(storage, "BILLING_DATA_DIR", tmp_path)
+        admin_token = _login(client, admin_user.email, "Admin@123")
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 128
+        up = client.post(
+            "/api/v1/admin/billing/offline-payment-qr",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            files={"file": ("qr.png", png, "image/png")},
+        )
+        assert up.status_code == 200
+        assert up.json()["offline_payment_qr_uploaded"] is True
+
+        settings = client.get(
+            "/api/v1/admin/billing/settings",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert settings.json()["offline_payment_qr_uploaded"] is True
+
+        user_token = _login(client, normal_user.email, "User@123")
+        opts = client.get(
+            "/api/v1/user/billing/payment-options",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert opts.json()["offline_qr_uploaded"] is True
+        assert opts.json()["offline_qr_image_url"] is None
+
+        qr = client.get(
+            "/api/v1/user/billing/offline-payment-qr",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert qr.status_code == 200
+        assert qr.content == png
+
+    def test_delete_offline_payment_qr(
+        self, client: TestClient, admin_user, normal_user, tmp_path, monkeypatch
+    ):
+        from src.application.services import billing_offline_qr_storage as storage
+
+        monkeypatch.setattr(storage, "BILLING_DATA_DIR", tmp_path)
+        admin_token = _login(client, admin_user.email, "Admin@123")
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 128
+        up = client.post(
+            "/api/v1/admin/billing/offline-payment-qr",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            files={"file": ("qr.png", png, "image/png")},
+        )
+        assert up.status_code == 200
+
+        deleted = client.delete(
+            "/api/v1/admin/billing/offline-payment-qr",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["offline_payment_qr_uploaded"] is False
+
+        settings = client.get(
+            "/api/v1/admin/billing/settings",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert settings.json()["offline_payment_qr_uploaded"] is False
+
+        user_token = _login(client, normal_user.email, "User@123")
+        qr = client.get(
+            "/api/v1/user/billing/offline-payment-qr",
+            headers={"Authorization": f"Bearer {user_token}"},
+        )
+        assert qr.status_code == 404
 
     def test_patch_razorpay_credentials_empty(self, client: TestClient, admin_user):
         token = _login(client, admin_user.email, "Admin@123")
@@ -311,6 +387,7 @@ class TestBillingUserRouter:
         assert r.status_code == 200
         body = r.json()
         assert body["online_payments_enabled"] is False
+        assert body["offline_qr_uploaded"] is False
 
     def test_checkout_forbidden_when_online_disabled(self, client: TestClient, normal_user, db_session):
         bill = MonthlyPerformanceBill(
