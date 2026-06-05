@@ -230,6 +230,8 @@ pip install -r requirements.txt
 pip install -r server/requirements.txt
 ```
 
+If the API fails to start with a `python_multipart` / multipart import error, you likely installed only the root `requirements.txt`. Admin billing QR upload needs **`python-multipart`** from `server/requirements.txt` — run the second `pip install` line above.
+
 ## Service Layer Usage (Phase 4)
 
 The system uses a **service layer architecture** for analysis functionality. Legacy `core.*` functions are deprecated.

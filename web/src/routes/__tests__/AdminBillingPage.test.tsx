@@ -267,6 +267,63 @@ describe('AdminBillingPage', () => {
 		});
 	});
 
+	it('uploads offline payment QR image', async () => {
+		vi.mocked(billingApi.uploadAdminOfflinePaymentQr).mockResolvedValue({
+			ok: true,
+			offline_payment_qr_uploaded: true,
+		} as never);
+
+		render(withProviders(<AdminBillingPage />));
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Upload QR image' })).toBeInTheDocument()
+		);
+
+		const file = new File(['png-bytes'], 'qr.png', { type: 'image/png' });
+		const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(fileInput, { target: { files: [file] } });
+
+		await waitFor(() => {
+			expect(billingApi.uploadAdminOfflinePaymentQr).toHaveBeenCalledWith(file);
+			expect(screen.getByText('QR image uploaded.')).toBeInTheDocument();
+		});
+	});
+
+	it('shows uploaded QR preview and removes it', async () => {
+		vi.mocked(billingApi.getAdminBillingSettings).mockResolvedValue({
+			payment_card_enabled: true,
+			payment_upi_enabled: false,
+			online_payments_enabled: false,
+			offline_payment_upi_id: 'beta@paytm',
+			offline_payment_instructions: 'Pay exact amount',
+			offline_payment_qr_image_url: null,
+			offline_payment_qr_uploaded: true,
+			razorpay_key_id_preview: 'rzp_test',
+			razorpay_api_configured: true,
+			razorpay_webhook_configured: false,
+		} as never);
+		vi.mocked(billingApi.fetchOfflinePaymentQrBlob).mockResolvedValue(
+			new Blob(['preview'], { type: 'image/png' })
+		);
+		vi.mocked(billingApi.deleteAdminOfflinePaymentQr).mockResolvedValue({
+			ok: true,
+			offline_payment_qr_uploaded: false,
+		} as never);
+
+		render(withProviders(<AdminBillingPage />));
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: 'Remove uploaded QR' })).toBeInTheDocument();
+			expect(screen.getByAltText('Uploaded payment QR preview')).toBeInTheDocument();
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Remove uploaded QR' }));
+
+		await waitFor(() => {
+			expect(billingApi.deleteAdminOfflinePaymentQr).toHaveBeenCalled();
+			expect(screen.getByText('Uploaded QR removed.')).toBeInTheDocument();
+		});
+	});
+
 	it('updates razorpay clear flags and refund form fields', async () => {
 		render(withProviders(<AdminBillingPage />));
 		await waitFor(() => expect(screen.getByText('Refund')).toBeInTheDocument());

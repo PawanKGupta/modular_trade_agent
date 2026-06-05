@@ -48,6 +48,19 @@ def _normalize_content_type(content_type: str | None) -> str:
     return content_type.split(";", 1)[0].strip().lower()
 
 
+def _detect_image_ext(content: bytes) -> str | None:
+    """Return file extension from magic bytes, or None if not a supported image."""
+    if len(content) >= 8 and content[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if len(content) >= 3 and content[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if len(content) >= 6 and content[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
 def save_offline_payment_qr(content: bytes, content_type: str | None) -> Path:
     if not content:
         raise OfflinePaymentQrValidationError("QR image file is empty")
@@ -60,6 +73,16 @@ def save_offline_payment_qr(content: bytes, content_type: str | None) -> Path:
     if not ext:
         allowed = ", ".join(sorted(_CONTENT_TYPE_TO_EXT))
         raise OfflinePaymentQrValidationError(f"Unsupported image type. Use one of: {allowed}")
+
+    detected_ext = _detect_image_ext(content)
+    if detected_ext is None:
+        raise OfflinePaymentQrValidationError(
+            "File is not a valid PNG, JPEG, WebP, or GIF image"
+        )
+    if detected_ext != ext:
+        raise OfflinePaymentQrValidationError(
+            f"Image content does not match declared type ({normalized})"
+        )
 
     delete_offline_payment_qr()
     path = _billing_dir() / f"{QR_BASENAME}{ext}"
