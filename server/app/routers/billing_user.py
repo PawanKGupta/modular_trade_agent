@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from server.app.core.crypto import encryption_uses_dedicated_env_key
 from src.application.services.billing_payment_modes import (
-    OFFLINE_PAYMENTS_DISABLED_DETAIL,
+    ONLINE_CHECKOUT_DISABLED_MESSAGE,
     get_admin_settings,
     offline_payment_info,
     online_payments_enabled,
@@ -57,7 +57,7 @@ def _reject_if_online_payments_disabled(db: Session) -> None:
     if not online_payments_enabled(get_admin_settings(db)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=OFFLINE_PAYMENTS_DISABLED_DETAIL,
+            detail=ONLINE_CHECKOUT_DISABLED_MESSAGE,
         )
 
 

@@ -228,7 +228,7 @@ export function AdminBillingPage() {
 									className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
 									value={offlineUpi}
 									onChange={(e) => setOfflineUpi(e.target.value)}
-									placeholder="8565859556@apl"
+									placeholder="yourname@paytm"
 								/>
 							</label>
 							<label className="flex flex-col gap-1">

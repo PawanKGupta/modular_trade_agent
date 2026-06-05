@@ -12,7 +12,7 @@ from src.application.services.performance_bill_payment_service import (
     PerformanceBillPaymentError,
     PerformanceBillPaymentService,
 )
-from src.application.services.billing_payment_modes import offline_payment_info
+from src.application.services.billing_payment_modes import admin_offline_payment_settings
 from src.application.services.razorpay_credentials import get_razorpay_gateway, razorpay_admin_meta
 from src.infrastructure.db.models import BillingTransaction, BillingTransactionStatus, MonthlyPerformanceBill, Users
 from src.infrastructure.persistence.billing_repository import BillingRepository
@@ -65,7 +65,7 @@ def get_billing_settings(db: Session = Depends(get_db)):
     return {
         "payment_card_enabled": s.payment_card_enabled,
         "payment_upi_enabled": s.payment_upi_enabled,
-        **offline_payment_info(s),
+        **admin_offline_payment_settings(s),
         "performance_fee_payment_days_after_invoice": s.performance_fee_payment_days_after_invoice,
         "performance_fee_default_percentage": float(s.performance_fee_default_percentage),
         **rz,
@@ -82,7 +82,7 @@ def patch_billing_settings(
     return {
         "payment_card_enabled": s.payment_card_enabled,
         "payment_upi_enabled": s.payment_upi_enabled,
-        **offline_payment_info(s),
+        **admin_offline_payment_settings(s),
         "performance_fee_payment_days_after_invoice": s.performance_fee_payment_days_after_invoice,
         "performance_fee_default_percentage": float(s.performance_fee_default_percentage),
         **razorpay_admin_meta(s),

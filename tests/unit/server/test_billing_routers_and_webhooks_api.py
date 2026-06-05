@@ -78,6 +78,10 @@ class TestBillingAdminRouter:
         assert r.status_code == 200
         body = r.json()
         assert "payment_card_enabled" in body
+        assert "offline_payment_upi_id" in body
+        assert "offline_payment_instructions" in body
+        assert "offline_payment_qr_image_url" in body
+        assert "offline_upi_id" not in body
 
         r2 = client.patch(
             "/api/v1/admin/billing/settings",

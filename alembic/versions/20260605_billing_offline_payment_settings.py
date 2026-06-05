@@ -41,22 +41,13 @@ def upgrade() -> None:
     if "offline_payment_instructions" not in cols:
         op.add_column(
             "billing_admin_settings",
-            sa.Column("offline_payment_instructions", sa.Text(), nullable=True),
+            sa.Column("offline_payment_instructions", sa.String(2048), nullable=True),
         )
     if "offline_payment_qr_image_url" not in cols:
         op.add_column(
             "billing_admin_settings",
             sa.Column("offline_payment_qr_image_url", sa.String(512), nullable=True),
         )
-    op.execute(
-        sa.text(
-            "UPDATE billing_admin_settings SET "
-            "offline_payment_upi_id = COALESCE(NULLIF(TRIM(offline_payment_upi_id), ''), '8565859556@apl'), "
-            "offline_payment_instructions = COALESCE(NULLIF(TRIM(offline_payment_instructions), ''), "
-            "'Pay exact amount; add bill # and email in UPI note.') "
-            "WHERE id = 1"
-        )
-    )
 
 
 def downgrade() -> None:
