@@ -57,6 +57,14 @@ describe('LoginPage', () => {
 		await screen.findByText('Dashboard');
 	});
 
+	it('shows validation errors when required fields are empty on submit', async () => {
+		renderWithRouter(<LoginPage />);
+		fireEvent.submit(screen.getByRole('button', { name: /login/i }).closest('form')!);
+		await waitFor(() => {
+			expect(screen.getByText('Email is required')).toBeInTheDocument();
+		});
+	});
+
 	it('shows error on invalid credentials', async () => {
 		server.use(
 			http.post('http://localhost:8000/api/v1/auth/login', async () =>

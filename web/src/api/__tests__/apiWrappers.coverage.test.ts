@@ -12,9 +12,12 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../client', () => ({
 	api: hoisted.api,
+	setAccessToken: vi.fn(),
+	setRefreshToken: vi.fn(),
 }));
 
 import * as admin from '../admin';
+import * as auth from '../auth';
 import * as billing from '../billing';
 import * as broker from '../broker';
 import * as exportApi from '../export';
@@ -53,6 +56,34 @@ beforeEach(() => {
 });
 
 describe('api wrappers (mocked client)', () => {
+	it('auth', async () => {
+		hoisted.api.post.mockResolvedValue({
+			data: { access_token: 'access', refresh_token: 'refresh', token_type: 'bearer' },
+		});
+		await auth.login('user@example.com', 'Secret123!');
+		hoisted.api.post.mockResolvedValueOnce({ data: { refresh_token: 'refresh-only' } });
+		await auth.login('other@example.com', 'Secret123!');
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'Account created.' } });
+		await auth.signup('new@example.com', 'Secret123!', 'New User');
+		hoisted.api.get.mockResolvedValueOnce({
+			data: { id: 1, email: 'user@example.com', roles: ['user'], email_verified: true },
+		});
+		await auth.me();
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.forgotPassword('user@example.com');
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.resetPassword('token', 'NewSecret123!');
+		hoisted.api.post.mockResolvedValueOnce({
+			data: { access_token: 'access2', refresh_token: null, token_type: 'bearer' },
+		});
+		await auth.verifyEmail('verify-token');
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.resendVerification('user@example.com');
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.changePassword('OldSecret123!', 'NewSecret123!');
+		auth.logout();
+	});
+
 	it('admin', async () => {
 		await admin.listUsers();
 		await admin.listUsers({ q: '  ' });
@@ -128,6 +159,7 @@ describe('api wrappers (mocked client)', () => {
 		hoisted.api.get.mockResolvedValueOnce({ data: null, headers: {} });
 		const hist = await portfolio.getPortfolioHistory(new Date(2026, 0, 1));
 		expect(hist).toEqual([]);
+		await portfolio.getPortfolioHistory('2026-01-01', '2026-01-31', 50);
 		await portfolio.createPortfolioSnapshot('2026-01-15');
 		await portfolio.createPortfolioSnapshot();
 	});
