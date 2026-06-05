@@ -18,6 +18,10 @@ type MessageResponse = {
 	message: string;
 };
 
+export type SignupResponse = {
+	message: string;
+};
+
 function persistTokens(tokens: TokenResponse) {
 	const access = tokens.access_token;
 	const refresh = tokens.refresh_token ?? null;
@@ -27,9 +31,8 @@ function persistTokens(tokens: TokenResponse) {
 	setRefreshToken(refresh);
 }
 
-export async function signup(email: string, password: string, name?: string) {
-	const res = await api.post<TokenResponse>('/auth/signup', { email, password, name });
-	persistTokens(res.data);
+export async function signup(email: string, password: string, name: string): Promise<SignupResponse> {
+	const res = await api.post<SignupResponse>('/auth/signup', { email, password, name });
 	return res.data;
 }
 
@@ -59,12 +62,14 @@ export async function resetPassword(token: string, newPassword: string): Promise
 	await api.post<MessageResponse>('/auth/reset-password', { token, new_password: newPassword });
 }
 
-export async function verifyEmail(token: string): Promise<void> {
-	await api.post<MessageResponse>('/auth/verify-email', { token });
+export async function verifyEmail(token: string): Promise<TokenResponse> {
+	const res = await api.post<TokenResponse>('/auth/verify-email', { token });
+	persistTokens(res.data);
+	return res.data;
 }
 
-export async function resendVerification(): Promise<void> {
-	await api.post<MessageResponse>('/auth/resend-verification');
+export async function resendVerification(email: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/resend-verification', { email });
 }
 
 export function logout() {

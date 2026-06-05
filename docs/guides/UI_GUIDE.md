@@ -753,10 +753,12 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 #### Features
 - Email input
-- Password input (minimum 8 characters, at least one letter and one number)
+- Password input (minimum 8 characters, at least one letter, one capital letter, one number, and one special character)
 - Confirm password field
 - Name input (optional)
-- After signup, a verification email is sent (login is not blocked; unverified users see a banner in the dashboard)
+- After signup, a verification email is sent. **Login and all protected APIs are blocked** until the user verifies via the link in email.
+- Wrong or typo emails cannot be used without inbox access to the verification link.
+- `/resend-verification` is a public page (like forgot password) for requesting a new link.
 
 #### Actions
 - **Sign Up:** Create new account
@@ -783,11 +785,13 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 ### 20. Verify email (`/verify-email?token=...`)
 
-**Purpose:** Confirm email ownership from the verification link sent after signup.
+**Purpose:** Confirm email ownership from the verification link sent after signup. On success, the app stores auth tokens and redirects to the dashboard (auto-login).
 
-#### Dashboard banner
+---
 
-If `email_verified` is false, the app shell shows a dismissible banner with **Resend verification email**.
+### 21. Resend verification (`/resend-verification`)
+
+**Purpose:** Public form to request a new verification email when signup succeeded but the link was lost or expired. Linked from login and the post-signup “check your email” screen.
 
 ---
 

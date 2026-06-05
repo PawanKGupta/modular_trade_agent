@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { verifyEmail } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
+import { useSessionStore } from '@/state/sessionStore';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 
 export function VerifyEmailPage() {
+	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const token = useMemo(() => searchParams.get('token') ?? '', [searchParams]);
+	const setSession = useSessionStore((s) => s.setSession);
 	const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
 	const [message, setMessage] = useState<string | null>(null);
 
@@ -18,11 +21,15 @@ export function VerifyEmailPage() {
 		}
 		let cancelled = false;
 		verifyEmail(token)
-			.then(() => {
-				if (!cancelled) {
-					setStatus('success');
-					setMessage('Your email has been verified.');
+			.then(async () => {
+				if (cancelled) {
+					return;
 				}
+				await useSessionStore.getState().refresh();
+				setSession(useSessionStore.getState().user);
+				setStatus('success');
+				setMessage('Your email has been verified. Redirecting to dashboard...');
+				navigate('/dashboard');
 			})
 			.catch((err: unknown) => {
 				if (!cancelled) {
@@ -33,7 +40,7 @@ export function VerifyEmailPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [token]);
+	}, [token, navigate, setSession]);
 
 	return (
 		<div className="min-h-screen flex items-center justify-center p-2 sm:p-4">
@@ -46,16 +53,16 @@ export function VerifyEmailPage() {
 				{status === 'success' && (
 					<div className="text-sm">
 						<p className="text-green-400 mb-4">{message}</p>
-						<Link to="/login" className="text-[var(--accent)]">
-							Continue to login
+						<Link to="/dashboard" className="text-[var(--accent)]">
+							Continue to dashboard
 						</Link>
 					</div>
 				)}
 				{status === 'error' && (
 					<div className="text-sm">
 						<p className="text-red-400 mb-4">{message}</p>
-						<Link to="/dashboard" className="text-[var(--accent)]">
-							Go to dashboard
+						<Link to="/resend-verification" className="text-[var(--accent)]">
+							Resend verification email
 						</Link>
 					</div>
 				)}

@@ -3,6 +3,14 @@ export type FieldError = {
 	message: string;
 };
 
+export type PasswordRequirement = {
+	id: string;
+	label: string;
+	met: boolean;
+};
+
+export const PASSWORD_MIN_LENGTH = 8;
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function validateEmail(email: string): string | null {
@@ -16,18 +24,81 @@ export function validateEmail(email: string): string | null {
 	return null;
 }
 
+/** Live checklist rules for email fields (signup, login, etc.). */
+export function getEmailRequirements(email: string): PasswordRequirement[] {
+	const trimmed = email.trim();
+	return [
+		{
+			id: 'present',
+			label: 'Email address entered',
+			met: trimmed.length > 0,
+		},
+		{
+			id: 'format',
+			label: 'Valid format (name@example.com)',
+			met: trimmed.length > 0 && EMAIL_PATTERN.test(trimmed),
+		},
+	];
+}
+
+export function isEmailValid(email: string): boolean {
+	return getEmailRequirements(email).every((rule) => rule.met);
+}
+
+export function validateName(name: string): string | null {
+	const trimmed = name.trim();
+	if (!trimmed) {
+		return 'Name is required';
+	}
+	if (trimmed.length > 255) {
+		return 'Name must be 255 characters or fewer';
+	}
+	return null;
+}
+
+export function getPasswordRequirements(password: string): PasswordRequirement[] {
+	return [
+		{
+			id: 'length',
+			label: `At least ${PASSWORD_MIN_LENGTH} characters`,
+			met: password.length >= PASSWORD_MIN_LENGTH,
+		},
+		{
+			id: 'letter',
+			label: 'At least one letter',
+			met: /[a-zA-Z]/.test(password),
+		},
+		{
+			id: 'uppercase',
+			label: 'At least one capital letter',
+			met: /[A-Z]/.test(password),
+		},
+		{
+			id: 'number',
+			label: 'At least one number',
+			met: /[0-9]/.test(password),
+		},
+		{
+			id: 'special',
+			label: 'At least one special character',
+			met: /[^a-zA-Z0-9]/.test(password),
+		},
+	];
+}
+
+export function isPasswordValid(password: string): boolean {
+	return getPasswordRequirements(password).every((rule) => rule.met);
+}
+
 export function validatePassword(password: string): string | null {
 	if (!password) {
 		return 'Password is required';
 	}
-	if (password.length < 8) {
-		return 'Password must be at least 8 characters';
-	}
-	if (!/[a-zA-Z]/.test(password)) {
-		return 'Password must include at least one letter';
-	}
-	if (!/[0-9]/.test(password)) {
-		return 'Password must include at least one number';
+	if (!isPasswordValid(password)) {
+		const unmet = getPasswordRequirements(password)
+			.filter((rule) => !rule.met)
+			.map((rule) => rule.label.toLowerCase());
+		return `Password must include ${unmet.join(', ')}`;
 	}
 	return null;
 }
@@ -50,6 +121,53 @@ export function validateLoginForm(input: { email: string; password: string }): F
 	}
 	if (!input.password) {
 		errors.push({ field: 'password', message: 'Password is required' });
+	}
+	return errors;
+}
+
+export function validateSignupForm(input: {
+	name: string;
+	email: string;
+	password: string;
+	confirmPassword: string;
+}): FieldError[] {
+	const errors: FieldError[] = [];
+	const nameError = validateName(input.name);
+	if (nameError) {
+		errors.push({ field: 'name', message: nameError });
+	}
+	const emailError = validateEmail(input.email);
+	if (emailError) {
+		errors.push({ field: 'email', message: emailError });
+	}
+	const passwordError = validatePassword(input.password);
+	if (passwordError) {
+		errors.push({ field: 'password', message: passwordError });
+	}
+	const confirmError = validatePasswordConfirm(input.password, input.confirmPassword);
+	if (confirmError) {
+		errors.push({ field: 'confirmPassword', message: confirmError });
+	}
+	return errors;
+}
+
+export function validateAdminCreateUserForm(input: {
+	email: string;
+	name: string;
+	password: string;
+}): FieldError[] {
+	const errors: FieldError[] = [];
+	const nameError = validateName(input.name);
+	if (nameError) {
+		errors.push({ field: 'name', message: nameError });
+	}
+	const emailError = validateEmail(input.email);
+	if (emailError) {
+		errors.push({ field: 'email', message: emailError });
+	}
+	const passwordError = validatePassword(input.password);
+	if (passwordError) {
+		errors.push({ field: 'password', message: passwordError });
 	}
 	return errors;
 }

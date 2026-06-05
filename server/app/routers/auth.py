@@ -7,19 +7,22 @@ from sqlalchemy.orm import Session
 
 from src.application.services.auth_email_service import AuthEmailService
 from src.infrastructure.db.models import UserRole, Users
-from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from ..core.auth_tokens import (
+    auth_sent_at,
     generate_token,
     hash_token,
+    is_expired,
     is_rate_limited,
+    is_still_valid,
     reset_expiry,
 )
 from ..core.config import settings
 from ..core.deps import get_current_user, get_db
 from ..core.security import create_jwt_token, decode_token, verify_password
+from ..core.user_verification import require_verified_email, user_is_email_verified
 from ..schemas.auth import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
@@ -27,8 +30,10 @@ from ..schemas.auth import (
     MeResponse,
     MessageResponse,
     RefreshRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     SignupRequest,
+    SignupResponse,
     TokenResponse,
     VerifyEmailRequest,
 )
@@ -39,7 +44,12 @@ logger = logging.getLogger("uvicorn.error")
 FORGOT_PASSWORD_MESSAGE = (
     "If an account exists for that email, we sent password reset instructions."
 )
-RESEND_VERIFICATION_MESSAGE = "If your email is unverified, we sent a verification link."
+SIGNUP_VERIFY_MESSAGE = (
+    "Account created. Check your email and click the verification link before logging in."
+)
+RESEND_VERIFICATION_MESSAGE = (
+    "If an account exists and is not yet verified, we sent a verification link."
+)
 
 
 def _issue_tokens(user: Users) -> TokenResponse:
@@ -55,28 +65,36 @@ def _issue_tokens(user: Users) -> TokenResponse:
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
-def _user_is_verified(user: Users) -> bool:
-    return user.email_verified_at is not None
-
-
 def _send_verification(user_repo: UserRepository, user: Users, email_service: AuthEmailService) -> None:
     if is_rate_limited(user.email_verification_sent_at):
         return
     token = generate_token()
-    user_repo.set_verification_token(user, hash_token(token), ist_now())
+    user_repo.set_verification_token(user, hash_token(token), auth_sent_at())
     email_service.send_verification_email(user.email, token)
 
 
-@router.post("/signup", response_model=TokenResponse)
+def _signup_message_response() -> SignupResponse:
+    return SignupResponse(message=SIGNUP_VERIFY_MESSAGE)
+
+
+@router.post("/signup", response_model=SignupResponse)
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     try:
         logger.info(f"Signup request for {payload.email}")
         user_repo = UserRepository(db)
         existing = user_repo.get_by_email(payload.email)
+        email_service = AuthEmailService()
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
-            )
+            if user_is_email_verified(existing):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+                )
+            if not existing.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+                )
+            _send_verification(user_repo, existing, email_service)
+            return _signup_message_response()
         logger.info("Creating user...")
         user = user_repo.create_user(
             email=payload.email, password=payload.password, name=payload.name, role=UserRole.USER
@@ -86,11 +104,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         db.refresh(user)
         logger.info(f"User created id={user.id}, creating default settings...")
         SettingsRepository(db).ensure_default(user.id)
-        email_service = AuthEmailService()
         _send_verification(user_repo, user, email_service)
-        tokens = _issue_tokens(user)
-        logger.info("Signup success")
-        return tokens
+        logger.info("Signup success — verification email sent")
+        return _signup_message_response()
     except HTTPException:
         raise
     except Exception as e:
@@ -131,6 +147,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
+        require_verified_email(user)
         return _issue_tokens(user)
     except HTTPException:
         raise
@@ -146,7 +163,7 @@ def me(current: Users = Depends(get_current_user)):
         email=current.email,
         name=current.name,
         roles=[current.role.value],
-        email_verified=_user_is_verified(current),
+        email_verified=user_is_email_verified(current),
     )
 
 
@@ -176,7 +193,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     user_repo = UserRepository(db)
     user = user_repo.get_by_email(payload.email)
     if user and user.is_active:
-        if user.password_reset_expires_at and user.password_reset_expires_at > ist_now():
+        if is_still_valid(user.password_reset_expires_at):
             sent_at = user.password_reset_expires_at - timedelta(hours=1)
             if is_rate_limited(sent_at):
                 return MessageResponse(message=FORGOT_PASSWORD_MESSAGE)
@@ -197,7 +214,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset link",
         )
-    if user.password_reset_expires_at < ist_now():
+    if is_expired(user.password_reset_expires_at):
         user_repo.clear_password_reset_token(user)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -208,7 +225,7 @@ def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db))
     return MessageResponse(message="Password reset successfully")
 
 
-@router.post("/verify-email", response_model=MessageResponse)
+@router.post("/verify-email", response_model=TokenResponse)
 def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
     user_repo = UserRepository(db)
     token_hash = hash_token(payload.token)
@@ -218,27 +235,23 @@ def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification link",
         )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification link",
+        )
     user_repo.clear_verification(user)
-    return MessageResponse(message="Email verified successfully")
+    return _issue_tokens(user)
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
-def resend_verification(
-    current: Users = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    if _user_is_verified(current):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email is already verified",
-        )
+def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
     user_repo = UserRepository(db)
-    if is_rate_limited(current.email_verification_sent_at):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Please wait before requesting another verification email",
-        )
-    _send_verification(user_repo, current, AuthEmailService())
+    user = user_repo.get_by_email(payload.email)
+    if user and user.is_active and not user_is_email_verified(user):
+        if is_rate_limited(user.email_verification_sent_at):
+            return MessageResponse(message=RESEND_VERIFICATION_MESSAGE)
+        _send_verification(user_repo, user, AuthEmailService())
     return MessageResponse(message=RESEND_VERIFICATION_MESSAGE)
 
 
@@ -267,6 +280,7 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
         user = UserRepository(db).get_by_id(int(user_id))
         if not user or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
+        require_verified_email(user)
         return _issue_tokens(user)
     except HTTPException:
         raise

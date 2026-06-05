@@ -15,6 +15,7 @@ import {
 	type BillingTransaction,
 	fetchOfflinePaymentQrBlob,
 } from '@/api/billing';
+import { PasswordInput } from '@/components/PasswordInput';
 
 function formatInrPaise(paise: number): string {
 	return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -432,8 +433,7 @@ export function AdminBillingPage() {
 					</label>
 					<label className="flex flex-col gap-1">
 						<span className="text-xs text-[var(--muted)]">Key secret (password)</span>
-						<input
-							type="password"
+						<PasswordInput
 							autoComplete="new-password"
 							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
 							value={rzKeySecret}
@@ -443,8 +443,7 @@ export function AdminBillingPage() {
 					</label>
 					<label className="flex flex-col gap-1">
 						<span className="text-xs text-[var(--muted)]">Webhook secret</span>
-						<input
-							type="password"
+						<PasswordInput
 							autoComplete="new-password"
 							className="px-2 py-1 rounded bg-[#0f1720] border border-[#1e293b]"
 							value={rzWebhookSecret}

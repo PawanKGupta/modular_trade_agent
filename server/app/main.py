@@ -382,6 +382,7 @@ async def ensure_db_schema():
                         name=settings.admin_name,
                         role=UserRole.ADMIN,
                     )
+                    UserRepository(db).mark_email_verified(user)
                     # Create default settings for admin user (required for services to work)
                     print(f"[Startup] Creating default settings for admin user {user.id}")
                     SettingsRepository(db).ensure_default(user.id)

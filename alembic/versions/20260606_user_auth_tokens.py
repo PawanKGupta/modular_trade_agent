@@ -48,7 +48,7 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "UPDATE users SET email_verified_at = created_at "
-            "WHERE email_verified_at IS NULL"
+            "WHERE email_verified_at IS NULL AND email_verification_token_hash IS NULL"
         )
     )
 

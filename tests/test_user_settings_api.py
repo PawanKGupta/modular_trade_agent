@@ -1,10 +1,8 @@
-def test_get_and_put_settings(client):
+from tests.support.auth_flow import signup_and_verify_payload
+def test_get_and_put_settings(client, db_session):
     # Create user via signup
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "s1@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "s1@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get settings
     resp = client.get("/api/v1/user/settings", headers={"Authorization": f"Bearer {token}"})
@@ -22,13 +20,10 @@ def test_get_and_put_settings(client):
     assert resp.json()["trade_mode"] == "paper"
 
 
-def test_get_buying_zone_columns_empty(client):
+def test_get_buying_zone_columns_empty(client, db_session):
     """Test getting buying zone columns when none are saved."""
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "s2@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "s2@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     resp = client.get(
         "/api/v1/user/buying-zone-columns", headers={"Authorization": f"Bearer {token}"}
@@ -38,13 +33,10 @@ def test_get_buying_zone_columns_empty(client):
     assert data["columns"] == []
 
 
-def test_save_and_get_buying_zone_columns(client):
+def test_save_and_get_buying_zone_columns(client, db_session):
     """Test saving and retrieving buying zone columns."""
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "s3@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "s3@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Save columns
     columns = ["symbol", "rsi10", "ema9", "confidence", "backtest_score"]
@@ -66,13 +58,10 @@ def test_save_and_get_buying_zone_columns(client):
     assert data["columns"] == columns
 
 
-def test_update_buying_zone_columns(client):
+def test_update_buying_zone_columns(client, db_session):
     """Test updating buying zone columns overwrites previous values."""
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "s4@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "s4@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Save initial columns
     initial_columns = ["symbol", "rsi10", "ema9"]
@@ -104,7 +93,7 @@ def test_update_buying_zone_columns(client):
     assert data["columns"] != initial_columns
 
 
-def test_buying_zone_columns_requires_auth(client):
+def test_buying_zone_columns_requires_auth(client, db_session):
     """Test that buying zone columns endpoints require authentication."""
     # Get without auth
     resp = client.get("/api/v1/user/buying-zone-columns")

@@ -4,14 +4,19 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 _PASSWORD_MIN_LENGTH = 8
-_PASSWORD_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).+$")
 
 
 def validate_password_strength(value: str) -> str:
     if len(value) < _PASSWORD_MIN_LENGTH:
         raise ValueError("Password must be at least 8 characters")
-    if not _PASSWORD_PATTERN.match(value):
-        raise ValueError("Password must include at least one letter and one number")
+    if not re.search(r"[A-Za-z]", value):
+        raise ValueError("Password must include at least one letter")
+    if not re.search(r"[A-Z]", value):
+        raise ValueError("Password must include at least one capital letter")
+    if not re.search(r"\d", value):
+        raise ValueError("Password must include at least one number")
+    if not re.search(r"[^A-Za-z0-9]", value):
+        raise ValueError("Password must include at least one special character")
     return value
 
 
@@ -21,7 +26,15 @@ PasswordStr = Annotated[str, Field(min_length=_PASSWORD_MIN_LENGTH)]
 class SignupRequest(BaseModel):
     email: EmailStr
     password: PasswordStr
-    name: str | None = None
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Name is required")
+        return trimmed
 
     @field_validator("password")
     @classmethod
@@ -64,6 +77,14 @@ class VerifyEmailRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+class SignupResponse(BaseModel):
+    message: str
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
 
 
 class TokenResponse(BaseModel):

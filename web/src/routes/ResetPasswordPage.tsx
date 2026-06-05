@@ -2,8 +2,11 @@ import { FormEvent, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { resetPassword } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
+import { PasswordInput } from '@/components/PasswordInput';
+import { FormLabel } from '@/components/FormLabel';
 import { fieldErrorFor, validateResetPasswordForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
+import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components/PasswordRequirementsChecklist';
 
 export function ResetPasswordPage() {
 	const navigate = useNavigate();
@@ -61,38 +64,41 @@ export function ResetPasswordPage() {
 					<BrandMark />
 				</header>
 				<h1 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Reset password</h1>
-				<label className="block text-xs sm:text-sm mb-1" htmlFor="password">
+				<p className="text-xs text-[var(--muted)] mb-3">
+					<span className="text-red-400">*</span> Required fields
+				</p>
+				<FormLabel htmlFor="password" required>
 					New password
-				</label>
-				<input
+				</FormLabel>
+				<PasswordInput
 					id="password"
 					name="password"
 					className={inputClass}
 					value={password}
 					onChange={(e) => setPassword(e.target.value)}
-					type="password"
 					autoComplete="new-password"
 					required
 				/>
 				{fieldErrorFor(fieldErrors, 'password') && (
 					<div className="text-red-400 text-xs sm:text-sm mb-2">{fieldErrorFor(fieldErrors, 'password')}</div>
 				)}
-				<label className="block text-xs sm:text-sm mb-1 mt-2" htmlFor="confirmPassword">
+				<PasswordRequirementsChecklist password={password} />
+				<FormLabel htmlFor="confirmPassword" required className="mt-2">
 					Confirm password
-				</label>
-				<input
+				</FormLabel>
+				<PasswordInput
 					id="confirmPassword"
 					name="confirmPassword"
 					className={inputClass}
 					value={confirmPassword}
 					onChange={(e) => setConfirmPassword(e.target.value)}
-					type="password"
 					autoComplete="new-password"
 					required
 				/>
 				{fieldErrorFor(fieldErrors, 'confirmPassword') && (
 					<div className="text-red-400 text-xs sm:text-sm mb-2">{fieldErrorFor(fieldErrors, 'confirmPassword')}</div>
 				)}
+				<PasswordConfirmHint password={password} confirmPassword={confirmPassword} />
 				{error && <div className="text-red-400 text-xs sm:text-sm mb-3 mt-2">{error}</div>}
 				<button
 					disabled={loading}

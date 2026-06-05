@@ -15,7 +15,7 @@ export interface AdminUser {
 export interface CreateUserPayload {
 	email: string;
 	password: string;
-	name?: string;
+	name: string;
 	role?: Role;
 }
 

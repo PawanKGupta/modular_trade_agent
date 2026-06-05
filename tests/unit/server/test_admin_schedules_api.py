@@ -40,7 +40,7 @@ def admin_user(db_session):
     """Create an admin user for testing"""
     return UserRepository(db_session).create_user(
         email="admin@example.com",
-        password="password123",
+        password="Password123!",
         role=UserRole.ADMIN,
     )
 
@@ -50,7 +50,7 @@ def normal_user(db_session):
     """Create a normal user for testing"""
     return UserRepository(db_session).create_user(
         email="user@example.com",
-        password="password123",
+        password="Password123!",
         role=UserRole.USER,
     )
 
@@ -75,30 +75,16 @@ def sample_schedule(db_session):
     return schedule
 
 
-def login(client: TestClient, email: str, password: str) -> str:
-    """Helper to login and get token"""
-    # Try signup first (in case user doesn't exist)
-    signup_response = client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": password},
-    )
-    # If user already exists (409), that's fine - just proceed to login
-    # If signup succeeded (200), we can use that token or login
-    if signup_response.status_code == 200:
-        return signup_response.json()["access_token"]
+def login(client: TestClient, db_session, email: str, password: str) -> str:
+    """Helper to login and get token (signup + verify when needed)."""
+    from tests.support.auth_flow import get_access_token
 
-    # User exists, so login
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": password},
-    )
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    return response.json()["access_token"]
+    return get_access_token(client, db_session, email, password)
 
 
 def test_list_schedules_requires_admin(client, db_session, normal_user):
     """Test that listing schedules requires admin privileges"""
-    token = login(client, normal_user.email, "password123")
+    token = login(client, normal_user.email, "Password123!")
 
     response = client.get(
         "/api/v1/admin/schedules",
@@ -109,7 +95,7 @@ def test_list_schedules_requires_admin(client, db_session, normal_user):
 
 def test_list_schedules_success(client, db_session, admin_user, sample_schedule):
     """Test successfully listing all schedules"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.get(
         "/api/v1/admin/schedules",
@@ -124,7 +110,7 @@ def test_list_schedules_success(client, db_session, admin_user, sample_schedule)
 
 def test_get_schedule_requires_admin(client, db_session, normal_user):
     """Test that getting a schedule requires admin privileges"""
-    token = login(client, normal_user.email, "password123")
+    token = login(client, normal_user.email, "Password123!")
 
     response = client.get(
         "/api/v1/admin/schedules/premarket_retry",
@@ -135,7 +121,7 @@ def test_get_schedule_requires_admin(client, db_session, normal_user):
 
 def test_get_schedule_success(client, db_session, admin_user, sample_schedule):
     """Test successfully getting a specific schedule"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.get(
         "/api/v1/admin/schedules/premarket_retry",
@@ -150,7 +136,7 @@ def test_get_schedule_success(client, db_session, admin_user, sample_schedule):
 
 def test_get_schedule_not_found(client, db_session, admin_user):
     """Test getting a non-existent schedule"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.get(
         "/api/v1/admin/schedules/nonexistent_task",
@@ -161,7 +147,7 @@ def test_get_schedule_not_found(client, db_session, admin_user):
 
 def test_update_schedule_requires_admin(client, db_session, normal_user):
     """Test that updating a schedule requires admin privileges"""
-    token = login(client, normal_user.email, "password123")
+    token = login(client, normal_user.email, "Password123!")
 
     response = client.put(
         "/api/v1/admin/schedules/premarket_retry",
@@ -173,7 +159,7 @@ def test_update_schedule_requires_admin(client, db_session, normal_user):
 
 def test_update_schedule_success(client, db_session, admin_user, sample_schedule):
     """Test successfully updating a schedule"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.put(
         "/api/v1/admin/schedules/premarket_retry",
@@ -194,7 +180,7 @@ def test_update_schedule_success(client, db_session, admin_user, sample_schedule
 
 def test_update_schedule_invalid_time_format(client, db_session, admin_user, sample_schedule):
     """Test updating schedule with invalid time format"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.put(
         "/api/v1/admin/schedules/premarket_retry",
@@ -211,7 +197,7 @@ def test_enable_schedule_success(client, db_session, admin_user, sample_schedule
     sample_schedule.enabled = False
     db_session.commit()
 
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.post(
         "/api/v1/admin/schedules/premarket_retry/enable",
@@ -225,7 +211,7 @@ def test_enable_schedule_success(client, db_session, admin_user, sample_schedule
 
 def test_disable_schedule_success(client, db_session, admin_user, sample_schedule):
     """Test successfully disabling a schedule"""
-    token = login(client, admin_user.email, "password123")
+    token = login(client, admin_user.email, "Password123!")
 
     response = client.post(
         "/api/v1/admin/schedules/premarket_retry/disable",

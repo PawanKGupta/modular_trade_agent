@@ -10,6 +10,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 def _make_client() -> TestClient:
@@ -39,12 +40,8 @@ def _signup_and_promote_admin(client: TestClient, email: str) -> dict:
     from src.infrastructure.db.models import UserRole, Users  # noqa: PLC0415
     from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
 
-    response = client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": "testpass123", "name": "Admin User"},
-    )
-    assert response.status_code == 200
-    token = response.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Testpass123!", "name": "Admin User"})
+    token = _auth_tokens["access_token"]
 
     with SessionLocal() as db:
         user = db.query(Users).filter(Users.email == email).first()
@@ -72,7 +69,7 @@ def test_admin_create_user_creates_default_settings():
         headers=admin_headers,
         json={
             "email": "newuser@test.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "New User",
             "role": "user",
         },
@@ -100,7 +97,7 @@ def test_signup_also_creates_default_settings():
 
     response = client.post(
         "/api/v1/auth/signup",
-        json={"email": "signupuser@test.com", "password": "testpass123", "name": "Signup User"},
+        json={"email": "signupuser@test.com", "password": "Testpass123!", "name": "Signup User"},
     )
 
     assert response.status_code == 200
@@ -133,7 +130,7 @@ def test_service_can_find_settings_for_new_user():
         headers=admin_headers,
         json={
             "email": "serviceuser@test.com",
-            "password": "testpass123",
+            "password": "Testpass123!",
             "name": "Service User",
             "role": "user",
         },

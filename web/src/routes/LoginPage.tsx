@@ -2,9 +2,12 @@ import { FormEvent, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { login } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
+import { PasswordInput } from '@/components/PasswordInput';
+import { EmailInput } from '@/components/EmailInput';
+import { FormLabel } from '@/components/FormLabel';
 import { useSessionStore } from '@/state/sessionStore';
 import { fieldErrorFor, validateLoginForm } from '@/utils/authValidation';
-import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
+import { getApiErrorMessage, isUnverifiedEmailLoginError } from '@/utils/getApiErrorMessage';
 
 export function LoginPage() {
 	const navigate = useNavigate();
@@ -13,11 +16,13 @@ export function LoginPage() {
 	const [password, setPassword] = useState('');
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateLoginForm>>([]);
 	const [error, setError] = useState<string | null>(null);
+	const [showResendVerification, setShowResendVerification] = useState(false);
 	const [loading, setLoading] = useState(false);
 
 	async function onSubmit(e: FormEvent) {
 		e.preventDefault();
 		setError(null);
+		setShowResendVerification(false);
 		const validationErrors = validateLoginForm({ email, password });
 		setFieldErrors(validationErrors);
 		if (validationErrors.length > 0) {
@@ -31,6 +36,7 @@ export function LoginPage() {
 			navigate('/dashboard');
 		} catch (err: unknown) {
 			setError(getApiErrorMessage(err, 'Login failed'));
+			setShowResendVerification(isUnverifiedEmailLoginError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -46,28 +52,39 @@ export function LoginPage() {
 					<BrandMark />
 				</header>
 				<h1 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Login</h1>
-				<label className="block text-xs sm:text-sm mb-1" htmlFor="email">Email</label>
-				<input
+				<p className="text-xs text-[var(--muted)] mb-3">
+					<span className="text-red-400">*</span> Required fields
+				</p>
+				<FormLabel htmlFor="email" required>
+					Email
+				</FormLabel>
+				<EmailInput
 					id="email"
 					name="email"
 					className={inputClass}
 					value={email}
-					onChange={(e) => setEmail(e.target.value)}
-					type="email"
+					onChange={(e) => {
+						setEmail(e.target.value);
+						setShowResendVerification(false);
+					}}
 					autoComplete="email"
 					required
 				/>
 				{fieldErrorFor(fieldErrors, 'email') && (
 					<div className="text-red-400 text-xs sm:text-sm mb-2">{fieldErrorFor(fieldErrors, 'email')}</div>
 				)}
-				<label className="block text-xs sm:text-sm mb-1 mt-2" htmlFor="password">Password</label>
-				<input
+				<FormLabel htmlFor="password" required className="mt-2">
+					Password
+				</FormLabel>
+				<PasswordInput
 					id="password"
 					name="password"
 					className={inputClass}
 					value={password}
-					onChange={(e) => setPassword(e.target.value)}
-					type="password"
+					onChange={(e) => {
+						setPassword(e.target.value);
+						setShowResendVerification(false);
+					}}
 					autoComplete="current-password"
 					required
 				/>
@@ -89,6 +106,17 @@ export function LoginPage() {
 				<div className="mt-3 text-xs sm:text-sm text-[var(--muted)]">
 					No account? <Link to="/signup" className="text-[var(--accent)]">Sign up</Link>
 				</div>
+				{showResendVerification ? (
+					<div className="mt-2 text-xs sm:text-sm text-[var(--muted)]">
+						Need to verify?{' '}
+						<Link
+							to={`/resend-verification?email=${encodeURIComponent(email.trim())}`}
+							className="text-[var(--accent)]"
+						>
+							Resend verification email
+						</Link>
+					</div>
+				) : null}
 			</form>
 		</div>
 	);

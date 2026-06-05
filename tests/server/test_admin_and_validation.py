@@ -38,7 +38,7 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     db = SessionLocal()
     repo = UserRepository(db)
     admin = repo.create_user(
-        f"adm{random.randint(1, 1_000_000)}@example.com", "Admin123", role=UserRole.ADMIN
+        f"adm{random.randint(1, 1_000_000)}@example.com", "Admin123!", role=UserRole.ADMIN
     )
     db.close()
     admin_token = create_jwt_token(str(admin.id), extra={"uid": admin.id, "roles": ["admin"]})
@@ -48,7 +48,7 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     resp = client.post(
         "/api/v1/admin/users",
         headers=ah,
-        json={"email": email_new, "password": "Secret123", "role": "user"},
+        json={"email": email_new, "password": "Secret123!", "role": "user"},
     )
     assert resp.status_code == 200
     new_user = resp.json()
@@ -60,11 +60,10 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     assert up.json()["is_active"] is False
     # non-admin forbidden
     # sign up normal user
-    normal_signup = client.post(
-        "/api/v1/auth/signup",
-        json={"email": f"n{random.randint(1, 1_000_000)}@example.com", "password": "Secret123"},
-    )
-    ntok = normal_signup.json()["access_token"]
+    from tests.support.auth_flow import get_access_token
+
+    email = f"n{random.randint(1, 1_000_000)}@example.com"
+    ntok = get_access_token(client, None, email, "Secret123!")
     nh = {"Authorization": f"Bearer {ntok}"}
     for path, method in [("/api/v1/admin/users", "GET"), ("/api/v1/admin/users", "POST")]:
         r = (
@@ -85,13 +84,19 @@ def test_auth_guards_and_validation_errors():
     # Invalid signup payload -> 422
     bad = client.post("/api/v1/auth/signup", json={"email": "not-an-email", "password": "123"})
     assert bad.status_code == 422
-    # Valid signup
+    # Valid signup then verify before protected routes
+    from tests.support.auth_flow import signup_and_verify
+
+    email = f"ok{random.randint(1, 1_000_000)}@example.com"
+    password = "Secret123!"
     ok = client.post(
         "/api/v1/auth/signup",
-        json={"email": f"ok{random.randint(1, 1_000_000)}@example.com", "password": "Secret123"},
+        json={"email": email, "password": password},
     )
     assert ok.status_code == 200
-    token = ok.json()["access_token"]
+    assert "message" in ok.json()
+    tokens = signup_and_verify(client, None, email, password)
+    token = tokens["access_token"]
     h = {"Authorization": f"Bearer {token}"}
     # Invalid settings payload -> 422
     inv = client.put("/api/v1/user/settings", headers=h, json={"trade_mode": "invalid-mode"})

@@ -4,6 +4,8 @@ import { changePassword } from '@/api/auth';
 import { useState, useEffect } from 'react';
 import { fieldErrorFor, validateChangePasswordForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
+import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components/PasswordRequirementsChecklist';
+import { PasswordInput } from '@/components/PasswordInput';
 
 export function SettingsPage() {
 	const qc = useQueryClient();
@@ -78,9 +80,8 @@ export function SettingsPage() {
 					<label className="block text-xs sm:text-sm mb-1" htmlFor="currentPassword">
 						Current password
 					</label>
-					<input
+					<PasswordInput
 						id="currentPassword"
-						type="password"
 						autoComplete="current-password"
 						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						value={currentPassword}
@@ -94,9 +95,8 @@ export function SettingsPage() {
 					<label className="block text-xs sm:text-sm mb-1" htmlFor="newPassword">
 						New password
 					</label>
-					<input
+					<PasswordInput
 						id="newPassword"
-						type="password"
 						autoComplete="new-password"
 						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						value={newPassword}
@@ -105,14 +105,14 @@ export function SettingsPage() {
 					{fieldErrorFor(passwordFieldErrors, 'newPassword') && (
 						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(passwordFieldErrors, 'newPassword')}</div>
 					)}
+					<PasswordRequirementsChecklist password={newPassword} />
 				</div>
 				<div>
 					<label className="block text-xs sm:text-sm mb-1" htmlFor="confirmNewPassword">
 						Confirm new password
 					</label>
-					<input
+					<PasswordInput
 						id="confirmNewPassword"
-						type="password"
 						autoComplete="new-password"
 						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 						value={confirmNewPassword}
@@ -121,6 +121,7 @@ export function SettingsPage() {
 					{fieldErrorFor(passwordFieldErrors, 'confirmPassword') && (
 						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(passwordFieldErrors, 'confirmPassword')}</div>
 					)}
+					<PasswordConfirmHint password={newPassword} confirmPassword={confirmNewPassword} />
 				</div>
 				<button
 					type="button"
@@ -215,12 +216,12 @@ export function SettingsPage() {
 						</div>
 						<div>
 							<label className="block text-xs sm:text-sm mb-1">Client ID (UCC)</label>
-							<input
+							<PasswordInput
 								className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
-								type="password"
 								value={apiSecret}
 								onChange={(e) => setApiSecret(e.target.value)}
 								placeholder={credsInfo?.has_creds && !showFullCreds ? `Stored: ${credsInfo.api_secret_masked}` : "Enter Client ID (UCC)"}
+								autoComplete="off"
 							/>
 							{credsInfo?.has_creds && !showFullCreds && (
 								<div className="text-xs text-[var(--muted)] mt-1">
@@ -263,24 +264,24 @@ export function SettingsPage() {
 							</div>
 							<div>
 								<label className="block text-xs sm:text-sm mb-1">MPIN (for 2FA)</label>
-								<input
+								<PasswordInput
 									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
-									type="password"
 									value={mpin}
 									onChange={(e) => setMpin(e.target.value)}
 									placeholder={credsInfo?.has_creds && !showFullCreds ? "Stored (click Show to view)" : "Enter MPIN"}
 									disabled={credsInfo?.has_creds && !showFullCreds}
+									autoComplete="off"
 								/>
 							</div>
 							<div>
 								<label className="block text-xs sm:text-sm mb-1">TOTP Secret</label>
-								<input
+								<PasswordInput
 									className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
-									type="password"
 									value={totpSecret}
 									onChange={(e) => setTotpSecret(e.target.value)}
 									placeholder={credsInfo?.has_creds && !showFullCreds ? "Stored (click Show to view)" : "Enter TOTP Secret"}
 									disabled={credsInfo?.has_creds && !showFullCreds}
+									autoComplete="off"
 								/>
 							</div>
 							<div>

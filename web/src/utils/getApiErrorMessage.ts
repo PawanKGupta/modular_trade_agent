@@ -29,6 +29,17 @@ export function getApiErrorMessage(error: unknown, fallback = 'Something went wr
 	return fallback;
 }
 
+/** True when login failed because the account email is not verified yet (HTTP 403). */
+export function isUnverifiedEmailLoginError(error: unknown): boolean {
+	if (!axios.isAxiosError(error) || error.response?.status !== 403) {
+		return false;
+	}
+	const detail = normalizeFastApiDetail(
+		(error.response.data as { detail?: unknown } | undefined)?.detail,
+	);
+	return (detail ?? '').toLowerCase().includes('verify your email');
+}
+
 function normalizeFastApiDetail(detail: unknown): string | null {
 	if (detail == null) {
 		return null;

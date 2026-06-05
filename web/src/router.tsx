@@ -4,6 +4,7 @@ import { SignupPage } from './routes/SignupPage';
 import { ForgotPasswordPage } from './routes/ForgotPasswordPage';
 import { ResetPasswordPage } from './routes/ResetPasswordPage';
 import { VerifyEmailPage } from './routes/VerifyEmailPage';
+import { ResendVerificationPage } from './routes/ResendVerificationPage';
 import { AppShell } from './routes/AppShell';
 import { DashboardHome } from './routes/dashboard/DashboardHome';
 import { BuyingZonePage } from './routes/dashboard/BuyingZonePage';
@@ -37,6 +38,7 @@ export function createAppRouter() {
 		{ path: '/forgot-password', element: <ForgotPasswordPage /> },
 		{ path: '/reset-password', element: <ResetPasswordPage /> },
 		{ path: '/verify-email', element: <VerifyEmailPage /> },
+		{ path: '/resend-verification', element: <ResendVerificationPage /> },
 		{
 			path: '/dashboard',
 			element: (

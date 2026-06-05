@@ -192,30 +192,47 @@ def dummy_db():
 
 # Signup tests
 def test_signup_success(
-    user_repo, settings_repo, mock_jwt_creation, mock_settings, mock_auth_email, dummy_db
+    user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db
 ):
     user_repo.by_email = None  # No existing user
-    payload = auth.SignupRequest(email="new@example.com", password="password123", name="New User")
+    payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     result = auth.signup(payload, db=dummy_db)
 
-    assert result.access_token == "access_token_123"
-    assert result.refresh_token == "refresh_token_456"
+    assert "verification link" in result.message.lower()
     assert user_repo.created_user.email == "new@example.com"
     assert user_repo.created_user.name == "New User"
     assert settings_repo.ensured_user_ids == [42]
+    assert len(mock_auth_email.verify) == 1
 
 
-def test_signup_duplicate_email(user_repo, settings_repo):
-    existing_user = DummyUser(email="existing@example.com")
+def test_signup_duplicate_verified_email(user_repo, settings_repo):
+    from src.infrastructure.db.timezone_utils import ist_now
+
+    existing_user = DummyUser(email="existing@example.com", email_verified_at=ist_now())
     user_repo.by_email = existing_user
-    payload = auth.SignupRequest(email="existing@example.com", password="password123")
+    payload = auth.SignupRequest(email="existing@example.com", password="Password123!", name="Existing")
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
 
     assert exc.value.status_code == status.HTTP_409_CONFLICT
     assert "Email already registered" in exc.value.detail
+    assert user_repo.created_user is None
+
+
+def test_signup_unverified_duplicate_resends(user_repo, settings_repo, mock_auth_email, dummy_db):
+    existing_user = DummyUser(
+        email="pending@example.com",
+        email_verified_at=None,
+        email_verification_token_hash="pending-hash",
+    )
+    user_repo.by_email = existing_user
+    payload = auth.SignupRequest(email="pending@example.com", password="Password123!", name="Pending")
+
+    result = auth.signup(payload, db=dummy_db)
+
+    assert "verification link" in result.message.lower()
     assert user_repo.created_user is None
 
 
@@ -226,7 +243,7 @@ def test_signup_exception_handling(user_repo, settings_repo, mock_settings):
         raise RuntimeError("Database error")
 
     user_repo.create_user = boom
-    payload = auth.SignupRequest(email="new@example.com", password="password123")
+    payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -236,6 +253,22 @@ def test_signup_exception_handling(user_repo, settings_repo, mock_settings):
 
 
 # Login tests
+def test_login_blocks_unverified_user(user_repo, mock_verify_password, mock_settings):
+    user = DummyUser(
+        password_hash="$2b$12$hashed.password",
+        email_verified_at=None,
+        email_verification_token_hash="pending-hash",
+    )
+    user_repo.by_email = user
+    payload = auth.LoginRequest(email="test@example.com", password="correct_password")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.login(payload, db=None)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "verify your email" in exc.value.detail.lower()
+
+
 def test_login_success(user_repo, mock_jwt_creation, mock_verify_password, mock_settings):
     user = DummyUser(id=1, email="test@example.com", password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
@@ -460,7 +493,7 @@ def test_refresh_exception_handling(user_repo, mock_settings, monkeypatch):
 
 
 def test_signup_exception_from_settings_repo(
-    user_repo, settings_repo, mock_jwt_creation, mock_settings
+    user_repo, settings_repo, mock_settings
 ):
     user_repo.by_email = None
 
@@ -468,7 +501,7 @@ def test_signup_exception_from_settings_repo(
         raise RuntimeError("Settings error")
 
     settings_repo.ensure_default = boom
-    payload = auth.SignupRequest(email="new@example.com", password="password123")
+    payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -477,20 +510,24 @@ def test_signup_exception_from_settings_repo(
     assert "Signup failed" in exc.value.detail
 
 
-def test_signup_exception_from_jwt_creation(user_repo, settings_repo, mock_settings, monkeypatch):
-    user_repo.by_email = None
+def test_signup_exception_from_jwt_creation(user_repo, mock_settings, monkeypatch):
+    """verify-email issues JWT; failure surfaces from token creation."""
+    from server.app.core.auth_tokens import hash_token
 
     def boom(*_, **__):
         raise RuntimeError("JWT error")
 
     monkeypatch.setattr(auth, "create_jwt_token", boom)
-    payload = auth.SignupRequest(email="new@example.com", password="password123")
+    token = "verify-token"
+    user = DummyUser(email="user@example.com")
+    user.email_verification_token_hash = hash_token(token)
+    user_repo = DummyUserRepo(db=None)
+    user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
+    monkeypatch.setattr(auth, "UserRepository", lambda db: user_repo)
+    payload = auth.VerifyEmailRequest(token=token)
 
-    with pytest.raises(HTTPException) as exc:
-        auth.signup(payload, db=DummyDB())
-
-    assert exc.value.status_code == 500
-    assert "Signup failed" in exc.value.detail
+    with pytest.raises(RuntimeError, match="JWT error"):
+        auth.verify_email(payload, db=DummyDB())
 
 
 def test_signup_exception_from_get_by_email(user_repo, settings_repo, mock_settings):
@@ -498,7 +535,7 @@ def test_signup_exception_from_get_by_email(user_repo, settings_repo, mock_setti
         raise RuntimeError("DB connection error")
 
     user_repo.get_by_email = boom
-    payload = auth.SignupRequest(email="new@example.com", password="password123")
+    payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -659,7 +696,7 @@ def test_signup_http_exception_propagation(user_repo, settings_repo):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service down")
 
     user_repo.create_user = create_with_http_error
-    payload = auth.SignupRequest(email="new@example.com", password="password123")
+    payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -670,7 +707,14 @@ def test_signup_http_exception_propagation(user_repo, settings_repo):
 
 def test_signup_rejects_weak_password():
     with pytest.raises(ValidationError):
-        SignupRequest(email="new@example.com", password="short1")
+        SignupRequest(email="new@example.com", password="short1!", name="User")
+    with pytest.raises(ValidationError):
+        SignupRequest(email="new@example.com", password="secret123!", name="User")
+
+
+def test_signup_rejects_empty_name():
+    with pytest.raises(ValidationError):
+        SignupRequest(email="new@example.com", password="Password123!", name="   ")
 
 
 def test_login_rejects_inactive_user(user_repo, mock_settings):
@@ -690,13 +734,13 @@ def test_change_password_success(user_repo, mock_verify_password):
     mock_verify_password.verified = True
     payload = auth.ChangePasswordRequest(
         current_password="OldPass123",
-        new_password="NewPass456",
+        new_password="NewPass456!",
     )
 
     result = auth.change_password(payload, current=user, db=DummyDB())
 
     assert result.message == "Password updated successfully"
-    assert user_repo.password_set_value == "NewPass456"
+    assert user_repo.password_set_value == "NewPass456!"
 
 
 def test_change_password_wrong_current(user_repo, mock_verify_password):
@@ -704,7 +748,7 @@ def test_change_password_wrong_current(user_repo, mock_verify_password):
     mock_verify_password.verified = False
     payload = auth.ChangePasswordRequest(
         current_password="wrong",
-        new_password="NewPass456",
+        new_password="NewPass456!",
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -744,14 +788,14 @@ def test_reset_password_valid_token(user_repo, mock_verify_password, dummy_db):
     user_repo.by_email = user
     user_repo.find_by_reset_token_hash = lambda h: user if h == hash_token(token) else None
 
-    payload = auth.ResetPasswordRequest(token=token, new_password="NewPass456")
+    payload = auth.ResetPasswordRequest(token=token, new_password="NewPass456!")
     result = auth.reset_password(payload, db=dummy_db)
 
     assert result.message == "Password reset successfully"
-    assert user_repo.password_set_value == "NewPass456"
+    assert user_repo.password_set_value == "NewPass456!"
 
 
-def test_verify_email_success(user_repo, dummy_db):
+def test_verify_email_success(user_repo, mock_jwt_creation, dummy_db):
     from server.app.core.auth_tokens import hash_token
 
     token = "verify-token"
@@ -762,11 +806,56 @@ def test_verify_email_success(user_repo, dummy_db):
     payload = auth.VerifyEmailRequest(token=token)
     result = auth.verify_email(payload, db=dummy_db)
 
-    assert result.message == "Email verified successfully"
+    assert result.access_token == "access_token_123"
+    assert result.refresh_token == "refresh_token_456"
     assert user.email_verified_at is not None
+
+
+def test_resend_verification_public(user_repo, mock_auth_email, dummy_db):
+    user = DummyUser(
+        email="pending@example.com",
+        email_verified_at=None,
+        email_verification_token_hash="hash",
+    )
+    user_repo.by_email = user
+    payload = auth.ResendVerificationRequest(email="pending@example.com")
+
+    result = auth.resend_verification(payload, db=dummy_db)
+
+    assert "verification link" in result.message.lower()
+    assert len(mock_auth_email.verify) == 1
+
+
+def test_reset_password_expired_token(user_repo, dummy_db):
+    from datetime import timedelta
+
+    from server.app.core.auth_tokens import hash_token
+    from src.infrastructure.db.timezone_utils import ist_now_naive
+
+    token = "expired-token"
+    user = DummyUser(email="user@example.com")
+    user.password_reset_token_hash = hash_token(token)
+    user.password_reset_expires_at = ist_now_naive() - timedelta(hours=2)
+    user_repo.find_by_reset_token_hash = lambda h: user if h == hash_token(token) else None
+
+    payload = auth.ResetPasswordRequest(token=token, new_password="NewPass456!")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.reset_password(payload, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Invalid or expired reset link" in exc.value.detail
 
 
 def test_me_unverified_user():
     user = DummyUser(email="user@example.com", email_verified_at=None)
+    user.email_verification_token_hash = "abc123"
     result = auth.me(current=user)
     assert result.email_verified is False
+
+
+def test_me_legacy_user_grandfathered_without_verified_at():
+    user = DummyUser(email="legacy@example.com", email_verified_at=None)
+    user.email_verification_token_hash = None
+    result = auth.me(current=user)
+    assert result.email_verified is True

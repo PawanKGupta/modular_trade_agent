@@ -13,17 +13,13 @@ test.describe('Authentication', () => {
 		// Track user for cleanup
 		testDataTracker.trackUser(email);
 
-		// Complete signup flow
+		// Complete signup flow — hard verification: stay on check-email screen
 		await signupPage.signup(email, password, name);
 
-		// Should redirect to dashboard - wait with longer timeout for signup processing
-		await expect(page).toHaveURL(/\/dashboard/, { timeout: 15000 });
-
-		// Wait for network to be idle to ensure all API calls complete
-		await page.waitForLoadState('networkidle', { timeout: 10000 });
-
-		// Wait for dashboard to load - check for main content area with retry
-		await expect(page.locator('main, [role="main"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: /check your email/i })).toBeVisible({
+			timeout: 15000,
+		});
+		await expect(page.getByText(/verification link/i)).toBeVisible();
 	});
 
 	test('user can login with correct credentials', async ({ loginPage, page }) => {

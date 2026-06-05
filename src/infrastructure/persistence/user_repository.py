@@ -98,13 +98,16 @@ class UserRepository:
         user.email_verification_sent_at = sent_at
         self.db.commit()
 
-    def clear_verification(self, user: Users) -> None:
-        from src.infrastructure.db.timezone_utils import ist_now
+    def mark_email_verified(self, user: Users) -> None:
+        from src.infrastructure.db.timezone_utils import ist_now_naive
 
-        user.email_verified_at = ist_now()
+        user.email_verified_at = ist_now_naive()
         user.email_verification_token_hash = None
         user.email_verification_sent_at = None
         self.db.commit()
+
+    def clear_verification(self, user: Users) -> None:
+        self.mark_email_verified(user)
 
     def find_by_verification_token_hash(self, token_hash: str) -> Users | None:
         return (
