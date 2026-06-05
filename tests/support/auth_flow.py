@@ -10,6 +10,16 @@ from sqlalchemy.orm import Session
 from server.app.core.auth_tokens import auth_sent_at, generate_token, hash_token
 from src.infrastructure.db.models import Users
 
+DEFAULT_TEST_USER_NAME = "Test User"
+
+
+def _signup_payload(email: str, password: str, name: str | None = None) -> dict[str, Any]:
+    return {
+        "email": email,
+        "password": password,
+        "name": (name or DEFAULT_TEST_USER_NAME).strip() or DEFAULT_TEST_USER_NAME,
+    }
+
 
 def _resolve_db(db: Session | None) -> tuple[Session, bool]:
     if db is not None:
@@ -44,9 +54,7 @@ def signup_and_verify(
     name: str | None = None,
 ) -> dict[str, Any]:
     """Register via signup, verify email, return token response JSON."""
-    payload: dict[str, Any] = {"email": email, "password": password}
-    if name is not None:
-        payload["name"] = name
+    payload = _signup_payload(email, password, name)
     signup = client.post("/api/v1/auth/signup", json=payload)
     assert signup.status_code == 200, signup.text
     assert "message" in signup.json()
@@ -57,7 +65,10 @@ def signup_and_verify_payload(
     client: TestClient, db: Session | None, payload: dict[str, Any]
 ) -> dict[str, Any]:
     """Signup with a JSON payload dict, verify email, return tokens."""
-    signup = client.post("/api/v1/auth/signup", json=payload)
+    body = dict(payload)
+    if not str(body.get("name", "")).strip():
+        body["name"] = DEFAULT_TEST_USER_NAME
+    signup = client.post("/api/v1/auth/signup", json=body)
     assert signup.status_code == 200, signup.text
     return verify_user_email(client, db, str(payload["email"]))
 
@@ -81,9 +92,7 @@ def get_access_token(
     name: str | None = None,
 ) -> str:
     """Signup (or re-signup) + verify, or login when already verified."""
-    payload: dict[str, Any] = {"email": email, "password": password}
-    if name is not None:
-        payload["name"] = name
+    payload = _signup_payload(email, password, name)
     signup = client.post("/api/v1/auth/signup", json=payload)
     if signup.status_code == 200 and "message" in signup.json():
         return verify_user_email(client, db, email)["access_token"]

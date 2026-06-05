@@ -38,17 +38,22 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     db = SessionLocal()
     repo = UserRepository(db)
     admin = repo.create_user(
-        f"adm{random.randint(1, 1_000_000)}@example.com", "Admin123!", role=UserRole.ADMIN
+        f"adm{random.randint(1, 1_000_000)}@example.com",
+        "Admin123!",
+        name="Admin User",
+        role=UserRole.ADMIN,
     )
+    repo.mark_email_verified(admin)
+    admin_id = admin.id
     db.close()
-    admin_token = create_jwt_token(str(admin.id), extra={"uid": admin.id, "roles": ["admin"]})
+    admin_token = create_jwt_token(str(admin_id), extra={"uid": admin_id, "roles": ["admin"]})
     ah = {"Authorization": f"Bearer {admin_token}"}
     # admin: create user
     email_new = f"user{random.randint(1, 1_000_000)}@example.com"
     resp = client.post(
         "/api/v1/admin/users",
         headers=ah,
-        json={"email": email_new, "password": "Secret123!", "role": "user"},
+        json={"email": email_new, "password": "Secret123!", "name": "New User", "role": "user"},
     )
     assert resp.status_code == 200
     new_user = resp.json()
@@ -67,7 +72,7 @@ def test_admin_create_and_update_and_forbidden_for_non_admin():
     nh = {"Authorization": f"Bearer {ntok}"}
     for path, method in [("/api/v1/admin/users", "GET"), ("/api/v1/admin/users", "POST")]:
         r = (
-            client.request(method, path, headers=nh, json={"email": "x@y.com", "password": "x"})
+            client.request(method, path, headers=nh, json={"email": "x@y.com", "password": "Secret123!", "name": "X User"})
             if method == "POST"
             else client.request(method, path, headers=nh)
         )
@@ -91,7 +96,7 @@ def test_auth_guards_and_validation_errors():
     password = "Secret123!"
     ok = client.post(
         "/api/v1/auth/signup",
-        json={"email": email, "password": password},
+        json={"email": email, "password": password, "name": "Test User"},
     )
     assert ok.status_code == 200
     assert "message" in ok.json()

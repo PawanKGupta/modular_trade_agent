@@ -8,9 +8,12 @@ from server.app.core import deps
 
 class DummyUser:
     def __init__(self):
+        from src.infrastructure.db.timezone_utils import ist_now
+
         self.is_active = True
         self.role = "USER"
         self.id = 1
+        self.email_verified_at = ist_now()
 
 
 class DummyUserRepo:
