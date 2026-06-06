@@ -1,0 +1,105 @@
+---
+description: Rebound — global project map, workflow, and cross-cutting quality (always on)
+alwaysApply: true
+---
+
+# Modular Trade Agent (Rebound) — global
+
+## What this repo is
+
+**React (Vite) + TypeScript** web (`web/`), **FastAPI** API (`server/app/`), **Python domain & DB** (`src/`), **SQLite** persistence. Treat trading-related code with extra care: correctness, and no credential leakage to logs or commits.
+
+## Where things live
+
+| Area | Path | Notes |
+|------|------|--------|
+| API | `server/app/` | `routers/`, `core/`, `schemas/` |
+| Domain / services / DB | `src/` | Imported as `src.*` (path set from `server`) |
+| Web UI | `web/src/` | API client: `web/src/api/`; TanStack Query for server state |
+| Migrations | `alembic/` | Prefer Alembic for schema changes |
+| Tests | `tests/` | `unit/`, `integration/` |
+| Doc standards | `docs/DOCUMENTATION_RULES.md` | **Single** canonical policy (markdown + docstrings) |
+
+**Run (local):** from **repo root**, use the **root `.venv`** for Python: `uvicorn` / `python` / `pytest` (see `python.mdc`). Web: `npm run dev` in `web/`
+
+**Stack-specific rules:** Python → `python.mdc` · `web/src` TypeScript → `web.mdc`
+
+## Git and remotes
+
+- **Never** `git push`, `git push --force`, open a PR, or change **shared** / **release** branches on the remote **without explicit user permission** in the current task. Prepare commits or a patch locally; ask before publishing to `origin` or opening PRs.
+- **Do not** assume “helping” by pushing fixes (including Docker, config, or release branches) unless the user clearly asked to **push** or **merge** to that branch.
+
+## Code quality
+
+- **Clean, readable, maintainable:** Prefer **clear names** and **small, focused** functions or components. Match the file’s existing style, structure, and error-handling patterns. Avoid “clever” one-liners that obscure behavior.
+- **No duplication (code):** Do not copy-paste the same logic in multiple places. **Extract** **reusable** functions and shared helpers, hooks, or modules, or call existing code in `src/`, `server/app/core`, and shared `web` utilities. (Documentation duplication: **Documentation** below.)
+- **Best practices:** Use **idiomatic** patterns for the stack in this repo — **FastAPI** / **Pydantic** / **SQLAlchemy** on the server, **React** / **TypeScript** with existing hooks and query patterns in `web/`. Do not add ad hoc alternatives when a project-standard pattern already exists. Stack-specific details: `python.mdc`, `web.mdc`.
+
+## Implementation rules
+
+- **Avoid hardcoding:** Put URLs, ports, feature toggles, and environment-dependent values in **config** — `server/app/core` settings, env / `.env`, and (for the web) `import.meta.env` / `VITE_*` as the project already does. No magic numbers or strings in business logic when a **named constant** or **settings** field is expected.
+- **Use logging** — In Python, **`logging.getLogger(__name__)`** with appropriate **levels** (`debug` / `info` / `warning` / `error`); use **`print()`** only for clearly intentional CLI/one-off scripts, not the API or `src/` services. In `web/`, follow existing error reporting and the **Security** note on not leaking secrets. Details: `python.mdc`, `web.mdc`.
+- **Follow project structure strictly** — New code belongs in the **established layer**: e.g. HTTP routes in `server/app/routers/`, shared domain in `src/` (`application/`, `infrastructure/`, … as already used), Pydantic **schemas** where peers live, `web/src/api` and feature folders under `web/src/` to match surrounding features. Do **not** add parallel top-level “dump” packages or misplace code to skip imports.
+- **Prefer reusable functions over duplication:** The default is **one** well-named function or service used from every call site; if you are about to paste logic, **extract** first. Aligns with **Code quality** and **After writing code** (duplication review).
+
+## Features
+
+- Small, reviewable diffs. Match existing patterns in the touched files.
+- If you change an HTTP contract the UI uses, keep **Pydantic ↔ web API client** aligned.
+
+## Documentation (for meaningful changes)
+
+- **Policy file (read first):** Always follow [`docs/DOCUMENTATION_RULES.md`](../docs/DOCUMENTATION_RULES.md) (single canonical: structure, style, code docstrings, templates, and maintenance).
+- **Structured documentation:** For new or substantial markdown, use a **clear head hierarchy** and the **Quick reference** and templates in that file (Overview, purpose, inputs/outputs, flow, examples, edge cases as applicable). **Consistent format** across the repo: same heading levels, list style, and code-fence style as the **sibling** doc you are appending to.
+- **Clarity over verbosity:** Short, scannable text; no filler. Prefer precision and examples over long prose. Same for **docstrings** (below).
+- **Code docstrings (Python):** `docs/DOCUMENTATION_RULES.md` — every function (and nontrivial `__init__` / public methods) gets a **docstring**; **Google or NumPy** style, **one style per file**, matching the module. Details: `python.mdc`. **TypeScript / web:** JSDoc or TSDoc for **public exports** and non-obvious helpers; follow how the file and `web.mdc` do it. Do not restate types that are already obvious from signatures unless it adds meaning.
+- **When to update:** Behavior users or operators see, new/changed **API** surface, **env/config**, **migrations/deployment**, or anything another developer would look up. **Omit** doc edits for obvious one-line fixes, test-only or formatting-only work, unless comments/README already claim wrong behavior.
+- **Prefer updating over adding:** Find the **canonical** place first (`docs/` — e.g. `docs/ARCHITECTURE.md`, `docs/guides/`, `docs/features/`, `docs/kotak_neo_trader/`, `docker/README.md`, root `README.md`). **Amend the existing page** (correct sections, add a subsection) instead of a second file on the same topic.
+- **Avoid duplication:** Do not copy the same procedure into two markdown files. If two areas must mention it, keep detail in one place and use a **one-line cross-link** in the other.
+- **New files only when needed:** Add a new `.md` only if nothing reasonably covers a **new** subsystem or workflow. Use clear names; do not add parallel “summary” or “notes” docs that restate an existing guide.
+- **Types of edits:** API/schema changes → reflect in any API/architecture and consumer docs; **UI flow** changes → `docs/guides/UI_GUIDE.md` / `USER_GUIDE.md` (or the guide that already documents that area); **config** → env/setup sections in `GETTING_STARTED` or `README` as appropriate. Keep tone and structure consistent with the file.
+
+## Bug fixes
+
+- **Reproduce** (test, script, or steps) or state assumptions.
+- **Root cause**; avoid try/except that only hides errors.
+- **Regression test** for non-obvious or repeat failures under `tests/unit/` or `tests/integration/`.
+- Run **targeted** `pytest` (or web tests) after substantive changes; no unrelated refactors.
+- If the bug was **user-visible** or a **doc promised wrong behavior**, update the same **existing** doc per **Documentation** above (no duplicate bug write-ups in `docs/`).
+
+## Security
+
+- No real **passwords, API keys, JWT/encryption secrets, or broker creds** in code or chat paste.
+- Logs: no **PII, tokens, or full request bodies** unless the codebase already does so deliberately.
+
+## After writing code
+
+Re-read the change before you consider it **done** (complements **Code quality** and **Implementation rules** above):
+
+- **Review for duplication** — same logic in two places, or a pattern that already exists in `src/`, `core`, or `web`? **Prefer reusable** helpers; same as **Implementation rules**.
+- **Optimize for readability** — names and control flow that match the file; remove noise (dead code, obsolete comments); keep units small enough to scan.
+- **Ensure best practices** — stack norms (`python.mdc` / `web.mdc`); no shortcuts that break typing, error handling, or security. **No new hardcoding**; **use logging** on the server where behavior should be diagnosable; file placement matches **project structure**. New **Python/TS** surface area has **docstrings or JSDoc** per **Documentation** (and `DOCUMENTATION_RULES.md`).
+
+## Before commit — verify documentation
+
+Run this **before every commit** that touches docs, user-facing behavior, or public API. (Aligns with **Documentation review checklist** in [`docs/DOCUMENTATION_RULES.md`](../docs/DOCUMENTATION_RULES.md) → *Maintenance & Review*.)
+
+When **markdown** under `docs/`, `README.md`, or similar is part of the diff:
+
+- **Correctness** — Steps, env names, paths, and behavior match the **current** code and config; remove or update stale sections.
+- **Policy** — Structure and tone follow the **Quick reference** and formatting rules in `docs/DOCUMENTATION_RULES.md`; no duplicate guides (per **Documentation**).
+- **Links** — Relative links you added or changed **work** from the target file’s location.
+- **Safety** — No secrets, tokens, or personal data in examples.
+
+When the diff is **code** with new/changed **public** Python or exported TS:
+
+- **Docstrings / JSDoc** present and accurate per **Documentation**; no stale parameter lists.
+
+When the change is **trivial** (typo, format-only, test-only) and **no** doc or API surface was touched: **state that** the verification pass was **N/A** for documentation.
+
+## Finish
+
+- You have run the **After writing code** pass on the diff.
+- **Documentation verified** per **Before commit — verify documentation** (or recorded as N/A with a one-line reason).
+- Tooling and types consistent with the file (see language-specific rules when editing Python or `web/src`).
+- For meaningful work, **update existing docs** per **Documentation** and [`docs/DOCUMENTATION_RULES.md`](../docs/DOCUMENTATION_RULES.md); new prose should be **structured** and **format-consistent** with the target file. Trivial or test-only: skip doc edits unless fixing wrong descriptions. **Do not** add redundant new markdown.

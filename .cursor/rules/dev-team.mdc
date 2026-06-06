@@ -1,0 +1,68 @@
+---
+description: Cursor-native dev team workflow (planner → implementer → reviewer → tester → documenter)
+alwaysApply: false
+---
+
+# Dev team workflow (Path A — Cursor-native)
+
+Use this rule when running the **multi-agent engineering loop** inside Cursor. Do **not** build a separate Python/LangGraph orchestrator; roles are **chat sessions, slash commands, or subagents**.
+
+## Roles
+
+| Role | Cursor surface | Output |
+|------|----------------|--------|
+| **Planner** | `/plan-feature` command or dedicated chat | Tasks, affected paths, acceptance criteria |
+| **Implementer** | Main Agent (this session) | Small diff; **root `.venv/`** for all Python (see `python.mdc`) |
+| **Reviewer** | `generalPurpose` or `explore` subagent, or `/review-changes` | `PASS` or `FAIL` with actionable comments |
+| **Tester** | `/tester` command or `shell` subagent | Tests via **`.\.venv\Scripts\python.exe -m pytest`** (root `.venv` only) + coverage + `-n auto` |
+| **Documenter** | `/documenter` command | Update/write docs and docstrings per `DOCUMENTATION_RULES.md` |
+
+## Loop
+
+```text
+Requirement → Planner → Implementer → Reviewer → Tester → Documenter → (user commit)
+                              ↑___________| (on FAIL)      ↑_______| (on FAIL → Implementer)
+```
+
+1. **Planner** — Read requirement; use Graphify MCP for cross-module impact; list files, risks (especially trading/broker paths), and acceptance criteria. No code yet.
+2. **Implementer** — Follow `AGENTS.md`, `project-development.mdc`, `python.mdc` / `web.mdc`. Small diffs; reuse `src/` and existing patterns.
+3. **Reviewer** — Subagent or fresh pass: correctness, duplication, security, layer boundaries (router thin, logic in `src/`). Trading paths: extra scrutiny.
+4. **Tester** — **Write or update tests** for the diff, then run pytest with coverage (`pytest.ini` + `--cov-fail-under=90`, **>90%**) and **parallel** (`-n auto`, `pytest-xdist`). See `/tester` and `docs/testing/TESTING_RULES.md`.
+5. **Documenter** — Update **canonical** docs and docstrings for user-visible, API, config, or deployment changes. Prefer amend over new files. See `/documenter` and `docs/DOCUMENTATION_RULES.md`.
+
+## Python virtualenv (implementer + tester)
+
+**Mandatory:** repository root **`.venv/`** for every Python and pytest invocation. **Forbidden:** system `python`/`py`, bare `pytest`, `server/.venv`, or any other env.
+
+- **Windows:** `.\.venv\Scripts\python.exe -m pytest …` from repo root
+- **Unix:** `.venv/bin/python -m pytest …` from repo root
+- **Graphify** (planner/implementer architecture only): `.venv-graphify/` — not for app tests
+
+See [`python.mdc`](python.mdc).
+
+## Human gates (required for this repo)
+
+- **No** `git push`, PR, or merge without explicit user permission.
+- User reviews the diff before commit.
+- Live broker / order logic: prefer paper paths and existing guards; call out assumptions.
+
+## Graphify
+
+Before planner/implementer work on architecture or cross-file flows:
+
+- MCP: `query_graph`, `shortest_path`, `god_nodes` (server: graphify in `.cursor/mcp.json`)
+- Or CLI: `.\.venv-graphify\Scripts\graphify query "…"`
+- After substantive edits: `.\.venv-graphify\Scripts\graphify update .`
+
+## Commands
+
+Slash commands live in `.cursor/commands/`:
+
+- `plan-feature` — planner role
+- `implement-plan` — implementer with plan context
+- `review-changes` — reviewer checklist
+- `tester` — write tests, coverage, parallel pytest (`-n auto`)
+- `documenter` — update/write documentation and docstrings
+- `run-targeted-tests` — alias; prefer `tester`
+
+Canonical guide: [`docs/development/CURSOR_DEV_TEAM.md`](../docs/development/CURSOR_DEV_TEAM.md).

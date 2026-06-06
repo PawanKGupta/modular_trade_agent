@@ -1,0 +1,43 @@
+---
+description: Python — Ruff/Black, layers, tests, and server/src layout
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python (FastAPI, `src/`, tests)
+
+## Virtual environment (required)
+
+- Use **only the repository root** virtualenv **`.venv/`** (do not use `server/.venv`, system Python, or other envs) for **every** `python` run and **every** `pytest` run, plus tools like Ruff/Black on this project.
+- **Windows:** `.\.venv\Scripts\python.exe -m pytest …`, `.\.venv\Scripts\python.exe -m uvicorn server.app.main:app …`, or `.\.venv\Scripts\activate` then `python` / `pytest` from repo root.
+- **Linux / macOS:** `source .venv/bin/activate` from repo root, or `.venv/bin/python -m pytest …` / `.venv/bin/python -m uvicorn …`.
+- When the agent **runs** shell commands in this repo, set **cwd to project root** and prefix with the root venv’s `python` as above, unless the venv is already active for that session.
+
+## Style
+
+- **Black** + **Ruff** (root `pyproject.toml`). **Line length 100**; **Python 3.12** target.
+- isort: first-party `server`, `src`.
+- **Logging:** `logger = logging.getLogger(__name__)` per module. Use the right level; for exceptions, `logger.exception(...)` or `logger.error(..., exc_info=True)` when appropriate. **Do not** use `print()` in API, routers, or `src/` for operational output (aligns with global **Implementation rules**).
+- **Config / hardcoding:** Read tunable values from **`server.app.core` settings** / env and existing patterns, not inline literals, unless a true constant with a name in the right module.
+- **Docstrings:** **Every** `def` and nontrivial public method (including `__init__` when it does more than assign fields) has a **docstring** per [`docs/DOCUMENTATION_RULES.md`](../docs/DOCUMENTATION_RULES.md). Use **one** of **Google** or **NumPy** style, matching the file. **Clarity over verbosity** — a single accurate summary line is enough when parameters and return are self-explanatory with types; expand for side effects, raises, and non-obvious behavior.
+
+## Layers
+
+- **Routers** (`server/app/routers/`): validate input, call services/repos, return schemas. Avoid fat route handlers; move logic to `src/` (or existing service modules).
+- Reuse `server/app/core` (config, security, deps) instead of duplicating.
+- **No duplication:** If the same validation or business rule appears in more than one place, extract to `src/` (or a single shared helper). Global bar: see **Code quality** in `project-development.mdc`.
+
+## Tests
+
+- Prefer tests under `tests/` mirroring the area you changed.
+- After edits, run with **root `.venv`**: e.g. `.\.venv\Scripts\python.exe -m pytest path\to\test_file.py -q` (Win) or `.venv/bin/python -m pytest path/to/test_file.py -q` (Unix). Wider runs: `python -m pytest` from the same venv.
+
+## Bug fixes (Python)
+
+- Prefer failing test first when practical.
+- No drive-by renames or unrelated module moves.
+
+## Finish
+
+- No unused imports; Ruff/Black clean on edited files.
+- If the change is user- or operator-facing, update the **relevant existing** doc in `docs/` (see global rule **Documentation**): e.g. API/architecture, broker/trading, or `docs/development/*` for deep integration behavior — do not add a second doc for the same topic.

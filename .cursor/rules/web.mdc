@@ -1,0 +1,39 @@
+---
+description: Web — React/TypeScript, API client, and Vite app conventions
+globs: "web/src/**/*.ts,web/src/**/*.tsx"
+alwaysApply: false
+---
+
+# Web (`web/src/` — TypeScript & TSX)
+
+## Stack
+
+- **Vite** + **React** + **TypeScript**; **TanStack Query** for server state; follow patterns already in the file and nearby components.
+- **Config / hardcoding:** API base and env-specific behavior use **`import.meta.env`** (e.g. `VITE_API_URL`, `VITE_*`, `PROD` / `DEV`) like `web/src/api/client.ts` — not hardcoded production URLs in feature code. Aligns with global **Implementation rules**.
+- **Errors / observability:** Rely on existing user-visible error handling, toasts, or app patterns; do not add ad hoc `alert()` or permanent `console.log` in user paths (see **Finish**).
+- **Documentation in code:** For **exported** (public) functions, hooks, and non-trivial shared helpers, add **JSDoc / TSDoc** when the file or folder already does — brief `@param` / `@returns` only where they add meaning; **clarity over verbosity** (no essays). For prose in `docs/`, follow [`docs/DOCUMENTATION_RULES.md`](../docs/DOCUMENTATION_RULES.md) only.
+
+## API & data
+
+- Prefer the **central API client** (`web/src/api/`) and existing hooks/query keys over ad hoc `fetch` when an abstraction exists.
+- If the backend contract changes, update **Types** and **client** in step with the server (Pydantic / OpenAPI is the source of truth on the API side).
+- **No duplication:** Reuse existing hooks, components, and utils; do not copy-paste similar screens or fetches. Global bar: see **Code quality** in `project-development.mdc`.
+
+## UI
+
+- Match existing layout, spacing, and component style in the same feature area.
+- Avoid introducing unnecessary `any`; follow how sibling files type props and query results.
+
+## Tests (when applicable)
+
+- Use existing E2E/unit patterns under `web/` (e.g. POM in e2e) if the change affects user-facing flows; keep the same test runner the folder uses.
+
+## Bug fixes (frontend)
+
+- Reproduce in dev (`npm run dev` from `web/`) or via failing test.
+- No unrelated refactors; keep diffs focused.
+
+## Finish
+
+- Lint/typecheck expectations of the `web` package; no left-behind `console.log` in production code paths unless the file already uses logging for debugging.
+- If UI or user flows changed, update the **existing** guide that already describes that area (e.g. `docs/guides/UI_GUIDE.md`, `USER_GUIDE.md`); no duplicate how-to. See global rule **Documentation**.
