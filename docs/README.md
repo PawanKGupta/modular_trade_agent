@@ -41,6 +41,7 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[Service Status & Trading Config UI](features/SERVICE_STATUS_AND_TRADING_CONFIG_UI.md)** - Service management and trading configuration UI guide
 - **[Individual Service Management](features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)** - Running individual trading tasks
 - **[Chart Quality Guide](features/CHART_QUALITY_USAGE_GUIDE.md)** - Chart quality filtering and capital adjustment
+- **[Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)** - `VerdictService` and `ScoringService` behavior (verdict rules, strength/priority/combined scores)
 - **[Backtesting Guide](backtest/README.md)** - Backtesting framework documentation
 
 ## 📋 Quick Reference
