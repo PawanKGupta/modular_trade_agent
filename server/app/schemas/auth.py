@@ -137,6 +137,7 @@ class MeResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     email: EmailStr | None = None
     mobile_number: str | None = None
+    current_password: str | None = None
 
     @field_validator("mobile_number", mode="before")
     @classmethod

@@ -1025,11 +1025,15 @@ def test_update_profile_clears_mobile(user_repo, dummy_db):
 
 
 def test_update_profile_email_change_requires_verification(
-    user_repo, mock_auth_email, dummy_db
+    user_repo, mock_auth_email, mock_verify_password, dummy_db
 ):
+    mock_verify_password.verified = True
     user = verified_dummy(id=1, email="old@example.com")
     user_repo.by_email = user
-    payload = auth.UpdateProfileRequest(email="new@example.com")
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="Password123!",
+    )
 
     result = auth.update_profile(payload, current=user, db=dummy_db)
 
@@ -1041,7 +1045,64 @@ def test_update_profile_email_change_requires_verification(
     assert mock_auth_email.verify[0][0] == "new@example.com"
 
 
-def test_update_profile_duplicate_email(user_repo, dummy_db):
+def test_update_profile_email_change_requires_password(user_repo, dummy_db):
+    user = verified_dummy(id=1, email="old@example.com")
+    payload = auth.UpdateProfileRequest(email="new@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc.value.detail == auth.PROFILE_EMAIL_PASSWORD_REQUIRED
+    assert user.email == "old@example.com"
+
+
+def test_update_profile_email_change_wrong_password(
+    user_repo, mock_verify_password, dummy_db
+):
+    mock_verify_password.verified = False
+    user = verified_dummy(id=1, email="old@example.com")
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="WrongPassword123!",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert user.email == "old@example.com"
+
+
+def test_update_profile_email_change_smtp_failure_rolls_back(
+    user_repo, monkeypatch, mock_verify_password, dummy_db
+):
+    mock_verify_password.verified = True
+    user = verified_dummy(id=1, email="old@example.com")
+    user_repo.by_email = user
+
+    class FailingEmailService:
+        _notifier = SimpleNamespace(is_available=lambda: True)
+
+        def send_verification_email(self, to_email, token):
+            return False
+
+    monkeypatch.setattr(auth, "AuthEmailService", FailingEmailService)
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="Password123!",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert user.email == "old@example.com"
+    assert user.email_verified_at is not None
+
+
+def test_update_profile_duplicate_email(user_repo, mock_verify_password, dummy_db):
+    mock_verify_password.verified = True
     user = verified_dummy(id=1, email="user@example.com")
     taken = verified_dummy(id=2, email="taken@example.com")
 
@@ -1053,7 +1114,10 @@ def test_update_profile_duplicate_email(user_repo, dummy_db):
         return None
 
     user_repo.get_by_email = lookup
-    payload = auth.UpdateProfileRequest(email="taken@example.com")
+    payload = auth.UpdateProfileRequest(
+        email="taken@example.com",
+        current_password="Password123!",
+    )
 
     with pytest.raises(HTTPException) as exc:
         auth.update_profile(payload, current=user, db=dummy_db)

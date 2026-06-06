@@ -85,11 +85,27 @@ describe('authValidation', () => {
 	});
 
 	it('validateProfileForm validates email and optional mobile', () => {
-		expect(validateProfileForm({ email: 'user@example.com', mobile: '9876543210' })).toEqual([]);
-		expect(validateProfileForm({ email: 'bad', mobile: '123' }).map((e) => e.field)).toEqual([
-			'profileEmail',
-			'profileMobile',
-		]);
+		expect(
+			validateProfileForm({
+				email: 'user@example.com',
+				originalEmail: 'user@example.com',
+				mobile: '9876543210',
+			}),
+		).toEqual([]);
+		expect(
+			validateProfileForm({ email: 'bad', originalEmail: 'user@example.com', mobile: '123' }).map(
+				(e) => e.field,
+			),
+		).toEqual(['profileEmail', 'profileMobile']);
+	});
+
+	it('validateProfileForm requires password when email changes', () => {
+		const errors = validateProfileForm({
+			email: 'new@example.com',
+			originalEmail: 'user@example.com',
+			mobile: '',
+		});
+		expect(errors.map((e) => e.field)).toEqual(['profileCurrentPassword']);
 	});
 
 	it('validateAdminCreateUserForm collects admin create field errors', () => {

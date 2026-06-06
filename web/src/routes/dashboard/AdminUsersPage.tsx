@@ -26,13 +26,19 @@ export function AdminUsersPage() {
 		enabled: isAdmin,
 	});
 
-	const [newUser, setNewUser] = useState<CreateUserPayload>({ email: '', password: '', name: '', role: 'user' });
+	const [newUser, setNewUser] = useState<CreateUserPayload & { mobile?: string }>({
+		email: '',
+		password: '',
+		name: '',
+		role: 'user',
+		mobile: '',
+	});
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateAdminCreateUserForm>>([]);
 	const [createError, setCreateError] = useState<string | null>(null);
 	const [showCreateForm, setShowCreateForm] = useState(false);
 
 	const resetCreateForm = () => {
-		setNewUser({ email: '', password: '', name: '', role: 'user' });
+		setNewUser({ email: '', password: '', name: '', role: 'user', mobile: '' });
 		setFieldErrors([]);
 		setCreateError(null);
 	};
@@ -64,16 +70,23 @@ export function AdminUsersPage() {
 
 	function handleCreate() {
 		setCreateError(null);
-		const validationErrors = validateAdminCreateUserForm(newUser);
+		const validationErrors = validateAdminCreateUserForm({
+			email: newUser.email,
+			name: newUser.name,
+			password: newUser.password,
+			mobile: newUser.mobile,
+		});
 		setFieldErrors(validationErrors);
 		if (validationErrors.length > 0) {
 			return;
 		}
+		const mobileDigits = (newUser.mobile ?? '').trim().replace(/\D/g, '');
 		createMut.mutate({
 			email: newUser.email.trim(),
 			password: newUser.password,
 			name: newUser.name.trim(),
 			role: newUser.role ?? 'user',
+			mobile_number: mobileDigits ? mobileDigits : null,
 		});
 	}
 
@@ -162,6 +175,26 @@ export function AdminUsersPage() {
 					)}
 					<PasswordRequirementsChecklist password={newUser.password} />
 
+					<FormLabel htmlFor="admin-create-mobile" className="mt-1">
+						Contact mobile
+					</FormLabel>
+					<input
+						id="admin-create-mobile"
+						className={inputClass}
+						type="tel"
+						inputMode="numeric"
+						value={newUser.mobile ?? ''}
+						onChange={(e) => setNewUser((s) => ({ ...s, mobile: e.target.value }))}
+						autoComplete="off"
+						placeholder="10-digit mobile (optional)"
+					/>
+					{fieldErrorFor(fieldErrors, 'mobile') && (
+						<div className="text-red-400 text-xs sm:text-sm">{fieldErrorFor(fieldErrors, 'mobile')}</div>
+					)}
+					<p className="text-xs text-[var(--muted)]">
+						Optional account contact number. Users can also set this themselves after signup.
+					</p>
+
 					<FormLabel htmlFor="admin-create-role" className="mt-1">
 						Role
 					</FormLabel>
@@ -187,7 +220,7 @@ export function AdminUsersPage() {
 					</>
 				) : (
 					<p className="text-xs sm:text-sm text-[var(--muted)]">
-						Add a new account when you need to onboard someone manually.
+						Add a new account manually. Optional contact mobile can be set here or by the user later.
 					</p>
 				)}
 			</div>

@@ -44,9 +44,20 @@ class DummyUserRepo:
     def get_by_email(self, email):
         return self.by_email
 
-    def create_user(self, **kwargs):
-        self.created = kwargs
-        return DummyUser(**kwargs)
+    def create_user(self, email, password, name, role, mobile_number=None):
+        self.created = {
+            "email": email,
+            "password": password,
+            "name": name,
+            "role": role,
+            "mobile_number": mobile_number,
+        }
+        return DummyUser(
+            email=email,
+            name=name,
+            role=role,
+            mobile_number=mobile_number,
+        )
 
     def mark_email_verified(self, user):
         return None
@@ -123,9 +134,16 @@ def test_create_user_conflict(user_repo):
 
 def test_create_user_success(user_repo, settings_repo):
     user_repo.by_email = None
-    payload = admin.AdminUserCreate(email="new@x.com", password="Password123!", name="New", role="user")
+    payload = admin.AdminUserCreate(
+        email="new@x.com",
+        password="Password123!",
+        name="New",
+        role="user",
+        mobile_number="9876543210",
+    )
     resp = admin.create_user(payload, db=None)
     assert resp.email == "new@x.com"
+    assert resp.mobile_number == "9876543210"
     assert settings_repo.ids == [resp.id]
 
 

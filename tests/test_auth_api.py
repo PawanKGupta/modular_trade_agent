@@ -93,3 +93,27 @@ def test_profile_update_mobile(client, db_session):
     me = client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200
     assert me.json()["mobile_number"] == "9123456789"
+
+
+def test_profile_email_change_requires_password(client, db_session):
+    tokens = signup_and_verify(client, db_session, "email@example.com", "Secret123!", "Email User")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    resp = client.patch(
+        "/api/v1/auth/profile",
+        headers=headers,
+        json={"email": "newemail@example.com"},
+    )
+    assert resp.status_code == 400
+    assert "password" in resp.json()["detail"].lower()
+
+    resp = client.patch(
+        "/api/v1/auth/profile",
+        headers=headers,
+        json={
+            "email": "newemail@example.com",
+            "current_password": "Secret123!",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["verification_required"] is True

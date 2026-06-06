@@ -76,13 +76,21 @@ export async function changePassword(currentPassword: string, newPassword: strin
 export async function updateProfile(input: {
 	email: string;
 	mobile_number?: string | null;
+	current_password?: string;
 }): Promise<ProfileUpdateResponse> {
-	const body: { email: string; mobile_number?: string | null } = {
+	const body: {
+		email: string;
+		mobile_number?: string | null;
+		current_password?: string;
+	} = {
 		email: input.email.trim(),
 	};
 	if (input.mobile_number !== undefined) {
 		const trimmed = (input.mobile_number ?? '').trim();
 		body.mobile_number = trimmed ? trimmed.replace(/\D/g, '') : null;
+	}
+	if (input.current_password) {
+		body.current_password = input.current_password;
 	}
 	const res = await api.patch<ProfileUpdateResponse>('/auth/profile', body);
 	return res.data;

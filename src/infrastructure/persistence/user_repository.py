@@ -57,7 +57,12 @@ class UserRepository:
         )
 
     def create_user(
-        self, email: str, password: str, name: str | None = None, role: UserRole = UserRole.USER
+        self,
+        email: str,
+        password: str,
+        name: str | None = None,
+        role: UserRole = UserRole.USER,
+        mobile_number: str | None = None,
     ) -> Users:
         hashed = hash_password(password)
         user = Users(
@@ -66,6 +71,7 @@ class UserRepository:
             role=role,
             is_active=True,
             password_hash=hashed,
+            mobile_number=mobile_number,
         )
         self.db.add(user)
         try:

@@ -48,7 +48,7 @@ describe('SettingsPage', () => {
 		expect(nameInput.value).toBe('Test User');
 		expect(nameInput).toBeDisabled();
 
-		const profileMobile = screen.getByLabelText(/^Mobile number$/i);
+		const profileMobile = screen.getByPlaceholderText('10-digit mobile (optional)');
 		fireEvent.change(profileMobile, { target: { value: '9876543210' } });
 		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
 

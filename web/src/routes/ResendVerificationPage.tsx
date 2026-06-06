@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { resendVerification } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
 import { EmailInput } from '@/components/EmailInput';
@@ -8,6 +8,8 @@ import { validateEmail } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 
 export function ResendVerificationPage() {
+	const location = useLocation();
+	const profileMessage = (location.state as { profileMessage?: string } | null)?.profileMessage;
 	const [searchParams] = useSearchParams();
 	const initialEmail = useMemo(() => searchParams.get('email') ?? '', [searchParams]);
 	const [email, setEmail] = useState(initialEmail);
@@ -44,6 +46,9 @@ export function ResendVerificationPage() {
 					<BrandMark />
 				</header>
 				<h1 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Resend verification</h1>
+				{profileMessage ? (
+					<p className="text-sm text-green-400 mb-4">{profileMessage}</p>
+				) : null}
 				{success ? (
 					<div className="text-sm">
 						<p className="text-[var(--text)] mb-4">

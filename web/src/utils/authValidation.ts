@@ -178,6 +178,7 @@ export function validateAdminCreateUserForm(input: {
 	email: string;
 	name: string;
 	password: string;
+	mobile?: string;
 }): FieldError[] {
 	const errors: FieldError[] = [];
 	const nameError = validateName(input.name);
@@ -187,6 +188,10 @@ export function validateAdminCreateUserForm(input: {
 	const emailError = validateEmail(input.email);
 	if (emailError) {
 		errors.push({ field: 'email', message: emailError });
+	}
+	const mobileError = validateMobile(input.mobile ?? '');
+	if (mobileError) {
+		errors.push({ field: 'mobile', message: mobileError });
 	}
 	const passwordError = validatePassword(input.password);
 	if (passwordError) {
@@ -231,7 +236,12 @@ export function validateChangePasswordForm(input: {
 	return errors;
 }
 
-export function validateProfileForm(input: { email: string; mobile?: string }): FieldError[] {
+export function validateProfileForm(input: {
+	email: string;
+	originalEmail: string;
+	mobile?: string;
+	currentPassword?: string;
+}): FieldError[] {
 	const errors: FieldError[] = [];
 	const emailError = validateEmail(input.email);
 	if (emailError) {
@@ -240,6 +250,14 @@ export function validateProfileForm(input: { email: string; mobile?: string }): 
 	const mobileError = validateMobile(input.mobile ?? '');
 	if (mobileError) {
 		errors.push({ field: 'profileMobile', message: mobileError });
+	}
+	const emailChanging =
+		input.email.trim().toLowerCase() !== input.originalEmail.trim().toLowerCase();
+	if (emailChanging && !input.currentPassword?.trim()) {
+		errors.push({
+			field: 'profileCurrentPassword',
+			message: 'Current password is required to change email',
+		});
 	}
 	return errors;
 }

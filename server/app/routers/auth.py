@@ -58,6 +58,10 @@ PROFILE_UPDATED_MESSAGE = "Profile updated successfully."
 PROFILE_EMAIL_VERIFY_MESSAGE = (
     "Profile updated. Check your new email and click the verification link before using the app."
 )
+PROFILE_EMAIL_SEND_FAILED_MESSAGE = (
+    "Could not send verification email. Your email address was not changed. Try again later."
+)
+PROFILE_EMAIL_PASSWORD_REQUIRED = "Current password is required to change email"
 
 
 def _issue_tokens(user: Users) -> TokenResponse:
@@ -79,6 +83,29 @@ def _send_verification(user_repo: UserRepository, user: Users, email_service: Au
     token = generate_token()
     user_repo.set_verification_token(user, hash_token(token), auth_sent_at())
     email_service.send_verification_email(user.email, token)
+
+
+def _send_verification_to_new_email(
+    user_repo: UserRepository,
+    user: Users,
+    new_email: str,
+    email_service: AuthEmailService,
+) -> None:
+    """Send verification to a new address before persisting an email change."""
+    token = generate_token()
+    sent = email_service.send_verification_email(new_email, token)
+    if not sent and email_service._notifier.is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=PROFILE_EMAIL_SEND_FAILED_MESSAGE,
+        )
+    user_repo.update_profile(
+        user,
+        email=new_email,
+        update_email=True,
+        reset_email_verification=True,
+    )
+    user_repo.set_verification_token(user, hash_token(token), auth_sent_at())
 
 
 def _signup_message_response() -> SignupResponse:
@@ -209,23 +236,39 @@ def update_profile(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Email already registered",
             )
+        if not payload.current_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=PROFILE_EMAIL_PASSWORD_REQUIRED,
+            )
+        if not verify_password(payload.current_password, current.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect",
+            )
 
     mobile_value = payload.mobile_number if update_mobile else None
-    user_repo.update_profile(
-        current,
-        email=new_email if email_changed else None,
-        mobile_number=mobile_value,
-        update_email=email_changed,
-        update_mobile=update_mobile,
-        reset_email_verification=email_changed,
-    )
+    if email_changed:
+        email_service = AuthEmailService()
+        _send_verification_to_new_email(user_repo, current, new_email, email_service)
+        if update_mobile:
+            user_repo.update_profile(
+                current,
+                mobile_number=mobile_value,
+                update_mobile=True,
+            )
+    elif update_mobile:
+        user_repo.update_profile(
+            current,
+            mobile_number=mobile_value,
+            update_mobile=True,
+        )
 
     verification_required = False
     message = PROFILE_UPDATED_MESSAGE
     if email_changed:
         verification_required = True
         message = PROFILE_EMAIL_VERIFY_MESSAGE
-        _send_verification(user_repo, current, AuthEmailService())
 
     return ProfileUpdateResponse(
         message=message,

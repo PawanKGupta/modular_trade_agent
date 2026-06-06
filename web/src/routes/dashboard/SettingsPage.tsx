@@ -46,6 +46,7 @@ export function SettingsPage() {
 	const [profileName, setProfileName] = useState('');
 	const [profileEmail, setProfileEmail] = useState('');
 	const [profileMobile, setProfileMobile] = useState('');
+	const [profileCurrentPassword, setProfileCurrentPassword] = useState('');
 	const [profileFieldErrors, setProfileFieldErrors] = useState<ReturnType<typeof validateProfileForm>>([]);
 	const [profileMsg, setProfileMsg] = useState<string | null>(null);
 	const [profileSaving, setProfileSaving] = useState(false);
@@ -90,6 +91,8 @@ export function SettingsPage() {
 	if (isLoading) return <div className="p-2 sm:p-4 text-sm sm:text-base">Loading settings...</div>;
 
 	const isBroker = form.trade_mode === 'broker';
+	const profileEmailChanging =
+		(profileEmail.trim().toLowerCase() || '') !== (user?.email?.trim().toLowerCase() || '');
 
 	return (
 		<div className="p-2 sm:p-4 max-w-xl">
@@ -128,8 +131,27 @@ export function SettingsPage() {
 					{fieldErrorFor(profileFieldErrors, 'profileEmail') && (
 						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(profileFieldErrors, 'profileEmail')}</div>
 					)}
-					<p className="text-xs text-[var(--muted)] mt-1">Changing email requires verifying the new address.</p>
+					<p className="text-xs text-[var(--muted)] mt-1">Changing email requires verifying the new address and your current password.</p>
 				</div>
+				{profileEmailChanging ? (
+					<div>
+						<label className="block text-xs sm:text-sm mb-1" htmlFor="profileCurrentPassword">
+							Current password
+						</label>
+						<PasswordInput
+							id="profileCurrentPassword"
+							className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+							value={profileCurrentPassword}
+							onChange={(e) => setProfileCurrentPassword(e.target.value)}
+							autoComplete="current-password"
+						/>
+						{fieldErrorFor(profileFieldErrors, 'profileCurrentPassword') && (
+							<div className="text-red-400 text-xs mt-1">
+								{fieldErrorFor(profileFieldErrors, 'profileCurrentPassword')}
+							</div>
+						)}
+					</div>
+				) : null}
 				<div>
 					<label className="block text-xs sm:text-sm mb-1" htmlFor="profileMobile">
 						Mobile number
@@ -147,6 +169,9 @@ export function SettingsPage() {
 					{fieldErrorFor(profileFieldErrors, 'profileMobile') && (
 						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(profileFieldErrors, 'profileMobile')}</div>
 					)}
+					<p className="text-xs text-[var(--muted)] mt-1">
+						Your contact number for account purposes — not the Kotak broker login mobile below.
+					</p>
 				</div>
 				<button
 					type="button"
@@ -155,7 +180,9 @@ export function SettingsPage() {
 						setProfileMsg(null);
 						const errors = validateProfileForm({
 							email: profileEmail,
+							originalEmail: user?.email ?? profileEmail,
 							mobile: profileMobile,
+							currentPassword: profileCurrentPassword,
 						});
 						setProfileFieldErrors(errors);
 						if (errors.length > 0) {
@@ -166,6 +193,9 @@ export function SettingsPage() {
 							const result = await updateProfile({
 								email: profileEmail.trim(),
 								mobile_number: profileMobile.trim() ? profileMobile : null,
+								...(profileEmailChanging
+									? { current_password: profileCurrentPassword }
+									: {}),
 							});
 							setProfileMsg(result.message);
 							if (result.verification_required) {

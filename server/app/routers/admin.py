@@ -55,7 +55,11 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
     role = UserRole(payload.role)
     u = repo.create_user(
-        email=payload.email, password=payload.password, name=payload.name, role=role
+        email=payload.email,
+        password=payload.password,
+        name=payload.name,
+        role=role,
+        mobile_number=payload.mobile_number,
     )
     repo.mark_email_verified(u)
 
