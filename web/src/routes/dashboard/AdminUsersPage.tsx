@@ -29,13 +29,19 @@ export function AdminUsersPage() {
 	const [newUser, setNewUser] = useState<CreateUserPayload>({ email: '', password: '', name: '', role: 'user' });
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateAdminCreateUserForm>>([]);
 	const [createError, setCreateError] = useState<string | null>(null);
+	const [showCreateForm, setShowCreateForm] = useState(false);
+
+	const resetCreateForm = () => {
+		setNewUser({ email: '', password: '', name: '', role: 'user' });
+		setFieldErrors([]);
+		setCreateError(null);
+	};
 
 	const createMut = useMutation({
 		mutationFn: createUser,
 		onSuccess: () => {
-			setNewUser({ email: '', password: '', name: '', role: 'user' });
-			setFieldErrors([]);
-			setCreateError(null);
+			resetCreateForm();
+			setShowCreateForm(false);
 			qc.invalidateQueries({ queryKey: ['admin-users'] });
 		},
 		onError: (err: unknown) => {
@@ -80,11 +86,35 @@ export function AdminUsersPage() {
 			<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Users</h1>
 
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-3 sm:p-4">
-				<h2 className="text-sm sm:text-base font-medium mb-2 text-[var(--text)]">Create user</h2>
-				<p className="text-xs text-[var(--muted)] mb-3">
-					<span className="text-red-400">*</span> Required fields
-				</p>
-				<div className="flex flex-col gap-2 max-w-xl">
+				<div className="flex items-center justify-between gap-3 mb-2">
+					<h2 className="text-sm sm:text-base font-medium text-[var(--text)]">Create user</h2>
+					{showCreateForm ? (
+						<button
+							type="button"
+							className="text-xs sm:text-sm text-[var(--muted)] hover:text-[var(--text)] px-2 py-1 rounded min-h-[36px] sm:min-h-0"
+							onClick={() => {
+								resetCreateForm();
+								setShowCreateForm(false);
+							}}
+						>
+							Cancel
+						</button>
+					) : (
+						<button
+							type="button"
+							className="bg-blue-600 text-white rounded px-3 py-2 sm:py-1 text-sm disabled:opacity-50 min-h-[36px] sm:min-h-0"
+							onClick={() => setShowCreateForm(true)}
+						>
+							Add user
+						</button>
+					)}
+				</div>
+				{showCreateForm ? (
+					<>
+						<p className="text-xs text-[var(--muted)] mb-3">
+							<span className="text-red-400">*</span> Required fields
+						</p>
+						<div className="flex flex-col gap-2 max-w-xl">
 					<FormLabel htmlFor="admin-create-email" required>
 						Email
 					</FormLabel>
@@ -153,7 +183,13 @@ export function AdminUsersPage() {
 					>
 						{createMut.isPending ? 'Creating...' : 'Create'}
 					</button>
-				</div>
+						</div>
+					</>
+				) : (
+					<p className="text-xs sm:text-sm text-[var(--muted)]">
+						Add a new account when you need to onboard someone manually.
+					</p>
+				)}
 			</div>
 
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">

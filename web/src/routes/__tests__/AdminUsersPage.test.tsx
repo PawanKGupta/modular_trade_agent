@@ -46,11 +46,23 @@ describe('AdminUsersPage', () => {
 			expect(screen.getByText('user@example.com')).toBeInTheDocument();
 			expect(screen.getByText('9876543210')).toBeInTheDocument();
 		});
+		expect(screen.queryByLabelText(/^Email/i)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument();
+	});
+
+	it('expands create user form on demand', async () => {
+		render(withProviders(<AdminUsersPage />));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+
+		expect(screen.queryByLabelText(/^Email/i)).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
+		expect(screen.getByLabelText(/^Email/i)).toBeInTheDocument();
 	});
 
 	it('creates a new user', async () => {
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'New User');
@@ -66,7 +78,8 @@ describe('AdminUsersPage', () => {
 
 	it('blocks create when name is missing', async () => {
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
 		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
@@ -128,7 +141,8 @@ describe('AdminUsersPage', () => {
 	it('shows create error state', async () => {
 		vi.mocked(adminApi.createUser).mockRejectedValue(new Error('fail'));
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByLabelText(/^Email/i)).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'bad@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'Bad User');
