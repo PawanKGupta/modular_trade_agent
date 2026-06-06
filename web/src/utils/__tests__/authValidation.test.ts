@@ -96,7 +96,7 @@ describe('authValidation', () => {
 			validateProfileForm({ email: 'bad', originalEmail: 'bad', mobile: '123' }).map(
 				(e) => e.field,
 			),
-		).toEqual(['profileEmail', 'profileMobile']);
+		).toEqual(['profileEmail', 'profileMobile', 'profileCurrentPassword']);
 	});
 
 	it('validateProfileForm requires password when email changes', () => {

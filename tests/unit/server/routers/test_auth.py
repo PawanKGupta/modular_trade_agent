@@ -1082,7 +1082,8 @@ def test_update_profile_email_change_smtp_failure_rolls_back(
     user_repo.by_email = user
 
     class FailingEmailService:
-        _notifier = SimpleNamespace(is_available=lambda: True)
+        def is_smtp_configured(self):
+            return True
 
         def send_verification_email(self, to_email, token):
             return False

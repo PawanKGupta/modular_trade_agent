@@ -15,6 +15,10 @@ class AuthEmailService:
     def __init__(self, notifier: EmailNotifier | None = None):
         self._notifier = notifier or EmailNotifier()
 
+    def is_smtp_configured(self) -> bool:
+        """True when outbound SMTP is configured (distinct from send success)."""
+        return self._notifier.is_available()
+
     def _base_url(self) -> str:
         return settings.frontend_base_url.rstrip("/")
 

@@ -94,7 +94,7 @@ def _send_verification_to_new_email(
     """Send verification to a new address before persisting an email change."""
     token = generate_token()
     sent = email_service.send_verification_email(new_email, token)
-    if not sent and email_service._notifier.is_available():
+    if not sent and email_service.is_smtp_configured():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=PROFILE_EMAIL_SEND_FAILED_MESSAGE,
