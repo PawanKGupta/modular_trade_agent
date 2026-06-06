@@ -92,9 +92,7 @@ class DummyUserRepo:
         )
         return self.created_user
 
-    def update_unverified_signup_credentials(
-        self, user, *, password, name, mobile_number=None
-    ):
+    def update_unverified_signup_credentials(self, user, *, password, name, mobile_number=None):
         user.name = name
         user.mobile_number = mobile_number
         self.updated_unverified_user = user
@@ -135,7 +133,10 @@ class DummyUserRepo:
         user.password_reset_expires_at = None
 
     def find_by_reset_token_hash(self, token_hash):
-        if self.by_email and getattr(self.by_email, "password_reset_token_hash", None) == token_hash:
+        if (
+            self.by_email
+            and getattr(self.by_email, "password_reset_token_hash", None) == token_hash
+        ):
             return self.by_email
         return None
 
@@ -151,7 +152,10 @@ class DummyUserRepo:
         user.email_verification_sent_at = None
 
     def find_by_verification_token_hash(self, token_hash):
-        if self.by_email and getattr(self.by_email, "email_verification_token_hash", None) == token_hash:
+        if (
+            self.by_email
+            and getattr(self.by_email, "email_verification_token_hash", None) == token_hash
+        ):
             return self.by_email
         return None
 
@@ -228,19 +232,10 @@ def mock_settings(monkeypatch):
 
 @pytest.fixture
 def mock_auth_email(monkeypatch):
-    sent = SimpleNamespace(reset=[], verify=[])
+    """Replace AuthEmailService with an in-memory recorder (unit tests)."""
+    from tests.support.mock_auth_email import install_mock_auth_email_service
 
-    class MockEmailService:
-        def send_password_reset_email(self, to_email, token):
-            sent.reset.append((to_email, token))
-            return True
-
-        def send_verification_email(self, to_email, token):
-            sent.verify.append((to_email, token))
-            return True
-
-    monkeypatch.setattr(auth, "AuthEmailService", MockEmailService)
-    return sent
+    return install_mock_auth_email_service(monkeypatch)
 
 
 @pytest.fixture
@@ -249,9 +244,7 @@ def dummy_db():
 
 
 # Signup tests
-def test_signup_success(
-    user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db
-):
+def test_signup_success(user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db):
     user_repo.by_email = None  # No existing user
     payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
@@ -271,7 +264,9 @@ def test_signup_duplicate_verified_email(user_repo, settings_repo):
 
     existing_user = DummyUser(email="existing@example.com", email_verified_at=ist_now())
     user_repo.by_email = existing_user
-    payload = auth.SignupRequest(email="existing@example.com", password="Password123!", name="Existing")
+    payload = auth.SignupRequest(
+        email="existing@example.com", password="Password123!", name="Existing"
+    )
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -288,7 +283,9 @@ def test_signup_unverified_duplicate_resends(user_repo, settings_repo, mock_auth
         email_verification_token_hash="pending-hash",
     )
     user_repo.by_email = existing_user
-    payload = auth.SignupRequest(email="pending@example.com", password="Password123!", name="Pending")
+    payload = auth.SignupRequest(
+        email="pending@example.com", password="Password123!", name="Pending"
+    )
 
     result = auth.signup(payload, db=dummy_db)
 
@@ -556,9 +553,7 @@ def test_refresh_exception_handling(user_repo, mock_settings, monkeypatch):
 # Additional edge case tests for better coverage
 
 
-def test_signup_exception_from_settings_repo(
-    user_repo, settings_repo, mock_settings
-):
+def test_signup_exception_from_settings_repo(user_repo, settings_repo, mock_settings):
     user_repo.by_email = None
 
     def boom(user_id):
@@ -886,7 +881,9 @@ def test_verify_email_expired_token(user_repo, dummy_db):
     token = "expired-verify-token"
     user = DummyUser(email="user@example.com")
     user.email_verification_token_hash = hash_token(token)
-    user.email_verification_sent_at = ist_now_naive() - timedelta(hours=VERIFICATION_TOKEN_HOURS + 1)
+    user.email_verification_sent_at = ist_now_naive() - timedelta(
+        hours=VERIFICATION_TOKEN_HOURS + 1
+    )
     user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
 
     payload = auth.VerifyEmailRequest(token=token)
@@ -956,7 +953,9 @@ def test_me_user_without_verified_at_is_not_verified():
     assert result.email_verified is False
 
 
-def test_signup_with_optional_mobile(user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db):
+def test_signup_with_optional_mobile(
+    user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db
+):
     user_repo.by_email = None
     payload = auth.SignupRequest(
         email="new@example.com",
@@ -1057,9 +1056,7 @@ def test_update_profile_email_change_requires_password(user_repo, dummy_db):
     assert user.email == "old@example.com"
 
 
-def test_update_profile_email_change_wrong_password(
-    user_repo, mock_verify_password, dummy_db
-):
+def test_update_profile_email_change_wrong_password(user_repo, mock_verify_password, dummy_db):
     mock_verify_password.verified = False
     user = verified_dummy(id=1, email="old@example.com")
     payload = auth.UpdateProfileRequest(

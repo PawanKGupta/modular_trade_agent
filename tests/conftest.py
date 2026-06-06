@@ -72,6 +72,14 @@ import src.infrastructure.db.models  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
+def disable_auth_smtp(monkeypatch):
+    """Prevent auth routes from sending real SMTP mail during tests."""
+    from tests.support.mock_auth_email import install_mock_auth_email_service
+
+    return install_mock_auth_email_service(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
 def ohlcv_daily_source_yahoo_for_tests(monkeypatch):
     """
     Keep gap_fill on Yahoo during tests unless a case explicitly mocks NSE.
