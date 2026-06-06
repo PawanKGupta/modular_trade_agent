@@ -16,6 +16,7 @@ class DummyUser(SimpleNamespace):
             name=kwargs.get("name", "User"),
             role=kwargs.get("role", UserRole.USER),
             is_active=kwargs.get("is_active", True),
+            mobile_number=kwargs.get("mobile_number", None),
         )
 
 
@@ -86,12 +87,19 @@ def settings_repo(monkeypatch):
 def test_list_users_transforms_response(user_repo):
     user_repo._users = [
         DummyUser(id=1, email="a@x.com", name="A", role=UserRole.ADMIN),
-        DummyUser(id=2, email="b@x.com", name="B", role=UserRole.USER),
+        DummyUser(
+            id=2,
+            email="b@x.com",
+            name="B",
+            role=UserRole.USER,
+            mobile_number="9876543210",
+        ),
     ]
     result = admin.list_users(db=None, q=None, limit=50)
     assert user_repo.listed_active_only is False
     assert result[0].role == "admin"
     assert result[1].email == "b@x.com"
+    assert result[1].mobile_number == "9876543210"
 
 
 def test_list_users_with_search_uses_repo(user_repo):

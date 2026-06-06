@@ -206,7 +206,23 @@ http.post(API('/auth/refresh'), async () => {
 		});
 	}),
 	http.get(API('/auth/me'), async () => {
-		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'], email_verified: true });
+		return HttpResponse.json({
+			id: 1,
+			email: 'test@example.com',
+			name: 'Test User',
+			mobile_number: null,
+			roles: ['admin'],
+			email_verified: true,
+		});
+	}),
+	http.patch(API('/auth/profile'), async () => {
+		return HttpResponse.json({
+			message: 'Profile updated successfully.',
+			email: 'test@example.com',
+			mobile_number: '9876543210',
+			email_verified: true,
+			verification_required: false,
+		});
 	}),
 	http.post(API('/auth/forgot-password'), async () => {
 		return HttpResponse.json({ message: 'If an account exists for that email, we sent password reset instructions.' });
@@ -619,8 +635,8 @@ http.post(API('/auth/refresh'), async () => {
 	// admin users
 	http.get(API('/admin/users'), async () => {
 		return HttpResponse.json([
-			{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-			{ id: 2, email: 'user@example.com', name: 'User', role: 'user', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+			{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, mobile_number: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+			{ id: 2, email: 'user@example.com', name: 'User', role: 'user', is_active: true, mobile_number: '9876543210', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 		]);
 	}),
 	http.post(API('/admin/users'), async ({ request }) => {

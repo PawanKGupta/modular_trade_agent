@@ -473,9 +473,17 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ### 9. Settings (`/dashboard/settings`)
 
-**Purpose:** Configure system settings.
+**Purpose:** Configure account profile, password, and system settings.
 
 #### Features
+
+**Account profile:**
+- Name (read-only; contact support to change)
+- Email (editable; changing email requires re-verification)
+- Mobile number (optional; 10-digit Indian format)
+
+**Account password:**
+- Change password with current password confirmation
 
 **Broker Credentials:**
 - Consumer Key
@@ -755,7 +763,8 @@ The Activity Log page and `activity` database table were removed. Operational an
 - Email input
 - Password input (minimum 8 characters, at least one letter, one capital letter, one number, and one special character)
 - Confirm password field
-- Name input (optional)
+- Name input (required)
+- Mobile number (optional; 10-digit Indian format)
 - After signup, a verification email is sent. **Login and all protected APIs are blocked** until the user verifies via the link in email.
 - Wrong or typo emails cannot be used without inbox access to the verification link.
 - `/resend-verification` is a public page (like forgot password) for requesting a new link.

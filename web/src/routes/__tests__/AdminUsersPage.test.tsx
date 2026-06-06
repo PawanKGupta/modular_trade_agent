@@ -14,8 +14,8 @@ vi.mock('@/api/admin', () => ({
 }));
 
 const sampleUsers = [
-	{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' as const, is_active: true, created_at: '', updated_at: '' },
-	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, created_at: '', updated_at: '' },
+	{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' as const, is_active: true, mobile_number: null, created_at: '', updated_at: '' },
+	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, mobile_number: '9876543210', created_at: '', updated_at: '' },
 ];
 
 function getCreatePasswordInput() {
@@ -44,6 +44,7 @@ describe('AdminUsersPage', () => {
 		await waitFor(() => {
 			expect(screen.getByText('admin@example.com')).toBeInTheDocument();
 			expect(screen.getByText('user@example.com')).toBeInTheDocument();
+			expect(screen.getByText('9876543210')).toBeInTheDocument();
 		});
 	});
 

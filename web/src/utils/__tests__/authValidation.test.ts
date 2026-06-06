@@ -8,8 +8,10 @@ import {
 	validateChangePasswordForm,
 	validateEmail,
 	validateLoginForm,
+	validateMobile,
 	validatePassword,
 	validatePasswordConfirm,
+	validateProfileForm,
 	validateSignupForm,
 } from '../authValidation';
 
@@ -74,6 +76,20 @@ describe('authValidation', () => {
 			confirmPassword: 'other',
 		});
 		expect(errors.map((e) => e.field)).toEqual(['name', 'email', 'password', 'confirmPassword']);
+	});
+
+	it('validateMobile accepts empty and valid Indian numbers', () => {
+		expect(validateMobile('')).toBeNull();
+		expect(validateMobile('9876543210')).toBeNull();
+		expect(validateMobile('12345')).toContain('10-digit');
+	});
+
+	it('validateProfileForm validates email and optional mobile', () => {
+		expect(validateProfileForm({ email: 'user@example.com', mobile: '9876543210' })).toEqual([]);
+		expect(validateProfileForm({ email: 'bad', mobile: '123' }).map((e) => e.field)).toEqual([
+			'profileEmail',
+			'profileMobile',
+		]);
 	});
 
 	it('validateAdminCreateUserForm collects admin create field errors', () => {

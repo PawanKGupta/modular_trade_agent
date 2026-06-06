@@ -54,20 +54,12 @@ test.describe('Settings & Configuration', () => {
 		}
 	});
 
-	test('Broker Settings page loads', async ({ authenticatedPage }) => {
+	test('Account Settings page loads', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/settings');
 		await authenticatedPage.waitForLoadState('networkidle');
 
-		// Verify page loads - check for heading or main content
-		const heading = authenticatedPage.getByRole('heading', { name: /Broker Settings|Settings/i });
-		const hasHeading = await heading.isVisible().catch(() => false);
-
-		if (!hasHeading) {
-			// If no heading, at least verify the page loaded
-			await expect(authenticatedPage.locator('main, [role="main"]')).toBeVisible();
-		} else {
-			await expect(heading).toBeVisible();
-		}
+		await expect(authenticatedPage.getByRole('heading', { name: /Account settings/i })).toBeVisible();
+		await expect(authenticatedPage.getByRole('heading', { name: /Account profile/i })).toBeVisible();
 
 		// Verify credential form or fields are displayed - check for various possible field names
 		const apiKeyField = authenticatedPage.getByLabel(/API Key|Api Key|Access Token|Secret Key|Broker/i).first();

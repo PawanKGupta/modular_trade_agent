@@ -23,6 +23,7 @@ class DummyUser(SimpleNamespace):
             email_verification_sent_at=kwargs.get("email_verification_sent_at", None),
             password_reset_token_hash=kwargs.get("password_reset_token_hash", None),
             password_reset_expires_at=kwargs.get("password_reset_expires_at", None),
+            mobile_number=kwargs.get("mobile_number", None),
         )
 
 
@@ -74,7 +75,7 @@ class DummyUserRepo:
         return self.created_user
 
     def create_pending_verification_user(
-        self, email, password, name, token_hash, sent_at, role=UserRole.USER
+        self, email, password, name, token_hash, sent_at, role=UserRole.USER, mobile_number=None
     ):
         self.created_user = SimpleNamespace(
             id=42,
@@ -87,14 +88,38 @@ class DummyUserRepo:
             email_verification_sent_at=sent_at,
             password_reset_token_hash=None,
             password_reset_expires_at=None,
+            mobile_number=mobile_number,
         )
         return self.created_user
 
-    def update_unverified_signup_credentials(self, user, *, password, name):
+    def update_unverified_signup_credentials(
+        self, user, *, password, name, mobile_number=None
+    ):
         user.name = name
+        user.mobile_number = mobile_number
         self.updated_unverified_user = user
         self.password_set_user = user
         self.password_set_value = password
+        return user
+
+    def update_profile(
+        self,
+        user,
+        *,
+        email=None,
+        mobile_number=None,
+        update_email=False,
+        update_mobile=False,
+        reset_email_verification=False,
+    ):
+        if update_mobile:
+            user.mobile_number = mobile_number
+        if update_email and email is not None:
+            user.email = email
+        if reset_email_verification:
+            user.email_verified_at = None
+            user.email_verification_token_hash = None
+            user.email_verification_sent_at = None
         return user
 
     def set_password(self, user, password):
@@ -929,3 +954,114 @@ def test_me_user_without_verified_at_is_not_verified():
     user.email_verification_token_hash = None
     result = auth.me(current=user)
     assert result.email_verified is False
+
+
+def test_signup_with_optional_mobile(user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db):
+    user_repo.by_email = None
+    payload = auth.SignupRequest(
+        email="new@example.com",
+        password="Password123!",
+        name="New User",
+        mobile_number="9876543210",
+    )
+
+    auth.signup(payload, db=dummy_db)
+
+    assert user_repo.created_user.mobile_number == "9876543210"
+
+
+def test_signup_rejects_invalid_mobile():
+    with pytest.raises(ValidationError):
+        auth.SignupRequest(
+            email="new@example.com",
+            password="Password123!",
+            name="New User",
+            mobile_number="12345",
+        )
+
+
+def test_signup_unverified_resubmit_updates_mobile(
+    user_repo, settings_repo, mock_auth_email, dummy_db
+):
+    existing_user = DummyUser(
+        email="pending@example.com",
+        email_verified_at=None,
+        email_verification_token_hash="pending-hash",
+        mobile_number="9876543210",
+    )
+    user_repo.by_email = existing_user
+    payload = auth.SignupRequest(
+        email="pending@example.com",
+        password="Password123!",
+        name="Pending",
+        mobile_number="9123456789",
+    )
+
+    auth.signup(payload, db=dummy_db)
+
+    assert existing_user.mobile_number == "9123456789"
+
+
+def test_update_profile_mobile_only(user_repo, mock_auth_email, dummy_db):
+    user = verified_dummy(id=1, email="user@example.com", mobile_number=None)
+    payload = auth.UpdateProfileRequest(mobile_number="9876543210")
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.mobile_number == "9876543210"
+    assert result.verification_required is False
+    assert result.email_verified is True
+    assert len(mock_auth_email.verify) == 0
+
+
+def test_update_profile_clears_mobile(user_repo, dummy_db):
+    user = verified_dummy(id=1, email="user@example.com", mobile_number="9876543210")
+    payload = auth.UpdateProfileRequest(mobile_number="")
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.mobile_number is None
+    assert result.verification_required is False
+
+
+def test_update_profile_email_change_requires_verification(
+    user_repo, mock_auth_email, dummy_db
+):
+    user = verified_dummy(id=1, email="old@example.com")
+    user_repo.by_email = user
+    payload = auth.UpdateProfileRequest(email="new@example.com")
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.email == "new@example.com"
+    assert user.email_verified_at is None
+    assert result.verification_required is True
+    assert result.email_verified is False
+    assert len(mock_auth_email.verify) == 1
+    assert mock_auth_email.verify[0][0] == "new@example.com"
+
+
+def test_update_profile_duplicate_email(user_repo, dummy_db):
+    user = verified_dummy(id=1, email="user@example.com")
+    taken = verified_dummy(id=2, email="taken@example.com")
+
+    def lookup(email):
+        if email == "taken@example.com":
+            return taken
+        if email == "user@example.com":
+            return user
+        return None
+
+    user_repo.get_by_email = lookup
+    payload = auth.UpdateProfileRequest(email="taken@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_409_CONFLICT
+
+
+def test_me_includes_mobile_number():
+    user = verified_dummy(email="user@example.com", mobile_number="9876543210")
+    result = auth.me(current=user)
+    assert result.mobile_number == "9876543210"

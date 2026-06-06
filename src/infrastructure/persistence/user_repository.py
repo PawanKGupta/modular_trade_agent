@@ -84,6 +84,7 @@ class UserRepository:
         token_hash: str,
         sent_at: datetime,
         role: UserRole = UserRole.USER,
+        mobile_number: str | None = None,
     ) -> Users:
         """Create an unverified user with a pending verification token in one commit."""
         user = Users(
@@ -95,6 +96,7 @@ class UserRepository:
             email_verified_at=None,
             email_verification_token_hash=token_hash,
             email_verification_sent_at=sent_at,
+            mobile_number=mobile_number,
         )
         self.db.add(user)
         try:
@@ -106,10 +108,38 @@ class UserRepository:
         return user
 
     def update_unverified_signup_credentials(
-        self, user: Users, *, password: str, name: str
+        self,
+        user: Users,
+        *,
+        password: str,
+        name: str,
+        mobile_number: str | None = None,
     ) -> Users:
         user.name = name.strip()
         user.password_hash = hash_password(password)
+        user.mobile_number = mobile_number
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def update_profile(
+        self,
+        user: Users,
+        *,
+        email: str | None = None,
+        mobile_number: str | None = None,
+        update_email: bool = False,
+        update_mobile: bool = False,
+        reset_email_verification: bool = False,
+    ) -> Users:
+        if update_mobile:
+            user.mobile_number = mobile_number
+        if update_email and email is not None:
+            user.email = email
+        if reset_email_verification:
+            user.email_verified_at = None
+            user.email_verification_token_hash = None
+            user.email_verification_sent_at = None
         self.db.commit()
         self.db.refresh(user)
         return user

@@ -167,6 +167,7 @@ export function AdminUsersPage() {
 						<tr>
 							<th className="text-left p-2">Email</th>
 							<th className="text-left p-2">Name</th>
+							<th className="text-left p-2">Mobile</th>
 							<th className="text-left p-2">Role</th>
 							<th className="text-left p-2">Active</th>
 							<th className="text-left p-2">Actions</th>
@@ -177,6 +178,7 @@ export function AdminUsersPage() {
 							<tr key={u.id} className="border-t border-[#1e293b]">
 								<td className="p-2 text-[var(--text)]">{u.email}</td>
 								<td className="p-2 text-[var(--text)]">{u.name ?? '-'}</td>
+								<td className="p-2 text-[var(--text)]">{u.mobile_number ?? '-'}</td>
 								<td className="p-2">
 									<select
 										className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
@@ -208,7 +210,7 @@ export function AdminUsersPage() {
 						))}
 						{(data ?? []).length === 0 && !isLoading && (
 							<tr>
-								<td className="p-2 text-[var(--muted)]" colSpan={5}>
+								<td className="p-2 text-[var(--muted)]" colSpan={6}>
 									No users found
 								</td>
 							</tr>

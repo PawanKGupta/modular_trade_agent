@@ -64,9 +64,12 @@ Content-Type: application/json
 {
   "email": "user@example.com",
   "password": "password",
-  "name": "User Name"
+  "name": "User Name",
+  "mobile_number": "9876543210"
 }
 ```
+
+`mobile_number` is optional; when provided it must be a valid 10-digit Indian mobile number (starts with 6–9).
 
 #### Login
 ```http
@@ -84,6 +87,22 @@ Content-Type: application/json
 GET /api/v1/auth/me
 Authorization: Bearer <token>
 ```
+
+Response includes `email`, `name`, optional `mobile_number`, `roles`, and `email_verified`.
+
+#### Update Profile
+```http
+PATCH /api/v1/auth/profile
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "mobile_number": "9876543210"
+}
+```
+
+Users may update **email** and **mobile_number** only (name is read-only). Changing email marks the account unverified and sends a new verification link. Send `mobile_number: null` or `""` to clear a stored mobile.
 
 #### Refresh Token
 ```http

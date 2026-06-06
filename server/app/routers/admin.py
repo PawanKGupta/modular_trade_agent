@@ -37,7 +37,12 @@ def list_users(
         users = repo.list_users(active_only=False)
     return [
         AdminUserResponse(
-            id=u.id, email=u.email, name=u.name, role=u.role.value, is_active=u.is_active
+            id=u.id,
+            email=u.email,
+            name=u.name,
+            role=u.role.value,
+            is_active=u.is_active,
+            mobile_number=u.mobile_number,
         )
         for u in users
     ]
@@ -58,7 +63,12 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
     SettingsRepository(db).ensure_default(u.id)
 
     return AdminUserResponse(
-        id=u.id, email=u.email, name=u.name, role=u.role.value, is_active=u.is_active
+        id=u.id,
+        email=u.email,
+        name=u.name,
+        role=u.role.value,
+        is_active=u.is_active,
+        mobile_number=u.mobile_number,
     )
 
 
@@ -71,7 +81,12 @@ def update_user(user_id: int, payload: AdminUserUpdate, db: Session = Depends(ge
     role = UserRole(payload.role) if payload.role else None
     u = repo.update_user(user, name=payload.name, role=role, is_active=payload.is_active)
     return AdminUserResponse(
-        id=u.id, email=u.email, name=u.name, role=u.role.value, is_active=u.is_active
+        id=u.id,
+        email=u.email,
+        name=u.name,
+        role=u.role.value,
+        is_active=u.is_active,
+        mobile_number=u.mobile_number,
     )
 
 

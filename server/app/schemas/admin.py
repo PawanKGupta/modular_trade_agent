@@ -37,3 +37,4 @@ class AdminUserResponse(BaseModel):
     name: str | None
     role: Literal["admin", "user"]
     is_active: bool
+    mobile_number: str | None = None
