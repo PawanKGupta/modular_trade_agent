@@ -704,7 +704,48 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 14. User Management (`/dashboard/admin/users`) - Admin Only
+---
+
+### 14. Billing (`/dashboard/billing`)
+
+**Purpose:** View access entitlements, performance-fee invoices, and pay offline or via Razorpay (when admin enables online checkout).
+
+#### Features
+
+- **Current access:** Tier, status, period end, feature flags (from entitlements API).
+- **Performance bills:** Monthly broker performance-fee invoices with amounts and due dates.
+- **Offline payment (beta):** When `online_payments_enabled` is false, shows admin-configured UPI ID, instructions, and uploaded QR (`GET /user/billing/offline-payment-qr`).
+- **Online checkout:** Pay open bill via Razorpay when admin enables card/UPI checkout.
+- **Transaction history:** Past payments and statuses.
+
+#### Usage Tips
+
+- Complete offline UPI transfer using the amount on the specific invoice; admin marks bills paid via Admin Billing.
+- See [Billing user traceability matrix](../features/BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md) for API details.
+
+---
+
+### 15. Admin Billing (`/dashboard/admin/billing`) — Admin Only
+
+**Purpose:** Configure payment methods, Razorpay credentials, offline UPI/QR, and manage performance-fee billing.
+
+#### Features
+
+- **Settings:** Enable card/UPI online checkout, offline payment fields (UPI ID, payee name, instructions).
+- **Razorpay:** Store key id and secret (encrypted in DB); test-mode warning in UI when using test keys.
+- **Offline QR:** Upload/replace/delete payment QR image (max 2 MB).
+- **Performance bills:** List all users' bills; **record cash payment** for offline settlements.
+- **Transactions & refunds:** View history; issue refunds when applicable.
+- **Reconcile:** Mark overdue performance bills.
+
+#### Usage Tips
+
+- For beta deployments, keep online checkout disabled and use offline UPI + admin cash payment recording.
+- See [Billing admin traceability matrix](../features/BILLING_ADMIN_TRACEABILITY_MATRIX.md).
+
+---
+
+### 16. User Management (`/dashboard/admin/users`) - Admin Only
 
 **Purpose:** Manage users and roles.
 
@@ -740,7 +781,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 15. Activity (legacy URL)
+### 17. Activity (legacy URL)
 
 **Route:** `/dashboard/activity` redirects to **System Logs** (`/dashboard/logs`).
 
@@ -748,7 +789,7 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 ---
 
-### 16. Login (`/login`)
+### 18. Login (`/login`)
 
 **Purpose:** User authentication.
 
@@ -764,7 +805,7 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 ---
 
-### 17. Signup (`/signup`)
+### 19. Signup (`/signup`)
 
 **Purpose:** User registration.
 
@@ -784,7 +825,7 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 ---
 
-### 18. Forgot password (`/forgot-password`)
+### 20. Forgot password (`/forgot-password`)
 
 **Purpose:** Request a password reset link by email.
 
@@ -795,13 +836,13 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 ---
 
-### 19. Reset password (`/reset-password?token=...`)
+### 21. Reset password (`/reset-password?token=...`)
 
 **Purpose:** Set a new password from the email reset link.
 
 ---
 
-### 20. Verify email (`/verify-email?token=...`)
+### 22. Verify email (`/verify-email?token=...`)
 
 **Purpose:** Confirm email ownership from the verification link sent after signup. On success, the app stores auth tokens and redirects to the dashboard (auto-login).
 
@@ -809,7 +850,7 @@ Verification links expire **72 hours** after they are sent; use resend verificat
 
 ---
 
-### 21. Resend verification (`/resend-verification`)
+### 23. Resend verification (`/resend-verification`)
 
 **Purpose:** Public form to request a new verification email when signup succeeded but the link was lost or expired. Linked from login and the post-signup “check your email” screen.
 

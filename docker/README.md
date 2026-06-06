@@ -134,6 +134,16 @@ The **`api-server`** image (`Dockerfile.api`) installs **CPU PyTorch** and **`re
 docker-compose -f docker-compose.yml exec api-server python -m alembic upgrade head
 ```
 
+### Upgrading to 26.2.1
+
+1. Backup Postgres (`docker/scripts/backup_postgres_docker.sh` or your operator backup).
+2. Pull latest code / image for `releases/rebound_2621` or tag `v26.2.1`.
+3. Update `.env` from repo `.env.example` (SMTP, billing, OHLCV).
+4. `docker-compose build` and `docker-compose up -d` (or your deploy script).
+5. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
+
+See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-to-2621) and [RELEASE_PLAN_V26.2.1.md](../docs/development/RELEASE_PLAN_V26.2.1.md).
+
 ### Check Status
 ```bash
 docker-compose -f docker-compose.yml ps

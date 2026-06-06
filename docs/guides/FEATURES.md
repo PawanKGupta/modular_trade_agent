@@ -4,6 +4,21 @@ Complete documentation of all features in Rebound — Modular Trade Agent system
 
 ## 📊 Core Features
 
+### 0. Authentication & Accounts
+
+**Purpose:** Self-service signup, email verification, password recovery, and profile management.
+
+**Key Features:**
+- Public signup with required name and optional 10-digit Indian mobile (contact number, not broker login)
+- **Hard email verification:** login and protected APIs blocked until the inbox link is used (72-hour token window)
+- Forgot / reset password (requires SMTP)
+- Account Settings: update mobile; change email with current password (triggers re-verification)
+- Admin user creation with optional mobile (admin-created users are pre-verified)
+
+**UI:** `/signup`, `/login`, `/forgot-password`, `/reset-password`, `/verify-email`, `/resend-verification`, `/dashboard/settings`
+
+**API:** See [API.md](../API.md) Authentication section.
+
 ### 1. Trading Signals (Buying Zone)
 
 **Purpose:** Automated stock screening and signal generation based on mean reversion to EMA9 strategy.
@@ -183,9 +198,9 @@ See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
   - Separate retention for service logs and error logs
 
 **Technical Details:**
-- Activity logs use JSONL file format (one file per user per day)
+- Service and task logs use **JSONL files** (one file per user per day); view under **Log Viewer** (`/dashboard/logs`)
+- The legacy **Activity Log** page and `activity` database table were **removed** in 26.2.1
 - Error logs stored in database (ErrorLog table)
-- File-based logging eliminates SQLite lock contention
 - `FileLogReader` provides efficient log reading and filtering
 - `LogRetentionService` manages automatic cleanup of old files and error logs
 
@@ -220,11 +235,25 @@ See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
 - `EmailNotifier` supports SMTP configuration
 - In-app notifications stored in database with read/unread status
 
+### 10. Billing (Performance Fees)
+
+**Purpose:** Broker performance-fee invoicing and payment collection (offline UPI beta; optional Razorpay checkout).
+
+**Key Features:**
+- User **Billing** page: entitlements, performance-fee bills, offline UPI/QR or Razorpay pay
+- Admin **Billing** page: payment toggles, Razorpay credentials (encrypted), offline QR upload, cash payment recording, reconcile overdue bills
+- Legacy in-app subscription catalog removed; webhooks may still update existing subscription rows
+
+**UI Location:** `/dashboard/billing`, `/dashboard/admin/billing` (admin)
+
+**Docs:** [Billing user matrix](../features/BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md), [Billing admin matrix](../features/BILLING_ADMIN_TRACEABILITY_MATRIX.md)
+
 ## 🔐 Security Features
 
 ### Authentication
-- JWT-based authentication
-- Refresh token support
+- JWT-based authentication with refresh tokens
+- Public signup and **mandatory email verification** before login
+- Password reset via email (requires SMTP)
 - Secure password hashing (pbkdf2_sha256)
 
 ### Credential Management

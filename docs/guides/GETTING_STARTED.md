@@ -107,12 +107,13 @@ TZ=Asia/Kolkata
 
 #### Step 4: Initialize Database
 
-The application will auto-create tables on first run. Alternatively, you can run migrations:
+The application will auto-create tables on first run. **Production and upgrades should use Alembic:**
 
 ```bash
-# If using Alembic migrations
 alembic upgrade head
 ```
+
+> **Auth emails (26.2.1+):** If you enable public signup, configure **`SMTP_HOST`**, **`SMTP_USER`**, **`SMTP_PASSWORD`**, and **`SMTP_FROM_EMAIL`** in `.env` before users sign up. Without SMTP, verification and password-reset emails cannot be sent. See [`.env.example`](../../.env.example).
 
 #### Step 5: Start Services
 

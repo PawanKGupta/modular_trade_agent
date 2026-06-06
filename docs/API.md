@@ -116,15 +116,104 @@ Users may update **email** and **mobile_number** only (name is read-only). **`mo
 }
 ```
 
-#### Refresh Token
+#### Change Password
 ```http
-POST /api/v1/auth/refresh
+POST /api/v1/auth/change-password
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "refresh_token": "eyJ..."
+  "current_password": "OldPassword123!",
+  "new_password": "NewPassword123!"
 }
 ```
+
+#### Forgot Password
+```http
+POST /api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+Always returns 200 when SMTP is configured (does not reveal whether the email exists).
+
+#### Reset Password
+```http
+POST /api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "<reset-token-from-email>",
+  "new_password": "NewPassword123!"
+}
+```
+
+#### Verify Email
+```http
+POST /api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "token": "<verification-token-from-email>"
+}
+```
+
+Returns access and refresh tokens on success (auto-login).
+
+#### Resend Verification
+```http
+POST /api/v1/auth/resend-verification
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+Verification links expire **72 hours** after send.
+
+### User Billing
+
+Prefix: `/api/v1/user` (authenticated). See [Billing user traceability matrix](features/BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/billing/payment-options` | Offline UPI instructions vs online checkout availability |
+| GET | `/billing/offline-payment-qr` | Admin-uploaded QR image (when offline mode) |
+| GET | `/billing/performance-fee-arrears` | Open arrears summary |
+| GET | `/billing/performance-bills` | User performance-fee invoices |
+| POST | `/billing/performance-bills/{bill_id}/checkout` | Razorpay checkout for a bill (when online enabled) |
+| POST | `/billing/razorpay/create-order` | Generic Razorpay order (prefer performance-bill checkout) |
+| POST | `/billing/razorpay/verify-payment` | Verify Razorpay payment signature |
+| GET | `/billing/transactions` | Payment transaction history |
+
+### Admin Billing
+
+Prefix: `/api/v1/admin` (admin role). See [Billing admin traceability matrix](features/BILLING_ADMIN_TRACEABILITY_MATRIX.md).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/billing/settings` | Payment toggles, offline UPI fields, performance-fee defaults |
+| PATCH | `/billing/settings` | Update settings |
+| POST | `/billing/offline-payment-qr` | Upload offline payment QR (PNG/JPEG/WebP/GIF, max 2 MB) |
+| DELETE | `/billing/offline-payment-qr` | Remove uploaded QR |
+| PATCH | `/billing/razorpay-credentials` | Store encrypted Razorpay keys |
+| GET | `/billing/transactions` | All billing transactions |
+| POST | `/billing/refunds` | Issue refund |
+| POST | `/billing/reconcile` | Mark overdue performance bills |
+| GET | `/billing/performance-bills` | All users' performance bills |
+| POST | `/billing/performance-bills/{bill_id}/record-cash-payment` | Mark bill paid (offline UPI/cash) |
+
+### Billing Webhooks
+
+```http
+POST /api/v1/billing/webhooks/razorpay
+```
+
+Razorpay server-to-server events (signature verified). No JWT.
 
 ### Trading Signals
 

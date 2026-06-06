@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.1] - 2026-06-06
+
+Release from branch `releases/rebound_2621`. See [docs/development/RELEASE_PLAN_V26.2.1.md](docs/development/RELEASE_PLAN_V26.2.1.md) for deploy checklist.
+
+### Added
+
+- **Auth & onboarding:** Public signup, hard email verification (login blocked until verified), forgot/reset password, resend verification (72-hour token window), unified auth form validation.
+- **Profile:** Self-service email and optional mobile number updates; admin create-user with optional mobile; `PATCH /api/v1/auth/profile`.
+- **Billing (performance fees):** User Billing page, admin billing settings, Razorpay credentials (encrypted in DB), performance-fee invoices, offline UPI/QR payment (admin upload), admin cash payment recording, transaction history, reconcile overdue bills.
+- **Trading / Kotak:** Morning REGULAR buy schedule and evening margin preview; sell monitor EMA rehydration after restart; NSE tick-band rounding and upper-circuit caps on live sells; T+1 holdings reconciliation; live position repair tool; Kotak live LTP for sell monitoring.
+- **OHLCV / analysis:** Postgres OHLCV cache, NSE bhavcopy primary daily source, bulk analysis job with resume, admin-only market analysis run-once, stale today-bar fixes, premarket read-only price_cache refresh.
+- **ML / verdict:** Versioned verdict feature manifest, dip episode dataset and ranking, optional CPU transformer news sentiment, composite news profiles, `VERDICT_AND_SCORING` documentation.
+- **Paper trading:** DB-only portfolio/history metrics, unified EMA9 sell targets with live broker, improved fill/win-rate statistics.
+- **Platform:** IST wall-clock consistency, Postgres Docker backup cron docs, `tools/verify_db_schema.py`, JWT/Fernet migration tool for broker secrets.
+
+### Changed
+
+- **Billing model:** In-app subscription catalog and SaaS checkout removed; performance-fee + offline UPI beta (Razorpay checkout optional when admin enables online payments).
+- **Analysis access:** Bulk/market analysis restricted to admin role; shared signals remain user-visible via Buying Zone.
+- **Activity logging:** Activity Log UI and `activity` table removed; use Log Viewer (JSONL file logs).
+- **News sentiment:** Composite sources with cheap backtest profile and paid enrich on shortlisted names; env-tunable downgrade thresholds.
+- **Dependencies:** Python and web stack upgrades (React 19, Tailwind v4 PostCSS); Vitest 90% line coverage CI gate.
+
+### Fixed
+
+- Performance bills use closed positions as PnL source of truth; PnL daily sync on full closes.
+- Sell monitor false cancellation on mid-session restart; same-day buy/sell sizing for T+1.
+- Paper sell monitor stale OHLCV guards; duplicate paper order rows.
+- Run-once UI timer and conflict banner during long analysis subprocesses.
+- Backtest scoring when only `total_trades` is set; bond ticker screener filter.
+- Holdings pre-flight on stale Kotak holdings; CSV fallback when no ACTIVE signals.
+- Admin ML training (XGBoost, sklearn 1.8, price regressors); integrated backtest offline-safe tests.
+- Auth email SMTP mock in pytest (no real `@example.com` sends during tests).
+
+### Removed
+
+- Activity Log page (`/dashboard/activity`), `activity` router, and `activity` database table.
+- Legacy subscription billing UI and user subscribe/cancel/plan-list APIs (webhooks may still update legacy rows).
+
+### Documentation
+
+- [Verdict and Scoring](docs/features/VERDICT_AND_SCORING.md), billing traceability matrices, bulk analysis reliability, HTTPS DuckDNS, auth/profile UI and API sections.
+- Release plan and upgrade notes for 26.2.1.
+
+### Migration
+
+- **Required:** `alembic upgrade head` before starting API (18+ revisions on this branch, including billing, auth tokens, mobile number, OHLCV cache, activity drop). Backup Postgres first in production.
+- **New env (see `.env.example`):** `SMTP_*` for auth emails; billing/Razorpay; OHLCV/NSE; optional news sentiment and transformer backend.
+- **Operators:** Configure SMTP before enabling public signup; configure admin billing (offline QR or Razorpay) before performance-fee collection.
+
 ## [26.2] - 2026-04-14
 
 ### Added

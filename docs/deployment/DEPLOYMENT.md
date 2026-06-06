@@ -80,6 +80,21 @@ For cloud provider specific deployment instructions:
 - [ ] Trading services started via Web UI
 - [ ] Health check passing
 
+## Upgrading to 26.2.1
+
+From **v26.2**, **v26.2.0**, or **`releases/rebound_2620`** deployments:
+
+1. **Backup** the database ([Postgres backup guide](POSTGRES_DOCKER_BACKUP_CRON.md)).
+2. Pull branch `releases/rebound_2621` or tag **`v26.2.1`**.
+3. Merge new variables from [`.env.example`](../../.env.example) — especially **`SMTP_*`**, billing/Razorpay, OHLCV/NSE, and news settings.
+4. Rebuild and restart containers (see [Docker README](../../docker/README.md)).
+5. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`).
+6. Post-deploy smoke: signup/verify login, Billing pages, admin run-once analysis.
+
+Full checklist: [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
+
+**Breaking notes:** Activity Log UI removed (use Log Viewer); market analysis run-once is **admin-only**; in-app subscription catalog removed in favor of performance-fee billing.
+
 ## 🔗 Related Documentation
 
 - [Docker README](../../docker/README.md) - Docker-specific documentation
