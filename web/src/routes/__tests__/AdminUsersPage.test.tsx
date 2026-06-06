@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { withProviders } from '@/test/utils';
 import { AdminUsersPage } from '../dashboard/AdminUsersPage';
@@ -95,15 +95,17 @@ describe('AdminUsersPage', () => {
 		render(withProviders(<AdminUsersPage />));
 		await waitFor(() => expect(screen.getByText('user@example.com')).toBeInTheDocument());
 
-		const roleSelects = screen.getAllByRole('combobox');
-		await userEvent.selectOptions(roleSelects[2], 'admin');
+		const userRow = screen.getByText('user@example.com').closest('tr');
+		expect(userRow).not.toBeNull();
+		await userEvent.selectOptions(within(userRow!).getByRole('combobox'), 'admin');
 
 		await waitFor(() => {
 			expect(adminApi.updateUser).toHaveBeenCalledWith(2, { role: 'admin' });
 		});
 
-		const checkboxes = screen.getAllByRole('checkbox');
-		fireEvent.click(checkboxes[0]);
+		const adminRow = screen.getByText('admin@example.com').closest('tr');
+		expect(adminRow).not.toBeNull();
+		fireEvent.click(within(adminRow!).getByRole('checkbox'));
 
 		await waitFor(() => {
 			expect(adminApi.updateUser).toHaveBeenCalledWith(1, { is_active: false });

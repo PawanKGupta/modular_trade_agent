@@ -39,7 +39,7 @@ describe('SettingsPage', () => {
 			fireEvent.click(toggleButtons[0]);
 			await screen.findByRole('button', { name: /Hide Full Credentials/i });
 		}
-	});
+	};
 
 	it('shows account profile with read-only name and saves mobile', async () => {
 		renderPage();
