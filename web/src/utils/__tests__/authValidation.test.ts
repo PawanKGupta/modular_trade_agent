@@ -93,7 +93,7 @@ describe('authValidation', () => {
 			}),
 		).toEqual([]);
 		expect(
-			validateProfileForm({ email: 'bad', originalEmail: 'bad', mobile: '123' }).map(
+			validateProfileForm({ email: 'bad', originalEmail: 'user@example.com', mobile: '123' }).map(
 				(e) => e.field,
 			),
 		).toEqual(['profileEmail', 'profileMobile', 'profileCurrentPassword']);
