@@ -14,7 +14,6 @@ Features:
 
 import hashlib
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +32,46 @@ from core.indicators import compute_indicators  # noqa: E402
 from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
     extract_ticker_base,
 )
+from src.infrastructure.db.timezone_utils import ist_now_naive  # noqa: E402
 from utils.logger import logger  # noqa: E402
 
 # Constants
 EMA9_PERIOD = 9
 MIN_DATA_POINTS_FOR_EMA9 = 9
+
+
+def _ffill_close_trailing_nan(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """
+    Forward-fill ``close`` when the latest row has NaN in ``close``.
+
+    Yahoo Finance / yfinance sometimes returns the most recent daily bar with NaN
+    OHLC but non-zero volume. Propagating the last valid close matches common
+    trading-engine practice and yields a finite price for order sizing.
+
+    Args:
+        df: OHLCV frame (must include lowercase ``close`` when present).
+        ticker: Symbol label for logging only.
+
+    Returns:
+        ``df`` unchanged, or a copy with ``close`` forward-filled if the tail was NaN.
+    """
+    if df.empty or "close" not in df.columns:
+        return df
+    close_series = df["close"]
+    if not close_series.notna().any():
+        return df
+    if not pd.isna(close_series.iloc[-1]):
+        return df
+    out = df.copy()
+    out["close"] = out["close"].ffill()
+    if pd.isna(out["close"].iloc[-1]):
+        logger.warning(
+            "%s: latest close still NaN after forward-fill (no prior valid close)",
+            ticker,
+        )
+        return df
+    logger.debug("%s: forward-filled NaN close on latest bar from prior session", ticker)
+    return out
 
 
 class IndicatorCache:
@@ -50,7 +84,7 @@ class IndicatorCache:
         """Get cached indicator data if not expired"""
         if key in self._cache:
             entry = self._cache[key]
-            age = (datetime.now() - entry["timestamp"]).total_seconds()
+            age = (ist_now_naive() - entry["timestamp"]).total_seconds()
             if age < ttl_seconds:
                 logger.debug(f"Cache hit for indicator: {key} (age: {age:.1f}s)")
                 return entry["data"]
@@ -63,7 +97,7 @@ class IndicatorCache:
         """Cache indicator data"""
         self._cache[key] = {
             "data": data,
-            "timestamp": datetime.now(),
+            "timestamp": ist_now_naive(),
         }
 
     def clear(self):
@@ -116,8 +150,14 @@ class IndicatorService:
             if df is None or df.empty:
                 return "empty"
 
-            columns_to_use = [c for c in ("close", "volume", "open", "high", "low") if c in df.columns]
-            sample = df[columns_to_use].tail(tail_rows).copy() if columns_to_use else df.tail(tail_rows).copy()
+            columns_to_use = [
+                c for c in ("close", "volume", "open", "high", "low") if c in df.columns
+            ]
+            sample = (
+                df[columns_to_use].tail(tail_rows).copy()
+                if columns_to_use
+                else df.tail(tail_rows).copy()
+            )
 
             for col in columns_to_use:
                 sample[col] = pd.to_numeric(sample[col], errors="coerce").round(6)
@@ -377,8 +417,7 @@ class IndicatorService:
 
         # Create cache key
         cache_key = (
-            f"all_indicators_rsi{rsi_period}_ema{ema_period}_"
-            f"{self._build_df_cache_signature(df)}"
+            f"all_indicators_rsi{rsi_period}_ema{ema_period}_{self._build_df_cache_signature(df)}"
         )
 
         # Phase 4.2: Use adaptive TTL if caching enabled
@@ -434,6 +473,11 @@ class IndicatorService:
             Dict with keys: close, rsi10, ema9, ema200, avg_volume
             Returns None if calculation fails
 
+        Note:
+            If the latest daily bar has NaN ``close`` (common with incomplete Yahoo bars)
+            but earlier bars are valid, ``close`` is forward-filled from the prior session
+            before computing indicators so order sizing receives a finite price.
+
         Example:
             >>> service = IndicatorService(price_service=price_svc)
             >>> indicators = service.get_daily_indicators_dict('RELIANCE.NS')
@@ -454,6 +498,8 @@ class IndicatorService:
             if df is None or df.empty:
                 return None
 
+            df = _ffill_close_trailing_nan(df, ticker)
+
             # Calculate indicators
             df = self.calculate_all_indicators(
                 df, rsi_period=rsi_period, ema_period=200, config=config
@@ -461,6 +507,8 @@ class IndicatorService:
 
             if df is None or df.empty:
                 return None
+
+            df = _ffill_close_trailing_nan(df, ticker)
 
             last = df.iloc[-1]
 
@@ -481,8 +529,15 @@ class IndicatorService:
                 rsi_col = "rsi10"
 
             # Build result dict (same structure as get_daily_indicators())
+            close_val = last["close"]
+            if pd.isna(close_val):
+                logger.warning(
+                    "%s: close is NaN after indicator calculation; skipping dict",
+                    ticker,
+                )
+                return None
             result = {
-                "close": float(last["close"]),
+                "close": float(close_val),
                 "rsi10": (
                     float(last[rsi_col]) if rsi_col in last.index else 0.0
                 ),  # Keep 'rsi10' key for backward compatibility
@@ -519,7 +574,9 @@ class IndicatorService:
         """
         from datetime import time as dt_time
 
-        now = datetime.now().time()
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        now = ist_now().time()
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
 
@@ -572,7 +629,12 @@ class IndicatorService:
             # List of trades: extract unique symbols
             symbols = list(
                 set(
-                    trade.get("symbol", "").upper().replace("-EQ", "").replace("-BE", "").replace("-BL", "").replace("-BZ", "")
+                    trade.get("symbol", "")
+                    .upper()
+                    .replace("-EQ", "")
+                    .replace("-BE", "")
+                    .replace("-BL", "")
+                    .replace("-BZ", "")
                     for trade in positions
                     if trade.get("symbol")
                 )
@@ -590,7 +652,9 @@ class IndicatorService:
                 ticker = f"{symbol}.NS"
 
                 # Warm price cache first (needed for indicators)
-                df = self.price_service.get_price(ticker, days=365, interval="1d", add_current_day=True)
+                df = self.price_service.get_price(
+                    ticker, days=365, interval="1d", add_current_day=True
+                )
                 if df is None or df.empty:
                     failed += 1
                     continue
@@ -608,9 +672,7 @@ class IndicatorService:
                 logger.debug(f"Error warming indicator cache for {symbol}: {e}")
                 failed += 1
 
-        logger.info(
-            f"Indicator cache warming complete: {warmed} positions warmed, {failed} failed"
-        )
+        logger.info(f"Indicator cache warming complete: {warmed} positions warmed, {failed} failed")
 
         return {"warmed": warmed, "failed": failed}
 

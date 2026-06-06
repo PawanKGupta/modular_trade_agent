@@ -26,7 +26,7 @@ except ImportError as e:
 
 # Import helper functions from core (temporary, will be migrated)
 # Phase 4.8: calculate_backtest_score moved to BacktestService method
-from core.backtest_scoring import run_stock_backtest
+from core.backtest_scoring import _run_stock_backtest_impl
 
 
 class BacktestService:
@@ -59,107 +59,14 @@ class BacktestService:
         """
         Calculate a backtest score based on performance metrics.
 
-        Phase 4.8: Migrated from core.backtest_scoring.calculate_backtest_score()
-        to service layer for better testability and dependency injection.
-
-        Score components:
-        - Annualized return percentage (40%)
-        - Win rate (40%)
-        - Strategy vs buy-and-hold performance (20%)
-        - No trade frequency penalty (quality over quantity for reversals)
-
-        Enhanced with:
-        - Mild confidence adjustment for very low sample sizes
-        - Pure focus on reversal quality over entire backtest period
-
-        Args:
-            backtest_results: Backtest results dictionary
-            dip_mode: Whether to use dip mode (uses instance default if None)
-
-        Returns:
-            Float score between 0-100
+        Delegates to ``core.backtest_scoring.calculate_backtest_score`` so simple
+        and integrated backtest payloads stay consistent.
         """
         if dip_mode is None:
             dip_mode = self.dip_mode
+        from core.backtest_scoring import calculate_backtest_score as _calculate_backtest_score
 
-        if not backtest_results or backtest_results.get("total_positions", 0) == 0:
-            return 0.0
-
-        try:
-            # Calculate annualized return based on actual trading days
-            total_return = backtest_results.get("total_return_pct", 0)
-            total_trades = backtest_results.get("total_trades", 0)
-
-            # Estimate average holding period (assume 15 days if no position data available)
-            avg_holding_days = 15  # Default assumption
-            if "full_results" in backtest_results and backtest_results["full_results"].get(
-                "positions"
-            ):
-                positions = backtest_results["full_results"]["positions"]
-                if positions:
-                    total_days = 0
-                    valid_positions = 0
-                    for pos in positions:
-                        if pos.get("entry_date") and pos.get("exit_date"):
-                            from datetime import datetime
-
-                            entry = datetime.strptime(pos["entry_date"], "%Y-%m-%d")
-                            exit = datetime.strptime(pos["exit_date"], "%Y-%m-%d")
-                            days = (exit - entry).days
-                            total_days += days
-                            valid_positions += 1
-                    if valid_positions > 0:
-                        avg_holding_days = total_days / valid_positions
-
-            # For reversal strategy, use total return directly (avoid extreme annualization)
-            # Reversals are about absolute performance over the backtest period
-            effective_return = total_return
-
-            # Component 1: Total Return (40% weight) - Focus on reversal performance quality
-            # Scale: 0-10% -> 0-50 points, 10%+ -> 50-100 points (more appropriate for reversals)
-            if effective_return <= 10:
-                return_score = (effective_return / 10) * 50 * 0.4
-            else:
-                return_score = (50 + min((effective_return - 10) * 2.5, 50)) * 0.4
-
-            # Component 2: Win Rate (40% weight) - High importance for reversal consistency
-            win_rate = backtest_results.get("win_rate", 0)
-            win_score = win_rate * 0.4
-
-            # Component 3: Strategy vs Buy & Hold (20% weight)
-            vs_buyhold = backtest_results.get("strategy_vs_buy_hold", 0)
-            alpha_score = min(max(vs_buyhold + 50, 0), 100) * 0.2
-
-            # No trade frequency component - quality over quantity for reversal strategy
-
-            # Calculate base score (no trade frequency penalty)
-            base_score = return_score + win_score + alpha_score
-
-            # Enhancement 1: Mild confidence adjustment for reversal strategy
-            confidence_factor = 1.0
-            if total_trades < 3:  # Only penalize very low sample sizes
-                confidence_factor = 0.8 + (total_trades / 10)  # 80-100% confidence (mild penalty)
-                logger.debug(
-                    f"Applied confidence adjustment: {confidence_factor:.2f} for {total_trades} trades"
-                )
-
-            # No recent performance boost - reversal quality is consistent over time
-            recent_boost = 1.0
-
-            # Apply enhancements (confidence adjustment only)
-            total_score = base_score * confidence_factor
-
-            logger.debug(
-                f"Backtest score breakdown: Total Return={effective_return:.1f}% ({return_score:.1f}), "
-                f"Win={win_rate:.1f}% ({win_score:.1f}), Alpha={alpha_score:.1f}, "
-                f"Trades={total_trades}, Total={total_score:.1f}"
-            )
-
-            return min(total_score, 100.0)  # Cap at 100
-
-        except Exception as e:
-            logger.error(f"Error calculating backtest score: {e}")
-            return 0.0
+        return _calculate_backtest_score(backtest_results, dip_mode=dip_mode)
 
     def run_stock_backtest(
         self,
@@ -171,8 +78,7 @@ class BacktestService:
         """
         Run backtest for a stock using available method (integrated or simple).
 
-        This method delegates to core.backtest_scoring.run_stock_backtest()
-        while providing a service interface.
+        Uses ``core.backtest_scoring._run_stock_backtest_impl`` (no deprecated wrapper).
 
         Args:
             stock_symbol: Stock symbol (e.g., "RELIANCE.NS")
@@ -188,7 +94,7 @@ class BacktestService:
         if dip_mode is None:
             dip_mode = self.dip_mode
 
-        return run_stock_backtest(stock_symbol, years_back, dip_mode, config)
+        return _run_stock_backtest_impl(stock_symbol, years_back, dip_mode, config)
 
     def add_backtest_scores_to_results(
         self,
@@ -225,6 +131,13 @@ class BacktestService:
                 ticker = stock_result.get("ticker", "Unknown")
                 logger.info(f"Processing {i}/{len(stock_results)}: {ticker}")
 
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    apply_ohlcv_ops_fields,
+                    reset_symbol_yahoo_counter,
+                )
+
+                reset_symbol_yahoo_counter()
+
                 # Preserve initial ML predictions (2025-11-11)
                 # Backtest may overwrite these, so save them first
                 # Use dict access to preserve even if None/empty (vs .get() which might lose them)
@@ -253,6 +166,8 @@ class BacktestService:
                 )
 
                 # Add backtest data to stock result
+                backtest_mode = backtest_data.get("backtest_mode", BACKTEST_MODE)
+                stock_result["backtest_mode"] = backtest_mode
                 stock_result["backtest"] = {
                     "score": backtest_data.get("backtest_score", 0),
                     "total_return_pct": backtest_data.get("total_return_pct", 0),
@@ -264,6 +179,7 @@ class BacktestService:
                     "backtest_ml_verdict": backtest_data.get(
                         "backtest_ml_verdict"
                     ),  # Store for filtering logic
+                    "backtest_mode": backtest_mode,
                 }
 
                 # Calculate combined score (50% current analysis + 50% backtest)
@@ -284,6 +200,8 @@ class BacktestService:
 
                 stock_result["combined_score"] = combined_score
                 stock_result["backtest_score"] = backtest_score
+
+                apply_ohlcv_ops_fields(stock_result, ticker)
 
                 # Re-classify based on combined score and key metrics
                 self._reclassify_with_backtest(stock_result, backtest_score, combined_score)
@@ -452,9 +370,13 @@ class BacktestService:
                 enhanced_results.append(stock_result)
 
             except Exception as e:
-                logger.error(
-                    f"Error adding backtest score for {stock_result.get('ticker', 'Unknown')}: {e}"
+                ticker = stock_result.get("ticker", "Unknown")
+                logger.error(f"Error adding backtest score for {ticker}: {e}")
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    apply_ohlcv_ops_fields,
                 )
+
+                apply_ohlcv_ops_fields(stock_result, ticker)
                 # Add stock without backtest score
                 stock_result["backtest"] = {"score": 0, "error": str(e)}
                 # Restore initial ML predictions even on error (2025-11-11)

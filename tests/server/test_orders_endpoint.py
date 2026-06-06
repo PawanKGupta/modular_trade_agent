@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_orders.db")
 
 from server.app.core.config import settings  # noqa: E402
@@ -14,6 +15,7 @@ from server.app.schemas.orders import OrderResponse  # noqa: E402
 from src.infrastructure.db.models import Orders  # noqa: E402
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: E402
 from src.infrastructure.persistence.orders_repository import OrdersRepository  # noqa: E402
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 @pytest.fixture(scope="function")
@@ -37,14 +39,10 @@ def test_orders_list_requires_auth(client: TestClient):
     assert r.status_code in (401, 403)
 
 
-def test_orders_list_with_auth(client: TestClient):
+def test_orders_list_with_auth(client: TestClient, db_session):
     # signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "orders_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200, s.text
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "orders_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # initially empty
@@ -69,12 +67,8 @@ def test_orders_list_with_new_statuses(client: TestClient, db_session):
     from src.infrastructure.db.models import Users  # noqa: PLC0415
 
     # Create user via signup API (uses same db_session via override)
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "status_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "status_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user from database to get user_id
@@ -146,13 +140,10 @@ def test_orders_response_includes_monitoring_fields(client: TestClient):
     assert "is_manual" in schema_fields
 
 
-def test_orders_status_validation(client: TestClient):
+def test_orders_status_validation(client: TestClient, db_session):
     """Test that invalid status values are rejected"""
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "validation_tester@example.com", "password": "secret123"},
-    )
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "validation_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Invalid status should be handled gracefully (may return 422 or empty list)
@@ -167,12 +158,8 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
     from src.infrastructure.db.models import Users  # noqa: PLC0415
 
     # Create user via signup API (uses same db_session via override)
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "all_status_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "all_status_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user from database to get user_id
@@ -206,12 +193,8 @@ def test_orders_with_all_statuses(client: TestClient, db_session):
 def test_retry_order_success(client: TestClient, db_session):
     """Test retrying a failed order"""
     # Create user via signup API (uses same db_session via override)
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "retry_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "retry_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token (matches user created by signup API)
@@ -249,13 +232,10 @@ def test_retry_order_success(client: TestClient, db_session):
     assert failed_order.last_retry_attempt is not None
 
 
-def test_retry_order_not_found(client: TestClient):
+def test_retry_order_not_found(client: TestClient, db_session):
     """Test retrying a non-existent order"""
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "retry_notfound@example.com", "password": "secret123"},
-    )
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "retry_notfound@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     r = client.post("/api/v1/user/orders/99999/retry", headers=headers)
@@ -270,12 +250,8 @@ def test_retry_order_wrong_status(client: TestClient, db_session):
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: PLC0415
 
     # Create user via signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "retry_wrong_status@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "retry_wrong_status@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token
@@ -304,12 +280,8 @@ def test_retry_order_wrong_status(client: TestClient, db_session):
 def test_drop_order_success(client: TestClient, db_session):
     """Test dropping an order from retry queue"""
     # Create user via signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "drop_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "drop_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token
@@ -342,13 +314,10 @@ def test_drop_order_success(client: TestClient, db_session):
     assert "Dropped from retry queue" in (retry_order.reason or "")
 
 
-def test_drop_order_not_found(client: TestClient):
+def test_drop_order_not_found(client: TestClient, db_session):
     """Test dropping a non-existent order"""
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "drop_notfound@example.com", "password": "secret123"},
-    )
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "drop_notfound@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     r = client.delete("/api/v1/user/orders/99999", headers=headers)
@@ -363,12 +332,8 @@ def test_drop_order_wrong_status(client: TestClient, db_session):
     from src.infrastructure.db.models import OrderStatus as DbOrderStatus  # noqa: PLC0415
 
     # Create user via signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "drop_wrong_status@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "drop_wrong_status@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token
@@ -397,12 +362,8 @@ def test_drop_order_wrong_status(client: TestClient, db_session):
 def test_list_orders_with_filters(client: TestClient, db_session):
     """Test filtering orders by reason and date range"""
     # Create user via signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "filter_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "filter_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token
@@ -447,7 +408,7 @@ def test_list_orders_with_filters(client: TestClient, db_session):
     assert any("insufficient" in (o.get("reason") or "").lower() for o in items)
 
     # Filter by date range (using today's date)
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = ist_now_naive().strftime("%Y-%m-%d")
     r2 = client.get(
         f"/api/v1/user/orders?from_date={today}&to_date={today}",
         headers=headers,
@@ -461,12 +422,8 @@ def test_list_orders_with_filters(client: TestClient, db_session):
 def test_orders_response_includes_entry_type_and_is_manual(client: TestClient, db_session):
     """Test that order response includes entry_type and is_manual fields"""
     # Create user via signup
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "entry_type_tester@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "entry_type_tester@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get user_id from token

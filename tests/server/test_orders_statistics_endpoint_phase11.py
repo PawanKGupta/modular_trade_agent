@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from src.infrastructure.db.models import Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
 from server.app.main import app
+from tests.support.auth_flow import signup_and_verify_payload
 
 client = TestClient(app)
 
@@ -32,12 +33,8 @@ def mock_user(client, db_session):
     from server.app.core.config import settings
 
     # Create user via signup
-    response = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "test@example.com", "password": "password123"},
-    )
-    assert response.status_code == 200
-    token = response.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "test@example.com", "password": "Password123!"})
+    token = _auth_tokens["access_token"]
     
     # Get user_id from token and create a mock user object
     payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
@@ -54,7 +51,7 @@ def auth_headers(mock_user):
     """Get authentication headers"""
     response = client.post(
         "/api/v1/auth/login",
-        json={"email": mock_user.email, "password": "password123"},
+        json={"email": mock_user.email, "password": "Password123!"},
     )
     assert response.status_code == 200
     token = response.json()["access_token"]

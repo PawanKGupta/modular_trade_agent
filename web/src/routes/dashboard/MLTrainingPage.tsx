@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
 	getMLModels,
 	getTrainingJobs,
@@ -12,9 +12,12 @@ import {
 import { MLTrainingForm } from './MLTrainingForm';
 import { MLTrainingJobsTable } from './MLTrainingJobsTable';
 import { MLModelsTable } from './MLModelsTable';
+import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 
 export function MLTrainingPage() {
 	const queryClient = useQueryClient();
+	const [trainingServerError, setTrainingServerError] = useState<string | null>(null);
+	const [activateServerError, setActivateServerError] = useState<string | null>(null);
 
 	const {
 		data: jobs = [],
@@ -36,16 +39,28 @@ export function MLTrainingPage() {
 
 	const startTrainingMutation = useMutation({
 		mutationFn: (payload: StartTrainingPayload) => startTrainingJob(payload),
+		onMutate: () => {
+			setTrainingServerError(null);
+		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['mlTrainingJobs'] });
 			queryClient.invalidateQueries({ queryKey: ['mlModels'] });
+		},
+		onError: (err) => {
+			setTrainingServerError(getApiErrorMessage(err));
 		},
 	});
 
 	const activateModelMutation = useMutation({
 		mutationFn: (modelId: number) => activateModel(modelId),
+		onMutate: () => {
+			setActivateServerError(null);
+		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['mlModels'] });
+		},
+		onError: (err) => {
+			setActivateServerError(getApiErrorMessage(err));
 		},
 	});
 
@@ -69,6 +84,7 @@ export function MLTrainingPage() {
 				<MLTrainingForm
 					onSubmit={(payload) => startTrainingMutation.mutate(payload)}
 					isSubmitting={startTrainingMutation.isPending}
+					serverError={trainingServerError}
 				/>
 			</div>
 
@@ -97,6 +113,14 @@ export function MLTrainingPage() {
 						Refresh
 					</button>
 				</div>
+				{activateServerError ? (
+					<div
+						role="alert"
+						className="text-xs sm:text-sm text-red-400 break-words whitespace-pre-wrap border border-red-900/40 rounded p-3"
+					>
+						{activateServerError}
+					</div>
+				) : null}
 				<MLModelsTable
 					models={models}
 					isLoading={modelsLoading}

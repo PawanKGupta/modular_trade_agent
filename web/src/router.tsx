@@ -1,6 +1,10 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { LoginPage } from './routes/LoginPage';
 import { SignupPage } from './routes/SignupPage';
+import { ForgotPasswordPage } from './routes/ForgotPasswordPage';
+import { ResetPasswordPage } from './routes/ResetPasswordPage';
+import { VerifyEmailPage } from './routes/VerifyEmailPage';
+import { ResendVerificationPage } from './routes/ResendVerificationPage';
 import { AppShell } from './routes/AppShell';
 import { DashboardHome } from './routes/dashboard/DashboardHome';
 import { BuyingZonePage } from './routes/dashboard/BuyingZonePage';
@@ -12,7 +16,6 @@ import { BrokerOrdersPage } from './routes/dashboard/BrokerOrdersPage';
 import { BrokerTradingHistoryPage } from './routes/dashboard/BrokerTradingHistoryPage';
 import { PnlPage } from './routes/dashboard/PnlPage';
 import { TargetsPage } from './routes/dashboard/TargetsPage';
-import { ActivityPage } from './routes/dashboard/ActivityPage';
 import { SettingsPage } from './routes/dashboard/SettingsPage';
 import { NotificationPreferencesPage } from './routes/dashboard/NotificationPreferencesPage';
 import { NotificationsPage } from './routes/dashboard/NotificationsPage';
@@ -23,6 +26,8 @@ import { MLTrainingPage } from './routes/dashboard/MLTrainingPage';
 import { LogViewerPage } from './routes/dashboard/LogViewerPage';
 import { ServiceSchedulePage } from './routes/dashboard/ServiceSchedulePage';
 import { MonitoringDashboardPage } from './routes/dashboard/MonitoringDashboardPage';
+import { BillingPage } from './routes/dashboard/BillingPage';
+import { AdminBillingPage } from './routes/dashboard/AdminBillingPage';
 import { RequireAuth } from './routes/RequireAuth';
 
 export function createAppRouter() {
@@ -30,6 +35,10 @@ export function createAppRouter() {
 		{ path: '/', element: <LoginPage /> },
 		{ path: '/login', element: <LoginPage /> },
 		{ path: '/signup', element: <SignupPage /> },
+		{ path: '/forgot-password', element: <ForgotPasswordPage /> },
+		{ path: '/reset-password', element: <ResetPasswordPage /> },
+		{ path: '/verify-email', element: <VerifyEmailPage /> },
+		{ path: '/resend-verification', element: <ResendVerificationPage /> },
 		{
 			path: '/dashboard',
 			element: (
@@ -48,17 +57,19 @@ export function createAppRouter() {
 				{ path: 'broker-history', element: <BrokerTradingHistoryPage /> },
 				{ path: 'pnl', element: <PnlPage /> },
 				{ path: 'targets', element: <TargetsPage /> },
-				{ path: 'activity', element: <ActivityPage /> },
 				{ path: 'service', element: <ServiceStatusPage /> },
 				{ path: 'trading-config', element: <TradingConfigPage /> },
 				{ path: 'logs', element: <LogViewerPage /> },
+				{ path: 'activity', element: <Navigate to="/dashboard/logs" replace /> },
 				{ path: 'settings', element: <SettingsPage /> },
+				{ path: 'billing', element: <BillingPage /> },
 				{ path: 'notification-preferences', element: <NotificationPreferencesPage /> },
 				{ path: 'notifications', element: <NotificationsPage /> },
 				{ path: 'admin/users', element: <AdminUsersPage /> },
 				{ path: 'admin/ml', element: <MLTrainingPage /> },
 				{ path: 'admin/schedules', element: <ServiceSchedulePage /> },
 				{ path: 'admin/monitoring', element: <MonitoringDashboardPage /> },
+				{ path: 'admin/billing', element: <AdminBillingPage /> },
 			],
 		},
 	]);

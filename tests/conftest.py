@@ -36,9 +36,35 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
         # Set to in-memory if not already set or not in-memory
         os.environ["DB_URL"] = "sqlite:///:memory:"
 
+# Daily OHLCV gap-fill defaults to NSE in production; tests must not hit nsearchives HTTP.
+# Force before any ``config.settings`` import (module caches OHLCV_DAILY_SOURCE at import time).
+os.environ["OHLCV_DAILY_SOURCE"] = "yahoo"
+os.environ["NSE_BHAVCOPY_REQUEST_DELAY_S"] = "0"
+os.environ["NSE_BHAVCOPY_REQUEST_TIMEOUT_S"] = "1"
+
+
+def pytest_load_initial_conftests(early_config, parser, args):
+    """Pin OHLCV source before worker/master imports ``config.settings``."""
+    os.environ["OHLCV_DAILY_SOURCE"] = "yahoo"
+    os.environ["NSE_BHAVCOPY_REQUEST_DELAY_S"] = "0"
+    os.environ["NSE_BHAVCOPY_REQUEST_TIMEOUT_S"] = "1"
+
+
 # Ensure Unicode logs render on Windows/CI environments
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ.setdefault("PYTHONUTF8", "1")
+
+# Fernet material for encrypting broker / billing secrets in API tests (skipped if already set).
+if (
+    not (os.environ.get("APP_DATA_ENCRYPTION_KEY") or "").strip()
+    and not (os.environ.get("BROKER_SECRET_KEY") or "").strip()
+):
+    try:
+        from cryptography.fernet import Fernet  # noqa: PLC0415
+
+        os.environ["BROKER_SECRET_KEY"] = Fernet.generate_key().decode()
+    except Exception:
+        pass
 
 # Import models ONCE at module level to ensure they're registered before any fixtures
 # This prevents SQLAlchemy registry conflicts when models are imported multiple times
@@ -46,7 +72,52 @@ import src.infrastructure.db.models  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
-def clean_db_after_test():
+def disable_auth_smtp(monkeypatch):
+    """Prevent auth routes from sending real SMTP mail during tests."""
+    from tests.support.mock_auth_email import install_mock_auth_email_service
+
+    return install_mock_auth_email_service(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def ohlcv_daily_source_yahoo_for_tests(monkeypatch):
+    """
+    Keep gap_fill on Yahoo during tests unless a case explicitly mocks NSE.
+
+    ``OHLCV_DAILY_SOURCE=nse`` (prod default) routes daily gap-fill through live NSE
+    bhavcopy HTTP; many cache tests call ``gap_fill`` / ``get_ohlcv`` on empty DB and
+    would download one zip per trading day (tens of seconds per test).
+    """
+    monkeypatch.setenv("OHLCV_DAILY_SOURCE", "yahoo")
+    monkeypatch.setattr("config.settings.OHLCV_DAILY_SOURCE", "yahoo", raising=False)
+    monkeypatch.setattr(
+        "config.settings.daily_ohlcv_uses_nse",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "config.settings.daily_ohlcv_yahoo_fallback",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: True,
+    )
+
+    def _blocked_nse_http(_self, _url, retry_on_403=True):
+        return None
+
+    monkeypatch.setattr(
+        "src.infrastructure.data_providers.nse_bhavcopy_fetcher.NseBhavcopyFetcher._http_get",
+        _blocked_nse_http,
+    )
+
+
+@pytest.fixture(autouse=True)
+def clean_db_after_test():  # noqa: PLR0915
     """
     Ensure each test runs with an isolated in-memory DB schema and cleans up afterward.
     Drops and recreates all tables on the shared session engine so FastAPI TestClient and
@@ -102,7 +173,11 @@ def clean_db_after_test():
     # This avoids CI-only flakes where a previous test configures a singleton with mocks
     # (e.g. PriceService.live_price_manager) and later tests unexpectedly inherit it.
     try:
-        from modules.kotak_neo_auto_trader.services import indicator_service, position_loader, price_service
+        from modules.kotak_neo_auto_trader.services import (
+            indicator_service,
+            position_loader,
+            price_service,
+        )
 
         price_service._price_service_instance = None  # noqa: SLF001
         indicator_service._indicator_service_instance = None  # noqa: SLF001
@@ -478,6 +553,7 @@ def ensure_system_user(db_session):
     from sqlalchemy.orm import Session
 
     from src.infrastructure.db.models import UserRole, Users
+    from src.infrastructure.db.timezone_utils import ist_now
 
     # Handle tuple-returning fixtures: extract the session
     if isinstance(db_session, tuple):
@@ -491,8 +567,15 @@ def ensure_system_user(db_session):
     user = session.query(Users).filter_by(id=1).first()
     if not user:
         user = Users(
-            id=1, email="system@tradeagent.example.com", password_hash="system", role=UserRole.ADMIN
+            id=1,
+            email="system@tradeagent.example.com",
+            password_hash="system",
+            role=UserRole.ADMIN,
+            email_verified_at=ist_now(),
         )
         session.add(user)
+        session.commit()
+    elif user.email_verified_at is None:
+        user.email_verified_at = ist_now()
         session.commit()
     yield

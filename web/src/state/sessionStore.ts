@@ -7,6 +7,14 @@ import {
 	requestTokenRefresh,
 } from '@/api/client';
 
+/** Treat missing email_verified as verified (legacy API / cached sessions). */
+function normalizeMe(profile: MeResponse): MeResponse {
+	return {
+		...profile,
+		email_verified: profile.email_verified ?? true,
+	};
+}
+
 type SessionState = {
 	isAuthenticated: boolean;
 	user: MeResponse | null;
@@ -25,14 +33,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 	hasHydrated: false,
 	setSession: (user) =>
 		set({
-			user,
+			user: user ? normalizeMe(user) : null,
 			isAuthenticated: !!user,
 			isAdmin: !!user?.roles?.includes('admin'),
 			hasHydrated: true,
 		}),
 	refresh: async () => {
 		try {
-			const profile = await me();
+			const profile = normalizeMe(await me());
 			set({
 				user: profile,
 				isAuthenticated: true,

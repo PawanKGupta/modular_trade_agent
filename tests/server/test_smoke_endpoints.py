@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_orders.db")
 
 from server.app.main import app  # noqa: E402
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 def test_health_and_basic_endpoints():
@@ -16,12 +17,8 @@ def test_health_and_basic_endpoints():
     assert r.json().get("status") == "ok"
 
     # signup + auth
-    s = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "coverage_smoke@example.com", "password": "secret123"},
-    )
-    assert s.status_code == 200, s.text
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": "coverage_smoke@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # me

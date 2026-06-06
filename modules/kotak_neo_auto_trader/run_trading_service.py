@@ -81,6 +81,7 @@ class TradingService:
         strategy_config=None,  # StrategyConfig instance
         env_file: str | None = None,  # Deprecated: kept for backward compatibility
         skip_execution_tracking: bool = False,  # Set to True when called from individual services
+        enable_live_price_cache: bool = True,  # False for short broker tasks (e.g. buy_orders)
     ):
         """
         Initialize trading service with user context.
@@ -91,11 +92,15 @@ class TradingService:
             broker_creds: Decrypted broker credentials dict (None for paper trading mode)
             strategy_config: User-specific StrategyConfig (optional, will be loaded if not provided)
             env_file: Deprecated - kept for backward compatibility only
+            skip_execution_tracking: Set to True when called from individual services
+            enable_live_price_cache: Start Kotak REST LTP polling when True (scheduler/sell_monitor).
+                Set False for per-task runs that do not need live LTP (e.g. buy_orders).
         """
         self.user_id = user_id
         self.db = db_session  # Initial session (for setup only)
         self.broker_creds = broker_creds
         self.skip_execution_tracking = skip_execution_tracking
+        self._enable_live_price_cache = enable_live_price_cache
         # Track async task futures to prevent re-queuing long-running tasks.
         # This is critical for continuous tasks like sell_monitor: if one run exceeds timeout,
         # it may continue running in background; without this guard we would queue duplicates
@@ -149,6 +154,7 @@ class TradingService:
         self.tasks_completed = {
             "analysis": False,
             "buy_orders": False,
+            "buy_margin_preview": False,
             "eod_cleanup": False,
             "premarket_retry": False,
             "premarket_amo_adjustment": False,
@@ -251,17 +257,32 @@ class TradingService:
                 return False
             self.logger.info("Trading engine initialized successfully", action="initialize")
 
-            # Initialize live prices (WebSocket for real-time LTP)
-            # For buy_orders task, WebSocket is not needed (AMO orders don't need real-time prices)
-            # Skip WebSocket initialization to avoid blocking - buy orders use yfinance for prices
-            self.logger.info(
-                "Skipping WebSocket initialization for buy_orders (not needed for AMO orders)",
-                action="initialize",
-            )
-            self.price_cache = None
-            self.scrip_master = None
+            # Kotak REST live price cache for sell monitoring / portfolio LTP.
+            # AMO buy_orders use yfinance; short per-task runs can skip init (enable_live_price_cache).
+            if self._enable_live_price_cache:
+                self.logger.info(
+                    "Initializing Kotak live price cache for broker LTP...",
+                    action="initialize",
+                )
+                self._initialize_live_prices()
+                if self.price_cache:
+                    self.logger.info(
+                        "[OK] Live price cache ready for sell monitoring",
+                        action="initialize",
+                    )
+                else:
+                    self.logger.warning(
+                        "Live price cache unavailable; LTP will fall back to Yahoo/delayed data",
+                        action="initialize",
+                    )
+            else:
+                self.logger.info(
+                    "Skipping live price cache init (not required for this run; AMO/yfinance path)",
+                    action="initialize",
+                )
+                self.price_cache = None
+                self.scrip_master = None
 
-            # Update portfolio with price manager for WebSocket LTP access
             if self.engine.portfolio and self.price_cache:
                 self.engine.portfolio.price_manager = self.price_cache
 
@@ -339,17 +360,14 @@ class TradingService:
                 self.sell_manager = None
                 self.unified_order_monitor = None
 
-            # Subscribe to open positions immediately to avoid reconnect loops
-            # For buy_orders task, this is not needed (AMO orders don't need real-time prices)
-            # Skip it to avoid blocking
-            self.logger.info(
-                "Skipping position subscription for buy_orders (not needed for AMO orders)",
-                action="initialize",
-            )
-            # try:
-            #     self._subscribe_to_open_positions()
-            # except Exception as e:
-            #     self.logger.warning(f"Position subscription failed (non-critical for buy orders): {e}")
+            if self.price_cache:
+                try:
+                    self._subscribe_to_open_positions()
+                except Exception as e:
+                    self.logger.warning(
+                        f"Sell-order price subscription failed (non-fatal): {e}",
+                        action="initialize",
+                    )
 
             self.logger.info("Service initialized successfully", action="initialize")
             self.logger.info("=" * 80, action="initialize")
@@ -369,24 +387,38 @@ class TradingService:
         if is_trading_day_check and ist_now:
             return is_trading_day_check(ist_now().date())
         # Fallback to weekday check if imports failed
+        if ist_now is not None:
+            return ist_now().weekday() < 5
         return datetime.now().weekday() < 5
 
     def is_market_hours(self) -> bool:
-        """Check if currently in market hours (9:15 AM - 3:30 PM)"""
-        now = datetime.now().time()
+        """Check if currently in market hours (9:15 AM - 3:30 PM IST)."""
+        if ist_now is not None:
+            now = ist_now().time()
+        else:
+            now = datetime.now().time()
         return dt_time(9, 15) <= now <= dt_time(15, 30)
+
+    def _is_sell_open_placement_window(self) -> bool:
+        """True during the first sell-monitor cycle window (9:15–9:35 IST)."""
+        if ist_now is None:
+            return False
+        now = ist_now().time()
+        return dt_time(9, 15) <= now <= dt_time(9, 35)
 
     def _initialize_live_prices(self):
         """
-        Initialize LivePriceCache for real-time WebSocket prices.
-        Loads scrip master and starts WebSocket connection.
+        Initialize LivePriceCache for Kotak REST quote polling (real-time LTP).
+        Loads scrip master and starts the polling loop.
         Graceful fallback if initialization fails.
         """
         try:
-            logger.info("Initializing live price cache for real-time WebSocket prices...")
+            logger.info("Initializing live price cache (Kotak REST LTP polling)...")
 
             # Load scrip master for symbol/token mapping
-            rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            rest_client = (
+                self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+            )
             self.scrip_master = KotakNeoScripMaster(auth_client=rest_client, exchanges=["NSE"])
             if not self.scrip_master.load_scrip_master(force_download=False):
                 raise RuntimeError("Scrip master load failed")
@@ -404,21 +436,18 @@ class TradingService:
 
             # Start real-time price streaming
             self.price_cache.start()
-            logger.info("[OK] Live price cache started (WebSocket started)")
+            logger.info("[OK] Live price cache started (Kotak REST polling)")
 
-            # Wait for WebSocket connection to be established
-            # Use shorter timeout to avoid blocking buy_orders task
-            # Buy orders don't need WebSocket (AMO orders placed before market open)
-            logger.info("Waiting for WebSocket connection (non-blocking, 3s timeout)...")
+            logger.info("Waiting for Kotak quote poller (non-blocking, 3s timeout)...")
             try:
-                if self.price_cache.wait_for_connection(timeout=3):  # Reduced timeout to 3s
-                    logger.info("WebSocket connection established")
+                if self.price_cache.wait_for_connection(timeout=3):
+                    logger.info("Kotak live price poller ready")
                 else:
                     logger.warning(
-                        "WebSocket connection timeout (non-critical for buy orders), will use fallback"
+                        "Kotak live price poller not ready within timeout; will use LTP fallbacks"
                     )
             except Exception as e:
-                logger.warning(f"WebSocket wait failed (non-critical): {e}")
+                logger.warning(f"Live price poller wait failed (non-critical): {e}")
 
         except Exception as e:
             logger.warning(f"Failed to initialize live price cache: {e}")
@@ -527,7 +556,10 @@ class TradingService:
         if self.tasks_completed.get(task_name):
             return False  # Already completed today
 
-        now = datetime.now().time()
+        if ist_now is not None:
+            now = ist_now().time()
+        else:
+            now = datetime.now().time()
 
         # Allow 2 minute window for task execution
         time_diff = (now.hour * 60 + now.minute) - (
@@ -555,7 +587,7 @@ class TradingService:
         return should_run
 
     def run_premarket_retry(self):
-        """8:00 AM - Retry orders with RETRY_PENDING status from database"""
+        """9:03 AM IST (default) - Retry failed orders from database."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -567,7 +599,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: PRE-MARKET RETRY (8:00 AM)")
+            logger.info("TASK: PRE-MARKET RETRY (9:03 AM IST)")
             logger.info("=" * 80)
 
             # Check if engine is initialized
@@ -589,7 +621,7 @@ class TradingService:
             logger.info("Pre-market retry completed")
 
     def run_premarket_amo_adjustment(self):
-        """9:05 AM - Adjust AMO order quantities based on pre-market prices"""
+        """9:05 AM IST - Adjust pending buy order quantities using pre-market prices."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -601,7 +633,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: PRE-MARKET AMO ADJUSTMENT (9:05 AM)")
+            logger.info("TASK: PRE-MARKET PENDING BUY ADJUSTMENT (9:05 AM IST)")
             logger.info("=" * 80)
 
             # Check if engine is initialized
@@ -625,7 +657,11 @@ class TradingService:
             logger.info("Pre-market AMO adjustment completed")
 
     def run_sell_monitor(self):
-        """9:15 AM - Place sell orders and start monitoring (runs continuously)"""
+        """9:15 AM - Place sell orders and start monitoring (runs continuously).
+
+        Not gated by performance-fee arrears: overdue invoices block only ``run_buy_orders``,
+        so users can still place sells and complete exits on existing holdings.
+        """
         from src.application.services.task_execution_wrapper import execute_task
 
         # Respect stop request when used from unified service (do not place orders if stopped)
@@ -658,16 +694,22 @@ class TradingService:
                         # Get symbols from open positions (for orders to be placed)
                         open_positions = self.sell_manager.get_open_positions()
                         symbols = []
-                        for trade in open_positions:
-                            symbol = trade.get("symbol", "").upper()
-                            if symbol and symbol not in symbols:
-                                symbols.append(symbol)
+                        from .utils.symbol_utils import normalize_subscription_symbol
 
-                        # Also get symbols from existing sell orders
+                        for trade in open_positions:
+                            raw = (
+                                trade.get("placed_symbol")
+                                or trade.get("symbol")
+                                or ""
+                            )
+                            sub_sym = normalize_subscription_symbol(raw)
+                            if sub_sym and sub_sym not in symbols:
+                                symbols.append(sub_sym)
+
+                        # Also get symbols from existing sell orders (full trdSym, not base)
                         from .domain.value_objects.order_enums import OrderStatus
                         from .utils.order_field_extractor import OrderFieldExtractor
                         from .utils.order_status_parser import OrderStatusParser
-                        from .utils.symbol_utils import extract_base_symbol
 
                         orders_api = KotakNeoOrders(self.auth)
                         orders_response = orders_api.get_orders()
@@ -677,13 +719,15 @@ class TradingService:
                                 status = OrderStatusParser.parse_status(order)
                                 txn_type = OrderFieldExtractor.get_transaction_type(order)
                                 broker_symbol = OrderFieldExtractor.get_symbol(order)
-                                base_symbol = (
-                                    extract_base_symbol(broker_symbol) if broker_symbol else ""
+                                sub_sym = (
+                                    normalize_subscription_symbol(broker_symbol)
+                                    if broker_symbol
+                                    else ""
                                 )
 
-                                if status == OrderStatus.OPEN and txn_type == "S" and base_symbol:
-                                    if base_symbol not in symbols:
-                                        symbols.append(base_symbol)
+                                if status == OrderStatus.OPEN and txn_type == "S" and sub_sym:
+                                    if sub_sym not in symbols:
+                                        symbols.append(sub_sym)
 
                         if symbols:
                             # Phase 4.1: Use PriceService for centralized subscription management
@@ -742,8 +786,17 @@ class TradingService:
                 if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
-                # Place sell orders at market open
-                orders_placed = self.sell_manager.run_at_market_open()
+                # Place sell orders at market open (or mid-session: sync only, no reconcile)
+                in_open_window = self._is_sell_open_placement_window()
+                orders_placed = self.sell_manager.run_at_market_open(
+                    reconcile_holdings=in_open_window,
+                    cancel_orphans=in_open_window,
+                )
+                if not in_open_window:
+                    logger.info(
+                        "Mid-session sell_monitor startup: skipped holdings reconciliation "
+                        "and orphan cleanup (restart safety for same-day positions)"
+                    )
                 logger.info(f"Placed {orders_placed} sell orders")
                 task_context["orders_placed"] = orders_placed
 
@@ -788,7 +841,7 @@ class TradingService:
         else:
             # Phase 4: Market closed - stop tracking buy orders (they'll be picked up next day)
             # Only log once per minute to avoid spam
-            now = datetime.now()
+            now = ist_now() if ist_now is not None else datetime.now()
             if now.minute == 0 and now.second < 30:
                 if self.unified_order_monitor and self.unified_order_monitor.active_buy_orders:
                     logger.info(
@@ -797,149 +850,80 @@ class TradingService:
                     )
 
     def run_analysis(self):
-        """4:00 PM - Analyze stocks and generate recommendations"""
+        """4:00 PM - Analyze stocks and persist shared Signals (admin operator only)."""
+        from src.application.services.analysis_access import is_analysis_operator
+        from src.application.services.individual_service_manager import (
+            IndividualServiceManager,
+        )
+
+        if not is_analysis_operator(self.user_id, self.db):
+            logger.info(
+                "Skipping market analysis: admin-only task (Signals are shared for all users)",
+                action="scheduler",
+            )
+            self.tasks_completed["analysis"] = True
+            return
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("TASK: MARKET ANALYSIS (4:00 PM)")
+        logger.info("=" * 80)
+
+        try:
+            manager = IndividualServiceManager(self.db)
+            manager._run_analysis_task(self.user_id)
+            logger.info("Market analysis completed successfully")
+            self.tasks_completed["analysis"] = True
+        except Exception as e:
+            logger.error(f"Market analysis failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            self.tasks_completed["analysis"] = True
+            raise
+
+    def run_buy_margin_preview(self):
+        """16:05 IST - Evening margin preview for next-morning buys (no placement)."""
         from src.application.services.task_execution_wrapper import execute_task
 
-        max_retries = 3
-        base_delay = 30.0  # Start with 30 seconds delay
-        timeout_seconds = 1800  # 30 minutes timeout for market analysis
+        summary: dict = {
+            "attempted": 0,
+            "preview_sufficient": 0,
+            "failed_balance": 0,
+            "dry_run": True,
+        }
 
         with execute_task(
             self.user_id,
             self.db,
-            "analysis",
+            "buy_margin_preview",
             self.logger,
             track_execution=not self.skip_execution_tracking,
         ) as task_context:
-            task_context["max_retries"] = max_retries
-            task_context["timeout_seconds"] = timeout_seconds
+            self.logger.info("=" * 80, action="run_buy_margin_preview")
+            self.logger.info(
+                "TASK: EVENING BUY MARGIN PREVIEW (16:05 IST)",
+                action="run_buy_margin_preview",
+            )
+            self.logger.info("=" * 80, action="run_buy_margin_preview")
 
-            for attempt in range(max_retries):
-                try:
-                    if attempt > 0:
-                        logger.info(
-                            f"Retry attempt {attempt + 1}/{max_retries} for market analysis..."
-                        )
-                        time.sleep(base_delay * attempt)  # Exponential backoff
-                        task_context["retry_attempt"] = attempt + 1
+            if not self.engine:
+                raise RuntimeError("Trading engine not initialized. Call initialize() first.")
 
-                    logger.info("")
-                    logger.info("=" * 80)
-                    logger.info("TASK: MARKET ANALYSIS (4:00 PM)")
-                    logger.info("=" * 80)
+            summary = self.engine.preview_evening_buy_margins()
+            self.logger.info(
+                f"Margin preview: sufficient={summary.get('preview_sufficient', 0)}, "
+                f"shortfall={summary.get('failed_balance', 0)}, "
+                f"attempted={summary.get('attempted', 0)}",
+                action="run_buy_margin_preview",
+            )
+            task_context["summary"] = summary
 
-                    # Run trade_agent.py --backtest with timeout
-                    import subprocess
-
-                    try:
-                        result = subprocess.run(
-                            [sys.executable, "trade_agent.py", "--backtest"],
-                            check=False,
-                            cwd=project_root,
-                            capture_output=True,
-                            text=True,
-                            encoding="utf-8",
-                            errors="replace",  # Replace problematic Unicode chars instead of failing
-                            timeout=timeout_seconds,  # 30 minute timeout
-                        )
-
-                        if result.returncode == 0:
-                            logger.info("Market analysis completed successfully")
-                            task_context["return_code"] = 0
-                            task_context["success"] = True
-                            self.tasks_completed["analysis"] = True
-                            return  # Success - exit retry loop
-                        else:
-                            # Log both stdout and stderr for better debugging
-                            error_msg = (
-                                f"Market analysis failed with return code {result.returncode}"
-                            )
-                            if result.stderr:
-                                error_msg += f"\nSTDERR:\n{result.stderr}"
-                            if result.stdout:
-                                # Show last 500 chars of stdout to avoid log spam
-                                stdout_snippet = (
-                                    result.stdout[-500:]
-                                    if len(result.stdout) > 500
-                                    else result.stdout
-                                )
-                                error_msg += f"\nSTDOUT (last 500 chars):\n{stdout_snippet}"
-
-                            logger.error(error_msg)
-                            task_context["return_code"] = result.returncode
-                            task_context["error_message"] = error_msg
-
-                            # Check if it's a network-related error that we should retry
-                            error_text = (result.stderr + result.stdout).lower()
-                            network_keywords = [
-                                "timeout",
-                                "connection",
-                                "socket",
-                                "urllib3",
-                                "recv_into",
-                                "network",
-                            ]
-                            is_network_error = any(
-                                keyword in error_text for keyword in network_keywords
-                            )
-                            task_context["is_network_error"] = is_network_error
-
-                            if is_network_error and attempt < max_retries - 1:
-                                logger.warning(
-                                    f"Network error detected - will retry in {base_delay * (attempt + 1):.0f} seconds..."
-                                )
-                                continue  # Retry on network errors
-                            else:
-                                # Non-network error or final attempt - mark as failed
-                                self.tasks_completed["analysis"] = (
-                                    True  # Mark as attempted to prevent infinite retries
-                                )
-                                raise Exception(
-                                    error_msg
-                                )  # Raise to be caught by execute_task wrapper
-
-                    except subprocess.TimeoutExpired:
-                        logger.error(f"Market analysis timed out after {timeout_seconds} seconds")
-                        task_context["timeout"] = True
-                        if attempt < max_retries - 1:
-                            logger.warning(
-                                f"Will retry analysis in {base_delay * (attempt + 1):.0f} seconds..."
-                            )
-                            continue
-                        else:
-                            logger.error("Max retries exceeded for market analysis timeout")
-                            self.tasks_completed["analysis"] = True
-                            raise  # Raise to be caught by execute_task wrapper
-
-                except Exception as e:
-                    logger.error(f"Analysis failed with exception: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-
-                    # Check if it's a network-related exception
-                    error_str = str(e).lower()
-                    network_keywords = ["timeout", "connection", "socket", "network"]
-                    is_network_error = any(keyword in error_str for keyword in network_keywords)
-                    task_context["is_network_error"] = is_network_error
-
-                    if is_network_error and attempt < max_retries - 1:
-                        logger.warning(
-                            f"Network exception detected - will retry in {base_delay * (attempt + 1):.0f} seconds..."
-                        )
-                        continue
-                    else:
-                        # Final attempt or non-network error
-                        self.tasks_completed["analysis"] = True
-                        raise  # Re-raise to be caught by execute_task wrapper
-
-            # If we get here, all retries exhausted
-            logger.error("Market analysis failed after all retry attempts")
-            self.tasks_completed["analysis"] = True
-            raise Exception("Market analysis failed after all retry attempts")
+        self.tasks_completed["buy_margin_preview"] = True
+        return summary
 
     def run_buy_orders(self):
-        """4:05 PM - Place AMO buy orders for next day"""
+        """09:01 IST - Place REGULAR buy orders at market open (after prior-day analysis)."""
         from src.application.services.task_execution_wrapper import execute_task
 
         # Log entry point to verify method is being called
@@ -969,7 +953,7 @@ class TradingService:
             self.logger.info("Inside execute_task context", action="run_buy_orders")
             self.logger.info("", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
-            self.logger.info("TASK: PLACE BUY ORDERS (4:05 PM)", action="run_buy_orders")
+            self.logger.info("TASK: PLACE BUY ORDERS (9:01 AM IST)", action="run_buy_orders")
             self.logger.info("=" * 80, action="run_buy_orders")
 
             # Check if engine is initialized
@@ -978,69 +962,107 @@ class TradingService:
                 self.logger.error(error_msg, action="run_buy_orders")
                 raise RuntimeError(error_msg)
 
-            self.logger.info("Loading latest recommendations...", action="run_buy_orders")
-            recs = self.engine.load_latest_recommendations()
-            self.logger.info(
-                f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
-            )
-            if recs:
-                self.logger.info(
-                    f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+            skip_new_buys_for_arrears = False
+            try:
+                from src.application.services.performance_fee_arrears_service import (
+                    PerformanceFeeArrearsService,
                 )
-                try:
-                    # Place fresh entry orders
-                    summary = self.engine.place_new_entries(recs)
-                    self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
-                    # Log detailed summary
-                    self.logger.info(
-                        f"  - Attempted: {summary.get('attempted', 0)}, "
-                        f"Placed: {summary.get('placed', 0)}, "
-                        f"Retried: {summary.get('retried', 0)}, "
-                        f"Failed (balance): {summary.get('failed_balance', 0)}, "
-                        f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
-                        action="run_buy_orders",
-                    )
-                except OrderPlacementError as exc:
-                    # OrderPlacementError should no longer be raised (changed to continue)
-                    # But keep this handler for backward compatibility
-                    error_msg = (
-                        f"Unexpected OrderPlacementError: {exc}. "
-                        "This should not occur with current implementation."
-                    )
-                    self.logger.error(error_msg, action="run_buy_orders")
-                    task_context["recommendations_count"] = len(recs)
-                    task_context["error"] = str(exc)
-                    if getattr(exc, "symbol", None):
-                        task_context["failed_symbol"] = exc.symbol
-                    # Don't raise - let the summary be returned
-                    summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+                from src.infrastructure.db.models import Users
 
-                task_context["recommendations_count"] = len(recs)
-                task_context["summary"] = summary
-            else:
-                self.logger.warning(
-                    "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                db_user = self.db.get(Users, self.user_id)
+                if db_user:
+                    ar = PerformanceFeeArrearsService(self.db).status_for_user(db_user)
+                    if ar.blocks_new_broker_buys:
+                        skip_new_buys_for_arrears = True
+                        self.logger.warning(
+                            ar.message or "Performance fee arrears: skipping broker buys",
+                            action="run_buy_orders",
+                        )
+                        task_context["performance_fee_arrears_skipped_buys"] = True
+            except Exception:
+                self.logger.exception(
+                    "Performance fee arrears check failed; proceeding with buy orders",
                     action="run_buy_orders",
                 )
-                self.logger.warning(
-                    "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+
+            if skip_new_buys_for_arrears:
+                self.logger.info(
+                    "Skipping new entries and re-entries (unpaid performance fee past due); "
+                    "sell_monitor / sells are unchanged",
                     action="run_buy_orders",
                 )
                 task_context["recommendations_count"] = 0
-                task_context["summary"] = summary  # Return empty summary
+                task_context["summary"] = summary
+            else:
+                self.logger.info("Loading latest recommendations...", action="run_buy_orders")
+                recs = self.engine.load_latest_recommendations()
+                self.logger.info(
+                    f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
+                )
+                if recs:
+                    self.logger.info(
+                        f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+                    )
+                    try:
+                        # Place fresh entry orders
+                        summary = self.engine.place_new_entries(recs)
+                        self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
+                        # Log detailed summary
+                        self.logger.info(
+                            f"  - Attempted: {summary.get('attempted', 0)}, "
+                            f"Placed: {summary.get('placed', 0)}, "
+                            f"Retried: {summary.get('retried', 0)}, "
+                            f"Failed (balance): {summary.get('failed_balance', 0)}, "
+                            f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                            action="run_buy_orders",
+                        )
+                    except OrderPlacementError as exc:
+                        # OrderPlacementError should no longer be raised (changed to continue)
+                        # But keep this handler for backward compatibility
+                        error_msg = (
+                            f"Unexpected OrderPlacementError: {exc}. "
+                            "This should not occur with current implementation."
+                        )
+                        self.logger.error(error_msg, action="run_buy_orders")
+                        task_context["recommendations_count"] = len(recs)
+                        task_context["error"] = str(exc)
+                        if getattr(exc, "symbol", None):
+                            task_context["failed_symbol"] = exc.symbol
+                        # Don't raise - let the summary be returned
+                        summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
 
-            # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
-            # Re-entry should be checked independently of fresh entry orders
-            self.logger.info("Checking re-entry conditions...", action="run_buy_orders")
-            reentry_summary = self.engine.place_reentry_orders()
-            self.logger.info(f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders")
-            self.logger.info(
-                f"  - Attempted: {reentry_summary.get('attempted', 0)}, "
-                f"Placed: {reentry_summary.get('placed', 0)}, "
-                f"Failed (balance): {reentry_summary.get('failed_balance', 0)}, "
-                f"Skipped: {reentry_summary.get('skipped_duplicates', 0) + reentry_summary.get('skipped_invalid_rsi', 0) + reentry_summary.get('skipped_missing_data', 0) + reentry_summary.get('skipped_invalid_qty', 0)}",
-                action="run_buy_orders",
-            )
+                    task_context["recommendations_count"] = len(recs)
+                    task_context["summary"] = summary
+                else:
+                    self.logger.warning(
+                        "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                        action="run_buy_orders",
+                    )
+                    self.logger.warning(
+                        "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                        action="run_buy_orders",
+                    )
+                    task_context["recommendations_count"] = 0
+                    task_context["summary"] = summary  # Return empty summary
+
+                # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
+                # Re-entry should be checked independently of fresh entry orders
+                from modules.kotak_neo_auto_trader.reentry_logging import (
+                    format_reentry_run_buy_orders_detail,
+                )
+
+                self.logger.info(
+                    "Evaluating re-entry for open positions (see re-entry summary below)...",
+                    action="run_buy_orders",
+                )
+                reentry_summary = self.engine.place_reentry_orders()
+                self.logger.info(
+                    f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
+                )
+                self.logger.info(
+                    f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
+                    action="run_buy_orders",
+                )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
@@ -1048,7 +1070,7 @@ class TradingService:
         return summary
 
     def run_eod_cleanup(self):
-        """6:00 PM - End-of-day cleanup"""
+        """18:00 IST (default) - End-of-day cleanup."""
         from src.application.services.task_execution_wrapper import execute_task
 
         with execute_task(
@@ -1060,7 +1082,7 @@ class TradingService:
         ) as task_context:
             logger.info("")
             logger.info("=" * 80)
-            logger.info("TASK: END-OF-DAY CLEANUP (6:00 PM)")
+            logger.info("TASK: END-OF-DAY CLEANUP (18:00 IST)")
             logger.info("=" * 80)
 
             # Clean up expired failed orders
@@ -1122,6 +1144,7 @@ class TradingService:
             logger.info("EOD cleanup completed - resetting for next trading day")
             self.tasks_completed["analysis"] = False
             self.tasks_completed["buy_orders"] = False
+            self.tasks_completed["buy_margin_preview"] = False
             self.tasks_completed["eod_cleanup"] = False
             self.tasks_completed["premarket_retry"] = False
             self.tasks_completed["premarket_amo_adjustment"] = False
@@ -1387,7 +1410,15 @@ class TradingService:
                 f"Starting async execution of {task_name} (timeout: {timeout_seconds}s)",
                 action="scheduler",
             )
-            future = self.task_executor.submit(task_func)
+            from src.application.services.ohlcv_runtime import (  # noqa: PLC0415
+                OHLCV_READ_ONLY_TASK_NAMES,
+                run_with_ohlcv_cache_read_only,
+            )
+
+            task_runner = task_func
+            if task_name in OHLCV_READ_ONLY_TASK_NAMES:
+                task_runner = lambda: run_with_ohlcv_cache_read_only(task_func)
+            future = self.task_executor.submit(task_runner)
             # Track future so subsequent scheduler ticks won't queue duplicates.
             with self._task_futures_lock:
                 self._task_futures[task_name] = future
@@ -1456,9 +1487,9 @@ class TradingService:
         logger.info("Press Ctrl+C to stop")
         logger.info("")
 
-        # Log initial status
-        now_init = datetime.now()
-        logger.info(f"Current time: {now_init.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Log initial status (IST — matches exchange and DB conventions)
+        now_init = ist_now() if ist_now is not None else datetime.now()
+        logger.info(f"Current time: {now_init.strftime('%Y-%m-%d %H:%M:%S')} IST")
         logger.info(
             f"Is trading day: {self.is_trading_day()} (weekday: {now_init.weekday()}, 0=Mon, 4=Fri)"
         )
@@ -1502,7 +1533,7 @@ class TradingService:
             while not self.shutdown_requested:
                 loop_count += 1
                 try:
-                    now = datetime.now()
+                    now = ist_now() if ist_now is not None else datetime.now()
                     current_time = now.time()
                     current_minute = now.minute
 
@@ -1510,7 +1541,8 @@ class TradingService:
                     # Log first 10 iterations, then every 10 iterations
                     if loop_count <= 10 or loop_count % 10 == 0:
                         self.logger.info(
-                            f"Scheduler loop iteration #{loop_count} at {now.strftime('%H:%M:%S')}",
+                            f"Scheduler loop iteration #{loop_count} at "
+                            f"{now.strftime('%H:%M:%S')} IST",
                             action="scheduler",
                         )
 
@@ -1541,7 +1573,7 @@ class TradingService:
                                         timeout_seconds=300,  # 5 minutes
                                     )
 
-                            # Pre-market AMO quantity adjustment (hardcoded 9:05 AM - 5 mins after premarket retry) - 2 minute timeout
+                            # Pre-market pending buy quantity adjustment (9:05 AM IST) - 2 minute timeout
                             if self.should_run_task("premarket_amo_adjustment", dt_time(9, 5)):
                                 self._execute_task_async(
                                     self.run_premarket_amo_adjustment,
@@ -1571,14 +1603,18 @@ class TradingService:
                                         self._execute_task_async(
                                             self.run_sell_monitor,
                                             "sell_monitor",
-                                            timeout_seconds=60,  # 1 minute (should be quick)
+                                            timeout_seconds=180,  # 3 minutes (DB read-only; was 60s)
                                         )
 
                             # Analysis (uses DB schedule) - 30 minute timeout
                             analysis_schedule = self._schedule_manager.get_schedule("analysis")
                             if analysis_schedule and analysis_schedule.enabled:
+                                from src.application.services.analysis_access import (  # noqa: PLC0415
+                                    is_analysis_operator,
+                                )
+
                                 analysis_time = analysis_schedule.schedule_time
-                                if self.should_run_task(
+                                if is_analysis_operator(self.user_id, self.db) and self.should_run_task(
                                     "analysis", dt_time(analysis_time.hour, analysis_time.minute)
                                 ):
                                     self._execute_task_async(
@@ -1586,8 +1622,26 @@ class TradingService:
                                         "analysis",
                                         timeout_seconds=1800,  # 30 minutes
                                     )
+                                elif not is_analysis_operator(self.user_id, self.db):
+                                    self.tasks_completed["analysis"] = True
                             elif not analysis_schedule:
                                 logger.debug("Analysis schedule not found in DB")
+
+                            # Evening buy margin preview (uses DB schedule) - 10 minute timeout
+                            margin_preview_schedule = self._schedule_manager.get_schedule(
+                                "buy_margin_preview"
+                            )
+                            if margin_preview_schedule and margin_preview_schedule.enabled:
+                                preview_time = margin_preview_schedule.schedule_time
+                                if self.should_run_task(
+                                    "buy_margin_preview",
+                                    dt_time(preview_time.hour, preview_time.minute),
+                                ):
+                                    self._execute_task_async(
+                                        self.run_buy_margin_preview,
+                                        "buy_margin_preview",
+                                        timeout_seconds=600,
+                                    )
 
                             # Buy orders (uses DB schedule) - 10 minute timeout
                             buy_schedule = self._schedule_manager.get_schedule("buy_orders")

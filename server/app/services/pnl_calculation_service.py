@@ -293,7 +293,7 @@ class PnlCalculationService:
             return None
 
         # Find buy orders for this symbol around the opened_at time
-        orders = self.orders_repo.list(user_id)
+        orders, _total = self.orders_repo.list(user_id)
         for order in orders:
             if (
                 order.symbol == symbol

@@ -7,9 +7,10 @@ Phase 4 Feature - Feedback Loop
 """
 
 import csv
-from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
+
+from src.infrastructure.db.timezone_utils import ist_now
 
 from utils.logger import logger
 
@@ -74,7 +75,7 @@ class MLFeedbackService:
                     writer.writeheader()
                 
                 writer.writerow({
-                    'timestamp': datetime.now().isoformat(),
+                    'timestamp': ist_now().isoformat(),
                     'ticker': ticker,
                     'prediction_date': prediction_date,
                     'ml_verdict': ml_verdict,

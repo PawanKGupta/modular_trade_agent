@@ -20,6 +20,7 @@ from pathlib import Path
 import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 
@@ -93,13 +94,13 @@ class TrackingScope:
         data = self._load_tracking_data()
 
         # Generate unique tracking ID
-        tracking_id = f"track-{symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        tracking_id = f"track-{symbol}-{ist_now().strftime('%Y%m%d%H%M%S')}"
 
         tracking_entry = {
             "id": tracking_id,
             "symbol": symbol,
             "ticker": ticker,
-            "tracking_started_at": datetime.now().isoformat(),
+            "tracking_started_at": ist_now().isoformat(),
             "tracking_ended_at": None,
             "tracking_status": "active",
             "system_qty": initial_qty,
@@ -224,7 +225,7 @@ class TrackingScope:
     def _stop_tracking_internal(self, entry: Dict[str, Any]) -> None:
         """Internal method to stop tracking (called when qty = 0)."""
         entry["tracking_status"] = "completed"
-        entry["tracking_ended_at"] = datetime.now().isoformat()
+        entry["tracking_ended_at"] = ist_now().isoformat()
 
         logger.info(
             f"Stopped tracking {entry['symbol']} - position closed "
@@ -244,7 +245,7 @@ class TrackingScope:
         for entry in data["symbols"]:
             if entry["symbol"] == symbol and entry["tracking_status"] == "active":
                 entry["tracking_status"] = "completed"
-                entry["tracking_ended_at"] = datetime.now().isoformat()
+                entry["tracking_ended_at"] = ist_now().isoformat()
                 entry["stop_reason"] = reason
 
                 self._save_tracking_data(data)

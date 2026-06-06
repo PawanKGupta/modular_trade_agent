@@ -207,30 +207,43 @@ Control system behavior and logic.
 
 ### 7. News Sentiment
 
-Configure news sentiment analysis.
+**In the web app (Trading Configuration → Behavior)**
 
-- **News Sentiment Enabled** (default: true)
-  - Enable/disable news sentiment analysis
+- **Enable News Sentiment Analysis** (default matches server DB defaults)
+  - When enabled, headlines are fetched from composite sources (Yahoo, Google RSS, optional paid APIs) and scored for signals/analysis. See **Composite news profiles** below.
+  - When disabled, no news-sentiment attachment runs for this user's workflows that respect trading config.
 
-- **Lookback Days** (default: 30)
-  - Days to look back for news
-  - More days = more data
-  - Recommended: 7-30
+**Composite news profiles (operators)**
 
-- **Min Articles** (default: 2)
-  - Minimum articles required
-  - Filters stocks with insufficient news
-  - Recommended: 1-5
+Headlines are merged in `core/news_providers.py`. Profiles control which sources run and API spend.
 
-- **Positive Threshold** (default: 0.25)
-  - Sentiment score for positive news
-  - Higher = stricter
-  - Range: 0-1
+| Env var | Default | Role |
+|---------|---------|------|
+| `NEWS_UNIVERSE_PROFILE` | `cheap` | Universe / batch scans (`trade_agent`, `AsyncAnalysisService`) |
+| `NEWS_BACKTEST_PROFILE` | `cheap` | When `as_of_date` is set on `analyze_ticker` |
+| `NEWS_LIVE_PROFILE` | `full` | Live single-ticker analysis when no request context override |
+| `NEWS_SOURCES` | `composite` | `composite` = cheap sources + Marketaux/NewsData when keys set; or explicit list e.g. `yfinance,google_rss` |
+| `NEWS_GOOGLE_RSS_ENABLED` | `true` | Include Google News RSS in cheap/composite |
+| `NEWS_ENRICH_FILTERED_NEWS` | `true` | After filtering, re-score **buy** / **strong_buy** with paid APIs (`enrich_filtered_candidates_with_paid_news`) |
+| `MARKETAUX_API_KEY` | (unset) | Paid source; free tier ~100 req/day, 3 articles/req |
+| `NEWSDATA_API_KEY` | (unset) | Paid source; free tier ~200 credits/day |
+| `MARKETAUX_NEWS_LIMIT` | `3` | Max articles per Marketaux request |
 
-- **Negative Threshold** (default: -0.25)
-  - Sentiment score for negative news
-  - Lower = stricter
-  - Range: -1-0
+| Profile | Sources | Typical use |
+|---------|---------|-------------|
+| **cheap** | yfinance + Google RSS | Universe scan, integrated backtest, bulk jobs |
+| **full** | cheap + Marketaux + NewsData (if keys set) | Live `analyze_ticker`, paid enrich on shortlisted buys |
+
+**Backtest / historical `as_of_date` caveat:** News is still **fetched from live APIs** at run time; only headlines whose publish time falls in the lookback window ending on `as_of_date` are used. This is not a point-in-time news archive—backtest news sentiment can reflect headlines that were not knowable on that calendar day. Use `NEWS_BACKTEST_PROFILE=cheap` to avoid paid API usage; it does not remove lookahead from live fetches.
+
+**Server-only tuning (operators)**
+
+- Window, labeling thresholds (positive/negative), minimum articles used in confidence aggregation, transformers vs lexicon backend, cache TTL: **`NEWS_SENTIMENT_*`** in `config/settings.py` (`core/news_sentiment.py`).
+- Optional CPU Transformers: `requirements-sentiment.txt` + PyTorch CPU wheels; **`NEWS_SENTIMENT_BACKEND`** (`auto` \| `transformer` \| `lexicon`), **`NEWS_SENTIMENT_TRANSFORMER_MODEL`**, **`NEWS_SENTIMENT_TRANSFORMER_BATCH_SIZE`**, **`NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH`**. Payload may include `scorer` and `model` when applicable.
+
+The HTTP API still returns legacy DB-backed fields (**lookback/min articles/pos/neg thresholds**); **sentiment computation uses env-driven `config.settings`, not UI-edited overrides.**
+
+**Rule-based downgrade (operators):** `VerdictService` and paid enrich (`core/news_sentiment.enrich_result_with_paid_news`) can downgrade `buy` / `strong_buy` → `watch` when news is strongly negative **and** the aggregate is credible: **`used` ≥ `NEWS_SENTIMENT_MIN_ARTICLES`**, **`confidence`** ≥ **`NEWS_SENTIMENT_DOWNGRADE_MIN_CONFIDENCE`** (default `0.35`), **`score`** ≤ **`NEWS_SENTIMENT_DOWNGRADE_SCORE_THRESHOLD`** (default `-0.52`). Justification: `news_negative`.
 
 ### 8. ML Configuration
 

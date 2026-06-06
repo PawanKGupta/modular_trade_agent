@@ -25,6 +25,7 @@ import requests
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 # Phase 3: Import notification preference service
@@ -130,7 +131,7 @@ class TelegramNotifier:
         Returns:
             True if within rate limits, False if rate limit exceeded
         """
-        now = datetime.now()
+        now = ist_now()
         one_minute_ago = now - timedelta(minutes=1)
         one_hour_ago = now - timedelta(hours=1)
 
@@ -249,7 +250,7 @@ class TelegramNotifier:
 
             if response.status_code == 200:
                 # Phase 9: Record successful notification timestamp
-                self._notification_timestamps.append(datetime.now())
+                self._notification_timestamps.append(ist_now())
                 logger.debug("Telegram notification sent successfully")
                 return True
             else:
@@ -291,7 +292,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_REJECTED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
             f"ORDER REJECTED\n\n"
@@ -341,7 +342,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_EXECUTED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
             f"ORDER EXECUTED\n\nSymbol: `{symbol}`\nOrder ID: `{order_id}`\nQuantity: {quantity}\n"
@@ -393,7 +394,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.PARTIAL_FILL):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
         fill_percentage = (filled_qty / total_qty * 100) if total_qty > 0 else 0
 
         message = (
@@ -453,7 +454,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, event_type):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Choose emoji based on severity
         emoji_map = {"ERROR": "", "WARNING": "", "INFO": "", "SUCCESS": ""}
@@ -509,7 +510,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.SYSTEM_INFO):
             return False
 
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = ist_now().strftime("%Y-%m-%d")
 
         message = (
             f"DAILY TRADING SUMMARY\n"
@@ -559,7 +560,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.SYSTEM_INFO):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = f"TRACKING STOPPED\n\nSymbol: `{symbol}`\nReason: {reason}\n"
 
@@ -603,7 +604,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_PLACED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
             f"ORDER PLACED\n\n"
@@ -654,7 +655,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_CANCELLED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
             f"ORDER CANCELLED\n\n"
@@ -700,7 +701,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_MODIFIED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
             f"⚠️ ORDER MODIFIED\n\n"
@@ -754,7 +755,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, NotificationEventType.ORDER_SKIPPED):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Format reason for display
         reason_display = reason.replace("_", " ").title()
@@ -819,7 +820,7 @@ class TelegramNotifier:
         if not self._should_send_notification(user_id, event_type):
             return False
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = f"RETRY QUEUE UPDATE\n\nSymbol: `{symbol}`\nAction: {action}\n"
 

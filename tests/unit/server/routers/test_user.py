@@ -13,6 +13,7 @@ class DummyUser(SimpleNamespace):
             email=kwargs.get("email", "user@example.com"),
             name=kwargs.get("name", "User"),
             role=kwargs.get("role", UserRole.USER),
+            is_active=kwargs.get("is_active", True),
         )
 
 
@@ -197,7 +198,7 @@ def test_update_settings_none_trade_mode(settings_repo, current_user):
     settings_repo.settings_by_user_id[42] = settings
 
     payload = user.SettingsUpdateRequest(trade_mode=None, broker="kotak-neo")
-    result = user.update_settings(payload, db=None, current=current_user)
+    user.update_settings(payload, db=None, current=current_user)
 
     # Trade mode should remain unchanged when None
     call_args = settings_repo.update_called[0]

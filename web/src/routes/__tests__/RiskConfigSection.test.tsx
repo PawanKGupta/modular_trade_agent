@@ -107,4 +107,21 @@ describe('RiskConfigSection', () => {
 		expect(screen.getByText(new RegExp(`Default: ${(DEFAULT_CONFIG.default_target_pct * 100).toFixed(0)}%`))).toBeInTheDocument();
 		expect(screen.getByText(new RegExp(`Default: ${DEFAULT_CONFIG.buy_risk_reward}`))).toBeInTheDocument();
 	});
+
+	it('updates tight stop loss and sell risk-reward fields', () => {
+		const onChange = vi.fn();
+		render(<RiskConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+
+		fireEvent.change(screen.getByLabelText(/Tight Stop Loss/i), { target: { value: '0.07' } });
+		expect(onChange).toHaveBeenCalledWith({ tight_stop_loss_pct: 0.07 });
+
+		fireEvent.change(screen.getByLabelText(/Default Stop Loss/i), { target: { value: '0.09' } });
+		expect(onChange).toHaveBeenCalledWith({ default_stop_loss_pct: 0.09 });
+
+		fireEvent.change(screen.getByLabelText(/Strong Buy Target/i), { target: { value: '0.13' } });
+		expect(onChange).toHaveBeenCalledWith({ strong_buy_target_pct: 0.13 });
+
+		fireEvent.change(screen.getByLabelText(/Excellent Risk-Reward/i), { target: { value: '3.6' } });
+		expect(onChange).toHaveBeenCalledWith({ excellent_risk_reward: 3.6 });
+	});
 });

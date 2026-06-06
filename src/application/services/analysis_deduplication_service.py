@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import select
@@ -25,6 +26,21 @@ from src.infrastructure.utils.holiday_calendar import (
 
 # Constants
 WEEKEND_START_WEEKDAY = 5  # Saturday
+
+
+def _deep_sanitize_nonfinite_floats(obj):
+    """Replace NaN/Inf with None so nested structures are valid PostgreSQL JSON."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _deep_sanitize_nonfinite_floats(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_sanitize_nonfinite_floats(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_deep_sanitize_nonfinite_floats(v) for v in obj)
+    return obj
 
 
 class AnalysisDeduplicationService:
@@ -450,6 +466,7 @@ class AnalysisDeduplicationService:
 
     def _update_signal_from_data(self, signal: Signals, data: dict) -> None:
         """Update existing signal from analysis data"""
+        data = _deep_sanitize_nonfinite_floats(dict(data))
         if "rsi10" in data:
             signal.rsi10 = data["rsi10"]
         if "ema9" in data:
@@ -568,6 +585,7 @@ class AnalysisDeduplicationService:
 
     def _create_signal_from_data(self, data: dict) -> Signals | None:
         """Create new signal from analysis data"""
+        data = _deep_sanitize_nonfinite_floats(dict(data))
         symbol = data.get("symbol") or data.get("ticker", "").replace(".NS", "")
         if not symbol:
             return None

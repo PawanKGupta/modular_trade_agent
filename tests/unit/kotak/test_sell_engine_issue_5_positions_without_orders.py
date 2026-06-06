@@ -14,6 +14,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -218,7 +220,7 @@ class TestGetPositionsWithoutSellOrdersDatabaseOnly:
         closed_pos.symbol = "TCS-EQ"  # Full symbol after migration
         closed_pos.quantity = 5.0
         closed_pos.avg_price = 3500.0
-        closed_pos.closed_at = datetime.now()
+        closed_pos.closed_at = ist_now_naive()
 
         mock_positions_repo.list.return_value = [open_pos, closed_pos]
         mock_orders_repo.list.return_value = ([], 0)
@@ -727,21 +729,21 @@ class TestCheckPositionsWithoutSellOrders:
         pos1.symbol = "RELIANCE-EQ"  # Full symbol after migration
         pos1.quantity = 10.0
         pos1.avg_price = 2500.0
-        pos1.opened_at = datetime.now()
+        pos1.opened_at = ist_now_naive()
         pos1.closed_at = None
 
         pos2 = Mock(spec=Positions)
         pos2.symbol = "TCS-EQ"  # Full symbol after migration
         pos2.quantity = 5.0
         pos2.avg_price = 3500.0
-        pos2.opened_at = datetime.now()
+        pos2.opened_at = ist_now_naive()
         pos2.closed_at = None
 
         pos3 = Mock(spec=Positions)
         pos3.symbol = "INFY-EQ"  # Full symbol after migration
         pos3.quantity = 8.0
         pos3.avg_price = 1500.0
-        pos3.opened_at = datetime.now()
+        pos3.opened_at = ist_now_naive()
         pos3.closed_at = None
 
         mock_positions_repo.list.return_value = [pos1, pos2, pos3]
@@ -784,15 +786,15 @@ class TestCheckPositionsWithoutSellOrders:
         open_pos.symbol = "RELIANCE-EQ"  # Full symbol after migration
         open_pos.quantity = 10.0
         open_pos.avg_price = 2500.0
-        open_pos.opened_at = datetime.now()
+        open_pos.opened_at = ist_now_naive()
         open_pos.closed_at = None
 
         closed_pos = Mock(spec=Positions)
         closed_pos.symbol = "TCS-EQ"  # Full symbol after migration
         closed_pos.quantity = 5.0
         closed_pos.avg_price = 3500.0
-        closed_pos.opened_at = datetime.now()
-        closed_pos.closed_at = datetime.now()
+        closed_pos.opened_at = ist_now_naive()
+        closed_pos.closed_at = ist_now_naive()
 
         mock_positions_repo.list.return_value = [open_pos, closed_pos]
 

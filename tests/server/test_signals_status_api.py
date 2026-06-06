@@ -21,6 +21,7 @@ from server.app.main import app  # noqa: E402
 from src.infrastructure.db.models import Signals, SignalStatus, UserSignalStatus  # noqa: E402
 from src.infrastructure.db.timezone_utils import IST  # noqa: E402
 from src.infrastructure.persistence.signals_repository import SignalsRepository  # noqa: E402
+from tests.support.auth_flow import signup_and_verify_payload
 
 # Fixed IST timestamp so mark_time_expired_signals() never treats test rows as past market expiry
 # (CI clocks / timezones must not shrink the buying-zone active list or reject flow).
@@ -36,17 +37,12 @@ def _signals_status_api_uses_shared_engine():
     yield
 
 
-def _create_authenticated_client(client: TestClient):
+def _create_authenticated_client(client: TestClient, db_session):
     """Helper to create authenticated test client"""
     # Signup with unique email
     unique_email = f"test-{uuid.uuid4().hex[:8]}@example.com"
-    response = client.post(
-        "/api/v1/auth/signup",
-        json={"email": unique_email, "password": "testpass123", "name": "Test User"},
-    )
-    assert response.status_code == 200, f"Signup failed: {response.json()}"
-
-    token = response.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": unique_email, "password": "Testpass123!", "name": "Test User"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Decode token to get user_id (python-jose requires key but we bypass verification)
@@ -104,7 +100,7 @@ def _create_sample_signals(db_session):
 class TestBuyingZoneStatusFilter:
     def test_default_returns_only_active_signals(self, client, db_session):
         """Default behavior: return only ACTIVE signals"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get("/api/v1/signals/buying-zone", headers=headers)
@@ -123,7 +119,7 @@ class TestBuyingZoneStatusFilter:
 
     def test_filter_by_expired_status(self, client, db_session):
         """Should return only EXPIRED signals when status_filter='expired'"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get(
@@ -139,7 +135,7 @@ class TestBuyingZoneStatusFilter:
 
     def test_filter_by_traded_status(self, client, db_session):
         """Should return only TRADED signals when status_filter='traded'"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get(
@@ -155,7 +151,7 @@ class TestBuyingZoneStatusFilter:
 
     def test_filter_by_rejected_status(self, client, db_session):
         """Should return only REJECTED signals when status_filter='rejected'"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get(
@@ -171,7 +167,7 @@ class TestBuyingZoneStatusFilter:
 
     def test_filter_all_returns_all_signals(self, client, db_session):
         """Should return all signals when status_filter='all'"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get(
@@ -190,7 +186,7 @@ class TestBuyingZoneStatusFilter:
 
     def test_status_field_included_in_response(self, client, db_session):
         """Response should include status field"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.get("/api/v1/signals/buying-zone", headers=headers)
@@ -206,7 +202,7 @@ class TestBuyingZoneStatusFilter:
 class TestRejectSignalEndpoint:
     def test_reject_active_signal(self, client, db_session):
         """Should successfully reject an active signal (per-user)"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.patch("/api/v1/signals/signals/ACTIVE1/reject", headers=headers)
@@ -233,7 +229,7 @@ class TestRejectSignalEndpoint:
 
     def test_can_reject_expired_signal(self, client, db_session):
         """Should allow rejecting expired signal (creates per-user status)"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
         _create_sample_signals(db_session)
 
         response = client.patch("/api/v1/signals/signals/EXPIRED1/reject", headers=headers)
@@ -244,9 +240,9 @@ class TestRejectSignalEndpoint:
         assert data["symbol"] == "EXPIRED1"
         assert data["status"] == "rejected"
 
-    def test_cannot_reject_nonexistent_signal(self, client):
+    def test_cannot_reject_nonexistent_signal(self, client, db_session):
         """Should return 404 for nonexistent symbol"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
 
         response = client.patch("/api/v1/signals/signals/NONEXISTENT/reject", headers=headers)
 
@@ -266,7 +262,7 @@ class TestSignalStatusInBuyingZoneWorkflow:
 
     def test_complete_workflow_active_to_traded(self, client, db_session):
         """Test: Signal created as active, gets traded, shows in traded filter"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
 
         # Create active signal
         db_session.execute(text("DELETE FROM user_signal_status"))
@@ -309,7 +305,7 @@ class TestSignalStatusInBuyingZoneWorkflow:
 
     def test_complete_workflow_active_to_rejected(self, client, db_session):
         """Test: Signal created as active, user rejects it, shows in rejected filter"""
-        client, headers, user_id = _create_authenticated_client(client)
+        client, headers, user_id = _create_authenticated_client(client, db_session)
 
         # Create active signal
         db_session.execute(text("DELETE FROM user_signal_status"))

@@ -13,6 +13,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -141,7 +143,7 @@ class TestSellOrderUpdateFailureHandling:
         # Setup: Position is closed
         position = Mock()
         position.quantity = 100.0
-        position.closed_at = datetime.now()  # Position is closed
+        position.closed_at = ist_now_naive()  # Position is closed
 
         mock_positions_repo.get_by_symbol = Mock(return_value=position)
 

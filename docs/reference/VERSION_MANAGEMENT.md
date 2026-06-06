@@ -30,14 +30,16 @@ Where:
 25.4.0  →  Q4 2025 (Oct-Dec), initial quarterly release
 25.4.1  →  Q4 2025, patch 1
 25.4.2  →  Q4 2025, patch 2
+26.2.1  →  Q2 2026, patch 1 (releases/rebound_2621)
+26.2.0  →  Q2 2026, initial quarterly release
 26.1.0  →  Q1 2026 (Jan-Mar), new quarterly release
 ```
 
 ## Current Version
 
-**Version**: `25.4.0`
-- **Quarter**: Q4 2025 (October-December)
-- **Patch**: 0 (initial release)
+**Version**: `26.2.1`
+- **Quarter**: Q2 2026 (April–June)
+- **Patch**: 1
 
 ## Checking Version
 
@@ -261,7 +263,7 @@ Based on version numbers, plan features by quarter:
   - 📋 Multi-account support
   - 📋 Cloud sync
 
-26.2.x (Q2 2026) - Future
+26.2.x (Q2 2026) — current line; see [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md)
   - 📋 Machine learning integration
   - 📋 Mobile app
 ```

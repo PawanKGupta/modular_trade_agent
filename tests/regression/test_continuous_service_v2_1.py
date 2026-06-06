@@ -141,26 +141,33 @@ class TestContinuousServiceArchitecture:
             env_file="test.env",
         )
 
-        with patch("modules.kotak_neo_auto_trader.run_trading_service.datetime") as mock_dt:
+        with patch("modules.kotak_neo_auto_trader.run_trading_service.ist_now") as mock_ist:
+            from datetime import datetime
+
+            from src.infrastructure.db.timezone_utils import IST
+
+            def _fake_ist(h: int, m: int = 0):
+                return datetime(2026, 6, 15, h, m, 0, tzinfo=IST)
+
             # Before market open
-            mock_dt.now.return_value.time.return_value = dt_time(9, 0)
-            assert service.is_market_hours() == False
+            mock_ist.return_value = _fake_ist(9, 0)
+            assert service.is_market_hours() is False
 
             # Market open
-            mock_dt.now.return_value.time.return_value = dt_time(9, 15)
-            assert service.is_market_hours() == True
+            mock_ist.return_value = _fake_ist(9, 15)
+            assert service.is_market_hours() is True
 
             # During market hours
-            mock_dt.now.return_value.time.return_value = dt_time(12, 0)
-            assert service.is_market_hours() == True
+            mock_ist.return_value = _fake_ist(12, 0)
+            assert service.is_market_hours() is True
 
             # Market close
-            mock_dt.now.return_value.time.return_value = dt_time(15, 30)
-            assert service.is_market_hours() == True
+            mock_ist.return_value = _fake_ist(15, 30)
+            assert service.is_market_hours() is True
 
             # After market close
-            mock_dt.now.return_value.time.return_value = dt_time(15, 31)
-            assert service.is_market_hours() == False
+            mock_ist.return_value = _fake_ist(15, 31)
+            assert service.is_market_hours() is False
 
 
 class TestSessionCachingRemoval:
@@ -571,22 +578,29 @@ class TestServiceTaskScheduling:
             env_file="test.env",
         )
 
-        with patch("modules.kotak_neo_auto_trader.run_trading_service.datetime") as mock_dt:
+        with patch("modules.kotak_neo_auto_trader.run_trading_service.ist_now") as mock_ist:
+            from datetime import datetime
+
+            from src.infrastructure.db.timezone_utils import IST
+
+            def fake_ist(h: int, m: int = 0):
+                return datetime(2026, 6, 15, h, m, 0, tzinfo=IST)
+
             # Exact time
-            mock_dt.now.return_value.time.return_value = dt_time(9, 0)
-            assert service.should_run_task("premarket_retry", dt_time(9, 0)) == True
+            mock_ist.return_value = fake_ist(9, 0)
+            assert service.should_run_task("premarket_retry", dt_time(9, 0)) is True
 
             # 1 minute after (should run)
-            mock_dt.now.return_value.time.return_value = dt_time(9, 1)
-            assert service.should_run_task("premarket_retry", dt_time(9, 0)) == True
+            mock_ist.return_value = fake_ist(9, 1)
+            assert service.should_run_task("premarket_retry", dt_time(9, 0)) is True
 
             # 2 minutes after (should not run)
-            mock_dt.now.return_value.time.return_value = dt_time(9, 2)
-            assert service.should_run_task("premarket_retry", dt_time(9, 0)) == False
+            mock_ist.return_value = fake_ist(9, 2)
+            assert service.should_run_task("premarket_retry", dt_time(9, 0)) is False
 
             # Before scheduled time (should not run)
-            mock_dt.now.return_value.time.return_value = dt_time(8, 59)
-            assert service.should_run_task("premarket_retry", dt_time(9, 0)) == False
+            mock_ist.return_value = fake_ist(8, 59)
+            assert service.should_run_task("premarket_retry", dt_time(9, 0)) is False
 
     def test_task_runs_only_once(self, db_session):
         """Test task doesn't run twice on same day"""
@@ -611,9 +625,13 @@ class TestServiceTaskScheduling:
         service.tasks_completed["analysis"] = True
 
         # Should not run again
-        with patch("modules.kotak_neo_auto_trader.run_trading_service.datetime") as mock_dt:
-            mock_dt.now.return_value.time.return_value = dt_time(16, 0)
-            assert service.should_run_task("analysis", dt_time(16, 0)) == False
+        with patch("modules.kotak_neo_auto_trader.run_trading_service.ist_now") as mock_ist:
+            from datetime import datetime
+
+            from src.infrastructure.db.timezone_utils import IST
+
+            mock_ist.return_value = datetime(2026, 6, 15, 16, 0, 0, tzinfo=IST)
+            assert service.should_run_task("analysis", dt_time(16, 0)) is False
 
 
 if __name__ == "__main__":

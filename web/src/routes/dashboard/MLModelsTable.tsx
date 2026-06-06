@@ -23,6 +23,7 @@ export function MLModelsTable({ models, isLoading, onActivate, activatingModelId
 					<tr className="text-left text-[var(--muted)]">
 						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Model</th>
 						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap hidden sm:table-cell">Version</th>
+						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap hidden lg:table-cell">Data through</th>
 						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Accuracy</th>
 						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap">Status</th>
 						<th className="py-2 pr-2 sm:pr-4 whitespace-nowrap hidden md:table-cell">Created</th>
@@ -34,6 +35,9 @@ export function MLModelsTable({ models, isLoading, onActivate, activatingModelId
 						<tr key={model.id} className="border-t border-[#1e293b]">
 							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm">{model.model_type}</td>
 							<td className="py-2 pr-2 sm:pr-4 font-mono text-xs hidden sm:table-cell">{model.version}</td>
+							<td className="py-2 pr-2 sm:pr-4 text-xs hidden lg:table-cell text-[var(--muted)]">
+								{model.training_data_through_date ?? '—'}
+							</td>
 							<td className="py-2 pr-2 sm:pr-4 text-xs sm:text-sm">
 								{model.accuracy !== null ? `${(model.accuracy * 100).toFixed(2)}%` : '-'}
 							</td>

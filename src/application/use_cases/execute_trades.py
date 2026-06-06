@@ -30,6 +30,7 @@ from src.infrastructure.persistence.individual_service_status_repository import 
 from src.infrastructure.persistence.user_trading_config_repository import (
     UserTradingConfigRepository,
 )
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 from ..dto.analysis_response import BulkAnalysisResponse
@@ -207,7 +208,7 @@ class ExecuteTradesUseCase:
                         raise RuntimeError(f"Order failed: {error_msg}")
                     order_id = resp.order_id or ""
                     record = {
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": ist_now().isoformat(),
                         "ticker": stock.ticker,
                         "side": "BUY",
                         "quantity": qty,
@@ -298,7 +299,7 @@ class ExecuteTradesUseCase:
                             raise RuntimeError(f"Sell failed: {error_msg}")
                         order_id = resp.order_id or ""
                         record = {
-                            "timestamp": datetime.now().isoformat(),
+                            "timestamp": ist_now().isoformat(),
                             "ticker": ticker,
                             "side": "SELL",
                             "quantity": qty_to_sell,

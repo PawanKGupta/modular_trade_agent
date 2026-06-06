@@ -66,10 +66,9 @@ Rebound — Modular Trade Agent is a **multi-user, web-based trading system** wi
 - `broker.py` - Broker credential management
 - `service.py` - Service status and management
 - `ml.py` - ML training and models
-- `logs.py` - Log viewing
+- `logs.py` - Log viewing (JSONL system logs; legacy `/dashboard/activity` redirects to Log Viewer)
 - `admin.py` - Admin operations
 - `user.py` - User management
-- `activity.py` - Activity tracking
 - `notification_preferences.py` - Notification preferences management
 
 #### Core (`server/app/core/`)
@@ -177,10 +176,12 @@ The service layer is the **recommended way** to interact with analysis functiona
 - **`VerdictService`** - Verdict determination and trading parameters
   - Replaces `core.analysis.calculate_smart_*()` functions
   - Returns typed `TradingParameters` object
+  - See [Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)
 
 - **`ScoringService`** - Scoring and ranking
   - Replaces `core.scoring.compute_strength_score()`
   - Provides strength scores, priority scores, combined scores
+  - See [Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)
 
 - **`BacktestService`** - Backtesting integration
   - Replaces `core.backtest_scoring` functions

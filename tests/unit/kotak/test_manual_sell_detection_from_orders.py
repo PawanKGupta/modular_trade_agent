@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -786,7 +788,7 @@ class TestDetectManualSellsFromOrders:
 
         from src.infrastructure.db.timezone_utils import IST
 
-        today = datetime.now(IST).replace(hour=14, minute=0, second=0, microsecond=0)
+        today = ist_now().replace(hour=14, minute=0, second=0, microsecond=0)
         position.opened_at = today  # Position opened at 2:00 PM today
 
         mock_positions_repo.list.return_value = [position]

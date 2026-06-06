@@ -1,11 +1,14 @@
 from src.infrastructure.db.models import TradeMode, UserRole
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 def test_user_and_settings_repos(db_session):
     ur = UserRepository(db_session)
-    user = ur.create_user(email="u@example.com", password="Secret123", name="U", role=UserRole.USER)
+    user = create_verified_user(
+        ur, email="u@example.com", password="Secret123", name="U", role=UserRole.USER
+    )
     assert user.id is not None
     assert user.role == UserRole.USER
 

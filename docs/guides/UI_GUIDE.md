@@ -369,10 +369,8 @@ After logging in, you'll see the main dashboard with navigation to all features.
 - Enable Premarket AMO Adjustment
 
 **7. News Sentiment:**
-- News Sentiment Enabled
-- Lookback Days (default: 30)
-- Min Articles
-- Positive/Negative Thresholds
+- Enable News Sentiment Analysis (advanced tuning uses server env; see Trading Config guide)
+
 
 **8. ML Configuration:**
 - ML Enabled
@@ -475,9 +473,22 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ### 9. Settings (`/dashboard/settings`)
 
-**Purpose:** Configure system settings.
+**Purpose:** Configure account profile, password, and system settings.
 
 #### Features
+
+**Account profile:**
+- Name (read-only; contact support to change)
+- Email (editable; changing email requires **current password** and re-verification)
+- Mobile number (optional contact number; 10-digit Indian format; **not** the Kotak broker login mobile)
+- Contact mobile is not required to be unique across users
+
+**Resend verification (`/resend-verification`):**
+- Used after signup or after changing email in Account Settings
+- Pre-fills email from query string; may show a message when redirected from profile email change
+
+**Account password:**
+- Change password with current password confirmation
 
 **Broker Credentials:**
 - Consumer Key
@@ -693,7 +704,48 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 14. User Management (`/dashboard/admin/users`) - Admin Only
+---
+
+### 14. Billing (`/dashboard/billing`)
+
+**Purpose:** View access entitlements, performance-fee invoices, and pay offline or via Razorpay (when admin enables online checkout).
+
+#### Features
+
+- **Current access:** Tier, status, period end, feature flags (from entitlements API).
+- **Performance bills:** Monthly broker performance-fee invoices with amounts and due dates.
+- **Offline payment (beta):** When `online_payments_enabled` is false, shows admin-configured UPI ID, instructions, and uploaded QR (`GET /user/billing/offline-payment-qr`).
+- **Online checkout:** Pay open bill via Razorpay when admin enables card/UPI checkout.
+- **Transaction history:** Past payments and statuses.
+
+#### Usage Tips
+
+- Complete offline UPI transfer using the amount on the specific invoice; admin marks bills paid via Admin Billing.
+- See [Billing user traceability matrix](../features/BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md) for API details.
+
+---
+
+### 15. Admin Billing (`/dashboard/admin/billing`) — Admin Only
+
+**Purpose:** Configure payment methods, Razorpay credentials, offline UPI/QR, and manage performance-fee billing.
+
+#### Features
+
+- **Settings:** Enable card/UPI online checkout, offline payment fields (UPI ID, payee name, instructions).
+- **Razorpay:** Store key id and secret (encrypted in DB); test-mode warning in UI when using test keys.
+- **Offline QR:** Upload/replace/delete payment QR image (max 2 MB).
+- **Performance bills:** List all users' bills; **record cash payment** for offline settlements.
+- **Transactions & refunds:** View history; issue refunds when applicable.
+- **Reconcile:** Mark overdue performance bills.
+
+#### Usage Tips
+
+- For beta deployments, keep online checkout disabled and use offline UPI + admin cash payment recording.
+- See [Billing admin traceability matrix](../features/BILLING_ADMIN_TRACEABILITY_MATRIX.md).
+
+---
+
+### 16. User Management (`/dashboard/admin/users`) - Admin Only
 
 **Purpose:** Manage users and roles.
 
@@ -701,15 +753,19 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 **User List:**
 - View all users
-- User details (email, name, role)
+- User details (email, name, role, contact mobile)
 - User status (active/inactive)
 - Creation date
 
 **User Management:**
-- Create new users
+- Create new users (optional contact mobile; users can also set mobile in Account Settings)
 - Activate/deactivate users
 - Change user roles
 - Delete users (if supported)
+
+**Create user panel:**
+- Collapsed by default — click **Add user** to expand
+- Email change by end users requires their current password (not applicable to admin create)
 
 #### Actions
 - **Create User:** Add new user
@@ -725,67 +781,80 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ---
 
-### 15. Activity (`/dashboard/activity`)
+### 17. Activity (legacy URL)
 
-**Purpose:** Track user activity and system events.
+**Route:** `/dashboard/activity` redirects to **System Logs** (`/dashboard/logs`).
 
-#### Features
-
-**Activity Log:**
-- Chronological list of activities
-- Activity type filtering
-- Date range filtering
-- Activity details
-
-**Activity Types:**
-- Order placements
-- Configuration changes
-- Service starts/stops
-- Signal approvals/rejections
-- Login/logout events
-
-#### Actions
-- **Filter Activities:** Apply filters
-- **View Details:** Click activity for details
-- **Export:** Export activity log (if implemented)
-
-#### Usage Tips
-- Review activity for security
-- Track configuration changes
-- Monitor order activity
-- Use for audit purposes
+The Activity Log page and `activity` database table were removed. Operational and service events are recorded in per-user JSONL files and viewed under **Log Viewer** (see §12).
 
 ---
 
-### 16. Login (`/login`)
+### 18. Login (`/login`)
 
 **Purpose:** User authentication.
 
 #### Features
 - Email/password login
-- Remember me option (if implemented)
-- Forgot password link (if implemented)
+- **Forgot password** link to `/forgot-password` (sends reset email when SMTP is configured)
 - Link to signup page
 
 #### Actions
 - **Login:** Authenticate and access dashboard
+- **Forgot password:** Request a password reset email
 - **Sign Up:** Navigate to signup page
 
 ---
 
-### 17. Signup (`/signup`)
+### 19. Signup (`/signup`)
 
 **Purpose:** User registration.
 
 #### Features
 - Email input
-- Password input (with requirements)
-- Name input
-- Terms acceptance (if implemented)
+- Password input (minimum 8 characters, at least one letter, one capital letter, one number, and one special character)
+- Confirm password field
+- Name input (required)
+- Mobile number (optional; 10-digit Indian format)
+- After signup, a verification email is sent. **Login and all protected APIs are blocked** until the user verifies via the link in email.
+- Wrong or typo emails cannot be used without inbox access to the verification link.
+- `/resend-verification` is a public page (like forgot password) for requesting a new link.
 
 #### Actions
 - **Sign Up:** Create new account
 - **Login:** Navigate to login page
+
+---
+
+### 20. Forgot password (`/forgot-password`)
+
+**Purpose:** Request a password reset link by email.
+
+#### Features
+- Email input
+- Generic success message (does not reveal whether the email is registered)
+- Reset links expire after one hour
+
+---
+
+### 21. Reset password (`/reset-password?token=...`)
+
+**Purpose:** Set a new password from the email reset link.
+
+---
+
+### 22. Verify email (`/verify-email?token=...`)
+
+**Purpose:** Confirm email ownership from the verification link sent after signup. On success, the app stores auth tokens and redirects to the dashboard (auto-login).
+
+Verification links expire **72 hours** after they are sent; use resend verification if the link is older than that.
+
+---
+
+### 23. Resend verification (`/resend-verification`)
+
+**Purpose:** Public form to request a new verification email when signup succeeded but the link was lost or expired. Linked from login and the post-signup “check your email” screen.
+
+Each new link is valid for **72 hours** from when the email is sent (same window as the original signup verification email).
 
 ---
 
@@ -829,7 +898,7 @@ After logging in, you'll see the main dashboard with navigation to all features.
 5. **Use Filters:** Use filters to focus on relevant data
 6. **Customize Columns:** Show only relevant information
 7. **Keep Service Running:** Enable automated trading service
-8. **Review Activity:** Check activity log for security
+8. **Review System Logs:** Check logs for errors and audit-related events
 
 ## 🆘 Getting Help
 

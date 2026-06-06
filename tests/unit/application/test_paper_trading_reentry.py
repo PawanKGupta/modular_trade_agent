@@ -21,7 +21,8 @@ from src.application.services.paper_trading_service_adapter import (
     PaperTradingServiceAdapter,
 )
 from src.infrastructure.db.models import Users
-from src.infrastructure.db.timezone_utils import ist_now
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 
 
 @pytest.fixture
@@ -201,7 +202,7 @@ def test_reentry_level_10_triggers_after_level_20_taken(paper_service):
 def test_reentry_daily_cap_prevents_multiple_reentries_same_day(paper_service):
     """Test that daily cap (1 reentry per symbol per day) is enforced"""
     # Set up metadata with one reentry today
-    today = datetime.now().date().isoformat()
+    today = ist_now().date().isoformat()
     metadata = {
         "INFY": {
             "levels_taken": {"30": True, "20": False, "10": False},

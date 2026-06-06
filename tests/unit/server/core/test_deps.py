@@ -8,9 +8,12 @@ from server.app.core import deps
 
 class DummyUser:
     def __init__(self):
+        from src.infrastructure.db.timezone_utils import ist_now
+
         self.is_active = True
         self.role = "USER"
         self.id = 1
+        self.email_verified_at = ist_now()
 
 
 class DummyUserRepo:
@@ -120,6 +123,16 @@ def test_get_current_user_inactive(monkeypatch, stub_user):
     with pytest.raises(HTTPException) as exc:
         deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_get_current_user_unverified_email(monkeypatch, stub_user):
+    stub_user.user.email_verified_at = None
+
+    monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "1"})
+    with pytest.raises(HTTPException) as exc:
+        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+    assert "verify your email" in exc.value.detail.lower()
 
 
 def test_require_admin_success(stub_user):

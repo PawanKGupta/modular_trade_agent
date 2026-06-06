@@ -2,8 +2,24 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsPage } from '../dashboard/SettingsPage';
 import { withProviders } from '@/test/utils';
+import { useSessionStore } from '@/state/sessionStore';
 
 describe('SettingsPage', () => {
+	beforeEach(() => {
+		useSessionStore.setState({
+			user: {
+				id: 1,
+				email: 'test@example.com',
+				name: 'Test User',
+				mobile_number: null,
+				roles: ['user'],
+				email_verified: true,
+			},
+			isAuthenticated: true,
+			isAdmin: false,
+			hasHydrated: true,
+		});
+	});
 	const renderPage = () =>
 		render(
 			withProviders(
@@ -24,6 +40,58 @@ describe('SettingsPage', () => {
 			await screen.findByRole('button', { name: /Hide Full Credentials/i });
 		}
 	};
+
+	it('shows account profile with read-only name and saves mobile', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+		const nameInput = screen.getByLabelText(/^Name$/i) as HTMLInputElement;
+		expect(nameInput.value).toBe('Test User');
+		expect(nameInput).toBeDisabled();
+
+		const profileMobile = screen.getByPlaceholderText('10-digit mobile (optional)');
+		fireEvent.change(profileMobile, { target: { value: '9876543210' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/Profile updated successfully/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows validation error for invalid mobile', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+
+		fireEvent.change(screen.getByPlaceholderText('10-digit mobile (optional)'), {
+			target: { value: '123' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/10-digit/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows profile current password field when email is edited', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+		expect(document.getElementById('profileCurrentPassword')).not.toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText(/^Email$/i), { target: { value: 'new@example.com' } });
+
+		expect(document.getElementById('profileCurrentPassword')).toBeInTheDocument();
+	});
+
+	it('requires current password when changing email', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+
+		fireEvent.change(screen.getByLabelText(/^Email$/i), { target: { value: 'new@example.com' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Current password is required to change email')).toBeInTheDocument();
+		});
+	});
 
 	it('loads default Paper and saves Broker', async () => {
 		renderPage();
@@ -104,9 +172,7 @@ describe('SettingsPage', () => {
 		fireEvent.click(testBtn);
 
 		await waitFor(() => {
-			// Should show test result message
-			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
-			expect(message).toBeInTheDocument();
+			expect(screen.getByText(/Client initialized successfully/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
 	});
 
@@ -137,9 +203,7 @@ describe('SettingsPage', () => {
 		fireEvent.click(testBtn);
 
 		await waitFor(() => {
-			// Should show test result message
-			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
-			expect(message).toBeInTheDocument();
+			expect(screen.getByText(/Connection successful/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
 	});
 });

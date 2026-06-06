@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
 	type IndividualServiceStatus,
 	type IndividualServicesStatus,
@@ -19,14 +19,17 @@ const TASK_DISPLAY_NAMES: Record<string, string> = {
 	sell_monitor: 'Sell Monitor',
 	analysis: 'Analysis',
 	buy_orders: 'Buy Orders',
+	buy_margin_preview: 'Buy Margin Preview',
 	eod_cleanup: 'End-of-Day Cleanup',
 };
 
 const TASK_DESCRIPTIONS: Record<string, string> = {
-	premarket_retry: 'Retries failed orders from previous day',
+	premarket_retry: 'Retries failed buy orders after morning placement (default 9:03 AM IST)',
 	sell_monitor: 'Monitors sell orders continuously, converts to market on RSI exit',
 	analysis: 'Analyzes stocks and generates recommendations',
-	buy_orders: 'Places AMO buy orders (fresh entries and re-entries) for the next day',
+	buy_orders: 'Places REGULAR buy orders at market open (default 9:01 AM IST)',
+	buy_margin_preview:
+		'Evening margin preview for next-morning buys — notify only, no placement (default 4:05 PM IST)',
 	eod_cleanup: 'End-of-day cleanup and reset for the next day',
 };
 
@@ -46,8 +49,29 @@ export function IndividualServiceControls({
 		);
 	};
 	const qc = useQueryClient();
-	const [showConflictWarning, setShowConflictWarning] = useState(false);
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+	const [conflictStickyWhileRunning, setConflictStickyWhileRunning] = useState(false);
+	const [runOnceLocalStartedAt, setRunOnceLocalStartedAt] = useState<string | null>(null);
+	const [nowMs, setNowMs] = useState(() => Date.now());
+	const conflictDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const clearConflictDismissTimer = () => {
+		if (conflictDismissTimerRef.current) {
+			clearTimeout(conflictDismissTimerRef.current);
+			conflictDismissTimerRef.current = null;
+		}
+	};
+
+	const scheduleConflictDismiss = (delayMs: number) => {
+		clearConflictDismissTimer();
+		conflictDismissTimerRef.current = setTimeout(() => {
+			setConflictMessage(null);
+			setConflictStickyWhileRunning(false);
+			conflictDismissTimerRef.current = null;
+		}, delayMs);
+	};
+
+	useEffect(() => () => clearConflictDismissTimer(), []);
 
 	const startMutation = useMutation({
 		mutationFn: (taskName: string) => startIndividualService({ task_name: taskName }),
@@ -113,20 +137,38 @@ export function IndividualServiceControls({
 
 	const runOnceMutation = useMutation({
 		mutationFn: (taskName: string) => runTaskOnce({ task_name: taskName }),
-		onSuccess: (response) => {
+		onSuccess: (response, taskName) => {
 			// Handle backend rejection (e.g., unified service conflict)
 			if (!response.success) {
+				setConflictStickyWhileRunning(false);
 				setConflictMessage(response.message || 'Task execution failed');
-				setShowConflictWarning(true);
-				setTimeout(() => setShowConflictWarning(false), 8000);
+				scheduleConflictDismiss(8000);
 				return;
 			}
 
-			// Handle warning conflicts (still successful)
+			// Optimistic running state until polling confirms completion
+			qc.setQueryData<IndividualServicesStatus>(['individualServicesStatus'], (old) => {
+				if (!old?.services?.[taskName]) {
+					return old;
+				}
+				return {
+					...old,
+					services: {
+						...old.services,
+						[taskName]: {
+							...old.services[taskName],
+							last_execution_status: 'running',
+							current_run_started_at: new Date().toISOString(),
+						},
+					},
+				};
+			});
+
+			// Keep advisory conflict visible for the whole run (not a short auto-dismiss)
 			if (response.has_conflict) {
+				clearConflictDismissTimer();
 				setConflictMessage(response.conflict_message || 'Conflict detected');
-				setShowConflictWarning(true);
-				setTimeout(() => setShowConflictWarning(false), 5000);
+				setConflictStickyWhileRunning(true);
 			}
 			qc.invalidateQueries({ queryKey: ['individualServicesStatus'] });
 			qc.invalidateQueries({ queryKey: ['serviceTasks'] });
@@ -147,8 +189,68 @@ export function IndividualServiceControls({
 				}
 			| undefined) ?? undefined;
 
-	// "Run Once" is disabled if service is running OR if there's a "running" execution
-	const isRunOnceRunning = service.last_execution_status === 'running';
+	// Run-once in progress (API status or optimistic state right after click)
+	const isRunOnceRunning =
+		service.last_execution_status === 'running' || runOnceMutation.isPending;
+
+	const prevIsRunOnceRunningRef = useRef(false);
+
+	useEffect(() => {
+		if (!isRunOnceRunning) {
+			setRunOnceLocalStartedAt(null);
+			return;
+		}
+		const id = setInterval(() => setNowMs(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [isRunOnceRunning]);
+
+	useEffect(() => {
+		const wasRunning = prevIsRunOnceRunningRef.current;
+		prevIsRunOnceRunningRef.current = isRunOnceRunning;
+		if (wasRunning && !isRunOnceRunning && conflictStickyWhileRunning) {
+			setConflictStickyWhileRunning(false);
+			scheduleConflictDismiss(30_000);
+		}
+	}, [isRunOnceRunning, conflictStickyWhileRunning]);
+
+	const runStartedAtMs = useMemo(() => {
+		if (!isRunOnceRunning) {
+			return null;
+		}
+		const candidateMs: number[] = [];
+		if (service.current_run_started_at) {
+			candidateMs.push(new Date(service.current_run_started_at).getTime());
+		}
+		if (runOnceLocalStartedAt) {
+			candidateMs.push(new Date(runOnceLocalStartedAt).getTime());
+		}
+		if (candidateMs.length === 0) {
+			return null;
+		}
+		return Math.max(...candidateMs);
+	}, [isRunOnceRunning, service.current_run_started_at, runOnceLocalStartedAt]);
+
+	const currentRunDurationLabel = useMemo(() => {
+		if (!isRunOnceRunning) {
+			return null;
+		}
+		if (runStartedAtMs == null) {
+			return formatDuration(0);
+		}
+		const elapsedSeconds = Math.max(0, (nowMs - runStartedAtMs) / 1000);
+		return formatDuration(elapsedSeconds);
+	}, [isRunOnceRunning, runStartedAtMs, nowMs]);
+
+	const lastResultDurationLabel = useMemo(() => {
+		if (isRunOnceRunning || typeof service.last_execution_duration !== 'number') {
+			return null;
+		}
+		return formatDuration(service.last_execution_duration);
+	}, [isRunOnceRunning, service.last_execution_duration]);
+
+	const durationLabel = currentRunDurationLabel ?? lastResultDurationLabel;
+
+	const showConflictBanner = Boolean(conflictMessage);
 	// Service is considered "running" if either the scheduled service is running OR a run-once execution is in progress
 	const isServiceActive = service.is_running || isRunOnceRunning;
 	// Disable individual service start button if unified service is running, service is already running, or run-once is running
@@ -160,6 +262,7 @@ export function IndividualServiceControls({
 
 	const handleRunOnce = () => {
 		// No warning dialog needed - backend enforces the block
+		setRunOnceLocalStartedAt(new Date().toISOString());
 		runOnceMutation.mutate(service.task_name);
 	};
 
@@ -213,29 +316,30 @@ export function IndividualServiceControls({
 					</div>
 				)}
 			</div>
-			{service.last_execution_status && (
+			{(service.last_execution_status || isRunOnceRunning) && (
 				<div className="mb-3">
-					<div className="text-[var(--muted)] mb-1">Last Result</div>
+					<div className="text-[var(--muted)] mb-1">
+						{isRunOnceRunning ? 'Current Run' : 'Last Result'}
+					</div>
 					<div
 						className={`text-sm font-medium ${
-							service.last_execution_status === 'success'
-								? 'text-green-400'
-								: service.last_execution_status === 'failed'
-									? 'text-red-400'
-									: service.last_execution_status === 'running'
-										? 'text-blue-400'
+							isRunOnceRunning || service.last_execution_status === 'running'
+								? 'text-blue-400'
+								: service.last_execution_status === 'success'
+									? 'text-green-400'
+									: service.last_execution_status === 'failed'
+										? 'text-red-400'
 										: 'text-yellow-400'
 						}`}
 					>
-						{service.last_execution_status === 'success'
-							? 'Success'
-							: service.last_execution_status === 'failed'
-								? 'Failed'
-								: service.last_execution_status === 'running'
-									? 'Running'
+						{isRunOnceRunning || service.last_execution_status === 'running'
+							? 'Running'
+							: service.last_execution_status === 'success'
+								? 'Success'
+								: service.last_execution_status === 'failed'
+									? 'Failed'
 									: 'Skipped'}
-						{typeof service.last_execution_duration === 'number' &&
-							` - ${formatDuration(service.last_execution_duration)}`}
+						{durationLabel && ` - ${durationLabel}`}
 					</div>
 					{lastSummary && (
 						<div className="text-xs text-[var(--muted)] mt-1">
@@ -248,7 +352,7 @@ export function IndividualServiceControls({
 			)}
 
 			{/* Conflict Warning */}
-			{showConflictWarning && conflictMessage && (
+			{showConflictBanner && conflictMessage && (
 				<div className="mb-2 sm:mb-3 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded text-xs sm:text-sm text-yellow-400">
 					⚠ {conflictMessage}
 				</div>

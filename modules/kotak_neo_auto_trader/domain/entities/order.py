@@ -6,6 +6,8 @@ Represents a trading order with business logic and lifecycle
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+
 from ..value_objects import (
     Exchange,
     Money,
@@ -53,7 +55,7 @@ class Order:
 
     # Metadata
     remarks: str = ""
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=ist_now_naive)
 
     def __post_init__(self):
         """Validate order constraints"""
@@ -90,7 +92,7 @@ class Order:
 
         self.order_id = order_id
         self.status = OrderStatus.OPEN
-        self.placed_at = datetime.now()
+        self.placed_at = ist_now_naive()
 
     def execute(
         self, execution_price: Money, executed_quantity: int, execution_time: datetime | None = None
@@ -119,7 +121,7 @@ class Order:
 
         self.executed_price = execution_price
         self.executed_quantity += executed_quantity
-        self.executed_at = execution_time or datetime.now()
+        self.executed_at = execution_time or ist_now_naive()
 
         # Update status based on execution
         if self.executed_quantity >= self.quantity:
@@ -141,7 +143,7 @@ class Order:
             raise ValueError(f"Cannot cancel order in {self.status} status")
 
         self.status = OrderStatus.CANCELLED
-        self.cancelled_at = cancellation_time or datetime.now()
+        self.cancelled_at = cancellation_time or ist_now_naive()
 
     def reject(self, reason: str = "") -> None:
         """
@@ -294,5 +296,5 @@ class Order:
             "executed_price": str(self.executed_price) if self.executed_price else None,
             "executed_quantity": self.executed_quantity,
             "remarks": self.remarks,
-            "created_at": self._to_iso(self.created_at) or datetime.now().isoformat(),
+            "created_at": self._to_iso(self.created_at) or ist_now().isoformat(),
         }

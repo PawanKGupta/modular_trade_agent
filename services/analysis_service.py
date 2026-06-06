@@ -65,7 +65,9 @@ class AnalysisService:
             ml_enabled = getattr(self.config, "ml_enabled", False)
 
             # Debug logging to trace config value
-            logger.debug(f"AnalysisService init: ml_enabled={ml_enabled}, config type={type(self.config)}, config.ml_enabled={getattr(self.config, 'ml_enabled', 'NOT_SET')}")
+            logger.debug(
+                f"AnalysisService init: ml_enabled={ml_enabled}, config type={type(self.config)}, config.ml_enabled={getattr(self.config, 'ml_enabled', 'NOT_SET')}"
+            )
 
             if not ml_enabled:
                 logger.debug("ML is disabled in config, using VerdictService")
@@ -111,6 +113,121 @@ class AnalysisService:
         else:
             self.verdict_service = verdict_service
 
+        self._ml_price_service = None
+        self._init_ml_price_service()
+
+    def _init_ml_price_service(self) -> None:
+        """Load ``MLPriceService`` when ``ml_price_enabled`` and model files exist."""
+        if not getattr(self.config, "ml_price_enabled", False):
+            return
+        try:
+            from services.ml_price_service import MLPriceService
+
+            from utils.ml_price_availability import discover_ml_price_target_path
+
+            raw_tgt = getattr(self.config, "ml_price_model_path", None) or ""
+            discovered = discover_ml_price_target_path(configured_path=raw_tgt or None)
+            tgt = str(discovered) if discovered is not None else (raw_tgt.strip() or None)
+            raw_stp = getattr(self.config, "ml_stop_loss_model_path", None)
+            stp = (raw_stp.strip() or None) if isinstance(raw_stp, str) else raw_stp
+
+            svc = MLPriceService(target_model_path=tgt, stop_loss_model_path=stp)
+            if svc.target_model_loaded or svc.stop_loss_model_loaded:
+                self._ml_price_service = svc
+                logger.info(
+                    "MLPriceService initialized (target_loaded=%s, stop_loaded=%s)",
+                    svc.target_model_loaded,
+                    svc.stop_loss_model_loaded,
+                )
+            else:
+                expected = getattr(self.config, "ml_price_model_path", None) or "models/"
+                logger.warning(
+                    "ml_price_enabled=True but no price/stop ML models on disk (expected e.g. %s); "
+                    "using rule-only targets",
+                    expected,
+                )
+        except Exception as e:
+            logger.warning("Could not initialize MLPriceService: %s", e)
+
+    def _maybe_enrich_trading_params_with_ml_price(
+        self,
+        trading_params: dict[str, Any] | None,
+        verdict: str,
+        df: pd.DataFrame,
+        last: Any,
+        timeframe_confirmation: Any,
+        rsi_value: float | None,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """
+        Optionally override rule-based target/stop using ``MLPriceService``.
+
+        Returns:
+            Adjusted trading_params (or unchanged) and metadata for the analysis result payload.
+        """
+        meta: dict[str, Any] = {
+            "ml_price_target_applied": False,
+            "ml_price_stop_applied": False,
+            "ml_price_target_confidence": None,
+            "ml_price_stop_confidence": None,
+        }
+        svc = self._ml_price_service
+        if svc is None or trading_params is None or verdict not in ("buy", "strong_buy"):
+            return trading_params, meta
+
+        out = dict(trading_params)
+        current_price = float(last["close"])
+        thr = float(getattr(self.config, "ml_confidence_threshold", 0.5))
+
+        ema200_raw = last.get("ema_200", last.get("ema200"))
+        try:
+            if ema200_raw is None or pd.isna(ema200_raw):
+                ema200_f = current_price
+            else:
+                ema200_f = float(ema200_raw)
+        except (TypeError, ValueError):
+            ema200_f = current_price
+
+        indicators_ml: dict[str, Any] = {
+            "rsi": float(rsi_value) if rsi_value is not None else 50.0,
+            "ema200": ema200_f,
+        }
+
+        rule_target = out.get("target")
+        rule_stop = out.get("stop")
+
+        try:
+            if svc.target_model_loaded and rule_target is not None:
+                pred_t, conf_t = svc.predict_target(
+                    current_price=current_price,
+                    indicators=indicators_ml,
+                    timeframe_confirmation=timeframe_confirmation,
+                    df=df,
+                    rule_based_target=float(rule_target),
+                )
+                meta["ml_price_target_confidence"] = conf_t
+                if conf_t >= thr:
+                    out["target"] = round(float(pred_t), 2)
+                    meta["ml_price_target_applied"] = True
+        except Exception as e:
+            logger.debug("ML price target adjustment skipped: %s", e)
+
+        try:
+            if svc.stop_loss_model_loaded and rule_stop is not None:
+                pred_s, conf_s = svc.predict_stop_loss(
+                    current_price=current_price,
+                    indicators=indicators_ml,
+                    df=df,
+                    rule_based_stop_loss=float(rule_stop),
+                )
+                meta["ml_price_stop_confidence"] = conf_s
+                if conf_s >= thr:
+                    out["stop"] = round(float(pred_s), 2)
+                    meta["ml_price_stop_applied"] = True
+        except Exception as e:
+            logger.debug("ML price stop adjustment skipped: %s", e)
+
+        return out, meta
+
     def analyze_ticker(
         self,
         ticker: str,
@@ -121,6 +238,7 @@ class AnalysisService:
         pre_fetched_daily: pd.DataFrame | None = None,
         pre_fetched_weekly: pd.DataFrame | None = None,
         pre_calculated_indicators: dict[str, Any] | None = None,
+        news_profile: str | None = None,
     ) -> dict[str, Any]:
         """
         Analyze a single ticker - main entry point
@@ -137,6 +255,8 @@ class AnalysisService:
             pre_fetched_daily: Optional pre-fetched daily DataFrame (avoids duplicate fetching)
             pre_fetched_weekly: Optional pre-fetched weekly DataFrame (avoids duplicate fetching)
             pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
+            news_profile: ``cheap`` (yfinance + Google RSS), ``full`` (+ paid APIs), or
+                ``None``/``auto`` — cheap when ``as_of_date`` is set (backtest)
 
         Returns:
             Dict with analysis results including:
@@ -148,8 +268,21 @@ class AnalysisService:
             - buy_range, target, stop: Optional values
             - status: str (success/error)
         """
+        from core.news_context import reset_news_profile, set_news_profile
+        from core.news_providers import resolve_news_profile
+
+        profile_token = None
         try:
-            logger.debug(f"Starting analysis for {ticker}")
+            resolved_profile = resolve_news_profile(
+                news_profile=news_profile, as_of_date=as_of_date
+            )
+            if resolved_profile in ("cheap", "full"):
+                profile_token = set_news_profile(resolved_profile)
+            logger.debug(
+                "Starting analysis for %s (news_profile=%s)",
+                ticker,
+                resolved_profile,
+            )
 
             # Disable current day data addition during backtesting (when as_of_date is provided)
             add_current_day = as_of_date is None  # Only add current day for live analysis
@@ -543,6 +676,14 @@ class AnalysisService:
                 rsi_value=rsi_value,  # Pass RSI for validation
                 is_above_ema200=is_above_ema200,  # Pass EMA200 position for threshold selection
             )
+            trading_params, ml_price_meta = self._maybe_enrich_trading_params_with_ml_price(
+                trading_params=trading_params,
+                verdict=verdict,
+                df=df,
+                last=last,
+                timeframe_confirmation=timeframe_confirmation,
+                rsi_value=rsi_value,
+            )
 
             # Step 14: Extract EMA values and calculate distance
             ema9_value = None
@@ -578,6 +719,16 @@ class AnalysisService:
                     confidence_value = float(ml_conf)
 
             # Step 15: Build result
+            # rule_verdict = rules-only baseline from MLVerdictService when ML ran (matches
+            # get_last_ml_prediction()["rule_verdict"]). Otherwise same as final verdict (ML off
+            # or no baseline in metadata). Top-level "verdict" remains the actionable label
+            # (post ML combine and post candle-quality check).
+            rule_verdict_for_observation = (
+                ml_prediction.get("rule_verdict")
+                if ml_prediction is not None and ml_prediction.get("rule_verdict") is not None
+                else verdict
+            )
+
             result = {
                 "ticker": ticker,
                 "verdict": verdict,
@@ -626,6 +777,10 @@ class AnalysisService:
                     float(dip_features.get("volume_green_vs_red_ratio", 1.0)), 2
                 ),
                 "support_hold_count": int(dip_features.get("support_hold_count", 0)),
+                "ml_price_target_applied": ml_price_meta["ml_price_target_applied"],
+                "ml_price_stop_applied": ml_price_meta["ml_price_stop_applied"],
+                "ml_price_target_confidence": ml_price_meta["ml_price_target_confidence"],
+                "ml_price_stop_confidence": ml_price_meta["ml_price_stop_confidence"],
                 "ml_verdict": ml_prediction.get("ml_verdict") if ml_prediction else None,
                 "ml_confidence": (
                     round(float(ml_prediction.get("ml_confidence", 0)) * 100, 1)
@@ -636,7 +791,7 @@ class AnalysisService:
                 "ml_probabilities": (
                     ml_prediction.get("ml_probabilities") if ml_prediction else None
                 ),
-                "rule_verdict": verdict,
+                "rule_verdict": rule_verdict_for_observation,
                 "verdict_source": verdict_source,
                 "status": "success",
             }
@@ -656,7 +811,7 @@ class AnalysisService:
 
             # Store config in result for backtest to use (for ML support)
             # This allows backtest to use the same config that was used for analysis
-            result['_config'] = self.config
+            result["_config"] = self.config
 
             return result
 
@@ -665,3 +820,6 @@ class AnalysisService:
                 f"Unexpected error in analyze_ticker for {ticker}: {type(e).__name__}: {e}"
             )
             return {"ticker": ticker, "status": "analysis_error", "error": str(e)}
+        finally:
+            if profile_token is not None:
+                reset_news_profile(profile_token)

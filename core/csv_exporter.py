@@ -1,7 +1,9 @@
 import csv
 import os
-from datetime import datetime
 import pandas as pd
+
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+
 from utils.logger import logger
 
 class CSVExporter:
@@ -42,7 +44,7 @@ class CSVExporter:
             flattened = {}
 
             # Basic information
-            flattened['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            flattened['timestamp'] = ist_now().strftime('%Y-%m-%d %H:%M:%S')
             flattened['ticker'] = analysis_result.get('ticker', '')
             flattened['status'] = analysis_result.get('status', '')
             flattened['verdict'] = analysis_result.get('verdict', '')
@@ -200,7 +202,7 @@ class CSVExporter:
         except Exception as e:
             logger.error(f"Error flattening analysis data: {e}")
             return {
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'timestamp': ist_now().strftime('%Y-%m-%d %H:%M:%S'),
                 'ticker': analysis_result.get('ticker', ''),
                 'status': 'export_error',
                 'error': str(e)
@@ -218,7 +220,7 @@ class CSVExporter:
             ticker = analysis_result.get('ticker', 'unknown')
 
             if filename is None:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamp = ist_now_naive().strftime('%Y%m%d_%H%M%S')
                 filename = f"{ticker}_analysis_{timestamp}.csv"
 
             filepath = os.path.join(self.output_dir, filename)
@@ -245,7 +247,7 @@ class CSVExporter:
         """
         try:
             if filename is None:
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                timestamp = ist_now_naive().strftime('%Y%m%d_%H%M%S')
                 filename = f"bulk_analysis_{timestamp}.csv"
 
             filepath = os.path.join(self.output_dir, filename)

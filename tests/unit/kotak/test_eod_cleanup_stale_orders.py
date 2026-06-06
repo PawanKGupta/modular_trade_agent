@@ -12,6 +12,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -164,10 +166,10 @@ class TestEODCleanupStaleOrders:
         The main functionality is tested in other tests.
         """
         # Order placed 25 hours ago (should be removed with 24h fallback)
-        old_order_time = datetime.now() - timedelta(hours=25)
+        old_order_time = ist_now_naive() - timedelta(hours=25)
 
         # Order placed 23 hours ago (should NOT be removed with 24h fallback)
-        recent_order_time = datetime.now() - timedelta(hours=23)
+        recent_order_time = ist_now_naive() - timedelta(hours=23)
 
         mock_order_tracker.get_pending_orders.return_value = [
             {
@@ -204,7 +206,7 @@ class TestEODCleanupStaleOrders:
             {
                 "order_id": "ORDER2",
                 "symbol": "TCS",
-                "placed_at": (datetime.now() - timedelta(hours=25)).isoformat(),
+                "placed_at": (ist_now_naive() - timedelta(hours=25)).isoformat(),
                 "status": "PENDING",
             },
         ]
@@ -217,7 +219,7 @@ class TestEODCleanupStaleOrders:
             pytest.skip("Timezone utils not available")
 
         # Use a time that would trigger cleanup if it had placed_at
-        recent_order_time = datetime.now(IST) - timedelta(hours=25)
+        recent_order_time = ist_now() - timedelta(hours=25)
 
         mock_order_tracker.get_pending_orders.return_value = [
             {
@@ -234,12 +236,12 @@ class TestEODCleanupStaleOrders:
             },
         ]
 
-        with patch("src.infrastructure.db.timezone_utils.ist_now", return_value=datetime.now(IST)):
+        with patch("src.infrastructure.db.timezone_utils.ist_now", return_value=ist_now()):
             with patch(
                 "modules.kotak_neo_auto_trader.utils.trading_day_utils.get_next_trading_day_close"
             ) as mock_get_close:
                 # Return a time in the past so ORDER2 gets removed
-                mock_get_close.return_value = datetime.now(IST) - timedelta(hours=1)
+                mock_get_close.return_value = ist_now() - timedelta(hours=1)
 
                 result = eod_cleanup._cleanup_stale_orders()
 
@@ -259,7 +261,7 @@ class TestEODCleanupStaleOrders:
             {
                 "order_id": "ORDER2",
                 "symbol": "TCS",
-                "placed_at": (datetime.now() - timedelta(hours=25)).isoformat(),
+                "placed_at": (ist_now_naive() - timedelta(hours=25)).isoformat(),
                 "status": "PENDING",
             },
         ]
@@ -270,7 +272,7 @@ class TestEODCleanupStaleOrders:
         except ImportError:
             pytest.skip("Timezone utils not available")
 
-        recent_order_time = datetime.now(IST) - timedelta(hours=25)
+        recent_order_time = ist_now() - timedelta(hours=25)
 
         mock_order_tracker.get_pending_orders.return_value = [
             {
@@ -287,12 +289,12 @@ class TestEODCleanupStaleOrders:
             },
         ]
 
-        with patch("src.infrastructure.db.timezone_utils.ist_now", return_value=datetime.now(IST)):
+        with patch("src.infrastructure.db.timezone_utils.ist_now", return_value=ist_now()):
             with patch(
                 "modules.kotak_neo_auto_trader.utils.trading_day_utils.get_next_trading_day_close"
             ) as mock_get_close:
                 # Return a time in the past so ORDER2 gets removed
-                mock_get_close.return_value = datetime.now(IST) - timedelta(hours=1)
+                mock_get_close.return_value = ist_now() - timedelta(hours=1)
 
                 result = eod_cleanup._cleanup_stale_orders()
 
@@ -320,7 +322,7 @@ class TestEODCleanupStaleOrders:
             {
                 "order_id": "ORDER2",
                 "symbol": "TCS",
-                "placed_at": (datetime.now(IST) - timedelta(hours=1)).isoformat(),
+                "placed_at": (ist_now() - timedelta(hours=1)).isoformat(),
                 "status": "PENDING",
             },
         ]
@@ -332,7 +334,7 @@ class TestEODCleanupStaleOrders:
                     {
                         "order_id": "ORDER2",
                         "symbol": "TCS",
-                        "placed_at": (datetime.now(IST) - timedelta(hours=1)).isoformat(),
+                        "placed_at": (ist_now() - timedelta(hours=1)).isoformat(),
                         "status": "PENDING",
                     },
                 ]

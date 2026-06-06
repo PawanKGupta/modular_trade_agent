@@ -26,6 +26,7 @@ from server.app.routers import broker
 from src.infrastructure.db.models import TradeMode
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class DummyUser:
     """Dummy user for testing"""
 
@@ -107,7 +108,7 @@ class TestBrokerSessionReauthRegression:
             quantity=10,
             average_price=Money(Decimal("2500.00")),
             current_price=Money(Decimal("2600.00")),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
 
         mock_broker = MagicMock()
@@ -194,7 +195,7 @@ class TestBrokerSessionReauthRegression:
             quantity=10,
             average_price=Money(Decimal("2500.00")),
             current_price=Money(Decimal("2600.00")),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
 
         mock_broker = MagicMock()
@@ -284,7 +285,7 @@ class TestBrokerSessionReauthRegression:
             quantity=10,
             average_price=Money(Decimal("2500.00")),
             current_price=Money(Decimal("2600.00")),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
 
         mock_broker = MagicMock()
@@ -383,7 +384,7 @@ class TestBrokerSessionReauthRegression:
             quantity=10,
             average_price=Money(Decimal("2500.00")),
             current_price=Money(Decimal("2600.00")),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
 
         mock_broker = MagicMock()
@@ -466,7 +467,7 @@ class TestBrokerSessionReauthRegression:
             quantity=10,
             average_price=Money(Decimal("2500.00")),
             current_price=Money(Decimal("2600.00")),
-            last_updated=datetime.now(),
+            last_updated=ist_now_naive(),
         )
 
         mock_order = MagicMock()
@@ -476,7 +477,7 @@ class TestBrokerSessionReauthRegression:
         mock_order.price = Money(Decimal("2500.00"))
         mock_order.status = "PENDING"
         mock_order.order_type = "BUY"
-        mock_order.timestamp = datetime.now()
+        mock_order.timestamp = ist_now_naive()
 
         mock_broker = MagicMock()
         mock_broker.get_holdings.return_value = [mock_holding]
@@ -620,7 +621,7 @@ class TestBrokerSessionReauthRegression:
         mock_order.status = "EXECUTED"
         mock_order.executed_price = Money(Decimal("1295.20"))
         mock_order.executed_quantity = 7
-        mock_order.created_at = datetime.now()
+        mock_order.created_at = ist_now_naive()
 
         mock_broker = MagicMock()
         mock_broker.get_all_orders.return_value = [mock_order]

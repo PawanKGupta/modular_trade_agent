@@ -62,6 +62,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 pip install -r server/requirements.txt
 
+# Optional: CPU headline sentiment (Hugging Face Transformers; no paid news API).
+# Recommended on production Linux (e.g. Oracle Cloud) after installing PyTorch CPU wheels:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-sentiment.txt
+#
+# See docs/guides/TRADING_CONFIG.md (News Sentiment) for env vars.
+
 # Install frontend dependencies
 cd web
 npm install
@@ -93,16 +100,20 @@ CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
 
 # Timezone
 TZ=Asia/Kolkata
+
+# Daily OHLCV (NSE bhavcopy → price_cache): see docs/guides/BULK_ANALYSIS_RELIABILITY.md
+# OHLCV_DAILY_SOURCE=nse   # or nse_with_yahoo_fallback until backfill completes
 ```
 
 #### Step 4: Initialize Database
 
-The application will auto-create tables on first run. Alternatively, you can run migrations:
+The application will auto-create tables on first run. **Production and upgrades should use Alembic:**
 
 ```bash
-# If using Alembic migrations
 alembic upgrade head
 ```
+
+> **Auth emails (26.2.1+):** If you enable public signup, configure **`SMTP_HOST`**, **`SMTP_USER`**, **`SMTP_PASSWORD`**, and **`SMTP_FROM_EMAIL`** in `.env` before users sign up. Without SMTP, verification and password-reset emails cannot be sent. See [`.env.example`](../../.env.example).
 
 #### Step 5: Start Services
 
@@ -168,6 +179,21 @@ Before live trading, test with paper trading:
 
 1. Navigate to **Buying Zone** to see trading signals
 2. Signals are generated based on your strategy configuration
+
+### 5. Bulk backtest (CLI, optional)
+
+For ChartInk list analysis with integrated backtest scoring:
+
+```bash
+# Merge config/bulk_reliability.env.example into .env (MAX_CONCURRENT_ANALYSES=1, etc.)
+python trade_agent.py --backtest
+```
+
+See [Bulk analysis reliability](BULK_ANALYSIS_RELIABILITY.md) for engine labels (`backtest_mode` in CSV) and validation.
+
+```bash
+.venv\Scripts\python.exe tools/validate_bulk_analysis_final.py
+```
 3. Review and approve/reject signals as needed
 
 ## Common Issues
@@ -204,6 +230,8 @@ Ensure virtual environment is activated and dependencies are installed:
 pip install -r requirements.txt
 pip install -r server/requirements.txt
 ```
+
+If the API fails to start with a `python_multipart` / multipart import error, you likely installed only the root `requirements.txt`. Admin billing QR upload needs **`python-multipart`** from `server/requirements.txt` — run the second `pip install` line above.
 
 ## Service Layer Usage (Phase 4)
 

@@ -76,8 +76,17 @@ export interface PaperTradingPortfolio {
 		pending_orders: number;
 		cancelled_orders: number;
 		rejected_orders: number;
-		success_rate: number;
 		reentry_orders: number;
+		/** Closed / (closed + rejected). Cancelled strategy limits excluded. */
+		fill_rate: number;
+		/** Closed sells / (closed + cancelled sells). */
+		sell_fill_rate: number;
+		/** Winning paper closed positions / paper closed positions. */
+		trade_win_rate: number;
+		closed_positions: number;
+		winning_positions: number;
+		/** @deprecated Use fill_rate */
+		success_rate: number;
 	};
 }
 

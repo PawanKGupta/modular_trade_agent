@@ -8,21 +8,21 @@ from fastapi.testclient import TestClient
 
 from src.infrastructure.db.models import PnlDaily, TradeMode, Users
 from src.infrastructure.persistence.orders_repository import OrdersRepository
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 def _signup_and_headers(
-    client: TestClient, email: str = "exporter@example.com"
+    client: TestClient, db_session, email: str = "exporter@example.com"
 ) -> tuple[dict, int]:
-    resp = client.post("/api/v1/auth/signup", json={"email": email, "password": "secret123"})
-    assert resp.status_code == 200, resp.text
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": email, "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     return headers, token
 
 
 def test_export_pnl_csv_uses_db_data(client: TestClient, db_session):
     # Arrange: create user and seed P&L rows directly in DB
-    headers, _ = _signup_and_headers(client, email="pnl_csv@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="pnl_csv@example.com")
     user = db_session.query(Users).filter(Users.email == "pnl_csv@example.com").one()
 
     db_session.add_all(
@@ -77,7 +77,7 @@ def test_export_pnl_csv_uses_db_data(client: TestClient, db_session):
 
 
 def test_export_orders_csv_filters_by_trade_mode_and_dates(client: TestClient, db_session):
-    headers, _ = _signup_and_headers(client, email="orders_csv@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="orders_csv@example.com")
     user = db_session.query(Users).filter(Users.email == "orders_csv@example.com").one()
 
     repo = OrdersRepository(db_session)
@@ -128,7 +128,7 @@ def test_export_orders_csv_filters_by_trade_mode_and_dates(client: TestClient, d
 
 
 def test_export_pnl_pdf_returns_pdf(client: TestClient, db_session):
-    headers, _ = _signup_and_headers(client, email="pnl_pdf@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="pnl_pdf@example.com")
     user = db_session.query(Users).filter(Users.email == "pnl_pdf@example.com").one()
 
     db_session.add(
@@ -165,7 +165,7 @@ def test_export_pnl_pdf_returns_pdf(client: TestClient, db_session):
     reason="Skipping in CI due to PostgreSQL date filtering compatibility issues",
 )
 def test_export_signals_csv_filters_and_empty_case(client: TestClient, db_session):
-    headers, _ = _signup_and_headers(client, email="signals_csv@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="signals_csv@example.com")
     db_session.query(Users).filter(Users.email == "signals_csv@example.com").one()
 
     from src.infrastructure.db.models import Signals, SignalStatus
@@ -228,7 +228,7 @@ def test_export_signals_csv_filters_and_empty_case(client: TestClient, db_sessio
 
 def test_export_trades_csv_uses_closed_at_and_fields(client: TestClient, db_session):
     # Arrange
-    headers, _ = _signup_and_headers(client, email="trades_csv@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="trades_csv@example.com")
     user = db_session.query(Users).filter(Users.email == "trades_csv@example.com").one()
 
     from src.infrastructure.db.models import Positions
@@ -287,7 +287,7 @@ def test_export_trades_csv_uses_closed_at_and_fields(client: TestClient, db_sess
     reason="Skipping in CI due to PostgreSQL date filtering compatibility issues",
 )
 def test_export_signals_csv_handles_buy_range_dict(client: TestClient, db_session):
-    headers, _ = _signup_and_headers(client, email="signals_dict@example.com")
+    headers, _ = _signup_and_headers(client, db_session, email="signals_dict@example.com")
     db_session.query(Users).filter(Users.email == "signals_dict@example.com").one()
 
     from src.infrastructure.db.models import Signals, SignalStatus

@@ -8,7 +8,10 @@ Complete guide to using the Rebound — Modular Trade Agent web interface.
 
 1. Navigate to http://localhost:5173 (or your deployment URL)
 2. Click **Sign Up** to create an account, or use admin credentials if provided
-3. After login, you'll see the dashboard
+3. **Verify your email** from the link sent after signup (required before login)
+4. After login, you'll see the dashboard
+
+For auth pages and profile settings, see the [Complete UI Guide — Authentication & Settings](UI_GUIDE.md#9-settings-dashboardsettings) and [Signup](UI_GUIDE.md#19-signup-signup).
 
 ### Initial Setup
 
@@ -155,9 +158,17 @@ Complete guide to using the Rebound — Modular Trade Agent web interface.
 
 ### Settings
 
-**Purpose:** Configure system settings
+**Purpose:** Account profile, password, broker credentials, and trade mode.
 
 **Sections:**
+
+#### Account profile
+- Name (read-only)
+- Email (change requires current password; triggers re-verification)
+- Optional contact mobile (10-digit Indian number)
+
+#### Account password
+- Change password with current password confirmation
 
 #### Broker Credentials
 - Consumer Key
@@ -171,6 +182,20 @@ Complete guide to using the Rebound — Modular Trade Agent web interface.
 - Bot Token
 - Chat ID
 - Enable/disable notifications
+
+### Billing
+
+**Purpose:** View access entitlements and pay broker performance-fee invoices.
+
+**Location:** `/dashboard/billing`
+
+**Features:**
+- Current access summary (tier, status, feature flags)
+- Open performance-fee bills and payment history
+- **Offline UPI (beta):** Pay using admin-configured UPI/QR when online checkout is disabled
+- **Razorpay checkout:** When admin enables online payments
+
+See [UI Guide — Billing](UI_GUIDE.md#14-billing-dashboardbilling) for details.
 
 ### Notification Preferences
 
@@ -305,6 +330,12 @@ Service events include:
 - View all users
 - Manage user roles
 - Activate/deactivate users
+- Create users (optional contact mobile)
+
+#### Admin Billing
+- Configure offline UPI and optional Razorpay checkout
+- Upload payment QR; record cash payments on performance bills
+- See [UI Guide — Admin Billing](UI_GUIDE.md#15-admin-billing-dashboardadminbilling--admin-only)
 
 #### ML Training
 - View ML training status

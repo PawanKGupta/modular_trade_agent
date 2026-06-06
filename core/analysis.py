@@ -1,6 +1,7 @@
 from config.settings import (
     VOLUME_LOOKBACK_DAYS,
 )
+from src.infrastructure.db.timezone_utils import ist_now_naive
 from utils.logger import logger
 
 
@@ -379,6 +380,7 @@ def analyze_ticker(
     config=None,
     pre_fetched_data=None,
     pre_calculated_indicators=None,
+    news_profile=None,
 ):
     """
     Analyze a ticker - backward compatible wrapper using new service layer.
@@ -411,6 +413,7 @@ def analyze_ticker(
         config: StrategyConfig instance (uses default if None)
         pre_fetched_data: Optional pre-fetched daily DataFrame (from BacktestEngine)
         pre_calculated_indicators: Optional dict with pre-calculated indicators (rsi, ema200, etc.)
+        news_profile: ``cheap``, ``full``, or ``None``/``auto`` for news APIs during analysis
     """
     # Get config if not provided
     from config.strategy_config import StrategyConfig
@@ -438,6 +441,7 @@ def analyze_ticker(
             export_to_csv=export_to_csv,
             csv_exporter=csv_exporter,
             as_of_date=as_of_date,
+            news_profile=news_profile,
         )
     except ImportError as e:
         # Service layer is required - no fallback
@@ -453,7 +457,11 @@ def analyze_ticker(
 
 
 def analyze_multiple_tickers(
-    tickers, enable_multi_timeframe=True, export_to_csv=True, csv_filename=None
+    tickers,
+    enable_multi_timeframe=True,
+    export_to_csv=True,
+    csv_filename=None,
+    config=None,
 ):
     """
     Analyze multiple tickers and export results to CSV
@@ -481,6 +489,7 @@ def analyze_multiple_tickers(
         enable_multi_timeframe: Enable multi-timeframe analysis
         export_to_csv: Export results to CSV
         csv_filename: Custom filename for CSV export
+        config: Optional ``StrategyConfig`` for ``AsyncAnalysisService`` (defaults if None).
 
     Returns:
         List of analysis results and CSV filepath if exported
@@ -503,7 +512,7 @@ def analyze_multiple_tickers(
     logger.info(f"Starting batch analysis for {len(tickers)} tickers (using AsyncAnalysisService)")
 
     try:
-        service = AsyncAnalysisService(max_concurrent=10)
+        service = AsyncAnalysisService(max_concurrent=10, config=config)
 
         async def analyze():
             return await service.analyze_batch_async(
@@ -519,9 +528,7 @@ def analyze_multiple_tickers(
         if export_to_csv:
             # AsyncAnalysisService exports CSV internally
             # Return a placeholder path for backward compatibility
-            from datetime import datetime
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = ist_now_naive().strftime("%Y%m%d_%H%M%S")
             csv_filepath = f"analysis_results/bulk_analysis_{timestamp}.csv"
             logger.info(f"Batch analysis complete. Results exported to: {csv_filepath}")
         else:

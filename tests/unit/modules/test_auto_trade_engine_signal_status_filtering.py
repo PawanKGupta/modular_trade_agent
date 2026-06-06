@@ -186,6 +186,47 @@ class TestAutoTradeEngineSignalStatusFiltering:
         # Should exclude EXPIRED signal
         assert len(recs) == 0
 
+    def test_load_recommendations_no_active_signals_csv_fallback_without_db_error(
+        self, auto_trade_engine_with_db, db_session, test_user, caplog
+    ):
+        """DB signals with zero ACTIVE must fall back to CSV without UnboundLocalError."""
+        import logging
+
+        signal = Signals(
+            symbol="TCS",
+            verdict="buy",
+            final_verdict="buy",
+            last_close=3500.0,
+            status=SignalStatus.EXPIRED,
+            ts=ist_now(),
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        caplog.set_level(logging.WARNING, logger="modules.kotak_neo_auto_trader.auto_trade_engine")
+
+        fake_csv = "analysis_results/bulk_analysis_final_test.csv"
+        with (
+            patch(
+                "modules.kotak_neo_auto_trader.auto_trade_engine.glob.glob",
+                return_value=[fake_csv],
+            ),
+            patch(
+                "modules.kotak_neo_auto_trader.auto_trade_engine.os.path.getmtime",
+                return_value=0.0,
+            ),
+            patch.object(
+                auto_trade_engine_with_db,
+                "load_latest_recommendations_from_csv",
+                return_value=[],
+            ) as mock_csv,
+        ):
+            recs = auto_trade_engine_with_db.load_latest_recommendations()
+
+        mock_csv.assert_called_once_with(fake_csv)
+        assert recs == []
+        assert "Failed to load recommendations from database" not in caplog.text
+
     def test_load_recommendations_per_user_status_takes_precedence(
         self, auto_trade_engine_with_db, db_session, test_user
     ):

@@ -40,11 +40,12 @@ except ImportError:
 
 # Import holiday calendar for trading day checks
 try:
-    from src.infrastructure.db.timezone_utils import ist_now
+    from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
     from src.infrastructure.utils.holiday_calendar import is_trading_day as is_trading_day_check
 except ImportError:
     # Fallback if running from different context
     ist_now = None
+    ist_now_naive = None
     is_trading_day_check = None
 
 
@@ -53,13 +54,19 @@ def is_trading_day() -> bool:
     if is_trading_day_check and ist_now:
         return is_trading_day_check(ist_now().date())
     # Fallback to weekday check if imports failed
-    return datetime.now().weekday() < 5  # 0-4 is Monday-Friday
+    if ist_now is not None:
+        return ist_now().weekday() < 5
+    return datetime.now().weekday() < 5
 
 
 def wait_until_market_open():
-    """Wait until market opens at 9:15 AM"""
-    now = datetime.now()
-    market_open = datetime.now().replace(hour=9, minute=15, second=0, microsecond=0)
+    """Wait until market opens at 9:15 AM IST"""
+    if ist_now_naive is not None:
+        now = ist_now_naive()
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    else:
+        now = datetime.now()
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
 
     if now >= market_open:
         logger.info("Market already open")
@@ -221,8 +228,8 @@ def main():
         total_stats = {'checked': 0, 'updated': 0, 'executed': 0}
 
         while True:
-            # Check if market is still open
-            now = datetime.now().time()
+            # Check if market is still open (IST)
+            now = ist_now().time() if ist_now else datetime.now().time()
             market_close = dt_time(15, 30)
 
             if now > market_close:
@@ -234,7 +241,8 @@ def main():
 
             # Monitor and update
             monitor_count += 1
-            logger.info(f"\n--- Monitor Cycle #{monitor_count} ({datetime.now().strftime('%H:%M:%S')}) ---")
+            ts = ist_now().strftime("%H:%M:%S") if ist_now else datetime.now().strftime("%H:%M:%S")
+            logger.info(f"\n--- Monitor Cycle #{monitor_count} ({ts}) ---")
 
             stats = sell_manager.monitor_and_update()
 

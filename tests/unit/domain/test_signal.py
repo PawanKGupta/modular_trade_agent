@@ -3,11 +3,12 @@ from datetime import datetime
 from src.domain.entities.signal import Signal, SignalType
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 def test_signal_basic_and_justifications():
     s = Signal(
         ticker="RELIANCE.NS",
         signal_type=SignalType.BUY,
-        timestamp=datetime.now(),
+        timestamp=ist_now_naive(),
         strength_score=50.0,
     )
     assert s.is_buyable() is True
@@ -19,6 +20,6 @@ def test_signal_basic_and_justifications():
 
 def test_signal_validation():
     with pytest.raises(ValueError):
-        Signal(ticker="", signal_type=SignalType.BUY, timestamp=datetime.now(), strength_score=10)
+        Signal(ticker="", signal_type=SignalType.BUY, timestamp=ist_now_naive(), strength_score=10)
     with pytest.raises(ValueError):
-        Signal(ticker="X", signal_type=SignalType.BUY, timestamp=datetime.now(), strength_score=101)
+        Signal(ticker="X", signal_type=SignalType.BUY, timestamp=ist_now_naive(), strength_score=101)

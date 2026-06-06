@@ -15,7 +15,6 @@ Features:
 
 import sys
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +32,9 @@ from modules.kotak_neo_auto_trader.utils.price_manager_utils import (  # noqa: E
 from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
     extract_ticker_base,
     get_lookup_symbol,
+    lookup_price_from_map,
 )
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive  # noqa: E402
 from utils.logger import logger  # noqa: E402
 
 
@@ -72,7 +73,7 @@ class PriceCache:
             try:
                 if key in self._cache:
                     entry = self._cache[key]
-                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    age = (ist_now_naive() - entry["timestamp"]).total_seconds()
                     if age < ttl_seconds:
                         logger.debug(f"Cache hit for historical price: {key} (age: {age:.1f}s)")
                         return entry["data"]
@@ -119,7 +120,7 @@ class PriceCache:
                     "data": (
                         data.copy() if isinstance(data, pd.DataFrame) else data
                     ),  # Copy to prevent external mutations
-                    "timestamp": datetime.now(),
+                    "timestamp": ist_now_naive(),
                 }
                 logger.debug(f"Cached historical price for {key}")
             finally:
@@ -146,7 +147,7 @@ class PriceCache:
             try:
                 if key in self._realtime_cache:
                     entry = self._realtime_cache[key]
-                    age = (datetime.now() - entry["timestamp"]).total_seconds()
+                    age = (ist_now_naive() - entry["timestamp"]).total_seconds()
                     if age < ttl_seconds:
                         price = entry["price"]
                         # Validate price
@@ -208,7 +209,7 @@ class PriceCache:
 
                 self._realtime_cache[key] = {
                     "price": float(price),
-                    "timestamp": datetime.now(),
+                    "timestamp": ist_now_naive(),
                 }
                 logger.debug(f"Cached realtime price for {key}: Rs {price:.2f}")
             finally:
@@ -341,13 +342,16 @@ class PriceService:
         symbol: str,
         ticker: str | None = None,
         broker_symbol: str | None = None,
+        broker_price_map: dict[str, float] | None = None,
     ) -> float | None:
         """
         Get real-time Last Traded Price (LTP) for a symbol.
 
         Priority:
-        1. LivePriceManager/LivePriceCache (WebSocket) if available
-        2. yfinance fallback (delayed ~15-20 min)
+        1. In-memory cache (when enabled)
+        2. LivePriceManager/LivePriceCache (Kotak quotes polling) if available
+        3. Optional broker_price_map (e.g. Kotak holdings LTP batch for this request)
+        4. yfinance fallback via 1m OHLCV (delayed ~15-20 min)
 
         This method maintains exact same behavior as existing get_current_ltp() methods.
 
@@ -355,6 +359,7 @@ class PriceService:
             symbol: Base symbol name (e.g., 'RELIANCE')
             ticker: Yahoo Finance ticker (e.g., 'RELIANCE.NS') - used for fallback
             broker_symbol: Broker symbol (e.g., 'RELIANCE-EQ') - used for WebSocket lookup
+            broker_price_map: Optional pre-fetched symbol -> LTP map (holdings API, etc.)
 
         Returns:
             Current LTP as float, or None if unavailable
@@ -397,7 +402,10 @@ class PriceService:
                 ltp = get_ltp_from_manager(self.live_price_manager, lookup_symbol, ticker)
 
                 if ltp is not None and ltp > 0:
-                    logger.debug(f"{symbol} LTP from WebSocket: Rs {ltp:.2f}")
+                    logger.info(
+                        f"{symbol} LTP Rs {ltp:.2f} source=kotak_live "
+                        f"(lookup={lookup_symbol})"
+                    )
 
                     # Cache the result
                     if self._cache:
@@ -405,20 +413,39 @@ class PriceService:
 
                     return ltp
             except Exception as e:
-                logger.debug(f"WebSocket LTP failed for {symbol}: {e}")
+                lookup = get_lookup_symbol(broker_symbol, symbol or "")
+                logger.debug(f"Kotak live LTP failed for {symbol} ({lookup}): {e}")
 
-        # Fallback to yfinance (delayed ~15-20 min)
+        # Optional broker-provided prices (e.g. holdings snapshot for UI)
+        if broker_price_map:
+            lookup_sym = broker_symbol or symbol
+            broker_ltp = lookup_price_from_map(broker_price_map, lookup_sym)
+            if broker_ltp is not None and broker_ltp > 0:
+                logger.info(
+                    f"{symbol} LTP Rs {broker_ltp:.2f} source=broker_map "
+                    f"(lookup={lookup_sym})"
+                )
+                if self._cache:
+                    self._cache.set_realtime(cache_key, broker_ltp)
+                return broker_ltp
+
+        # Fallback to yfinance (delayed ~15-20 min) via in-process OHLCV cache (not Postgres)
         if ticker:
             try:
-                # Use 1-minute interval for most recent price
-                df = fetch_ohlcv_yf(ticker, days=1, interval="1m", add_current_day=True)
+                from core.data_fetcher import get_cached_ohlcv
+
+                df = get_cached_ohlcv(
+                    ticker=ticker, days=1, interval="1m", add_current_day=True
+                )
 
                 if df is None or df.empty:
                     logger.warning(f"No LTP data for {ticker} from yfinance")
                     return None
 
                 ltp = float(df["close"].iloc[-1])
-                logger.debug(f"{symbol} LTP from yfinance (delayed ~15min): Rs {ltp:.2f}")
+                logger.info(
+                    f"{symbol} LTP Rs {ltp:.2f} source=yahoo_1m (delayed, ticker={ticker})"
+                )
 
                 # Cache the result
                 if self._cache:
@@ -479,9 +506,8 @@ class PriceService:
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
                     )
                 elif hasattr(self.live_price_manager, "subscribe"):
-                    # LivePriceCache interface
-                    for symbol in symbols_to_subscribe:
-                        self.live_price_manager.subscribe(symbol)
+                    # LivePriceCache.subscribe expects a list of symbols
+                    self.live_price_manager.subscribe(symbols_to_subscribe)
                     logger.debug(
                         f"Subscribed to {len(symbols_to_subscribe)} new symbols via LivePriceCache "
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols) + len(symbols_to_subscribe)})"
@@ -549,8 +575,8 @@ class PriceService:
                     )
                     return True
                 elif hasattr(self.live_price_manager, "unsubscribe"):
-                    for symbol in symbols_to_unsubscribe:
-                        self.live_price_manager.unsubscribe(symbol)
+                    # LivePriceCache.unsubscribe expects a list of symbols
+                    self.live_price_manager.unsubscribe(symbols_to_unsubscribe)
                     logger.debug(
                         f"Unsubscribed from {len(symbols_to_unsubscribe)} symbols "
                         f"(service: {service_id}, total subscribed: {len(self._subscribed_symbols)})"
@@ -625,7 +651,7 @@ class PriceService:
         """
         from datetime import time as dt_time
 
-        now = datetime.now().time()
+        now = ist_now().time()
         market_open = dt_time(9, 15)
         market_close = dt_time(15, 30)
 

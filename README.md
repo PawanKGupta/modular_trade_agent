@@ -32,10 +32,13 @@ A professional-grade **multi-user trading system** for Indian stock markets (NSE
 - **Notifications**: Multi-channel notifications (Telegram, Email, In-App) with granular preferences
 
 ### 🔐 Security
-- **JWT Authentication**: Secure token-based auth with refresh tokens
-- **Encrypted Credentials**: Broker and Telegram credentials encrypted in database
-- **Role-Based Access**: Admin and User roles with appropriate permissions
-- **Password Hashing**: Secure pbkdf2_sha256 password hashing
+- **JWT Authentication:** Secure token-based auth with refresh tokens
+- **Email verification:** Required for signup and email changes (configure SMTP)
+- **Self-service auth:** Signup, forgot/reset password, profile updates
+- **Encrypted Credentials:** Broker, Razorpay, and Telegram credentials encrypted in database
+- **Role-Based Access:** Admin and User roles; market analysis run-once is admin-only
+- **Password Hashing:** Secure pbkdf2_sha256 password hashing
+- **Billing:** Performance-fee invoicing with offline UPI or optional Razorpay checkout
 
 ## 🚀 Quick Start
 

@@ -2,6 +2,7 @@
 
 from config.strategy_config import StrategyConfig
 from src.infrastructure.db.models import UserTradingConfig
+from utils.ml_price_availability import resolve_ml_price_target_path_str
 
 
 def create_default_user_config(user_id: int) -> UserTradingConfig:
@@ -52,7 +53,8 @@ def create_default_user_config(user_id: int) -> UserTradingConfig:
         default_variety="AMO",
         default_validity="DAY",
         # Behavior Toggles
-        allow_duplicate_recommendations_same_day=False,  # From modules/kotak_neo_auto_trader/config.py
+        # From modules/kotak_neo_auto_trader/config.py
+        allow_duplicate_recommendations_same_day=False,
         exit_on_ema9_or_rsi50=True,
         min_combined_score=25,  # From modules/kotak_neo_auto_trader/config.py
         enable_premarket_amo_adjustment=strategy_config.enable_premarket_amo_adjustment,
@@ -67,6 +69,7 @@ def create_default_user_config(user_id: int) -> UserTradingConfig:
         ml_model_version=None,  # Will be set when ML model is active
         ml_confidence_threshold=strategy_config.ml_confidence_threshold,
         ml_combine_with_rules=strategy_config.ml_combine_with_rules,
+        ml_price_enabled=strategy_config.ml_price_enabled,
     )
 
 
@@ -120,10 +123,12 @@ def db_config_to_strategy_config(db_config: UserTradingConfig) -> StrategyConfig
         news_sentiment_neg_threshold=db_config.news_sentiment_neg_threshold,
         # ML Configuration
         ml_enabled=db_config.ml_enabled,  # Use user's ML enabled setting
-        ml_verdict_model_path="models/verdict_model_random_forest.pkl",  # Default, can be resolved from ml_model_version if needed
-        ml_price_model_path="models/price_model_random_forest.pkl",
+        # Default; can be resolved from ml_model_version if needed
+        ml_verdict_model_path="models/verdict_model_random_forest.pkl",
+        ml_price_model_path=resolve_ml_price_target_path_str(),
         ml_confidence_threshold=db_config.ml_confidence_threshold,
         ml_combine_with_rules=db_config.ml_combine_with_rules,
+        ml_price_enabled=db_config.ml_price_enabled,
         # Order Defaults
         default_exchange=db_config.default_exchange,
         default_product=db_config.default_product,

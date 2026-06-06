@@ -13,7 +13,7 @@ import pytest
 from src.application.services.individual_service_manager import (
     IndividualServiceManager,
 )
-from src.infrastructure.db.models import Users
+from src.infrastructure.db.models import UserRole, Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
@@ -26,6 +26,7 @@ def sample_user(db_session):
     user = Users(
         email="test@example.com",
         password_hash="hashed_password",
+        role=UserRole.ADMIN,
         created_at=ist_now(),
     )
     db_session.add(user)
@@ -51,17 +52,18 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify schedules were created
         schedules = schedule_repo.get_all()
-        # premarket_retry, sell_monitor, analysis, buy_orders, eod_cleanup
-        # (position_monitor removed in Phase 3)
-        assert len(schedules) == 5
+        # Default daily tasks (position_monitor removed in Phase 3)
+        assert len(schedules) == 7
 
         # Verify specific schedules exist
         task_names = {s.task_name for s in schedules}
         expected_tasks = {
             "premarket_retry",
+            "premarket_amo_adjustment",
             "sell_monitor",
             "analysis",
             "buy_orders",
+            "buy_margin_preview",
             "eod_cleanup",
         }
         assert task_names == expected_tasks
@@ -70,7 +72,22 @@ class TestIndividualServiceManagerSchedules:
         premarket = schedule_repo.get_by_task_name("premarket_retry")
         assert premarket is not None
         assert premarket.schedule_time.hour == 9
-        assert premarket.schedule_time.minute == 0
+        assert premarket.schedule_time.minute == 3
+
+        buy_orders = schedule_repo.get_by_task_name("buy_orders")
+        assert buy_orders is not None
+        assert buy_orders.schedule_time.hour == 9
+        assert buy_orders.schedule_time.minute == 1
+
+        amo_adjust = schedule_repo.get_by_task_name("premarket_amo_adjustment")
+        assert amo_adjust is not None
+        assert amo_adjust.schedule_time.hour == 9
+        assert amo_adjust.schedule_time.minute == 5
+
+        margin_preview = schedule_repo.get_by_task_name("buy_margin_preview")
+        assert margin_preview is not None
+        assert margin_preview.schedule_time.hour == 16
+        assert margin_preview.schedule_time.minute == 5
         assert premarket.enabled is True
         assert premarket.schedule_type == "daily"
 
@@ -111,7 +128,7 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify other schedules were still created
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 5  # 1 existing + 4 new (position_monitor removed in Phase 3)
+        assert len(schedules) == 7  # 1 existing + 6 new (position_monitor removed in Phase 3)
 
     def test_get_status_returns_services_when_schedules_exist(self, db_session, sample_user):
         """Test that get_status returns service status for all scheduled tasks"""
@@ -122,7 +139,7 @@ class TestIndividualServiceManagerSchedules:
 
         # Verify status contains all scheduled tasks
         assert isinstance(status, dict)
-        assert len(status) == 5  # All 5 default schedules (position_monitor removed in Phase 3)
+        assert len(status) == 7  # All default schedules (position_monitor removed in Phase 3)
 
         # Verify each task has required fields
         for _task_name, info in status.items():
@@ -148,9 +165,27 @@ class TestIndividualServiceManagerSchedules:
 
         # Should still return status for all default schedules
         assert isinstance(status, dict)
-        assert len(status) == 5  # position_monitor removed in Phase 3
+        assert len(status) == 7  # position_monitor removed in Phase 3
 
         # Verify schedules were created in database
         schedule_repo = ServiceScheduleRepository(db_session)
         schedules = schedule_repo.get_all()
-        assert len(schedules) == 5  # position_monitor removed in Phase 3
+        assert len(schedules) == 7  # position_monitor removed in Phase 3
+
+    def test_get_status_excludes_analysis_for_non_admin(self, db_session):
+        """Non-admin users do not see analysis in get_status (admin-only operator)."""
+        user = Users(
+            email="user@example.com",
+            password_hash="hashed_password",
+            role=UserRole.USER,
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+
+        manager = IndividualServiceManager(db_session)
+        status = manager.get_status(user.id)
+
+        assert "analysis" not in status
+        assert len(status) == 6

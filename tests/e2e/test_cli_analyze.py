@@ -1,16 +1,17 @@
 from src.presentation.cli.application import Application
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 class FakeBulkAnalyzeUseCase:
     def execute(self, request):
         from datetime import datetime
         from src.application.dto.analysis_response import AnalysisResponse, BulkAnalysisResponse
         r = AnalysisResponse(
-            ticker='RELIANCE.NS', status='success', timestamp=datetime.now(),
+            ticker='RELIANCE.NS', status='success', timestamp=ist_now_naive(),
             verdict='buy', combined_score=40.0, priority_score=50.0
         )
         return BulkAnalysisResponse(
-            results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=datetime.now(), execution_time_seconds=0.1
+            results=[r], total_analyzed=1, successful=1, failed=0, buyable_count=1, timestamp=ist_now_naive(), execution_time_seconds=0.1
         )
 
 

@@ -15,9 +15,13 @@ from config.settings import (
     RETRY_MAX_ATTEMPTS,
     RETRY_MAX_DELAY,
 )
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.circuit_breaker import CircuitBreaker
 from utils.logger import logger
 from utils.retry_handler import exponential_backoff_retry
+
+# Intraday interval for LTP fallback only (not stored in Postgres price_cache).
+OHLCV_MINUTE_INTERVAL = "1m"
 
 # Shared OHLCV cache across ALL users (paper + broker trading) - market data is public
 # Format: {cache_key: (DataFrame, cached_time)}
@@ -134,22 +138,47 @@ api_retry_configured = exponential_backoff_retry(
 )
 
 
+def live_current_day_scope_allowed(
+    *,
+    end_date: str | datetime | None,
+    add_current_day: bool,
+    interval: str,
+) -> bool:
+    """
+    Whether live intraday OHLCV may be appended or refreshed.
+
+    Returns False for backtests and any historical ``end_date`` strictly before IST
+    calendar today, so completed sessions are not mixed with the live session.
+    """
+    if not add_current_day or interval != "1d":
+        return False
+    if end_date is None:
+        return True
+    if isinstance(end_date, str):
+        end_d = datetime.strptime(end_date, "%Y-%m-%d").date()
+    elif isinstance(end_date, datetime):
+        end_d = end_date.date()
+    else:
+        return False
+    return end_d >= ist_now().date()
+
+
 def _get_current_day_data(ticker, session=None):
     """
-    Get current day trading data from live ticker info
-    Returns dict with current day OHLCV data or None if not available
-    session is ignored: yfinance now requires curl_cffi session; we use default (no session).
+    Return today's OHLCV only when yfinance ``history`` includes an intraday row for today.
+
+    Does not synthesize a bar from ``Ticker.info`` (``dayHigh`` / ``volume`` can reflect the
+  prior session before today's daily row exists, e.g. Monday open).
+
+    ``session`` is ignored: yfinance uses its default curl_cffi session.
     """
     try:
         # Do not pass requests.Session - yfinance requires curl_cffi session or None (use its default)
         stock = yf.Ticker(ticker)
-        info = stock.info
         hist = stock.history(period="2d")  # Get last 2 days to find today's data
 
-        # Check if we have today's data in history
-        today = datetime.now().date()
+        today = ist_now().date()
         if not hist.empty and hist.index[-1].date() == today:
-            # Use today's data from history
             latest = hist.iloc[-1]
             return {
                 "date": today,
@@ -160,25 +189,11 @@ def _get_current_day_data(ticker, session=None):
                 "volume": latest["Volume"],
             }
 
-        # Fallback: construct current day data from live info
-        current_price = info.get("currentPrice")
-        prev_close = info.get("previousClose")
-        volume = info.get("volume")
-
-        if current_price and prev_close and volume:
-            # Estimate OHLC from available data
-            day_high = info.get("dayHigh", current_price)
-            day_low = info.get("dayLow", current_price)
-
-            return {
-                "date": today,
-                "open": prev_close,  # Approximate - actual open not always available
-                "high": day_high,
-                "low": day_low,
-                "close": current_price,
-                "volume": volume,
-            }
-
+        logger.debug(
+            "No intraday history row for %s on %s; skipping info-based current-day bar",
+            ticker,
+            today,
+        )
         return None
 
     except Exception as e:
@@ -218,12 +233,92 @@ def _append_current_day_data(df, live_data):
         return df  # Return original df if append fails
 
 
+def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
+    """
+    Fetch OHLCV via Postgres/SQLite cache when enabled, else direct Yahoo.
+
+    See ``fetch_ohlcv_yf_raw`` for the underlying Yahoo implementation.
+
+    Intraday ``1m`` uses in-process ``get_cached_ohlcv`` only (not price_cache / gap_fill).
+    """
+    if interval == OHLCV_MINUTE_INTERVAL:
+        return get_cached_ohlcv(
+            ticker=ticker,
+            days=days,
+            interval=interval,
+            add_current_day=add_current_day,
+            end_date=end_date,
+        )
+
+    try:
+        from config.settings import OHLCV_CACHE_ENABLED  # noqa: PLC0415
+
+        if OHLCV_CACHE_ENABLED:
+            from src.application.services.ohlcv_cache_service import (  # noqa: PLC0415
+                create_ohlcv_cache_service,
+            )
+            from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
+            db = SessionLocal()
+            try:
+                svc = create_ohlcv_cache_service(db, fetch_func=fetch_ohlcv_yf_raw)
+                if svc is not None:
+                    df = svc.get_ohlcv(
+                        ticker,
+                        days=days,
+                        interval=interval,
+                        end_date=end_date,
+                        add_current_day=add_current_day,
+                    )
+                    if df is not None and not df.empty:
+                        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+                            log_ohlcv_cache,
+                        )
+
+                        log_ohlcv_cache(
+                            logger,
+                            "fetch_ohlcv_yf %s [%s]: %s rows via cache",
+                            ticker,
+                            interval,
+                            len(df),
+                        )
+                        return df
+            finally:
+                db.close()
+    except Exception as exc:
+        from src.application.services.ohlcv_cache_logging import (  # noqa: PLC0415
+            log_ohlcv_cache,
+        )
+
+        log_ohlcv_cache(logger, "fetch_ohlcv_yf %s [%s]: cache bypass (%s)", ticker, interval, exc)
+
+    from src.application.services.ohlcv_cache_logging import log_ohlcv_cache  # noqa: PLC0415
+    from src.application.services.ohlcv_runtime import is_ohlcv_cache_read_only  # noqa: PLC0415
+
+    if is_ohlcv_cache_read_only():
+        log_ohlcv_cache(
+            logger,
+            "fetch_ohlcv_yf %s [%s]: read-only context — no Yahoo fallback",
+            ticker,
+            interval,
+        )
+        return None
+
+    return fetch_ohlcv_yf_raw(
+        ticker,
+        days=days,
+        interval=interval,
+        end_date=end_date,
+        add_current_day=add_current_day,
+    )
+
+
 @yfinance_circuit_breaker
 @api_retry_configured
-def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
+def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_current_day=True):
     # Determine end date (exclusive in yfinance); include the requested day by adding 1 day
     if end_date is None:
-        end = datetime.now()
+        end = ist_now_naive()
     else:
         if isinstance(end_date, str):
             end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -321,12 +416,14 @@ def fetch_ohlcv_yf(ticker, days=365, interval="1d", end_date=None, add_current_d
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        # Only add current day data if explicitly requested (avoid data leakage in backtests)
-        if add_current_day:
-            today_str = datetime.now().strftime("%Y-%m-%d")
+        # Only add live current-day data for live/analysis windows (not historical backtests)
+        if live_current_day_scope_allowed(
+            end_date=end_date, add_current_day=add_current_day, interval=interval
+        ):
+            today_str = ist_now_naive().strftime("%Y-%m-%d")
             latest_date_str = df["date"].iloc[-1].strftime("%Y-%m-%d")
 
-            if latest_date_str < today_str and interval == "1d":
+            if latest_date_str < today_str:
                 logger.debug(
                     f"Historical data for {ticker} is outdated (latest: {latest_date_str}, today: {today_str})"
                 )
@@ -464,13 +561,22 @@ def get_cached_ohlcv(
                 f"Fetching OHLCV data for {ticker} (days={days}, interval={interval}, "
                 f"add_current_day={add_current_day}, end_date={end_date})"
             )
-            data = fetch_ohlcv_yf(
-                ticker,
-                days=days,
-                interval=interval,
-                add_current_day=add_current_day,
-                end_date=end_date,
-            )
+            if interval == OHLCV_MINUTE_INTERVAL:
+                data = fetch_ohlcv_yf_raw(
+                    ticker,
+                    days=days,
+                    interval=interval,
+                    add_current_day=add_current_day,
+                    end_date=end_date,
+                )
+            else:
+                data = fetch_ohlcv_yf(
+                    ticker,
+                    days=days,
+                    interval=interval,
+                    add_current_day=add_current_day,
+                    end_date=end_date,
+                )
             if data is not None and not data.empty:
                 # Update cache
                 _shared_ohlcv_cache[cache_key] = (data.copy(), now)

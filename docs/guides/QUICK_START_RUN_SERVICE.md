@@ -6,12 +6,15 @@ The `run_trading_service.py` is a **unified service** that runs ALL trading task
 
 The unified service automatically runs these tasks on trading days (Mon-Fri):
 
-- **9:00 AM** - Pre-market retry (retry failed orders from previous day)
-- **9:15 AM - 3:30 PM** - Sell monitoring (continuous, monitors sell orders every minute)
-- **9:30 AM, 10:30 AM, 11:30 AM...** - Position monitoring (hourly)
+- **9:01 AM** - Place buy orders (REGULAR at open) + re-entry checks
+- **9:03 AM** - Pre-market retry (retry failed orders from database)
+- **9:05 AM** - Pre-market pending buy adjustment (if enabled in config)
+- **9:15 AM - 3:30 PM** - Sell monitoring (continuous)
 - **4:00 PM** - Market analysis (runs trade_agent.py --backtest)
-- **4:05 PM** - Place buy orders (AMO orders for next day)
-- **6:00 PM** - End-of-day cleanup (resets for next day)
+- **4:05 PM (16:05)** - Evening buy margin preview (no orders placed)
+- **6:00 PM (18:00)** - End-of-day cleanup (resets for next day)
+
+See [`docs/development/TRADING_SERVICES_FLOW.md`](../development/TRADING_SERVICES_FLOW.md) for the canonical schedule.
 
 ## 🚀 Quick Start (Windows)
 

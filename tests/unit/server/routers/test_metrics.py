@@ -8,6 +8,8 @@ import pytest
 from server.app.routers import metrics as metrics_module
 from src.infrastructure.db.models import Positions, TradeMode, UserRole, Users, UserSettings
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
+
 
 class DummyUser(SimpleNamespace):
     def __init__(self, **kwargs):
@@ -25,6 +27,7 @@ def mock_deps(monkeypatch, db_session):
     """Mock dependencies for metrics endpoints"""
     # Use the system user created by ensure_system_user fixture (id=1)
     # or create a new user if system user doesn't exist
+
     user = db_session.query(Users).filter_by(id=1).first()
     if not user:
         user = Users(
@@ -96,7 +99,7 @@ def test_get_dashboard_metrics_with_profitable_position(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
     position = Positions(
         user_id=user_id,
         symbol="AAPL",
@@ -133,7 +136,7 @@ def test_get_dashboard_metrics_with_losing_position(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
     position = Positions(
         user_id=user_id,
         symbol="GOOGL",
@@ -168,7 +171,7 @@ def test_get_dashboard_metrics_mixed_positions(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
 
     # Profitable trades
     for i in range(3):
@@ -222,7 +225,7 @@ def test_get_dashboard_metrics_date_range_filter(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
 
     # Position within range
     position_in_range = Positions(
@@ -281,7 +284,7 @@ def test_get_dashboard_metrics_avg_holding_period(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
 
     # Trade held for 5 days
     position1 = Positions(
@@ -445,7 +448,7 @@ def test_get_dashboard_metrics_zero_realized_pnl_positions(mock_deps):
     db = deps["db"]
     user_id = deps["user"].id
 
-    now = datetime.now()
+    now = ist_now_naive()
 
     # Position with None realized_pnl
     position1 = Positions(

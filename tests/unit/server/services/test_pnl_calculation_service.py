@@ -25,7 +25,7 @@ class FakeOrderRepo:
         self._sell_orders_map = {o.id: o for o in (sell_orders or [])}
 
     def list(self, user_id):
-        return self._buy_orders
+        return (self._buy_orders, len(self._buy_orders))
 
     def get(self, order_id):
         return self._sell_orders_map.get(order_id)
@@ -92,18 +92,16 @@ def _build_service(execute_results):
 
 
 def _normalize_orders_repo_list(service: PnlCalculationService) -> None:
-    """Ensure PnlCalculationService iterates a flat list of orders.
-
-    Some environments return `(items, total_count)` from OrdersRepository.list().
-    """
+    """Match production contract: OrdersRepository.list() -> (items, total_count)."""
 
     original_list = service.orders_repo.list
 
     def list_items(*args, **kwargs):
         result = original_list(*args, **kwargs)
         if isinstance(result, tuple) and len(result) == 2:
-            return result[0]
-        return result
+            return result
+        items = result or []
+        return (items, len(items))
 
     service.orders_repo.list = list_items
 
@@ -124,6 +122,88 @@ def test_calculate_realized_pnl_filters_trade_mode(monkeypatch):
 def test_calculate_realized_pnl_falls_back_to_exit_price(monkeypatch):
     position = _make_position(realized_pnl=None, exit_price=120.0, avg_price=100.0)
     position.sell_order_id = 5
+    service = _build_service([[position]])
+    service.orders_repo = FakeOrderRepo(
+        buy_orders=[],
+        sell_orders=[_make_order(id=5, quantity=4.0)],
+    )
+
+    result = service.calculate_realized_pnl(user_id=1)
+
+    expected = (120.0 - 100.0) * 4.0
+    assert result[position.closed_at.date()] == expected
+
+
+def test_calculate_realized_pnl_skips_when_sold_quantity_zero():
+    position = _make_position(
+        realized_pnl=None,
+        exit_price=120.0,
+        avg_price=100.0,
+        sell_order_id=9,
+    )
+    service = _build_service([[position]])
+    service.orders_repo = FakeOrderRepo(
+        buy_orders=[],
+        sell_orders=[_make_order(id=9, quantity=0.0)],
+    )
+
+    assert service.calculate_realized_pnl(user_id=1) == {}
+
+
+def test_calculate_realized_pnl_skips_without_exit_or_realized():
+    position = _make_position(realized_pnl=None, exit_price=None, avg_price=100.0)
+    service = _build_service([[position]])
+    service.orders_repo = FakeOrderRepo()
+
+    assert service.calculate_realized_pnl(user_id=1) == {}
+
+
+def test_calculate_realized_pnl_respects_target_date():
+    target = date(2026, 5, 1)
+    position = _make_position(
+        closed_at=datetime(2026, 5, 1, 15, 30),
+        realized_pnl=33.0,
+    )
+    service = _build_service([[position]])
+
+    assert service.calculate_realized_pnl(1, target_date=target) == {target: 33.0}
+
+
+def test_calculate_fees_non_sqlite_uses_datetime_window():
+    target = date(2026, 4, 10)
+    order = SimpleNamespace(
+        quantity=2.0,
+        avg_price=50.0,
+        price=None,
+        placed_at=datetime(2026, 4, 10, 14, 0, 0),
+    )
+    service = _build_service([[order]])
+    service.db.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    fees = service.calculate_fees(1, target_date=target)
+
+    assert fees[target] == pytest.approx(100.0 * service.DEFAULT_FEE_RATE)
+
+
+def test_calculate_unrealized_pnl_placeholder_when_field_missing(db_session, sample_user):
+    service = PnlCalculationService(db_session)
+    _create_position(
+        db_session,
+        sample_user.id,
+        closed_at=None,
+        unrealized_pnl=None,
+        symbol="NOPNL.NS",
+    )
+
+    target = date(2026, 6, 15)
+    result = service.calculate_unrealized_pnl(sample_user.id, target_date=target)
+
+    assert result.get(target) == 0.0
+
+
+def test_get_buy_order_for_position_returns_none_without_opened_at(db_session, sample_user):
+    service = PnlCalculationService(db_session)
+    assert service._get_buy_order_for_position(sample_user.id, "ANY.NS", None) is None
 
 
 @pytest.fixture

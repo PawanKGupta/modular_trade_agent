@@ -39,6 +39,12 @@ def paper_broker():
 class TestAMOOrderPlacement:
     """Test AMO order placement behavior"""
 
+    def test_get_portfolio_returns_cash_summary(self, paper_broker):
+        """Re-entry balance checks use get_portfolio() cash keys."""
+        portfolio = paper_broker.get_portfolio()
+        assert portfolio["availableCash"] == portfolio["cash"]
+        assert portfolio["availableCash"] > 0
+
     def test_amo_order_placed_but_not_executed_immediately(self, paper_broker):
         """Test that AMO orders are saved as PENDING/OPEN and not executed immediately"""
         # Create AMO MARKET order

@@ -13,10 +13,11 @@ from typing import Any
 from utils.logger import logger
 
 try:
-    from src.infrastructure.db.timezone_utils import IST, ist_now
+    from src.infrastructure.db.timezone_utils import IST, ist_now, ist_now_naive
 except ImportError:
     IST = None
     ist_now = None
+    ist_now_naive = None
 
 try:
     from .sell_engine import SellOrderManager
@@ -1336,7 +1337,7 @@ class UnifiedOrderMonitor:
             if ist_now:
                 execution_time = ist_now()
             else:
-                execution_time = datetime.now()
+                execution_time = ist_now_naive() if ist_now_naive else datetime.now()
             if db_order and hasattr(db_order, "filled_at") and db_order.filled_at:
                 execution_time = db_order.filled_at
             elif db_order and hasattr(db_order, "execution_time") and db_order.execution_time:

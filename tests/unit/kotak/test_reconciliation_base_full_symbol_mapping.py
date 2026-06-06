@@ -5,6 +5,7 @@ Tests the fix where reconciliation matches broker holdings by both full symbol a
 """
 
 import sys
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -16,6 +17,7 @@ sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.sell_engine import SellOrderManager  # noqa: E402
 from src.infrastructure.db.models import Positions  # noqa: E402
+from src.infrastructure.db.timezone_utils import ist_now_naive  # noqa: E402
 
 
 class TestReconciliationBaseFullSymbolMapping:
@@ -140,6 +142,7 @@ class TestReconciliationBaseFullSymbolMapping:
         position.symbol = "SOLD-EQ"
         position.quantity = 10.0
         position.closed_at = None
+        position.opened_at = ist_now_naive() - timedelta(days=3)
 
         sell_manager.positions_repo.list = Mock(return_value=[position])
         sell_manager.positions_repo.mark_closed = Mock()
@@ -147,9 +150,11 @@ class TestReconciliationBaseFullSymbolMapping:
         # Mock empty holdings (position truly sold)
         holdings_response = {"data": []}
         sell_manager.portfolio.get_holdings = Mock(return_value=holdings_response)
+        sell_manager.portfolio.get_positions = Mock(return_value={"data": []})
 
         # Run reconciliation
-        stats = sell_manager._reconcile_positions_with_broker_holdings(holdings_response)
+        with patch.object(sell_manager, "_has_recent_executed_buy_order", return_value=False):
+            stats = sell_manager._reconcile_positions_with_broker_holdings(holdings_response)
 
         # Should detect manual full sell
         assert stats["closed"] == 1

@@ -54,6 +54,28 @@ def extract_ticker_base(ticker: str) -> str:
     return normalize_symbol(ticker).replace(".NS", "").replace(".BO", "")
 
 
+def normalize_subscription_symbol(symbol: str, default_suffix: str = "-EQ") -> str:
+    """
+    Normalize a symbol for LivePriceCache subscription keys.
+
+    Kotak cache keys match the subscribed trading symbol (e.g. DMART-EQ).
+    Base-only symbols (DMART) miss cache lookups when LTP uses broker_symbol.
+
+    Args:
+        symbol: Base or full trading symbol (e.g. DMART, DMART-EQ, SALSTEEL-BE)
+        default_suffix: Segment suffix when none present (NSE equity default)
+
+    Returns:
+        Uppercase trading symbol suitable for subscribe/get_ltp
+    """
+    sym = normalize_symbol(symbol)
+    if not sym:
+        return sym
+    if "-" in sym:
+        return sym
+    return f"{sym}{default_suffix}"
+
+
 def get_lookup_symbol(broker_symbol: str | None, base_symbol: str) -> str:
     """
     Get the appropriate symbol for lookup.
@@ -99,3 +121,38 @@ def get_ticker_from_full_symbol(full_symbol: str, exchange: str = "NS") -> str:
     """
     base_symbol = extract_base_symbol(full_symbol)
     return f"{base_symbol}.{exchange}"
+
+
+def symbol_lookup_keys(symbol: str) -> list[str]:
+    """
+    Return normalized symbol keys for broker or price maps.
+
+    Examples:
+        'powergrid-eq' -> ['POWERGRID-EQ', 'POWERGRID']
+    """
+    s = normalize_symbol(symbol)
+    keys = [s]
+    base = (
+        s.replace(".NS", "")
+        .replace(".BO", "")
+        .replace("-EQ", "")
+        .replace("-BE", "")
+        .replace("-BL", "")
+        .replace("-BZ", "")
+    )
+    if base and base not in keys:
+        keys.append(base)
+    if "-EQ" not in s and base:
+        eq_key = f"{base}-EQ"
+        if eq_key not in keys:
+            keys.append(eq_key)
+    return keys
+
+
+def lookup_price_from_map(price_map: dict[str, float], symbol: str) -> float | None:
+    """Return the first positive price for symbol using normalized lookup keys."""
+    for key in symbol_lookup_keys(symbol):
+        price = price_map.get(key)
+        if price is not None and price > 0:
+            return float(price)
+    return None

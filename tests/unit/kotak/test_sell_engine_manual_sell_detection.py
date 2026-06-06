@@ -39,6 +39,7 @@ class TestManualSellDetection:
     def mock_portfolio(self):
         """Mock KotakNeoPortfolio."""
         portfolio = Mock()
+        portfolio.get_positions.return_value = {"data": []}
         return portfolio
 
     @pytest.fixture
@@ -71,8 +72,9 @@ class TestManualSellDetection:
         mock_positions_repo.list.return_value = [position]
         mock_positions_repo.get_by_symbol.return_value = position
 
-        # Broker holdings: 0 shares (manual full sell)
+        # Broker holdings: 0 shares (manual full sell); positions flat too
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
 
         # Execute reconciliation
         stats = sell_manager._reconcile_positions_with_broker_holdings()
@@ -106,6 +108,7 @@ class TestManualSellDetection:
                 }
             ]
         }
+        mock_portfolio.get_positions.return_value = {"data": []}
 
         # Execute reconciliation
         stats = sell_manager._reconcile_positions_with_broker_holdings()
@@ -334,6 +337,65 @@ class TestManualSellDetection:
         # Should return empty stats without crashing
         assert stats == {"checked": 0, "updated": 0, "closed": 0, "ignored": 0}
 
+    def test_reconcile_skips_same_day_position_when_broker_missing(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Same-day buys must not be closed when holdings API shows 0 (T+1 lag)."""
+        from src.infrastructure.db.timezone_utils import ist_now_naive
+
+        position = Mock(spec=Positions)
+        position.symbol = "PFC-EQ"
+        position.quantity = 24.0
+        position.closed_at = None
+        position.opened_at = ist_now_naive()
+
+        mock_positions_repo.list.return_value = [position]
+        mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
+
+        stats = sell_manager._reconcile_positions_with_broker_holdings()
+
+        assert stats["checked"] == 1
+        assert stats["ignored"] == 1
+        assert stats["closed"] == 0
+        mock_positions_repo.mark_closed.assert_not_called()
+
+    def test_reconcile_does_not_close_when_positions_api_shows_qty(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Holdings 0 but Kotak positions net qty > 0 must not close DB position."""
+        position = Mock(spec=Positions)
+        position.symbol = "PFC-EQ"
+        position.quantity = 24.0
+        position.closed_at = None
+        position.opened_at = datetime(2026, 6, 1, 10, 0, 0)
+
+        mock_positions_repo.list.return_value = [position]
+        mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {
+            "data": [{"trdSym": "PFC-EQ", "qty": 24}]
+        }
+
+        stats = sell_manager._reconcile_positions_with_broker_holdings()
+
+        assert stats["checked"] == 1
+        assert stats["closed"] == 0
+        mock_positions_repo.mark_closed.assert_not_called()
+
+    def test_run_at_market_open_skips_reconciliation_when_disabled(
+        self, sell_manager, mock_positions_repo, mock_portfolio
+    ):
+        """Mid-session startup can skip reconcile/orphan cleanup."""
+        mock_positions_repo.list.return_value = []
+        sell_manager.get_existing_sell_orders = Mock(return_value={})
+        sell_manager._reconcile_positions_with_broker_holdings = Mock()
+        sell_manager._cancel_orphaned_sell_orders = Mock()
+
+        sell_manager.run_at_market_open(reconcile_holdings=False, cancel_orphans=False)
+
+        sell_manager._reconcile_positions_with_broker_holdings.assert_not_called()
+        sell_manager._cancel_orphaned_sell_orders.assert_not_called()
+
     def test_run_at_market_open_calls_reconciliation(
         self, sell_manager, mock_positions_repo, mock_portfolio
     ):
@@ -374,13 +436,13 @@ class TestManualSellDetection:
         db_session.refresh(user)
         sell_manager.user_id = user.id
 
-        # Create an open position
+        # Create an open position (opened prior day so T+1 skip does not apply)
         position = positions_repo.upsert(
             user_id=user.id,
             symbol="IMFA-EQ",
             quantity=82,
             avg_price=1222.7,
-            opened_at=ist_now(),
+            opened_at=ist_now() - timedelta(days=2),
         )
 
         # Create an executed sell order (recent, within 24 hours)
@@ -400,8 +462,9 @@ class TestManualSellDetection:
         db_session.commit()
         db_session.refresh(sell_order)
 
-        # Mock portfolio to return empty holdings (manual sell detected)
+        # Mock portfolio: flat holdings and positions (manual sell detected)
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
         mock_positions_repo.list.return_value = [position]
 
         # Mock ist_now function for the reconciliation
@@ -440,13 +503,13 @@ class TestManualSellDetection:
         db_session.refresh(user)
         sell_manager.user_id = user.id
 
-        # Create an open position
+        # Create an open position (opened prior day so T+1 skip does not apply)
         position = positions_repo.upsert(
             user_id=user.id,
             symbol="RELIANCE-EQ",
             quantity=20,
             avg_price=2500.0,
-            opened_at=ist_now(),
+            opened_at=ist_now() - timedelta(days=2),
         )
 
         # Create two executed sell orders - older one first
@@ -479,8 +542,9 @@ class TestManualSellDetection:
         db_session.commit()
         db_session.refresh(recent_sell_order)
 
-        # Mock portfolio to return empty holdings
+        # Mock portfolio: flat holdings and positions
         mock_portfolio.get_holdings.return_value = {"data": []}
+        mock_portfolio.get_positions.return_value = {"data": []}
         mock_positions_repo.list.return_value = [position]
 
         # Mock ist_now function

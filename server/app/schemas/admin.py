@@ -1,13 +1,41 @@
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .auth import PasswordStr, normalize_optional_mobile, validate_password_strength
 
 
 class AdminUserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
-    name: str | None = None
+    password: PasswordStr
+    name: str = Field(min_length=1, max_length=255)
     role: Literal["admin", "user"] = "user"
+    mobile_number: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("Name is required")
+        return trimmed
+
+    @field_validator("mobile_number", mode="before")
+    @classmethod
+    def mobile_optional(cls, value: str | None) -> str | None:
+        if value == "":
+            return None
+        return value
+
+    @field_validator("mobile_number")
+    @classmethod
+    def mobile_valid(cls, value: str | None) -> str | None:
+        return normalize_optional_mobile(value)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        return validate_password_strength(value)
 
 
 class AdminUserUpdate(BaseModel):
@@ -22,3 +50,4 @@ class AdminUserResponse(BaseModel):
     name: str | None
     role: Literal["admin", "user"]
     is_active: bool
+    mobile_number: str | None = None

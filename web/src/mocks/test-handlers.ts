@@ -195,9 +195,7 @@ http.post(API('/auth/login'), async () => {
 	}),
 http.post(API('/auth/signup'), async () => {
 		return HttpResponse.json({
-			access_token: 'test-token',
-			refresh_token: 'refresh-token',
-			token_type: 'bearer',
+			message: 'Account created. Check your email and click the verification link before logging in.',
 		});
 	}),
 http.post(API('/auth/refresh'), async () => {
@@ -208,7 +206,44 @@ http.post(API('/auth/refresh'), async () => {
 		});
 	}),
 	http.get(API('/auth/me'), async () => {
-		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'] });
+		return HttpResponse.json({
+			id: 1,
+			email: 'test@example.com',
+			name: 'Test User',
+			mobile_number: null,
+			roles: ['admin'],
+			email_verified: true,
+		});
+	}),
+	http.patch(API('/auth/profile'), async () => {
+		return HttpResponse.json({
+			message: 'Profile updated successfully.',
+			email: 'test@example.com',
+			mobile_number: '9876543210',
+			email_verified: true,
+			verification_required: false,
+		});
+	}),
+	http.post(API('/auth/forgot-password'), async () => {
+		return HttpResponse.json({ message: 'If an account exists for that email, we sent password reset instructions.' });
+	}),
+	http.post(API('/auth/reset-password'), async () => {
+		return HttpResponse.json({ message: 'Password reset successfully' });
+	}),
+	http.post(API('/auth/verify-email'), async () => {
+		return HttpResponse.json({
+			access_token: 'test-token',
+			refresh_token: 'refresh-token',
+			token_type: 'bearer',
+		});
+	}),
+	http.post(API('/auth/change-password'), async () => {
+		return HttpResponse.json({ message: 'Password updated successfully' });
+	}),
+	http.post(API('/auth/resend-verification'), async () => {
+		return HttpResponse.json({
+			message: 'If an account exists and is not yet verified, we sent a verification link.',
+		});
 	}),
 	// settings
 	http.get(API('/user/settings'), async () => {
@@ -308,8 +343,13 @@ http.post(API('/auth/refresh'), async () => {
 				pending_orders: 2,
 				cancelled_orders: 0,
 				rejected_orders: 0,
-				success_rate: 80,
 				reentry_orders: 2,
+				fill_rate: 100,
+				sell_fill_rate: 100,
+				trade_win_rate: 66.67,
+				closed_positions: 3,
+				winning_positions: 2,
+				success_rate: 80,
 			},
 		});
 	}),
@@ -330,20 +370,20 @@ http.post(API('/auth/refresh'), async () => {
 
 			const byStatus: Record<string, unknown[]> = {
 				pending: [
-					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
-					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', created_at: now, updated_at: now },
+					{ id: 101, symbol: 'INFY', side: 'buy', quantity: 10, price: 1500, status: 'pending', reason: 'Order placed - waiting for market open', trade_mode_display: 'Paper', created_at: now, updated_at: now },
+					{ id: 250, symbol: 'SUNPHARMA', side: 'buy', quantity: 12, price: 1280, status: 'pending', reason: 'Order placed - waiting for market open', trade_mode_display: 'Kotak Neo', created_at: now, updated_at: now },
 				],
 				ongoing: [
-					{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', created_at: now, updated_at: now },
+					{ id: 201, symbol: 'RELIANCE', side: 'buy', quantity: 5, price: 2400, status: 'ongoing', reason: 'Order executed at Rs 2400.00', trade_mode_display: 'Paper', execution_price: 2400, execution_qty: 5, execution_time: now, created_at: now, updated_at: now },
 				],
 				failed: [
-					{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, created_at: now, updated_at: now },
+					{ id: 301, symbol: 'TCS', side: 'buy', quantity: 3, price: 3600, status: 'failed', reason: 'Insufficient balance', retry_count: 1, first_failed_at: now, last_retry_attempt: now, trade_mode_display: 'Paper', created_at: now, updated_at: now },
 				],
 				closed: [
-					{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', created_at: now, updated_at: now },
+					{ id: 401, symbol: 'HDFCBANK', side: 'buy', quantity: 2, price: 1500, status: 'closed', reason: 'Order completed', trade_mode_display: 'Paper', execution_price: 1500, execution_qty: 2, execution_time: now, created_at: now, updated_at: now },
 				],
 				cancelled: [
-					{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', created_at: now, updated_at: now },
+					{ id: 501, symbol: 'WIPRO', side: 'buy', quantity: 8, price: 450, status: 'cancelled', reason: 'Order cancelled', trade_mode_display: 'Paper', created_at: now, updated_at: now },
 				],
 			};
 
@@ -362,6 +402,32 @@ http.post(API('/auth/refresh'), async () => {
 			});
 		})
 	)),
+	http.post(API('/user/orders/sync'), async () =>
+		HttpResponse.json({
+			message: 'Synced',
+			sync_performed: true,
+			monitoring_active: false,
+			synced: 1,
+			updated: 1,
+			executed: 0,
+			rejected: 0,
+			cancelled: 0,
+			errors: [],
+		})
+	),
+	http.post(API('/user/orders/:id/retry'), async () =>
+		HttpResponse.json({
+			id: 301,
+			symbol: 'TCS',
+			side: 'buy',
+			quantity: 3,
+			price: 3600,
+			status: 'pending',
+			created_at: new Date().toISOString(),
+			updated_at: new Date().toISOString(),
+		})
+	),
+	http.delete(API('/user/orders/:id'), async () => HttpResponse.json({ message: 'Dropped' })),
 	// pnl
 	http.get(API('/user/pnl/daily'), async () => {
 		return HttpResponse.json([
@@ -558,19 +624,6 @@ http.post(API('/auth/refresh'), async () => {
 		error.resolution_notes = payload?.notes ?? null;
 		return HttpResponse.json({ message: 'Error marked as resolved', error });
 	}),
-	// activity
-	http.get(API('/user/activity'), async ({ request }) => {
-		const url = new URL(request.url);
-		const level = url.searchParams.get('level') ?? 'all';
-		const now = new Date().toISOString();
-		const items = [
-			{ id: 1, ts: now, event: 'Login', detail: 'User logged in', level: 'info' },
-			{ id: 2, ts: now, event: 'Order Placed', detail: 'BUY INFY x10', level: 'info' },
-			{ id: 3, ts: now, event: 'Warning', detail: 'API rate limit near', level: 'warn' },
-			{ id: 4, ts: now, event: 'Error', detail: 'Broker connection failed', level: 'error' },
-		];
-		return HttpResponse.json(level === 'all' ? items : items.filter((i) => i.level === level));
-	}),
 	// targets
 	http.get(API('/user/targets'), async () => {
 		const now = new Date().toISOString();
@@ -582,8 +635,8 @@ http.post(API('/auth/refresh'), async () => {
 	// admin users
 	http.get(API('/admin/users'), async () => {
 		return HttpResponse.json([
-			{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-			{ id: 2, email: 'user@example.com', name: 'User', role: 'user', is_active: true, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+			{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin', is_active: true, mobile_number: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+			{ id: 2, email: 'user@example.com', name: 'User', role: 'user', is_active: true, mobile_number: '9876543210', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
 		]);
 	}),
 	http.post(API('/admin/users'), async ({ request }) => {
@@ -796,11 +849,13 @@ http.post(API('/auth/refresh'), async () => {
 			exit_on_ema9_or_rsi50: true,
 			min_combined_score: 50,
 			news_sentiment_enabled: false,
-			news_sentiment_lookback_days: 7,
-			news_sentiment_min_articles: 3,
-			news_sentiment_pos_threshold: 0.6,
-			news_sentiment_neg_threshold: -0.4,
+			news_sentiment_lookback_days: 30,
+			news_sentiment_min_articles: 2,
+			news_sentiment_pos_threshold: 0.25,
+			news_sentiment_neg_threshold: -0.25,
 			ml_enabled: false,
+			ml_price_enabled: false,
+			ml_price_models_available: false,
 			ml_model_version: null,
 			ml_confidence_threshold: 0.7,
 			ml_combine_with_rules: true,
@@ -841,11 +896,13 @@ http.post(API('/auth/refresh'), async () => {
 			exit_on_ema9_or_rsi50: body.exit_on_ema9_or_rsi50 ?? true,
 			min_combined_score: body.min_combined_score ?? 50,
 			news_sentiment_enabled: body.news_sentiment_enabled ?? false,
-			news_sentiment_lookback_days: body.news_sentiment_lookback_days ?? 7,
-			news_sentiment_min_articles: body.news_sentiment_min_articles ?? 3,
-			news_sentiment_pos_threshold: body.news_sentiment_pos_threshold ?? 0.6,
-			news_sentiment_neg_threshold: body.news_sentiment_neg_threshold ?? -0.4,
+			news_sentiment_lookback_days: body.news_sentiment_lookback_days ?? 30,
+			news_sentiment_min_articles: body.news_sentiment_min_articles ?? 2,
+			news_sentiment_pos_threshold: body.news_sentiment_pos_threshold ?? 0.25,
+			news_sentiment_neg_threshold: body.news_sentiment_neg_threshold ?? -0.25,
 			ml_enabled: body.ml_enabled ?? false,
+			ml_price_enabled: body.ml_price_enabled ?? false,
+			ml_price_models_available: false,
 			ml_model_version: body.ml_model_version ?? null,
 			ml_confidence_threshold: body.ml_confidence_threshold ?? 0.7,
 			ml_combine_with_rules: body.ml_combine_with_rules ?? true,
@@ -885,11 +942,13 @@ http.post(API('/auth/refresh'), async () => {
 			exit_on_ema9_or_rsi50: true,
 			min_combined_score: 50,
 			news_sentiment_enabled: false,
-			news_sentiment_lookback_days: 7,
-			news_sentiment_min_articles: 3,
-			news_sentiment_pos_threshold: 0.6,
-			news_sentiment_neg_threshold: -0.4,
+			news_sentiment_lookback_days: 30,
+			news_sentiment_min_articles: 2,
+			news_sentiment_pos_threshold: 0.25,
+			news_sentiment_neg_threshold: -0.25,
 			ml_enabled: false,
+			ml_price_enabled: false,
+			ml_price_models_available: false,
 			ml_model_version: null,
 			ml_confidence_threshold: 0.7,
 			ml_combine_with_rules: true,

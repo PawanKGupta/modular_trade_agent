@@ -353,6 +353,34 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["skipped_invalid_qty"] == 1
         assert summary["placed"] == 0
 
+    def test_place_reentry_metadata_uses_update_reentry_cycle_metadata(
+        self, paper_engine_with_positions, db_session
+    ):
+        """Cycle metadata save must not go through full position upsert."""
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        engine = paper_engine_with_positions
+        mock_indicators = {
+            "close": 2450.0,
+            "rsi10": 35.0,
+            "ema9": 2500.0,
+            "avg_volume": 5000000,
+        }
+
+        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+            with patch.object(
+                PositionsRepository,
+                "update_reentry_cycle_metadata",
+                wraps=PositionsRepository.update_reentry_cycle_metadata,
+            ) as mock_update_meta:
+                with patch.object(PositionsRepository, "upsert") as mock_upsert:
+                    summary = engine.place_reentry_orders()
+
+        assert summary["placed"] == 0
+        mock_update_meta.assert_called()
+        assert mock_update_meta.call_args.kwargs["reentries"] is not None
+        mock_upsert.assert_not_called()
+
     def test_place_reentry_orders_no_reentry_opportunity(
         self, paper_engine_with_positions, db_session
     ):
@@ -374,18 +402,48 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["skipped_invalid_rsi"] == 1
         assert summary["placed"] == 0
 
-    def test_place_reentry_orders_duplicate_prevention(
+    def test_place_reentry_orders_allows_reentry_when_symbol_in_holdings_only(
         self, paper_engine_with_positions, db_session
     ):
-        """Test that re-entry is skipped if symbol already in holdings"""
+        """Re-entry must not be blocked merely because the symbol is already held."""
         engine = paper_engine_with_positions
 
-        # Mock holdings with same symbol
+        mock_holding = MagicMock()
+        mock_holding.symbol = "RELIANCE.NS"
+        engine.broker.get_holdings.return_value = [mock_holding]
+        engine.broker.get_all_orders.return_value = []
+
+        mock_indicators = {
+            "close": 2450.0,
+            "rsi10": 18.0,
+            "ema9": 2500.0,
+            "avg_volume": 5000000,
+        }
+
+        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+            summary = engine.place_reentry_orders()
+
+        assert summary["attempted"] == 1
+        assert summary["placed"] == 1
+        assert summary["skipped_duplicates"] == 0
+        engine.broker.place_order.assert_called_once()
+
+    def test_place_reentry_orders_duplicate_prevention_active_buy_only(
+        self, paper_engine_with_positions, db_session
+    ):
+        """Re-entry is skipped when an active BUY order exists (not because of holdings)."""
+        engine = paper_engine_with_positions
+
         mock_holding = MagicMock()
         mock_holding.symbol = "RELIANCE.NS"
         engine.broker.get_holdings.return_value = [mock_holding]
 
-        # Mock indicators: RSI=18 (would trigger re-entry)
+        pending_buy = MagicMock()
+        pending_buy.symbol = "RELIANCE"
+        pending_buy.is_buy_order.return_value = True
+        pending_buy.is_active.return_value = True
+        engine.broker.get_all_orders.return_value = [pending_buy]
+
         mock_indicators = {
             "close": 2450.0,
             "rsi10": 18.0,
@@ -399,6 +457,7 @@ class TestPaperTradingPlaceReentryOrders:
         assert summary["attempted"] == 1
         assert summary["skipped_duplicates"] == 1
         assert summary["placed"] == 0
+        engine.broker.place_order.assert_not_called()
 
     def test_place_reentry_orders_missing_indicators(self, paper_engine_with_positions, db_session):
         """Test that re-entry is skipped when indicators are missing"""
@@ -543,11 +602,8 @@ class TestPaperTradingRunBuyOrdersWithReentry:
         from src.application.services.paper_trading_service_adapter import (
             PaperTradingEngineAdapter,
         )
-        from src.infrastructure.db.models import OrderStatus
-        from src.infrastructure.persistence.orders_repository import OrdersRepository
         from src.infrastructure.persistence.positions_repository import PositionsRepository
 
-        # Create mock broker
         mock_broker = MagicMock()
         mock_broker.is_connected.return_value = True
         mock_broker.store = MagicMock()
@@ -589,29 +645,12 @@ class TestPaperTradingRunBuyOrdersWithReentry:
         }
         with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
             summary = engine.place_reentry_orders()
-            # Commit session to persist order to database
-            db_session.commit()
 
-        # Verify re-entry order was placed
         assert summary["placed"] == 1, f"Expected 1 placed order, got {summary}"
-
-        # Get the order from database
-        orders_repo = OrdersRepository(db_session)
-        all_orders_result = orders_repo.list(test_user.id)
-        all_orders = (
-            all_orders_result[0] if isinstance(all_orders_result, tuple) else all_orders_result
-        )
-        assert len(all_orders) > 0, f"No orders found in database. Summary: {summary}"
-
-        # Find the re-entry order
-        reentry_orders = [o for o in all_orders if o.entry_type == "reentry"]
-        assert len(reentry_orders) > 0, f"No re-entry orders found. All orders: {all_orders}"
-        reentry_order = reentry_orders[-1]
-
-        # Verify order is eligible for pre-market adjustment
-        assert reentry_order.entry_type == "reentry"
-        assert reentry_order.status == OrderStatus.PENDING
-        assert reentry_order.side == "buy"
-        # Verify order has correct metadata for adjustment
-        assert reentry_order.quantity is not None
-        assert reentry_order.price is not None
+        # DB row is written by PaperTradingBrokerAdapter.place_order(), not the engine adapter
+        engine.broker.place_order.assert_called_once()
+        placed = engine.broker.place_order.call_args[0][0]
+        assert placed._metadata["entry_type"] == "reentry"
+        assert placed.order_type.value == "LIMIT"
+        assert placed.price is not None
+        assert placed.quantity > 0

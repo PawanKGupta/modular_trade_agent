@@ -5,8 +5,11 @@ Validates data quality and detects potential issues with volume and price data.
 """
 
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
+
+from src.infrastructure.db.timezone_utils import ist_now
+
 from utils.logger import logger
 
 
@@ -50,7 +53,7 @@ def validate_volume_data(df: pd.DataFrame, ticker: str) -> Dict[str, any]:
         latest_date = pd.to_datetime(df["date"].iloc[-1]).date()
         validation_result["latest_date"] = latest_date.strftime("%Y-%m-%d")
 
-        today = datetime.now().date()
+        today = ist_now().date()
         data_age = (today - latest_date).days
         validation_result["data_age_days"] = data_age
 

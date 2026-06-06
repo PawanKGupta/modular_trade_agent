@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from src.infrastructure.persistence.positions_repository import PositionsRepository
 
 
+from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def db_session():
     """Create in-memory SQLite database for testing"""
@@ -48,7 +49,7 @@ def sample_position(positions_repo, user_id):
         symbol="RELIANCE-EQ",  # Full symbol after migration
         quantity=35.0,
         avg_price=2500.0,
-        opened_at=datetime.now(),
+        opened_at=ist_now_naive(),
     )
 
 

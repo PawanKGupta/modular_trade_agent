@@ -6,6 +6,7 @@ import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 def make_client():
@@ -37,11 +38,8 @@ def test_save_broker_creds():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Save basic credentials
@@ -67,11 +65,8 @@ def test_save_broker_creds_with_full_auth():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Save credentials with full auth
@@ -98,11 +93,8 @@ def test_get_broker_creds_info_masked():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Save credentials first
@@ -136,11 +128,8 @@ def test_get_broker_creds_info_full():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Save credentials with full auth
@@ -175,11 +164,8 @@ def test_get_broker_creds_info_no_creds():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get info without saving
@@ -195,11 +181,8 @@ def test_broker_status():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Get status before saving
@@ -230,11 +213,8 @@ def test_test_broker_connection_basic():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Test connection with basic credentials
@@ -258,11 +238,8 @@ def test_test_broker_connection_unsupported_broker():
     client = make_client()
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!", "name": "U1"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Test with unsupported broker
@@ -286,15 +263,15 @@ def test_broker_creds_isolation():
     email1 = f"u{random.randint(1, 1_000_000)}@example.com"
     email2 = f"u{random.randint(1, 1_000_000)}@example.com"
 
-    resp1 = client.post(
-        "/api/v1/auth/signup", json={"email": email1, "password": "Secret123", "name": "U1"}
+    tokens1 = signup_and_verify_payload(
+        client, None, {"email": email1, "password": "Secret123!", "name": "U1"}
     )
-    resp2 = client.post(
-        "/api/v1/auth/signup", json={"email": email2, "password": "Secret123", "name": "U2"}
+    tokens2 = signup_and_verify_payload(
+        client, None, {"email": email2, "password": "Secret123!", "name": "U2"}
     )
 
-    token1 = resp1.json()["access_token"]
-    token2 = resp2.json()["access_token"]
+    token1 = tokens1["access_token"]
+    token2 = tokens2["access_token"]
     headers1 = {"Authorization": f"Bearer {token1}"}
     headers2 = {"Authorization": f"Bearer {token2}"}
 

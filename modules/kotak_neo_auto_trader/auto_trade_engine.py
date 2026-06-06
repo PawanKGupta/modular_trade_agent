@@ -2,7 +2,7 @@
 """
 Auto Trade Engine for Kotak Neo
 - Reads recommendations (from analysis_results CSV)
-- Places AMO buy orders within portfolio constraints
+- Places buy orders (REGULAR at open, AMO when market closed) within portfolio constraints
 - Tracks positions and executes re-entry and exit based on RSI/EMA
 """
 
@@ -27,6 +27,7 @@ from modules.kotak_neo_auto_trader.services import (
     get_indicator_service,
     get_price_service,
 )
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
 
 # Database models
@@ -364,7 +365,7 @@ class AutoTradeEngine:
                     "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
                     "entry_price": pos.avg_price,
                     "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else datetime.now().isoformat()
+                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
                     ),
                     "rsi10": metadata.get("rsi10"),
                     "ema9": metadata.get("ema9"),
@@ -404,7 +405,7 @@ class AutoTradeEngine:
                     "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
                     "entry_price": pos.avg_price,
                     "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else datetime.now().isoformat()
+                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
                     ),
                     "exit_price": metadata.get("exit_price"),
                     "exit_time": pos.closed_at.isoformat() if pos.closed_at else None,
@@ -426,7 +427,7 @@ class AutoTradeEngine:
             return {
                 "trades": trades,
                 "failed_orders": failed_orders,
-                "last_run": datetime.now().isoformat(),
+                "last_run": ist_now().isoformat(),
             }
         # Fallback to file-based storage
         elif self.history_path:
@@ -459,11 +460,9 @@ class AutoTradeEngine:
         if status == "open":
             # Upsert open position
             try:
-                entry_time = datetime.fromisoformat(
-                    trade.get("entry_time", datetime.now().isoformat())
-                )
+                entry_time = datetime.fromisoformat(trade.get("entry_time", ist_now().isoformat()))
             except:
-                entry_time = datetime.now()
+                entry_time = ist_now_naive()
 
             # Get reentry data from trade history
             reentries = trade.get("reentries", [])
@@ -522,10 +521,10 @@ class AutoTradeEngine:
             if pos:
                 try:
                     exit_time = datetime.fromisoformat(
-                        trade.get("exit_time", datetime.now().isoformat())
+                        trade.get("exit_time", ist_now().isoformat())
                     )
                 except:
-                    exit_time = datetime.now()
+                    exit_time = ist_now_naive()
 
                 # Extract exit details from trade dictionary if available
                 exit_price = trade.get("exit_price")
@@ -928,7 +927,7 @@ class AutoTradeEngine:
 
     @staticmethod
     def is_trading_weekday(d: date | None = None) -> bool:
-        d = d or datetime.now().date()
+        d = d or ist_now().date()
         return d.weekday() in config.MARKET_DAYS
 
     def _get_order_variety_for_market_hours(self) -> str:
@@ -959,7 +958,7 @@ class AutoTradeEngine:
             if df is None or df.empty:
                 return False
             latest = df["date"].iloc[-1].date()
-            return latest == datetime.now().date()
+            return latest == ist_now().date()
         except Exception:
             # If detection fails, fallback to weekday check only
             return AutoTradeEngine.is_trading_weekday()
@@ -1343,14 +1342,14 @@ class AutoTradeEngine:
                             )
                             recommendations.append(rec)
 
-                    # Sort by priority_score (descending) - higher priority stocks placed first
-                    recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
+                        # Sort by priority_score (descending) - higher priority stocks placed first
+                        recommendations.sort(key=lambda r: r.priority_score or 0.0, reverse=True)
 
-                    logger.info(
-                        f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
-                        f"(sorted by priority_score)"
-                    )
-                    return recommendations
+                        logger.info(
+                            f"Converted {len(recommendations)} buy/strong_buy recommendations from database "
+                            f"(sorted by priority_score)"
+                        )
+                        return recommendations
 
             except Exception as e:
                 logger.warning(
@@ -1656,7 +1655,7 @@ class AutoTradeEngine:
                     "placed_symbol": sym,
                     "ticker": ticker,
                     "entry_price": float(entry_price) if entry_price else None,
-                    "entry_time": datetime.now().isoformat(),
+                    "entry_time": ist_now().isoformat(),
                     "rsi10": ind.get("rsi10"),
                     "ema9": ind.get("ema9"),
                     "ema200": ind.get("ema200"),
@@ -1707,7 +1706,9 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                rest_client = (
+                    self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                )
                 self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
                 if not self.scrip_master.load_scrip_master(force_download=False):
                     raise RuntimeError("Scrip master load failed")
@@ -1743,7 +1744,9 @@ class AutoTradeEngine:
 
             # Initialize scrip master for symbol resolution
             try:
-                rest_client = self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                rest_client = (
+                    self.auth.get_rest_client() if hasattr(self.auth, "get_rest_client") else None
+                )
                 self.scrip_master = KotakNeoScripMaster(auth_client=rest_client)
                 if not self.scrip_master.load_scrip_master(force_download=False):
                     raise RuntimeError("Scrip master load failed")
@@ -2175,7 +2178,7 @@ class AutoTradeEngine:
                     return None
                 # Support Money-like objects
                 if hasattr(raw, "amount"):
-                    raw = getattr(raw, "amount")
+                    raw = raw.amount
                 if isinstance(raw, str):
                     s = raw.replace(",", "").strip()
                     if s.lower().startswith("rs"):
@@ -2363,7 +2366,7 @@ class AutoTradeEngine:
             if not isinstance(reentries, list):
                 return 0
 
-            today = datetime.now().date()
+            today = ist_now().date()
             cnt = 0
             for reentry in reentries:
                 if not isinstance(reentry, dict):
@@ -2741,21 +2744,21 @@ class AutoTradeEngine:
         """
         resp = None
         placed_symbol = None
-        placement_time = datetime.now().isoformat()
+        placement_time = ist_now().isoformat()
 
-        # Determine order variety based on market hours
-        # AMO orders should only be used when market is closed
-        # During market hours, use REGULAR orders
-        from core.volume_analysis import is_market_hours
+        from core.volume_analysis import is_market_hours, is_pre_open_session
 
-        if is_market_hours():
-            order_variety = "REGULAR"
-            logger.debug(f"Market is open - using REGULAR order variety for {broker_symbol}")
-        else:
-            order_variety = config.DEFAULT_VARIETY  # Default to AMO when market is closed
-            logger.debug(
-                f"Market is closed - using {order_variety} order variety for {broker_symbol}"
+        order_variety = self._get_order_variety_for_market_hours()
+        use_limit_pre_open = is_pre_open_session()
+        if use_limit_pre_open:
+            logger.info(
+                f"Pre-open session - placing REGULAR LIMIT buy for {broker_symbol} "
+                f"@ Rs {close:.2f} (avoids MARKET LTP requirement)"
             )
+        elif is_market_hours():
+            logger.debug(f"Market is open - using REGULAR MARKET buy for {broker_symbol}")
+        else:
+            logger.debug(f"Market is closed - using {order_variety} MARKET buy for {broker_symbol}")
 
         # Symbol should already be resolved from place_new_entries() via scrip master
         # Scrip master is the SINGLE SOURCE OF TRUTH - use the resolved symbol directly
@@ -2773,14 +2776,24 @@ class AutoTradeEngine:
             )
             return (False, None)
 
-        # Place order with scrip master resolved symbol (all MARKET orders - T2T support removed)
-        trial = self.orders.place_market_buy(
-            symbol=place_symbol,
-            quantity=qty,
-            variety=order_variety,
-            exchange=config.DEFAULT_EXCHANGE,
-            product=config.DEFAULT_PRODUCT,
-        )
+        limit_price = round(float(close), 2)
+        if use_limit_pre_open:
+            trial = self.orders.place_limit_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                price=limit_price,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
+        else:
+            trial = self.orders.place_market_buy(
+                symbol=place_symbol,
+                quantity=qty,
+                variety=order_variety,
+                exchange=config.DEFAULT_EXCHANGE,
+                product=config.DEFAULT_PRODUCT,
+            )
 
         # Check for successful response - Kotak Neo returns stat='Ok' with nOrdNo
         if isinstance(trial, dict) and "error" not in trial:
@@ -2842,7 +2855,7 @@ class AutoTradeEngine:
                     f"No order ID and not found in order book"
                 )
                 # Send notification about uncertain order
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                 telegram_msg = (
                     f"⚠️ *Order Placement Uncertain*\n\n"
                     f"Symbol: `{actual_symbol}`\n"
@@ -2915,7 +2928,7 @@ class AutoTradeEngine:
                 # Don't fail order placement if marking fails
                 logger.warning(f"Failed to mark signal as traded for {actual_symbol}: {mark_error}")
 
-        order_type = "MARKET"  # All buy orders are MARKET orders (T2T support removed)
+        order_type = "LIMIT" if use_limit_pre_open else "MARKET"
 
         # Phase 9: Send notification for order placed successfully
         if self.telegram_notifier and self.telegram_notifier.enabled:
@@ -2925,7 +2938,7 @@ class AutoTradeEngine:
                     order_id=order_id,
                     quantity=qty,
                     order_type=order_type,
-                    price=None,  # MARKET orders don't have prices
+                    price=limit_price if use_limit_pre_open else None,
                     user_id=self.user_id,
                 )
             except Exception as e:
@@ -2967,8 +2980,8 @@ class AutoTradeEngine:
                 ticker=ticker,
                 qty=qty,
                 order_type=order_type,
-                variety=config.DEFAULT_VARIETY,
-                price=0.0,  # MARKET orders use price=0
+                variety=order_variety,
+                price=limit_price if use_limit_pre_open else 0.0,
                 entry_type=entry_type,
                 order_metadata=order_metadata,
             )
@@ -3052,11 +3065,30 @@ class AutoTradeEngine:
                 execution_qty = (
                     OrderFieldExtractor.get_quantity(target) or quantity or db_order.quantity
                 )
-                self.orders_repo.mark_executed(
-                    db_order,
-                    execution_price=execution_price,
-                    execution_qty=execution_qty,
-                )
+                # Defer early fill sync: placement snapshot can mark executed before
+                # unified_order_monitor records the real fill time/price.
+                from src.infrastructure.db.timezone_utils import ist_now_naive
+
+                placed_at = getattr(db_order, "placed_at", None)
+                if placed_at is not None:
+                    placed_naive = (
+                        placed_at.replace(tzinfo=None)
+                        if getattr(placed_at, "tzinfo", None) is not None
+                        else placed_at
+                    )
+                    age_s = (ist_now_naive() - placed_naive).total_seconds()
+                    if age_s < 120:
+                        logger.debug(
+                            f"Deferring immediate execute sync for {order_id} "
+                            f"({age_s:.0f}s after placement) to order monitor"
+                        )
+                        return
+                if execution_price and execution_qty and execution_price > 0 and execution_qty > 0:
+                    self.orders_repo.mark_executed(
+                        db_order,
+                        execution_price=execution_price,
+                        execution_qty=execution_qty,
+                    )
             elif status_lower in {
                 "pending",
                 "open",
@@ -3168,7 +3200,7 @@ class AutoTradeEngine:
 
                         # Phase 5: Send notification
                         try:
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
                                 f"⚠️ *AMO Order Immediately Rejected*\n\n"
                                 f"Symbol: `{symbol}`\n"
@@ -3687,7 +3719,9 @@ class AutoTradeEngine:
                     has_sufficient, avail_cash, required_cash, shortfall = margin_result
                     margin_api_ok = True
                 else:
-                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = margin_result
+                    has_sufficient, avail_cash, required_cash, shortfall, margin_api_ok = (
+                        margin_result
+                    )
 
                 if not margin_api_ok:
                     logger.error(
@@ -3714,9 +3748,7 @@ class AutoTradeEngine:
 
                     db_order.retry_count = (db_order.retry_count or 0) + 1
                     db_order.last_retry_attempt = ist_now()
-                    db_order.reason = (
-                        f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
-                    )
+                    db_order.reason = f"insufficient_balance - shortfall: Rs {shortfall:,.0f}"
                     self.orders_repo.update(db_order)
                     summary["failed"] += 1
                     continue
@@ -3739,15 +3771,16 @@ class AutoTradeEngine:
                         # uq_orders_user_base_symbol_active applying to active BUY rows.
                         # If a stale active row exists for same base_symbol, cancel it and retry once.
                         err_text = str(update_err).lower()
-                        if "uq_orders_user_base_symbol_active" in err_text or "duplicate key value" in err_text:
+                        if (
+                            "uq_orders_user_base_symbol_active" in err_text
+                            or "duplicate key value" in err_text
+                        ):
                             try:
                                 from src.infrastructure.db.timezone_utils import ist_now
 
                                 # Clear failed transaction before further DB work.
                                 self.db.rollback()
-                                base_symbol = (
-                                    (symbol or "").upper().split("-")[0].strip()
-                                )
+                                base_symbol = (symbol or "").upper().split("-")[0].strip()
                                 existing_orders, _ = self.orders_repo.list(self.user_id)
                                 cancelled_conflicts = 0
                                 for existing_order in existing_orders:
@@ -3853,10 +3886,10 @@ class AutoTradeEngine:
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
-        Pre-market AMO quantity adjuster (runs at 9:05 AM)
+        Pre-market pending buy quantity adjuster (runs at 9:05 AM by default).
 
-        Adjusts AMO order quantities based on pre-market prices
-        to keep capital constant (user_capital per trade).
+        When ``enable_premarket_amo_adjustment`` is on, adjusts open/pending BUY orders
+        at the broker (AMO or REGULAR) using pre-market prices to keep capital constant.
 
         Handles gaps up (reduce qty) and gaps down (increase qty)
         to prevent order rejections due to insufficient funds.
@@ -3876,11 +3909,11 @@ class AutoTradeEngine:
 
         # Check if feature is enabled
         if not self.strategy_config.enable_premarket_amo_adjustment:
-            logger.info("Pre-market AMO adjustment is disabled in config - skipping")
+            logger.info("Pre-market pending buy adjustment is disabled in config - skipping")
             summary["skipped_not_enabled"] = 1
             return summary
 
-        logger.info("🔄 Starting pre-market AMO quantity adjustment...")
+        logger.info("🔄 Starting pre-market pending buy quantity adjustment...")
 
         # Check authentication
         if not self.auth or not self.auth.is_authenticated():
@@ -3896,17 +3929,17 @@ class AutoTradeEngine:
                 return summary
 
         try:
-            # 1. Get all pending orders from broker
-            logger.info("Fetching pending AMO orders from broker...")
+            from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+                OrderFieldExtractor,
+            )
+
+            logger.info("Fetching pending buy orders from broker...")
             pending_orders = self.orders.get_pending_orders() or []
 
-            # Filter only AMO/pending orders (including re-entry orders)
-            amo_orders = [
+            pending_buy_orders = [
                 order
                 for order in pending_orders
-                if order.get("orderValidity", "").upper() == "DAY"  # AMO orders
-                and order.get("orderStatus", "").upper() in ["PENDING", "OPEN", "TRIGGER_PENDING"]
-                and order.get("transactionType", "").upper() == "BUY"
+                if OrderFieldExtractor.is_pending_open_buy_order(order)
             ]
 
             # Also get re-entry orders from database (if available)
@@ -4007,15 +4040,12 @@ class AutoTradeEngine:
                                 matching_broker_order = broker_order
                                 break
                     if matching_broker_order:
-                        # Only add if not already in amo_orders (avoid duplicates)
-                        # Re-entry orders might already be in amo_orders from initial broker filter
                         already_in_list = any(
-                            order.get("nOrdNo", order.get("orderId", ""))
-                            == db_order.broker_order_id
-                            for order in amo_orders
+                            OrderFieldExtractor.get_order_id(order) == db_order.broker_order_id
+                            for order in pending_buy_orders
                         )
                         if not already_in_list:
-                            amo_orders.append(matching_broker_order)
+                            pending_buy_orders.append(matching_broker_order)
                 else:
                     # Order not found at broker - likely cancelled by broker at EOD
                     # Order not found at broker - likely cancelled by broker at EOD
@@ -4091,7 +4121,7 @@ class AutoTradeEngine:
                             f"may have been executed or cancelled (status: {db_order.status})"
                         )
 
-            summary["total_orders"] = len(amo_orders)
+            summary["total_orders"] = len(pending_buy_orders)
 
             # PERFORMANCE FIX: Pre-fetch prices and calculate EMA9 for all orders in parallel
             # This reduces total time from N*3-4s to ~3-4s for all orders
@@ -4103,10 +4133,10 @@ class AutoTradeEngine:
 
             # Prepare order data for parallel processing
             order_data = []
-            for order in amo_orders:
-                symbol = order.get("symbol", order.get("tradingSymbol", ""))
-                original_qty = int(order.get("quantity", 0))
-                order_id = order.get("nOrdNo", order.get("orderId", ""))
+            for order in pending_buy_orders:
+                symbol = OrderFieldExtractor.get_symbol(order)
+                original_qty = OrderFieldExtractor.get_quantity(order)
+                order_id = OrderFieldExtractor.get_order_id(order)
 
                 if not symbol or not original_qty or not order_id:
                     logger.warning(f"Incomplete order data - skipping: {order}")
@@ -4314,9 +4344,6 @@ class AutoTradeEngine:
                     / (target_capital / original_qty)
                 ) * 100
 
-                # 6. Modify the AMO order
-                # For MARKET orders, only quantity needs to be updated
-                # Price is logged for tracking but not passed to modify_order (not needed for MARKET)
                 original_price = float(
                     order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
                 )
@@ -4402,12 +4429,40 @@ class AutoTradeEngine:
             return summary
 
     # ---------------------- New entries ----------------------
-    def place_new_entries(self, recommendations: list[Recommendation]) -> dict[str, int | list]:
+    def preview_evening_buy_margins(self) -> dict[str, int | list]:
+        """
+        Evening margin preview (no broker placement).
+
+        Loads buy recommendations and runs the same checks as ``place_new_entries``
+        with ``dry_run=True``, sending notifications for insufficient margin.
+        """
+        recs = self.load_latest_recommendations()
+        if not recs:
+            logger.info("No recommendations for evening margin preview")
+            return {
+                "attempted": 0,
+                "placed": 0,
+                "preview_sufficient": 0,
+                "failed_balance": 0,
+                "skipped": 0,
+                "dry_run": True,
+                "ticker_attempts": [],
+            }
+        return self.place_new_entries(recs, dry_run=True)
+
+    def place_new_entries(
+        self,
+        recommendations: list[Recommendation],
+        *,
+        dry_run: bool = False,
+    ) -> dict[str, int | list]:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "preview_sufficient": 0,
             "failed_balance": 0,
             "skipped": 0,  # Total skipped (for backward compatibility with tests)
+            "dry_run": dry_run,
             "skipped_portfolio_limit": 0,
             "skipped_duplicates": 0,
             "skipped_missing_data": 0,
@@ -4530,14 +4585,44 @@ class AutoTradeEngine:
                     self.portfolio_service._cache.set("holdings", test_holdings)
                     logger.debug("Updated PortfolioService cache with holdings after 2FA re-login")
 
+        # Broker may return {"error": ...} without raising (e.g. expired session)
+        if (
+            isinstance(test_holdings, dict)
+            and "error" in test_holdings
+            and "data" not in test_holdings
+            and hasattr(self.auth, "force_relogin")
+        ):
+            logger.warning(
+                "Holdings API returned error payload (%r) - attempting re-login...",
+                test_holdings.get("error"),
+            )
+            if self.auth.force_relogin():
+                test_holdings = self.portfolio.get_holdings()
+                if (
+                    self.portfolio_service
+                    and self.portfolio_service.enable_caching
+                    and self.portfolio_service._cache
+                    and isinstance(test_holdings, dict)
+                    and "data" in test_holdings
+                ):
+                    self.portfolio_service._cache.set("holdings", test_holdings)
+                    logger.debug(
+                        "Updated PortfolioService cache with holdings after error re-login"
+                    )
+
         # Verify holdings has 'data' field (successful response structure)
         if not isinstance(test_holdings, dict) or "data" not in test_holdings:
             logger.error(
                 "Holdings API returned invalid response - aborting order placement to prevent duplicates"
             )
-            logger.error(
-                f"Holdings response type: {type(test_holdings)}, keys: {list(test_holdings.keys()) if isinstance(test_holdings, dict) else 'N/A'}"
-            )
+            if isinstance(test_holdings, dict):
+                logger.error(
+                    "Holdings response keys: %s; error=%r",
+                    list(test_holdings.keys()),
+                    test_holdings.get("error"),
+                )
+            else:
+                logger.error("Holdings response type: %s", type(test_holdings))
             return summary
 
         logger.info("Holdings API healthy - proceeding with order placement")
@@ -5104,7 +5189,8 @@ class AutoTradeEngine:
                 summary["skipped"] += 1  # Increment general counter
                 ticker_attempt["status"] = "skipped"
                 ticker_attempt["reason"] = "invalid_price"
-                ticker_attempt["price"] = close
+                # Use null in telemetry — PostgreSQL JSON rejects Python ``NaN`` tokens.
+                ticker_attempt["price"] = None
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
             ticker_attempt["price"] = close
@@ -5207,11 +5293,11 @@ class AutoTradeEngine:
                         # Continue to place new order with updated quantity/price
                         # (has_db_order will be ignored, we've already cancelled the old one)
                     else:
-                        # Quantity and price unchanged, skip placing new order
                         logger.info(
                             f"Skipping {broker_symbol}: already has active buy order in database "
                             f"(status: {existing_db_order.status}, order_id: {existing_db_order.id}). "
-                            f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f})."
+                            f"Quantity and price unchanged (qty={existing_qty}, price=Rs {existing_price:.2f}). "
+                            f"FAILED rows are retried at premarket_retry (9:03)."
                         )
                         summary["skipped_duplicates"] += 1
                         summary["skipped"] += 1  # Increment general counter
@@ -5307,17 +5393,27 @@ class AutoTradeEngine:
                 continue
 
             if not has_sufficient_balance:
-                # Telegram message with emojis
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                telegram_msg = (
-                    f"💰 *Insufficient Balance - AMO BUY*\n\n"
-                    f"Symbol: `{broker_symbol}`\n"
-                    f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                    f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                    f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                    f"Order status updated in database. Will be retried at scheduled time (8:00 AM) or manually.\n\n"
-                    f"_Time: {timestamp}_"
-                )
+                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
+                if dry_run:
+                    telegram_msg = (
+                        f"💰 *Insufficient Margin (Evening Preview)*\n\n"
+                        f"Symbol: `{broker_symbol}`\n"
+                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
+                        f"No order placed. Fund account before morning buy run (9:01 AM IST).\n\n"
+                        f"_Time: {timestamp}_"
+                    )
+                else:
+                    telegram_msg = (
+                        f"💰 *Insufficient Balance - BUY*\n\n"
+                        f"Symbol: `{broker_symbol}`\n"
+                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
+                        f"Order saved for retry at premarket_retry or manually.\n\n"
+                        f"_Time: {timestamp}_"
+                    )
                 # Use TelegramNotifier to respect notification preferences
                 if self.telegram_notifier and self.telegram_notifier.enabled:
                     try:
@@ -5336,29 +5432,34 @@ class AutoTradeEngine:
                     send_telegram(telegram_msg)
 
                 # Logger message without emojis
+                log_suffix = (
+                    "Evening preview only — no DB order created."
+                    if dry_run
+                    else "Saved for premarket_retry or manual retry."
+                )
                 logger.warning(
-                    f"Insufficient balance for {broker_symbol} AMO BUY. "
+                    f"Insufficient balance for {broker_symbol} BUY. "
                     f"Needed: Rs.{required_cash:,.0f} for {qty} @ Rs.{close:.2f}. "
                     f"Available: Rs.{(avail_cash or 0.0):,.0f}. Shortfall: Rs.{shortfall:,.0f}. "
-                    f"Order status updated in database. Will be retried at scheduled time or manually."
+                    f"{log_suffix}"
                 )
 
-                # Create order in DB with FAILED status for scheduled retry
-                failed_order_info = {
-                    "symbol": broker_symbol,
-                    "ticker": rec.ticker,
-                    "close": close,
-                    "qty": qty,
-                    "required_cash": required_cash,
-                    "shortfall": shortfall,
-                    "reason": "insufficient_balance",
-                    "verdict": rec.verdict,
-                    "rsi10": ind.get("rsi10"),
-                    "ema9": ind.get("ema9"),
-                    "ema200": ind.get("ema200"),
-                    "execution_capital": execution_capital,  # Phase 11: Save execution_capital for retry
-                }
-                self._add_failed_order(failed_order_info)
+                if not dry_run:
+                    failed_order_info = {
+                        "symbol": broker_symbol,
+                        "ticker": rec.ticker,
+                        "close": close,
+                        "qty": qty,
+                        "required_cash": required_cash,
+                        "shortfall": shortfall,
+                        "reason": "insufficient_balance",
+                        "verdict": rec.verdict,
+                        "rsi10": ind.get("rsi10"),
+                        "ema9": ind.get("ema9"),
+                        "ema200": ind.get("ema200"),
+                        "execution_capital": execution_capital,
+                    }
+                    self._add_failed_order(failed_order_info)
                 summary["failed_balance"] += 1
                 summary["skipped_invalid_qty"] += 1
                 summary["skipped"] += 1  # Increment general counter
@@ -5369,6 +5470,17 @@ class AutoTradeEngine:
                 ticker_attempt["required_cash"] = required_cash
                 ticker_attempt["available_cash"] = avail_cash
                 ticker_attempt["shortfall"] = shortfall
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
+
+            if dry_run:
+                summary["preview_sufficient"] += 1
+                ticker_attempt["status"] = "preview_ok"
+                ticker_attempt["reason"] = "sufficient_margin"
+                ticker_attempt["qty"] = qty
+                ticker_attempt["execution_capital"] = execution_capital
+                ticker_attempt["required_cash"] = required_cash
+                ticker_attempt["available_cash"] = avail_cash
                 summary["ticker_attempts"].append(ticker_attempt)
                 continue
 
@@ -5451,7 +5563,7 @@ class AutoTradeEngine:
         """
         Check re-entry conditions and place AMO orders for re-entries.
 
-        Called at 4:05 PM (with buy orders).
+        Called from ``run_buy_orders`` (default 9:01 IST morning placement).
 
         Re-entry logic based on entry RSI level:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
@@ -5524,7 +5636,10 @@ class AutoTradeEngine:
             logger.info("No open positions for re-entry check")
             return summary
 
-        logger.info(f"Checking re-entry conditions for {len(open_positions)} open positions...")
+        logger.info(
+            f"Evaluating re-entry for {len(open_positions)} open position(s) "
+            f"(orders placed only when RSI level rules qualify)..."
+        )
         from datetime import time as dt_time
 
         from core.volume_analysis import is_market_hours
@@ -5533,12 +5648,10 @@ class AutoTradeEngine:
         # - At/after market close on trading days, use current day close-inclusive RSI.
         # - During next-day market hours, keep using previous closed-day RSI snapshot
         #   until the next post-close evaluation window.
-        now_time = datetime.now().time()
+        now_time = ist_now().time()
         market_close = dt_time(15, 30)
         use_latest_rsi_after_close = (
-            self.is_trading_weekday()
-            and (not is_market_hours())
-            and now_time >= market_close
+            self.is_trading_weekday() and (not is_market_hours()) and now_time >= market_close
         )
 
         # Get portfolio snapshot for capacity checks
@@ -5679,12 +5792,10 @@ class AutoTradeEngine:
                             last_rsi_value=metadata_updates.get("last_rsi_value"),
                         )
 
-                        # Update position in database
-                        self.positions_repo.upsert(
+                        # Update cycle metadata only (do not rewrite quantity/avg_price).
+                        self.positions_repo.update_reentry_cycle_metadata(
                             user_id=self.user_id,
                             symbol=symbol,
-                            quantity=position.quantity,
-                            avg_price=position.avg_price,
                             reentries=updated_reentries,
                             auto_commit=True,
                         )
@@ -5708,8 +5819,8 @@ class AutoTradeEngine:
                         )
 
                 if next_level is None:
-                    logger.debug(
-                        f"No re-entry opportunity for {symbol} "
+                    logger.info(
+                        f"No re-entry for {symbol}: RSI level rules not met "
                         f"(entry_rsi={entry_rsi:.2f}, current_rsi={current_rsi:.2f})"
                     )
                     summary["skipped_invalid_rsi"] += 1
@@ -5887,18 +5998,9 @@ class AutoTradeEngine:
                 logger.error(f"Error checking re-entry for {symbol}: {e}", exc_info=True)
                 continue
 
-        skipped_total = (
-            summary["skipped_no_position"]
-            + summary["skipped_duplicates"]
-            + summary["skipped_invalid_rsi"]
-            + summary["skipped_missing_data"]
-            + summary["skipped_invalid_qty"]
-        )
-        logger.info(
-            f"Re-entry check complete: attempted={summary['attempted']}, "
-            f"placed={summary['placed']}, failed_balance={summary['failed_balance']}, "
-            f"skipped={skipped_total}"
-        )
+        from modules.kotak_neo_auto_trader.reentry_logging import format_reentry_check_complete
+
+        logger.info(format_reentry_check_complete(summary))
 
         return summary
 
@@ -6252,7 +6354,7 @@ class AutoTradeEngine:
 
                                     if retry_failed:
                                         # Send Telegram notification for failed retry
-                                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                         telegram_msg = (
                                             f"❌ *Sell Order Retry Failed*\n\n"
                                             f"Symbol: `{symbol}`\n"
@@ -6295,7 +6397,7 @@ class AutoTradeEngine:
                                         total_qty = actual_qty
                                 else:
                                     # Send Telegram notification when no holdings found
-                                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                     telegram_msg = (
                                         f"❌ *Sell Order Retry Failed*\n\n"
                                         f"Symbol: `{symbol}`\n"
@@ -6327,7 +6429,7 @@ class AutoTradeEngine:
                                     )
                             else:
                                 # Send Telegram notification when holdings fetch fails
-                                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                                 telegram_msg = (
                                     f"❌ *Sell Order Retry Failed*\n\n"
                                     f"Symbol: `{symbol}`\n"
@@ -6359,7 +6461,7 @@ class AutoTradeEngine:
                                 )
                         except Exception as e:
                             # Send Telegram notification for exception during retry
-                            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
                             telegram_msg = (
                                 f"❌ *Sell Order Retry Exception*\n\n"
                                 f"Symbol: `{symbol}`\n"
@@ -6392,7 +6494,7 @@ class AutoTradeEngine:
                             )
 
                     # Mark all entries as closed
-                    exit_time = datetime.now().isoformat()
+                    exit_time = ist_now().isoformat()
                     for e in entries:
                         e["status"] = "closed"
                         e["exit_price"] = price
@@ -6634,7 +6736,7 @@ class AutoTradeEngine:
                                 # Construct reentry data matching database structure
                                 # This structure must match what unified_order_monitor writes to DB.
                                 # Since this is a market order placed immediately, placed_at = today
-                                current_time = datetime.now()
+                                current_time = ist_now()
                                 reentry_data = {
                                     "qty": int(qty),
                                     "level": int(next_level) if next_level is not None else None,

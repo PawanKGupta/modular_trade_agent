@@ -226,9 +226,11 @@ from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
 from .routers import (
-    activity,
     admin,
     auth,
+    billing_admin,
+    billing_user,
+    billing_webhooks,
     broker,
     export,
     logs,
@@ -313,26 +315,34 @@ def _can_rotate_logs():
         return False
 
 
-# Use rotating handler if rotation is possible, otherwise use simple file handler
-# This prevents permission errors in Docker environments
-if _can_rotate_logs():
-    file_handler = SafeRotatingFileHandler(log_path, maxBytes=2 * 1024 * 1024, backupCount=3)
-else:
-    # Use simple FileHandler if rotation is not possible
-    # External log rotation (logrotate) can be used instead
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+# File logging is optional: bind-mounted logs/ is often owned by the host user (not UID
+# 1000 `trader`). Console/docker logs still capture output (same pattern as utils/logger.py).
+def _configure_root_file_logging() -> None:
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    try:
+        if _can_rotate_logs():
+            file_handler = SafeRotatingFileHandler(
+                log_path, maxBytes=2 * 1024 * 1024, backupCount=3
+            )
+        else:
+            file_handler = logging.FileHandler(log_path, encoding="utf-8")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        if not any(
+            isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler, logging.FileHandler))
+            and getattr(h, "baseFilename", "") == log_path
+            for h in root_logger.handlers
+        ):
+            root_logger.addHandler(file_handler)
+    except OSError as exc:
+        logging.getLogger(__name__).warning(
+            "API file logging disabled (%s): %s", log_path, exc
+        )
+    root_logger.setLevel(logging.INFO)
 
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-file_handler.setFormatter(formatter)
-root_logger = logging.getLogger()
-if not any(
-    isinstance(h, (RotatingFileHandler, SafeRotatingFileHandler, logging.FileHandler))
-    and getattr(h, "baseFilename", "") == log_path
-    for h in root_logger.handlers
-):
-    root_logger.addHandler(file_handler)
-root_logger.setLevel(logging.INFO)
+
+_configure_root_file_logging()
 
 app.add_middleware(
     CORSMiddleware,
@@ -372,6 +382,7 @@ async def ensure_db_schema():
                         name=settings.admin_name,
                         role=UserRole.ADMIN,
                     )
+                    UserRepository(db).mark_email_verified(user)
                     # Create default settings for admin user (required for services to work)
                     print(f"[Startup] Creating default settings for admin user {user.id}")
                     SettingsRepository(db).ensure_default(user.id)
@@ -664,6 +675,7 @@ async def log_exceptions(request: Request, call_next):
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["user"])
+app.include_router(billing_user.router, prefix="/api/v1/user", tags=["billing"])
 app.include_router(trading_config.router, prefix="/api/v1/user", tags=["trading-config"])
 app.include_router(service.router, prefix="/api/v1/user", tags=["service"])
 app.include_router(orders.router, prefix="/api/v1/user/orders", tags=["orders"])
@@ -671,7 +683,6 @@ app.include_router(pnl.router, prefix="/api/v1/user/pnl", tags=["pnl"])
 app.include_router(export.router, prefix="/api/v1/user/export", tags=["export"])
 app.include_router(reports.router, prefix="/api/v1/user/reports", tags=["reports"])
 app.include_router(broker.router, prefix="/api/v1/user/broker", tags=["broker"])
-app.include_router(activity.router, prefix="/api/v1/user/activity", tags=["activity"])
 app.include_router(targets.router, prefix="/api/v1/user", tags=["targets"])
 app.include_router(portfolio.router, prefix="/api/v1/user/portfolio", tags=["portfolio"])
 app.include_router(
@@ -683,9 +694,11 @@ app.include_router(
 app.include_router(notifications.router, prefix="/api/v1/user", tags=["notifications"])
 app.include_router(metrics.router, prefix="/api/v1", tags=["metrics"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(billing_admin.router, prefix="/api/v1/admin", tags=["admin-billing"])
 app.include_router(ml.router, prefix="/api/v1", tags=["admin-ml"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(signals.router, prefix="/api/v1/signals", tags=["signals"])
+app.include_router(billing_webhooks.router, prefix="/api/v1/billing", tags=["billing-webhooks"])
 app.include_router(monitoring.router, prefix="/api/v1/admin/monitoring", tags=["monitoring"])
 
 
@@ -700,9 +713,41 @@ async def _log_retention_worker():
         await asyncio.sleep(24 * 60 * 60)
 
 
+async def _individual_subprocess_reaper_worker(interval_seconds: int = 45):
+    """
+    Poll spawned individual-service Popen handles and reap exited children.
+
+    Keeps SQLite/Postgres task status aligned when processes exit outside stop_service
+    and prevents zombie buildup on the API worker (waitpid runs via subprocess.Popen.poll).
+    """
+    from src.application.services.individual_service_manager import IndividualServiceManager
+
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            with SessionLocal() as db:
+                n = IndividualServiceManager(db).cleanup_stopped_processes()
+                if n:
+                    logging.getLogger(__name__).info(
+                        "Reaped %s stopped individual-service subprocess(es)", n
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("Individual-service subprocess reap failed")
+
+
 @app.on_event("startup")
 async def start_log_retention_worker():
     app.state.log_retention_task = asyncio.create_task(_log_retention_worker())
+
+
+@app.on_event("startup")
+async def start_individual_subprocess_reaper():
+    """Background reap for IndividualServiceManager child processes."""
+    app.state.individual_subprocess_reaper_task = asyncio.create_task(
+        _individual_subprocess_reaper_worker()
+    )
 
 
 @app.on_event("startup")
@@ -726,6 +771,15 @@ async def stop_log_retention_worker():
             await task
 
     # File-based logging doesn't require shutdown
+
+
+@app.on_event("shutdown")
+async def stop_individual_subprocess_reaper():
+    reap_task = getattr(app.state, "individual_subprocess_reaper_task", None)
+    if reap_task:
+        reap_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reap_task
 
 
 @app.on_event("shutdown")

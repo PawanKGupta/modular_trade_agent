@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import os
 import signal
 import subprocess
@@ -64,6 +65,48 @@ from src.infrastructure.persistence.user_trading_config_repository import (
 # Project root for script execution
 project_root = Path(__file__).parent.parent.parent.parent
 
+# Tracks Popen handles for spawned individual-service processes across requests.
+# Without a process-wide registry, each request-scoped manager instance would lose
+# references while the OS child remains parented by the API worker — causing
+# zombie accumulation until waitpid runs.
+_INDIVIDUAL_SERVICE_SUBPROCESSES: dict[tuple[int, str], subprocess.Popen] = {}
+# Run-once worker threads must be process-wide: each API request builds a new manager instance.
+_RUN_ONCE_THREADS: dict[tuple[int, str], threading.Thread] = {}
+
+
+def _sanitize_for_postgres_json(obj):
+    """
+    Recursively replace ``NaN`` and infinities with ``None`` for JSON persistence.
+
+    Python's ``json.dumps`` can emit ``NaN`` / ``Infinity`` for non-finite floats, which
+    PostgreSQL's ``json`` / ``jsonb`` types reject. Call this on execution ``details``
+    payloads before ORM assign or ``json.dumps``.
+
+    Args:
+        obj: Arbitrarily nested dicts, lists, tuples, and scalars.
+
+    Returns:
+        A structure of the same shape with non-finite floats replaced by ``None``.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_postgres_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_postgres_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_sanitize_for_postgres_json(v) for v in obj)
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if hasattr(obj, "item") and callable(getattr(obj, "item", None)):
+        try:
+            return _sanitize_for_postgres_json(obj.item())
+        except Exception:
+            return obj
+    return obj
+
 
 class IndividualServiceManager:
     """Manages individual service execution and lifecycle"""
@@ -79,12 +122,6 @@ class IndividualServiceManager:
         self._conflict_service = ConflictDetectionService(db)
         self._schedule_manager = ScheduleManager(db)
         self._notification_repo = NotificationRepository(db)
-        self._processes: dict[tuple[int, str], subprocess.Popen] = (
-            {}
-        )  # (user_id, task_name) -> process
-        self._run_once_threads: dict[tuple[int, str], threading.Thread] = (
-            {}
-        )  # (user_id, task_name) -> thread
         self._schedules_checked = False  # Cache flag to avoid repeated checks
 
     def start_service(self, user_id: int, task_name: str) -> tuple[bool, str]:
@@ -128,7 +165,18 @@ class IndividualServiceManager:
             if process.poll() is not None:
                 # Process already terminated (likely an error)
                 return_code = process.returncode
+                stderr_tail = ""
+                try:
+                    _, err = process.communicate(timeout=10)
+                    if err and err.strip():
+                        stderr_tail = err.strip()
+                        if len(stderr_tail) > 2000:
+                            stderr_tail = stderr_tail[-2000:]
+                except (subprocess.TimeoutExpired, ValueError):
+                    pass
                 error_msg = f"Process terminated immediately with code {return_code}"
+                if stderr_tail:
+                    error_msg = f"{error_msg}. stderr: {stderr_tail}"
                 logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
                 logger.error(
                     f"Failed to start {task_name}: {error_msg}",
@@ -145,8 +193,8 @@ class IndividualServiceManager:
                 self._status_repo.update_next_execution(user_id, task_name, next_execution)
                 self.db.commit()
 
-            # Store process reference
-            self._processes[(user_id, task_name)] = process
+            # Store process reference (module-level — survives past request scope)
+            _INDIVIDUAL_SERVICE_SUBPROCESSES[(user_id, task_name)] = process
 
             logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
             logger.info(
@@ -182,7 +230,7 @@ class IndividualServiceManager:
         try:
             # Get process
             process_key = (user_id, task_name)
-            process = self._processes.get(process_key)
+            process = _INDIVIDUAL_SERVICE_SUBPROCESSES.get(process_key)
 
             if process and process.poll() is None:
                 # Process is still running
@@ -209,8 +257,8 @@ class IndividualServiceManager:
                         pass  # Process already dead
 
             # Remove from processes dict
-            if process_key in self._processes:
-                del self._processes[process_key]
+            if process_key in _INDIVIDUAL_SERVICE_SUBPROCESSES:
+                del _INDIVIDUAL_SERVICE_SUBPROCESSES[process_key]
 
             # Update status
             self._status_repo.mark_stopped(user_id, task_name)
@@ -232,6 +280,16 @@ class IndividualServiceManager:
             logger.error(f"Failed to stop individual service: {task_name}", exc_info=e)
             return False, f"Failed to stop service: {str(e)}"
 
+    def _run_once_thread_is_alive(self, user_id: int, task_name: str) -> bool:
+        """True while the background run-once thread for this task is still executing."""
+        thread = _RUN_ONCE_THREADS.get((user_id, task_name))
+        return bool(thread and thread.is_alive())
+
+    @staticmethod
+    def _orphan_running_timeout_minutes() -> int:
+        """Max age for a DB 'running' row when the run-once thread is already dead (crash recovery)."""
+        return 2
+
     def _cleanup_stale_execution(
         self, user_id: int, task_name: str, context: str = "unknown"
     ) -> bool:
@@ -239,7 +297,8 @@ class IndividualServiceManager:
         Clean up ALL stale 'running' executions for a task.
 
         This method proactively marks ALL stale executions as 'failed' to prevent
-        them from blocking new executions.
+        them from blocking new executions. Rows are never marked failed while the
+        run-once thread is still alive (long analysis runs may exceed 2 minutes).
 
         Args:
             user_id: User ID
@@ -253,7 +312,7 @@ class IndividualServiceManager:
 
         from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
 
-        timeout_minutes = 2  # Reduced from 5 to 2 minutes for faster recovery from stuck executions
+        timeout_minutes = self._orphan_running_timeout_minutes()
 
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
 
@@ -298,9 +357,8 @@ class IndividualServiceManager:
         logger = get_user_logger(user_id=user_id, db=self.db, module="IndividualService")
 
         cleaned_count = 0
+        thread_is_alive = self._run_once_thread_is_alive(user_id, task_name)
         thread_key = (user_id, task_name)
-        thread = self._run_once_threads.get(thread_key)
-        thread_is_alive = thread.is_alive() if thread else False
 
         # Check each running execution to see if it's stale
         for row in results:
@@ -348,7 +406,17 @@ class IndividualServiceManager:
 
             execution_age = ist_now() - executed_at
 
-            # If execution is stale, mark it as failed
+            # Long-running tasks: never fail while the worker thread is still alive.
+            if thread_is_alive:
+                logger.debug(
+                    f"[{context}] Skipping stale check for {task_name} execution {execution_id} "
+                    f"(thread alive, age={execution_age.total_seconds():.0f}s)",
+                    action="cleanup_stale_execution",
+                    task_name=task_name,
+                )
+                continue
+
+            # Orphan 'running' row (thread finished/crashed without DB update).
             if execution_age > timedelta(minutes=timeout_minutes):
                 logger.warning(
                     f"Detected stale 'running' execution for {task_name} "
@@ -395,9 +463,9 @@ class IndividualServiceManager:
             # Expire all objects in session to force fresh queries
             self.db.expire_all()
 
-            # Clean up thread reference if it exists
-            if thread_key in self._run_once_threads:
-                del self._run_once_threads[thread_key]
+            # Orphan cleanup only runs when thread is not alive; drop stale registry entry.
+            if thread_key in _RUN_ONCE_THREADS and not thread_is_alive:
+                del _RUN_ONCE_THREADS[thread_key]
 
             return True  # Return True if we cleaned up any stale executions
 
@@ -459,6 +527,18 @@ class IndividualServiceManager:
                 # But if we get here, it means cleanup didn't find them, so they're legitimately running
                 return False, f"Task '{task_name}' is already running", {}
 
+        if task_name == "analysis":
+            from src.application.services.analysis_access import (  # noqa: PLC0415
+                is_analysis_operator,
+            )
+
+            if not is_analysis_operator(user_id, self.db):
+                return (
+                    False,
+                    "Analysis is restricted to admin users (results are shared via Signals)",
+                    {},
+                )
+
         try:
             # Create execution record
             execution = self._execution_repo.create(
@@ -479,7 +559,7 @@ class IndividualServiceManager:
             thread.start()
 
             # Store thread reference
-            self._run_once_threads[(user_id, task_name)] = thread
+            _RUN_ONCE_THREADS[(user_id, task_name)] = thread
 
             return True, f"Task '{task_name}' execution started", {"execution_id": execution.id}
 
@@ -521,6 +601,8 @@ class IndividualServiceManager:
         else:
             details_dict = {"result": str(details)}
 
+        details_dict = _sanitize_for_postgres_json(details_dict)
+
         try:
             # Rollback session if it's in a bad state (e.g., from previous errors)
             try:
@@ -555,8 +637,6 @@ class IndividualServiceManager:
                 task_name=task_name,
             )
             try:
-                from sqlalchemy import text  # noqa: PLC0415
-
                 # Rollback and use fresh connection for raw SQL
                 try:
                     db.rollback()
@@ -572,7 +652,7 @@ class IndividualServiceManager:
                     WHERE id = :execution_id
                 """
                 )
-                details_json = json.dumps(details_dict)
+                details_json = json.dumps(details_dict, allow_nan=False)
                 db.execute(
                     update_sql,
                     {
@@ -616,12 +696,20 @@ class IndividualServiceManager:
 
         logger = get_user_logger(user_id=user_id, db=task_db, module="IndividualService")
 
-        # Maximum execution time: 5 minutes for all tasks
-        MAX_EXECUTION_TIME = 300  # 5 minutes
+        from src.application.services.analysis_access import (  # noqa: PLC0415
+            ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS,
+        )
+
+        # Analysis subprocess allows up to 30 minutes; other run-once tasks stay at 5 minutes.
+        max_execution_time = (
+            ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS
+            if task_name == "analysis"
+            else 300
+        )
 
         try:
             logger.info(
-                f"Executing task once: {task_name} (timeout: {MAX_EXECUTION_TIME}s)",
+                f"Executing task once: {task_name} (timeout: {max_execution_time}s)",
                 action="run_once",
             )
 
@@ -661,17 +749,34 @@ class IndividualServiceManager:
 
             def _run_task():
                 """Run task logic in separate thread for timeout control"""
+                from src.application.services.ohlcv_runtime import (  # noqa: PLC0415
+                    OHLCV_READ_ONLY_TASK_NAMES,
+                    ohlcv_cache_read_only,
+                )
+
                 try:
                     nonlocal result
-                    result = self._execute_task_logic(
-                        user_id=user_id,
-                        task_name=task_name,
-                        broker_creds=broker_creds,
-                        strategy_config=strategy_config,
-                        settings=settings,
-                        db_session=task_db,
-                        config_repo=task_config_repo,
-                    )
+                    if task_name in OHLCV_READ_ONLY_TASK_NAMES:
+                        with ohlcv_cache_read_only():
+                            result = self._execute_task_logic(
+                                user_id=user_id,
+                                task_name=task_name,
+                                broker_creds=broker_creds,
+                                strategy_config=strategy_config,
+                                settings=settings,
+                                db_session=task_db,
+                                config_repo=task_config_repo,
+                            )
+                    else:
+                        result = self._execute_task_logic(
+                            user_id=user_id,
+                            task_name=task_name,
+                            broker_creds=broker_creds,
+                            strategy_config=strategy_config,
+                            settings=settings,
+                            db_session=task_db,
+                            config_repo=task_config_repo,
+                        )
                 except Exception as e:
                     task_exception[0] = e
                 finally:
@@ -682,7 +787,7 @@ class IndividualServiceManager:
             task_thread.start()
 
             # Wait for completion or timeout
-            if task_completed.wait(timeout=MAX_EXECUTION_TIME):
+            if task_completed.wait(timeout=max_execution_time):
                 # Task completed (success or exception)
                 if task_exception[0]:
                     raise task_exception[0]
@@ -716,7 +821,7 @@ class IndividualServiceManager:
                 # TIMEOUT: Task exceeded maximum execution time
                 duration = time.time() - start_time
                 timeout_msg = (
-                    f"Task '{task_name}' exceeded maximum execution time ({MAX_EXECUTION_TIME}s)"
+                    f"Task '{task_name}' exceeded maximum execution time ({max_execution_time}s)"
                 )
                 logger.error(timeout_msg, action="run_once", task_name=task_name)
 
@@ -728,7 +833,7 @@ class IndividualServiceManager:
                     details={
                         "error": timeout_msg,
                         "error_type": "TimeoutError",
-                        "timeout_seconds": MAX_EXECUTION_TIME,
+                        "timeout_seconds": max_execution_time,
                     },
                     task_name=task_name,
                     db_override=task_db,
@@ -781,8 +886,8 @@ class IndividualServiceManager:
             time.sleep(0.2)
             # Remove thread reference after ensuring commit is visible
             thread_key = (user_id, task_name)
-            if thread_key in self._run_once_threads:
-                del self._run_once_threads[thread_key]
+            if thread_key in _RUN_ONCE_THREADS:
+                del _RUN_ONCE_THREADS[thread_key]
                 logger.debug(
                     f"Removed thread reference for {task_name}",
                     action="run_once",
@@ -850,6 +955,8 @@ class IndividualServiceManager:
 
             # Create TradingService instance (same as unified service) for broker-dependent tasks
             # Skip execution tracking since individual services track separately
+            # Only sell_monitor needs Kotak LTP polling; other tasks skip scrip-master init for speed.
+            enable_live_ltp = task_name == "sell_monitor"
             service = trading_service_module.TradingService(
                 user_id=user_id,
                 db_session=db,
@@ -857,6 +964,7 @@ class IndividualServiceManager:
                 strategy_config=strategy_config,
                 env_file=None,
                 skip_execution_tracking=True,
+                enable_live_price_cache=enable_live_ltp,
             )
 
             # Initialize service
@@ -891,9 +999,21 @@ class IndividualServiceManager:
             if task_name == "premarket_retry":
                 service.run_premarket_retry()
                 return {"task": "premarket_retry", "status": "completed"}
+            elif task_name == "premarket_amo_adjustment":
+                summary = service.run_premarket_amo_adjustment()
+                result = {"task": "premarket_amo_adjustment", "status": "completed"}
+                if summary:
+                    result["summary"] = summary
+                return result
             elif task_name == "sell_monitor":
                 service.run_sell_monitor()
                 return {"task": "sell_monitor", "status": "completed"}
+            elif task_name == "buy_margin_preview":
+                summary = service.run_buy_margin_preview()
+                result = {"task": "buy_margin_preview", "status": "completed"}
+                if summary:
+                    result["summary"] = summary
+                return result
             elif task_name == "buy_orders":
                 logger.info(
                     "About to call service.run_buy_orders()",
@@ -1649,12 +1769,21 @@ class IndividualServiceManager:
         default_schedules = [
             {
                 "task_name": "premarket_retry",
-                "schedule_time": time(9, 0),
+                "schedule_time": time(9, 3),
                 "enabled": True,
                 "is_hourly": False,
                 "is_continuous": False,
                 "schedule_type": "daily",
-                "description": "Retry failed orders from previous day",
+                "description": "Retry failed buy orders (runs after morning buy placement)",
+            },
+            {
+                "task_name": "premarket_amo_adjustment",
+                "schedule_time": time(9, 5),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Adjust pending buy quantities before market open (if enabled)",
             },
             {
                 "task_name": "sell_monitor",
@@ -1677,12 +1806,21 @@ class IndividualServiceManager:
             },
             {
                 "task_name": "buy_orders",
+                "schedule_time": time(9, 1),
+                "enabled": True,
+                "is_hourly": False,
+                "is_continuous": False,
+                "schedule_type": "daily",
+                "description": "Place REGULAR buy orders at market open (after prior-day analysis)",
+            },
+            {
+                "task_name": "buy_margin_preview",
                 "schedule_time": time(16, 5),
                 "enabled": True,
                 "is_hourly": False,
                 "is_continuous": False,
                 "schedule_type": "daily",
-                "description": "Place AMO buy orders for next day",
+                "description": "Evening margin preview for morning buys (notify only)",
             },
             {
                 "task_name": "eod_cleanup",
@@ -1789,10 +1927,7 @@ class IndividualServiceManager:
                     last_execution_at = _executed_at_iso(unified_ts)
                     use_unified_for_display = True
 
-            # Check if thread is still running for "run once" tasks
-            thread_key = (user_id, task_name)
-            thread = self._run_once_threads.get(thread_key)
-            thread_is_alive = thread.is_alive() if thread else False
+            thread_is_alive = self._run_once_thread_is_alive(user_id, task_name)
 
             # If execution status is "running" but thread is not alive, query fresh from database
             if latest_execution and latest_execution.status == "running" and not thread_is_alive:
@@ -1826,7 +1961,7 @@ class IndividualServiceManager:
             process_id = None
             if service and service.process_id:
                 process_key = (user_id, task_name)
-                internal_process = self._processes.get(process_key)
+                internal_process = _INDIVIDUAL_SERVICE_SUBPROCESSES.get(process_key)
                 if internal_process:
                     if internal_process.poll() is None:
                         process_id = service.process_id
@@ -1855,6 +1990,8 @@ class IndividualServiceManager:
                             task_name=task_name,
                         )
                         self._status_repo.mark_stopped(user_id, task_name)
+                        self.db.commit()
+                        _INDIVIDUAL_SERVICE_SUBPROCESSES.pop(process_key, None)
                         service = self._status_repo.get_by_user_and_task(user_id, task_name)
                 else:
                     process_exists = False
@@ -1914,24 +2051,14 @@ class IndividualServiceManager:
             elif latest_execution:
                 actual_execution_status = latest_execution.status
 
-            if actual_execution_status == "running" and latest_execution_raw:
-                from datetime import timedelta  # noqa: PLC0415
+            # Active run-once thread always surfaces as running in the API (even if DB was
+            # incorrectly marked failed by an earlier stale cleanup).
+            if thread_is_alive:
+                actual_execution_status = "running"
 
-                from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
-
-                executed_at = latest_execution_raw["executed_at"]
-                # executed_at from get_latest_status_raw() is already converted to IST via SQL
-                if executed_at.tzinfo is None:
-                    executed_at = executed_at.replace(tzinfo=IST)
-                # Ensure it's in IST for comparison
-                elif executed_at.tzinfo != IST:
-                    executed_at = executed_at.astimezone(IST)
-                execution_age = ist_now() - executed_at
-
-                # Use 5 minute timeout for all tasks
-                timeout_minutes = 5
-                if execution_age > timedelta(minutes=timeout_minutes):
-                    actual_execution_status = "failed"
+            individual_run_in_progress = (
+                thread_is_alive or actual_execution_status == "running"
+            )
 
             # Get is_running from service status (synced above if needed)
             is_running = service.is_running if service else False
@@ -1946,7 +2073,25 @@ class IndividualServiceManager:
                 "process_id": process_id,
                 "schedule_enabled": schedule.enabled,
             }
-            if use_unified_for_display and unified_latest:
+            if individual_run_in_progress:
+                result_data["last_execution_status"] = "running"
+                if latest_execution:
+                    result_data["last_execution_duration"] = latest_execution.duration_seconds
+                    result_data["last_execution_details"] = latest_execution.details
+                else:
+                    result_data["last_execution_duration"] = None
+                    result_data["last_execution_details"] = None
+                # Timer must use the in-flight execution start, not service.last_execution_at
+                # (which still reflects the previous completed run until it finishes).
+                current_run_started = None
+                if latest_execution_raw and latest_execution_raw.get("executed_at"):
+                    current_run_started = latest_execution_raw["executed_at"]
+                elif latest_execution and latest_execution.executed_at:
+                    current_run_started = latest_execution.executed_at
+                result_data["current_run_started_at"] = (
+                    _executed_at_iso(current_run_started) if current_run_started else None
+                )
+            elif use_unified_for_display and unified_latest:
                 result_data["last_execution_status"] = unified_latest.status
                 result_data["last_execution_duration"] = unified_latest.duration_seconds
                 result_data["last_execution_details"] = unified_latest.details
@@ -1959,7 +2104,15 @@ class IndividualServiceManager:
                 result_data["last_execution_duration"] = None
                 result_data["last_execution_details"] = None
 
+            if not individual_run_in_progress:
+                result_data["current_run_started_at"] = None
+
             result[task_name] = result_data
+
+        from src.application.services.analysis_access import is_analysis_operator  # noqa: PLC0415
+
+        if not is_analysis_operator(user_id, self.db):
+            result.pop("analysis", None)
 
         return result
 
@@ -2311,10 +2464,12 @@ class IndividualServiceManager:
     def cleanup_stopped_processes(self) -> int:
         """Clean up processes that have stopped (for crash detection)"""
         count = 0
-        for (user_id, task_name), process in list(self._processes.items()):
+        for (user_id, task_name), process in list(_INDIVIDUAL_SERVICE_SUBPROCESSES.items()):
             if process.poll() is not None:
                 # Process has terminated
                 self._status_repo.mark_stopped(user_id, task_name)
-                del self._processes[(user_id, task_name)]
+                del _INDIVIDUAL_SERVICE_SUBPROCESSES[(user_id, task_name)]
                 count += 1
+        if count:
+            self.db.commit()
         return count

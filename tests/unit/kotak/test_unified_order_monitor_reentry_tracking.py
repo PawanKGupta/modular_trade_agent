@@ -15,15 +15,11 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-try:
-    from src.infrastructure.db.timezone_utils import IST, ist_now
-except ImportError:
-    IST = None
-    ist_now = None
+from tests.ist_clock import IST, ist_now, ist_now_naive
 
 
 def _now():
-    return ist_now() if ist_now is not None else datetime.now()
+    return ist_now()
 
 
 # Add project root to path
@@ -564,7 +560,7 @@ class TestReentryTrackingInDatabase:
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create reentry order with placed_at date (yesterday)
-        yesterday = datetime.now(IST) - timedelta(days=1)
+        yesterday = ist_now() - timedelta(days=1)
         reentry_order = Orders(
             id=1,
             user_id=1,
@@ -635,7 +631,7 @@ class TestReentryTrackingInDatabase:
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
         # Create reentry order (placed for 10 shares, but only 7 execute)
-        placement_date = datetime.now(IST) - timedelta(days=1)
+        placement_date = ist_now() - timedelta(days=1)
         reentry_order = Orders(
             id=1,
             user_id=1,

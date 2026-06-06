@@ -12,7 +12,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
+    Numeric,
     String,
+    Text,
     Time,
     UniqueConstraint,
 )
@@ -54,11 +57,17 @@ class Users(Base):
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        CaseInsensitiveEnum(UserRole),
         default=UserRole.USER,
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    email_verification_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email_verification_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    password_reset_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    mobile_number: Mapped[str | None] = mapped_column(String(15), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, onupdate=ist_now, nullable=False
@@ -124,10 +133,10 @@ class Orders(Base):
     )
     avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     placed_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, index=True, nullable=False
+        DateTime, default=ist_now_naive, index=True, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+        DateTime, default=ist_now_naive, onupdate=ist_now_naive, nullable=False
     )
     filled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -394,30 +403,107 @@ class PnlCalculationAudit(Base):
 
 
 class PriceCache(Base):
-    """Historical price cache for symbols (Phase 0.6)"""
+    """Historical OHLCV cache for symbols (Postgres-backed, Phase 0.6 + OHLCV plan)."""
 
     __tablename__ = "price_cache"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    interval: Mapped[str] = mapped_column(String(8), default="1d", nullable=False)
+    price_basis: Mapped[str] = mapped_column(String(16), default="unadjusted", nullable=False)
 
-    # Price data
     open: Mapped[float | None] = mapped_column(Float, nullable=True)
     high: Mapped[float | None] = mapped_column(Float, nullable=True)
     low: Mapped[float | None] = mapped_column(Float, nullable=True)
     close: Mapped[float] = mapped_column(Float, nullable=False)
     volume: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Metadata
-    source: Mapped[str] = mapped_column(
-        String(32), default="yfinance", nullable=False
-    )  # 'yfinance', 'broker', 'manual'
+    source: Mapped[str] = mapped_column(String(32), default="yfinance", nullable=False)
     cached_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("symbol", "date", name="uq_price_cache_symbol_date"),
-        Index("ix_price_cache_symbol_date", "symbol", "date"),
+        UniqueConstraint("symbol", "date", "interval", name="uq_price_cache_symbol_date_interval"),
+        Index("ix_price_cache_symbol_date_interval", "symbol", "date", "interval"),
+    )
+
+
+class OhlcvSymbolMeta(Base):
+    """Per-symbol OHLCV cache coverage summary."""
+
+    __tablename__ = "ohlcv_symbol_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(8), nullable=False)
+    first_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    fetch_status: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    coverage_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_fetch_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_validation_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "interval", name="uq_ohlcv_symbol_meta_symbol_interval"),
+    )
+
+
+class CorporateAction(Base):
+    """Stock splits and similar events for cache health checks."""
+
+    __tablename__ = "corporate_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    ex_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    ratio: Mapped[float] = mapped_column(Float, nullable=False)
+    action_type: Mapped[str] = mapped_column(String(16), default="split", nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="yfinance", nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "ex_date", "action_type", name="uq_corporate_actions_symbol_ex_type"
+        ),
+    )
+
+
+class BulkAnalysisJob(Base):
+    """Chunked bulk analysis run (trade_agent --backtest orchestration)."""
+
+    __tablename__ = "bulk_analysis_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    chunk_size: Mapped[int] = mapped_column(Integer, default=25, nullable=False)
+    symbols_json: Mapped[str] = mapped_column(Text, nullable=False)
+    cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    output_csv: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    env_snapshot_json: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+
+
+class BulkAnalysisSymbolStatus(Base):
+    """Per-symbol outcome for a bulk analysis job."""
+
+    __tablename__ = "bulk_analysis_symbol_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("bulk_analysis_jobs.id"), index=True, nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backtest_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    cache_health: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "symbol", name="uq_bulk_analysis_symbol_status_job_symbol"),
     )
 
 
@@ -607,17 +693,6 @@ class UserSignalStatus(Base):
         UniqueConstraint("user_id", "signal_id", name="uq_user_signal_status"),
         Index("ix_user_signal_status_user_symbol", "user_id", "symbol"),
     )
-
-
-class Activity(Base):
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
-    type: Mapped[str] = mapped_column(
-        String(64), index=True, nullable=False
-    )  # order_placed, order_filled, error, etc.
-    ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=ist_now, index=True, nullable=False)
 
 
 # Phase 1.1: New models for multi-user service architecture
@@ -817,6 +892,7 @@ class UserTradingConfig(Base):
     ml_model_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     ml_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
     ml_combine_with_rules: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ml_price_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Scheduling Preferences (JSON field for flexibility)
     task_schedule: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Timestamps
@@ -860,6 +936,8 @@ class MLModel(Base):
         String(16), index=True, nullable=False
     )  # 'v1.0', 'v1.1', etc.
     model_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    #: Inclusive end of training data window (typically max entry/backtest row date used).
+    training_data_through_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     accuracy: Mapped[float | None] = mapped_column(Float, nullable=True)
     training_job_id: Mapped[int] = mapped_column(ForeignKey("ml_training_jobs.id"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
@@ -911,6 +989,8 @@ class UserNotificationPreferences(Base):
     notify_service_execution_completed: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )
+    # Billing (Razorpay payment failures, including performance-fee orders)
+    notify_payment_failed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Quiet hours (optional)
     quiet_hours_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     quiet_hours_end: Mapped[time | None] = mapped_column(Time, nullable=True)
@@ -1061,3 +1141,346 @@ class IndividualServiceTaskExecution(Base):
             "executed_at",
         ),
     )
+
+
+# --- Subscription & billing (Razorpay) ---
+
+
+class PlanTier(str, Enum):
+    """Commercial tier mapped to product capabilities."""
+
+    PAPER_BASIC = "paper_basic"  # stock recommendations (+ paper); no live broker automation
+    AUTO_ADVANCED = "auto_advanced"  # broker + auto-trade services
+
+
+class BillingInterval(str, Enum):
+    MONTH = "month"
+    YEAR = "year"
+
+
+class PlanPriceScheduleStatus(str, Enum):
+    SCHEDULED = "scheduled"
+    APPLIED = "applied"
+    CANCELLED = "cancelled"
+
+
+class UserSubscriptionStatus(str, Enum):
+    PENDING = "pending"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    GRACE = "grace"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    SUSPENDED = "suspended"
+
+
+class BillingProvider(str, Enum):
+    RAZORPAY = "razorpay"
+    MANUAL = "manual"
+
+
+class CouponDiscountType(str, Enum):
+    PERCENT = "percent"
+    FIXED = "fixed"
+
+
+class BillingTransactionStatus(str, Enum):
+    CREATED = "created"
+    AUTHORIZED = "authorized"
+    CAPTURED = "captured"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+
+class SubscriptionPlan(Base):
+    """Admin-managed sellable plan (synced to Razorpay plan when configured)."""
+
+    __tablename__ = "subscription_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    plan_tier: Mapped[PlanTier] = mapped_column(
+        SAEnum(PlanTier, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
+    billing_interval: Mapped[BillingInterval] = mapped_column(
+        SAEnum(BillingInterval, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
+    # Default list price in minor units (paise); effective price comes from plan_price_schedules
+    base_amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    features_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    razorpay_plan_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+    price_schedules: Mapped[list[PlanPriceSchedule]] = relationship(
+        "PlanPriceSchedule", back_populates="plan", cascade="all, delete-orphan"
+    )
+
+
+class PlanPriceSchedule(Base):
+    """Scheduled price change; effective-from instant (IST-naive DB convention)."""
+
+    __tablename__ = "plan_price_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("subscription_plans.id"), index=True, nullable=False
+    )
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    status: Mapped[PlanPriceScheduleStatus] = mapped_column(
+        SAEnum(PlanPriceScheduleStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PlanPriceScheduleStatus.SCHEDULED,
+        nullable=False,
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    plan: Mapped[SubscriptionPlan] = relationship(
+        "SubscriptionPlan", back_populates="price_schedules"
+    )
+
+
+class Coupon(Base):
+    __tablename__ = "coupons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    discount_type: Mapped[CouponDiscountType] = mapped_column(
+        SAEnum(CouponDiscountType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
+    discount_value: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )  # percent 1-100 or fixed paise
+    max_redemptions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    per_user_max: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    allowed_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    allowed_plan_ids: Mapped[list | None] = mapped_column(
+        JSON, nullable=True
+    )  # list[int] or null = all
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+
+class CouponRedemption(Base):
+    __tablename__ = "coupon_redemptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    coupon_id: Mapped[int] = mapped_column(ForeignKey("coupons.id"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    user_subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_subscriptions.id"), nullable=True
+    )
+    redeemed_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+
+class UserBillingProfile(Base):
+    __tablename__ = "user_billing_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), unique=True, index=True, nullable=False
+    )
+    razorpay_customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    default_payment_method_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+
+class UserSubscription(Base):
+    __tablename__ = "user_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), nullable=False)
+    plan_tier_snapshot: Mapped[PlanTier] = mapped_column(
+        SAEnum(PlanTier, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
+    features_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[UserSubscriptionStatus] = mapped_column(
+        SAEnum(UserSubscriptionStatus, values_callable=lambda x: [e.value for e in x]),
+        default=UserSubscriptionStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    billing_provider: Mapped[BillingProvider] = mapped_column(
+        SAEnum(BillingProvider, values_callable=lambda x: [e.value for e in x]),
+        default=BillingProvider.RAZORPAY,
+        nullable=False,
+    )
+    razorpay_subscription_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    trial_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    grace_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    auto_renew: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pending_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subscription_plans.id"), nullable=True
+    )
+    last_renewal_reminder_for_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+    __table_args__ = (Index("ix_user_subscriptions_user_status", "user_id", "status"),)
+
+
+class BillingTransaction(Base):
+    __tablename__ = "billing_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_subscriptions.id"), index=True, nullable=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    razorpay_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    razorpay_invoice_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    status: Mapped[BillingTransactionStatus] = mapped_column(
+        SAEnum(BillingTransactionStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        index=True,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    raw_event_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+
+class BillingRefund(Base):
+    __tablename__ = "billing_refunds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    billing_transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("billing_transactions.id"), index=True, nullable=False
+    )
+    razorpay_refund_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+
+class BillingAdminSettings(Base):
+    """Singleton-style global billing controls (first row id=1 used by app)."""
+
+    __tablename__ = "billing_admin_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payment_card_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    payment_upi_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    online_payments_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    offline_payment_upi_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    offline_payment_instructions: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    offline_payment_qr_image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Broker performance fee: bill due N days after invoice generation (admin configurable).
+    performance_fee_payment_days_after_invoice: Mapped[int] = mapped_column(
+        Integer, default=15, nullable=False
+    )
+    performance_fee_default_percentage: Mapped[float] = mapped_column(
+        Numeric(8, 4), default=10.0, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+    # Razorpay key id plain; API + webhook secrets encrypted (razorpay_credentials).
+    razorpay_key_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    razorpay_key_secret_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    razorpay_webhook_secret_encrypted: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
+
+
+class PerformanceBillStatus(str, Enum):
+    PENDING_PAYMENT = "pending_payment"
+    OVERDUE = "overdue"
+    PAID = "paid"
+    VOID = "void"
+
+
+class UserPerformanceBillingState(Base):
+    """Per-user carry-forward loss for performance-fee billing (same unit as monthly PnL)."""
+
+    __tablename__ = "user_performance_billing_state"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=ist_now, onupdate=ist_now, nullable=False
+    )
+
+
+class MonthlyPerformanceBill(Base):
+    """One generated invoice per user per calendar month (broker / real trading)."""
+
+    __tablename__ = "monthly_performance_bills"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    bill_month: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    previous_carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    current_month_pnl: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    fee_percentage: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False)
+    chargeable_profit: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    fee_amount: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    new_carry_forward_loss: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    payable_amount: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
+    status: Mapped[PerformanceBillStatus] = mapped_column(
+        SAEnum(PerformanceBillStatus, values_callable=lambda x: [e.value for e in x]),
+        default=PerformanceBillStatus.PENDING_PAYMENT,
+        nullable=False,
+    )
+    razorpay_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    razorpay_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("user_id", "bill_month", name="uq_perf_bill_user_month"),)
+
+
+class FreeTrialUsage(Base):
+    __tablename__ = "free_trial_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    trial_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
+
+    __table_args__ = (UniqueConstraint("user_id", "trial_key", name="uq_free_trial_user_key"),)
+
+
+class RazorpayWebhookEvent(Base):
+    __tablename__ = "razorpay_webhook_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)

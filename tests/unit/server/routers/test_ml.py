@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -8,6 +9,7 @@ from fastapi import HTTPException, status
 from server.app.routers import ml
 from server.app.schemas.ml import MLTrainingRequest
 from src.infrastructure.db.models import UserRole
+from tests.ist_clock import ist_now_naive
 
 
 class DummyUser(SimpleNamespace):
@@ -29,7 +31,7 @@ class DummyTrainingJob(SimpleNamespace):
             model_type=kwargs.get("model_type", "verdict_classifier"),
             algorithm=kwargs.get("algorithm", "random_forest"),
             training_data_path=kwargs.get("training_data_path", "/data/train.csv"),
-            started_at=kwargs.get("started_at", datetime.now()),
+            started_at=kwargs.get("started_at", ist_now_naive()),
             completed_at=kwargs.get("completed_at", None),
             model_path=kwargs.get("model_path", None),
             accuracy=kwargs.get("accuracy", None),
@@ -48,7 +50,7 @@ class DummyMLModel(SimpleNamespace):
             accuracy=kwargs.get("accuracy", 0.85),
             training_job_id=kwargs.get("training_job_id", 1),
             is_active=kwargs.get("is_active", False),
-            created_at=kwargs.get("created_at", datetime.now()),
+            created_at=kwargs.get("created_at", ist_now_naive()),
             created_by=kwargs.get("created_by", 1),
         )
 
@@ -116,6 +118,16 @@ class DummyMLTrainingService:
         self.model_repo = DummyModelRepo()
         self.start_training_job_called = []
 
+    def resolve_training_csv(self, raw_path):
+        """Match MLTrainingService.resolve_training_csv (router calls before background task)."""
+        candidate = Path(raw_path)
+        if candidate.is_absolute():
+            return candidate.resolve()
+        return (Path.cwd() / candidate).resolve()
+
+    def validate_training_csv_for_ml(self, csv_path: Path) -> None:
+        """No-op in router unit tests; production service rejects bulk screener CSVs."""
+
     def start_training_job(self, started_by, config):
         self.start_training_job_called.append({"started_by": started_by, "config": config})
         return self.job_repo.create(
@@ -146,6 +158,14 @@ def background_tasks():
     return tasks
 
 
+@pytest.fixture
+def existing_training_csv(tmp_path):
+    """Real CSV path so ``start_ml_training`` passes disk checks on all platforms."""
+    path = tmp_path / "train.csv"
+    path.write_text("entry_date,rsi,label\n2026-01-01,40,buy\n", encoding="utf-8")
+    return str(path)
+
+
 # Helper function tests
 def test_to_config():
     """Test _to_config helper function"""
@@ -166,6 +186,8 @@ def test_to_config():
     assert config.hyperparameters == {"n_estimators": 100}
     assert config.notes == "Test training"
     assert config.auto_activate is True
+    assert config.incremental_training is True
+    assert config.training_run_end_date is None
 
 
 def test_to_config_defaults():
@@ -184,13 +206,30 @@ def test_to_config_defaults():
     assert config.auto_activate is False
 
 
+def test_to_config_incremental_flags():
+    """Incremental window fields map into TrainingJobConfig."""
+
+    request = MLTrainingRequest(
+        model_type="verdict_classifier",
+        algorithm="xgboost",
+        training_data_path="/data/train.csv",
+        incremental_training=False,
+        training_run_end_date=date(2026, 5, 10),
+    )
+
+    config = ml._to_config(request)
+
+    assert config.incremental_training is False
+    assert config.training_run_end_date == date(2026, 5, 10)
+
+
 # POST /admin/ml/train tests
-def test_start_ml_training_success(ml_service, admin_user, background_tasks):
+def test_start_ml_training_success(ml_service, admin_user, background_tasks, existing_training_csv):
     """Test start_ml_training successfully creates a job"""
     request = MLTrainingRequest(
         model_type="verdict_classifier",
         algorithm="random_forest",
-        training_data_path="/data/train.csv",
+        training_data_path=existing_training_csv,
         hyperparameters={"n_estimators": 100},
         notes="Test notes",
         auto_activate=False,
@@ -216,12 +255,14 @@ def test_start_ml_training_success(ml_service, admin_user, background_tasks):
     assert call_args[0][1] == result.id
 
 
-def test_start_ml_training_with_auto_activate(ml_service, admin_user, background_tasks):
+def test_start_ml_training_with_auto_activate(
+    ml_service, admin_user, background_tasks, existing_training_csv
+):
     """Test start_ml_training with auto_activate=True"""
     request = MLTrainingRequest(
         model_type="price_regressor",
         algorithm="xgboost",
-        training_data_path="/data/train.csv",
+        training_data_path=existing_training_csv,
         auto_activate=True,
     )
 
@@ -237,12 +278,14 @@ def test_start_ml_training_with_auto_activate(ml_service, admin_user, background
     assert background_tasks.add_task.called
 
 
-def test_start_ml_training_minimal_request(ml_service, admin_user, background_tasks):
+def test_start_ml_training_minimal_request(
+    ml_service, admin_user, background_tasks, existing_training_csv
+):
     """Test start_ml_training with minimal request (no optional fields)"""
     request = MLTrainingRequest(
         model_type="verdict_classifier",
         algorithm="logistic_regression",
-        training_data_path="/data/train.csv",
+        training_data_path=existing_training_csv,
     )
 
     result = ml.start_ml_training(
@@ -253,7 +296,7 @@ def test_start_ml_training_minimal_request(ml_service, admin_user, background_ta
     )
 
     assert result is not None
-    assert result.training_data_path == "/data/train.csv"
+    assert result.training_data_path == existing_training_csv
 
 
 # GET /admin/ml/jobs tests
@@ -541,12 +584,14 @@ def test_activate_model_different_types(ml_service, admin_user):
 
 
 # Edge cases
-def test_start_ml_training_background_task_args(ml_service, admin_user, background_tasks):
+def test_start_ml_training_background_task_args(
+    ml_service, admin_user, background_tasks, existing_training_csv
+):
     """Test that background task receives correct arguments"""
     request = MLTrainingRequest(
         model_type="verdict_classifier",
         algorithm="random_forest",
-        training_data_path="/data/train.csv",
+        training_data_path=existing_training_csv,
         hyperparameters={"max_depth": 10},
         notes="Test",
         auto_activate=True,
@@ -571,6 +616,7 @@ def test_start_ml_training_background_task_args(ml_service, admin_user, backgrou
     assert isinstance(call_args[2], dict)
     assert call_args[2]["model_type"] == "verdict_classifier"
     assert call_args[2]["algorithm"] == "random_forest"
+    assert call_args[2]["training_data_path"] == existing_training_csv
     assert call_args[2]["hyperparameters"] == {"max_depth": 10}
 
 
@@ -614,6 +660,8 @@ def test_run_training_job_async(monkeypatch):
         "hyperparameters": {},
         "notes": None,
         "auto_activate": False,
+        "incremental_training": True,
+        "training_run_end_date": None,
     }
 
     # Call the async function

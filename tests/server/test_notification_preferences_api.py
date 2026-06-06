@@ -9,6 +9,7 @@ Tests the REST API endpoints for managing notification preferences.
 from fastapi.testclient import TestClient
 
 from server.app.main import app
+from tests.support.auth_flow import signup_and_verify_payload
 
 client = TestClient(app)
 
@@ -19,14 +20,11 @@ def test_get_notification_preferences_requires_auth():
     assert resp.status_code == 401
 
 
-def test_get_notification_preferences_defaults(client):
+def test_get_notification_preferences_defaults(client, db_session):
     """Test getting notification preferences returns defaults for new user"""
     # Create user via signup
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs1@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs1@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get preferences
     resp = client.get(
@@ -58,14 +56,11 @@ def test_update_notification_preferences_requires_auth():
     assert resp.status_code == 401
 
 
-def test_update_notification_preferences_partial(client):
+def test_update_notification_preferences_partial(client, db_session):
     """Test updating only some notification preferences"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs2@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs2@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Update only telegram settings
     resp = client.put(
@@ -85,14 +80,11 @@ def test_update_notification_preferences_partial(client):
     assert data["email_enabled"] is False
 
 
-def test_update_notification_preferences_all_fields(client):
+def test_update_notification_preferences_all_fields(client, db_session):
     """Test updating all notification preference fields"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs3@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs3@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Update all fields
     update_data = {
@@ -154,14 +146,11 @@ def test_update_notification_preferences_all_fields(client):
     assert data["quiet_hours_end"] == "08:00:00"
 
 
-def test_update_notification_preferences_persists(client):
+def test_update_notification_preferences_persists(client, db_session):
     """Test that updated preferences persist across requests"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs4@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs4@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Update preferences
     resp = client.put(
@@ -185,14 +174,11 @@ def test_update_notification_preferences_persists(client):
     assert data["notify_order_modified"] is True
 
 
-def test_update_notification_preferences_empty_payload(client):
+def test_update_notification_preferences_empty_payload(client, db_session):
     """Test that empty update payload returns current preferences"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs5@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs5@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Update with empty payload
     resp = client.put(
@@ -208,18 +194,14 @@ def test_update_notification_preferences_empty_payload(client):
     assert data["telegram_enabled"] is False
 
 
-def test_notification_preferences_user_isolation(client):
+def test_notification_preferences_user_isolation(client, db_session):
     """Test that notification preferences are isolated per user"""
     # Create two users
-    resp1 = client.post(
-        "/api/v1/auth/signup", json={"email": "user1@example.com", "password": "Secret123"}
-    )
-    token1 = resp1.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "user1@example.com", "password": "Secret123!"})
+    token1 = _auth_tokens["access_token"]
 
-    resp2 = client.post(
-        "/api/v1/auth/signup", json={"email": "user2@example.com", "password": "Secret123"}
-    )
-    token2 = resp2.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "user2@example.com", "password": "Secret123!"})
+    token2 = _auth_tokens["access_token"]
 
     # Update user1 preferences
     client.put(
@@ -255,14 +237,11 @@ def test_notification_preferences_user_isolation(client):
     assert data2["telegram_enabled"] is False
 
 
-def test_update_notification_preferences_quiet_hours(client):
+def test_update_notification_preferences_quiet_hours(client, db_session):
     """Test updating quiet hours"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs6@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs6@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Set quiet hours
     resp = client.put(
@@ -293,14 +272,11 @@ def test_update_notification_preferences_quiet_hours(client):
     assert data["quiet_hours_end"] is None
 
 
-def test_update_notification_preferences_granular_events(client):
+def test_update_notification_preferences_granular_events(client, db_session):
     """Test updating granular event preferences"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "prefs7@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "prefs7@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Disable some events, enable others
     resp = client.put(

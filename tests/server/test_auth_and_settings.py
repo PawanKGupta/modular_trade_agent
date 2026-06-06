@@ -5,6 +5,8 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.support.auth_flow import signup_and_verify
+
 
 def make_client():
     # configure in-memory sqlite before importing app/session
@@ -30,37 +32,44 @@ def make_client():
 
 
 @pytest.mark.unit
-def test_signup_login_me_and_settings():
+def test_signup_verify_login_me_and_settings():
     client = make_client()
-    # signup
     import random
 
     email = f"u{random.randint(1, 1_000_000)}@example.com"
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": email, "password": "Secret123", "name": "U1"}
+    password = "Secret123!"
+    signup = client.post(
+        "/api/v1/auth/signup", json={"email": email, "password": password, "name": "U1"}
     )
-    assert resp.status_code == 200, resp.text
-    tokens = resp.json()
+    assert signup.status_code == 200, signup.text
+    assert "message" in signup.json()
+    assert "access_token" not in signup.json()
+
+    blocked = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert blocked.status_code == 403
+
+    tokens = signup_and_verify(client, None, email, password, "U1")
     token = tokens["access_token"]
     assert tokens["refresh_token"]
     headers = {"Authorization": f"Bearer {token}"}
-    # refresh token exchange
+
     refresh = client.post("/api/v1/auth/refresh", json={"refresh_token": tokens["refresh_token"]})
     assert refresh.status_code == 200
     refreshed = refresh.json()
     assert refreshed["access_token"]
     assert refreshed["refresh_token"]
-    # me
+
     me = client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200
     data = me.json()
     assert data["email"] == email
+    assert data["email_verified"] is True
     assert "user" in data["roles"]
-    # settings default paper
+
     s = client.get("/api/v1/user/settings", headers=headers)
     assert s.status_code == 200
     assert s.json()["trade_mode"] == "paper"
-    # update to broker
+
     upd = client.put(
         "/api/v1/user/settings",
         headers=headers,
@@ -75,26 +84,37 @@ def test_signup_login_me_and_settings():
 @pytest.mark.unit
 def test_admin_endpoints_and_constraints():
     client = make_client()
-    # create normal user
     import random
 
     client.post(
         "/api/v1/auth/signup",
-        json={"email": f"n{random.randint(1, 1_000_000)}@example.com", "password": "Secret123"},
+        json={
+            "email": f"n{random.randint(1, 1_000_000)}@example.com",
+            "password": "Secret123!",
+            "name": "Normal User",
+        },
     )
-    # create two admins directly via repo
     from server.app.core.security import create_jwt_token
     from src.infrastructure.db.models import UserRole
     from src.infrastructure.db.session import SessionLocal
     from src.infrastructure.persistence.user_repository import UserRepository
+    from tests.support.test_users import create_verified_user
 
     db = SessionLocal()
     repo = UserRepository(db)
-    a1 = repo.create_user(
-        f"a{random.randint(1, 1_000_000)}@example.com", "Admin123", role=UserRole.ADMIN
+    a1 = create_verified_user(
+        repo,
+        f"a{random.randint(1, 1_000_000)}@example.com",
+        "Admin123!",
+        name="Admin One",
+        role=UserRole.ADMIN,
     )
-    a2 = repo.create_user(
-        f"a{random.randint(1, 1_000_000)}@example.com", "Admin123", role=UserRole.ADMIN
+    a2 = create_verified_user(
+        repo,
+        f"a{random.randint(1, 1_000_000)}@example.com",
+        "Admin123!",
+        name="Admin Two",
+        role=UserRole.ADMIN,
     )
     a1_id, a2_id = a1.id, a2.id
     db.close()

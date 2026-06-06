@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
+from pathlib import Path
 
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,19 +16,40 @@ from server.app.routers.ml import get_ml_training_service
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
+
+
+def _write_verdict_csv(path: Path) -> None:
+    rows = []
+    for idx in range(30):
+        day = date(2026, 3, 1) + timedelta(days=idx)
+        rows.append(
+            {
+                "entry_date": day.isoformat(),
+                "rsi": float(idx % 30),
+                "label": "buy" if idx % 2 == 0 else "watch",
+            }
+        )
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
-        email="admin@example.com", password="Admin@123", role=UserRole.ADMIN
+    return create_verified_user(
+        UserRepository(db_session),
+        email="admin@example.com",
+        password="Admin@123",
+        role=UserRole.ADMIN,
     )
 
 
 @pytest.fixture
 def normal_user(db_session):
-    return UserRepository(db_session).create_user(
-        email="user@example.com", password="User@123", role=UserRole.USER
+    return create_verified_user(
+        UserRepository(db_session),
+        email="user@example.com",
+        password="User@123",
+        role=UserRole.USER,
     )
 
 
@@ -47,7 +71,10 @@ def client(db_session):
 
 @pytest.fixture
 def ml_service(db_session, tmp_path):
+    csv_path = tmp_path / "verdict_train.csv"
+    _write_verdict_csv(csv_path)
     service = MLTrainingService(db_session, artifact_dir=tmp_path / "models")
+    service._fixture_training_csv = csv_path  # type: ignore[attr-defined]
 
     def override_service():
         return service
@@ -82,15 +109,64 @@ def wait_for_models(model_repo, timeout: float = 2.0):
 
 
 class TestMLTrainingAPI:
-    def test_non_admin_cannot_start_training(self, client: TestClient, normal_user, ml_service):
-        token = login(client, normal_user.email, "User@123")
+    def test_admin_train_rejected_when_csv_missing(
+        self, client: TestClient, admin_user, ml_service, tmp_path: Path
+    ):
+        """Missing CSV path yields 400 and no orphaned background failure noise."""
+        token = login(client, admin_user.email, "Admin@123")
+        phantom = tmp_path / "does_not_exist_verdict.csv"
+        assert not phantom.exists()
         response = client.post(
             "/api/v1/admin/ml/train",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "model_type": "verdict_classifier",
-                "algorithm": "xgboost",
-                "training_data_path": "data/mock.csv",
+                "algorithm": "random_forest",
+                "training_data_path": str(phantom),
+            },
+        )
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_admin_train_rejected_for_bulk_analysis_final_csv(
+        self, client: TestClient, admin_user, ml_service, tmp_path: Path
+    ):
+        """bulk_analysis_final exports are screener snapshots, not ML training rows."""
+        token = login(client, admin_user.email, "Admin@123")
+        bulk = tmp_path / "bulk_analysis_final_20260522_013532.csv"
+        pd.DataFrame(
+            {
+                "ticker": ["POWERGRID.NS"],
+                "status": ["success"],
+                "final_verdict": ["buy"],
+                "combined_score": [37.7],
+                "backtest_mode": ["integrated"],
+            }
+        ).to_csv(bulk, index=False)
+        response = client.post(
+            "/api/v1/admin/ml/train",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "model_type": "verdict_classifier",
+                "algorithm": "random_forest",
+                "training_data_path": str(bulk),
+            },
+        )
+        assert response.status_code == 400
+        detail = response.json()["detail"].lower()
+        assert "bulk" in detail
+        assert "ml_training" in detail or "training" in detail
+
+    def test_non_admin_cannot_start_training(self, client: TestClient, normal_user, ml_service):
+        token = login(client, normal_user.email, "User@123")
+        csv_path = ml_service._fixture_training_csv
+        response = client.post(
+            "/api/v1/admin/ml/train",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "model_type": "verdict_classifier",
+                "algorithm": "random_forest",
+                "training_data_path": str(csv_path),
             },
         )
 
@@ -99,14 +175,15 @@ class TestMLTrainingAPI:
 
     def test_admin_can_start_training_job(self, client: TestClient, admin_user, ml_service):
         token = login(client, admin_user.email, "Admin@123")
+        csv_path = ml_service._fixture_training_csv
         response = client.post(
             "/api/v1/admin/ml/train",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "model_type": "verdict_classifier",
-                "algorithm": "xgboost",
-                "training_data_path": "data/mock.csv",
-                "hyperparameters": {"max_depth": 6},
+                "algorithm": "random_forest",
+                "training_data_path": str(csv_path),
+                "hyperparameters": {"n_estimators": 20},
                 "auto_activate": True,
             },
         )
@@ -120,14 +197,16 @@ class TestMLTrainingAPI:
 
     def test_list_jobs_endpoint(self, client: TestClient, admin_user, ml_service):
         token = login(client, admin_user.email, "Admin@123")
+        csv_path = ml_service._fixture_training_csv
         # Seed a job
         client.post(
             "/api/v1/admin/ml/train",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "model_type": "verdict_classifier",
-                "algorithm": "xgboost",
-                "training_data_path": "data/mock.csv",
+                "algorithm": "random_forest",
+                "training_data_path": str(csv_path),
+                "incremental_training": False,
             },
         )
 
@@ -142,14 +221,16 @@ class TestMLTrainingAPI:
 
     def test_activate_model(self, client: TestClient, admin_user, ml_service):
         token = login(client, admin_user.email, "Admin@123")
+        csv_path = ml_service._fixture_training_csv
         client.post(
             "/api/v1/admin/ml/train",
             headers={"Authorization": f"Bearer {token}"},
             json={
                 "model_type": "verdict_classifier",
-                "algorithm": "xgboost",
-                "training_data_path": "data/mock.csv",
+                "algorithm": "random_forest",
+                "training_data_path": str(csv_path),
                 "auto_activate": False,
+                "incremental_training": False,
             },
         )
         models = wait_for_models(ml_service.model_repo)

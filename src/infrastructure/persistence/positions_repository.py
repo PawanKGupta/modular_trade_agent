@@ -7,16 +7,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import Positions
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now_naive
 
 # Import logger for sync operations
-try:
-    from utils.logger import logger
-except ImportError:
-    import logging
-
-    logger = logging.getLogger(__name__)
-
 try:
     from utils.logger import logger
 except ImportError:
@@ -28,6 +21,29 @@ except ImportError:
 class PositionsRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def _sync_pnldaily_after_close(self, user_id: int, pos: Positions, *, symbol: str) -> None:
+        """Best-effort pnldaily increment when a position closes with realized PnL."""
+        if pos.realized_pnl is None or pos.closed_at is None:
+            return
+        try:
+            from src.application.services.pnl_daily_sync_service import (  # noqa: PLC0415
+                PnlDailySyncService,
+            )
+
+            PnlDailySyncService(self.db).record_position_close(
+                user_id,
+                pos.closed_at,
+                float(pos.realized_pnl),
+            )
+        except Exception as sync_err:
+            logger.warning(
+                "Failed to sync pnldaily after closing %s for user %s: %s",
+                symbol,
+                user_id,
+                sync_err,
+                exc_info=True,
+            )
 
     def get_by_symbol(self, user_id: int, symbol: str) -> Positions | None:
         """
@@ -171,7 +187,7 @@ class PositionsRepository:
                 quantity=quantity,
                 avg_price=avg_price,
                 unrealized_pnl=0.0,
-                opened_at=opened_at or ist_now(),
+                opened_at=opened_at or ist_now_naive(),
                 reentry_count=reentry_count or 0,
                 reentries=reentries,
                 initial_entry_price=initial_price,
@@ -202,6 +218,44 @@ class PositionsRepository:
                         exc_info=False,
                     )
 
+        return pos
+
+    def update_reentry_cycle_metadata(
+        self,
+        *,
+        user_id: int,
+        symbol: str,
+        reentries: dict,
+        auto_commit: bool = True,
+    ) -> Positions | None:
+        """Persist re-entry cycle metadata without changing quantity or avg_price.
+
+        Used during re-entry scans when only the ``reentries`` JSON (cycle / RSI
+        tracking) changed. Does not run signal TRADED sync (unlike ``upsert``).
+
+        Args:
+            user_id: User ID.
+            symbol: Open position symbol.
+            reentries: Updated reentries payload (includes ``_cycle_metadata``).
+            auto_commit: Commit when True; otherwise flush for same-session reads.
+
+        Returns:
+            Updated position, or None if no open position exists for the symbol.
+        """
+        pos = self.get_by_symbol_for_update(user_id, symbol)
+        if not pos:
+            logger.warning(
+                f"Cannot update re-entry metadata: open position not found for {symbol} "
+                f"(user_id={user_id})"
+            )
+            return None
+
+        pos.reentries = reentries
+        if auto_commit:
+            self.db.commit()
+            self.db.refresh(pos)
+        else:
+            self.db.flush()
         return pos
 
     def count_open(self, user_id: int) -> int:
@@ -263,7 +317,7 @@ class PositionsRepository:
         # Store original quantity before setting to 0 (needed for P&L calculations)
         original_quantity = pos.quantity
 
-        pos.closed_at = closed_at or ist_now()
+        pos.closed_at = closed_at or ist_now_naive()
         pos.quantity = 0.0  # Set quantity to 0 when fully closed
 
         # Phase 0.2: Populate exit details
@@ -296,6 +350,7 @@ class PositionsRepository:
         else:
             # Even with auto_commit=False, flush to ensure changes are visible in the same session
             self.db.flush()
+        self._sync_pnldaily_after_close(user_id, pos, symbol=symbol)
         logger.info(
             f"Position marked as closed: {symbol} (closed_at: {pos.closed_at}, "
             f"exit_price: {exit_price}, exit_reason: {exit_reason})"
@@ -307,6 +362,7 @@ class PositionsRepository:
         user_id: int,
         symbol: str,
         sold_quantity: float,
+        exit_price: float | None = None,
         auto_commit: bool = True,
     ) -> Positions | None:
         """
@@ -318,6 +374,7 @@ class PositionsRepository:
             user_id: User ID
             symbol: Full trading symbol (e.g., "RELIANCE-EQ", "SALSTEEL-BE")
             sold_quantity: Quantity sold (to subtract from current quantity)
+            exit_price: Optional fill price when this sell fully closes the position
             auto_commit: If True, commit immediately. If False, caller handles commit (for transactions).
 
         Returns:
@@ -329,12 +386,18 @@ class PositionsRepository:
             logger.warning(f"Position not found for {symbol} (user_id: {user_id})")
             return None
 
-        new_quantity = max(0.0, pos.quantity - sold_quantity)
+        qty_before = float(pos.quantity)
+        new_quantity = max(0.0, qty_before - sold_quantity)
         pos.quantity = new_quantity
 
         # If quantity becomes 0, mark as closed
         if new_quantity == 0:
-            pos.closed_at = ist_now()
+            pos.closed_at = ist_now_naive()
+            if exit_price is not None and pos.realized_pnl is None:
+                realized = (float(exit_price) - float(pos.avg_price)) * qty_before
+                pos.realized_pnl = realized
+                cost_basis = float(pos.avg_price) * qty_before
+                pos.realized_pnl_pct = (realized / cost_basis * 100) if cost_basis > 0 else 0.0
             logger.info(
                 f"Position fully closed after partial sell: {symbol} "
                 f"(sold {sold_quantity}, remaining: {new_quantity})"
@@ -349,4 +412,9 @@ class PositionsRepository:
         if auto_commit:
             self.db.commit()
             self.db.refresh(pos)
+        elif new_quantity == 0:
+            self.db.flush()
+
+        if new_quantity == 0:
+            self._sync_pnldaily_after_close(user_id, pos, symbol=symbol)
         return pos

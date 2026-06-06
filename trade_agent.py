@@ -11,6 +11,8 @@ from core.telegram import send_telegram  # TODO Phase 4: Migrate to infrastructu
 
 # Phase 4: Use services instead of core modules
 from services import BacktestService, ScoringService, compute_strength_score
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+from src.infrastructure.web_scraping.screener_symbol_filters import parse_and_filter_screener_csv
 from utils.logger import logger
 
 # ML verdict service (optional, for testing only)
@@ -40,7 +42,8 @@ def get_stocks():
         logger.error("Stock scraping failed, no stocks to analyze")
         return []
 
-    return [s.strip().upper() + ".NS" for s in stocks.split(",")]
+    equity = parse_and_filter_screener_csv(stocks)
+    return [f"{sym}.NS" for sym in equity]
 
 
 def compute_trading_priority_score(stock_data):
@@ -320,6 +323,7 @@ async def main_async(
     json_output_path: str | None = None,
     user_id: int | None = None,
     db_session=None,
+    enable_ml: bool = False,
 ):
     """
     Async main function using async batch analysis
@@ -335,6 +339,8 @@ async def main_async(
         json_output_path: Optional path to write results as JSON
         user_id: Optional user ID to load user-specific config
         db_session: Optional database session for loading user config
+        enable_ml: If True and no DB-backed config was loaded, use ``StrategyConfig(ml_enabled=True)``
+            for analysis (same as ``--ml`` / ``--ml-enabled`` on the CLI).
     """
     tickers = get_stocks()
 
@@ -368,17 +374,26 @@ async def main_async(
                 f"Failed to load user config for user {user_id}: {e}, using default config"
             )
 
+    if config is None and enable_ml:
+        from config.strategy_config import StrategyConfig
+
+        config = StrategyConfig(ml_enabled=True)
+        logger.info("CLI --ml/--ml-enabled: analysis will use StrategyConfig with ml_enabled=True")
+
     # Use async batch analysis (Phase 2)
     try:
         # Use configurable concurrency from settings
         # Default: 5 for regular backtesting (balanced), can be increased via MAX_CONCURRENT_ANALYSES env var
         # For ML training with >3000 stocks, set MAX_CONCURRENT_ANALYSES=10 for faster processing
-        from config.settings import MAX_CONCURRENT_ANALYSES
+        from config.settings import MAX_CONCURRENT_ANALYSES, NEWS_UNIVERSE_PROFILE
         from services.async_analysis_service import AsyncAnalysisService
 
         async_service = AsyncAnalysisService(max_concurrent=MAX_CONCURRENT_ANALYSES, config=config)
         results = await async_service.analyze_batch_async(
-            tickers=tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=export_csv
+            tickers=tickers,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=export_csv,
+            news_profile=NEWS_UNIVERSE_PROFILE,
         )
 
         logger.info(f"Async analysis complete: {len(results)} results")
@@ -404,6 +419,7 @@ async def main_async(
             enable_backtest_scoring,
             dip_mode,
             json_output_path=json_output_path,
+            enable_ml=enable_ml,
         )
         return processed_results
 
@@ -414,6 +430,7 @@ def main_sequential(
     enable_backtest_scoring=False,
     dip_mode=False,
     json_output_path: str | None = None,
+    enable_ml: bool = False,
 ):
     """
     Sequential main function (backward compatible)
@@ -430,10 +447,22 @@ def main_sequential(
         f"Starting sequential analysis for {len(tickers)} stocks (Multi-timeframe: {enable_multi_timeframe}, CSV Export: {export_csv})"
     )
 
+    analysis_config = None
+    if enable_ml:
+        from config.strategy_config import StrategyConfig
+
+        analysis_config = StrategyConfig(ml_enabled=True)
+        logger.info(
+            "CLI --ml/--ml-enabled: sequential path uses StrategyConfig with ml_enabled=True"
+        )
+
     # Use batch analysis with CSV export
     if export_csv:
         results, csv_filepath = analyze_multiple_tickers(
-            tickers, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=True
+            tickers,
+            enable_multi_timeframe=enable_multi_timeframe,
+            export_to_csv=True,
+            config=analysis_config,
         )
         logger.info(f"Analysis results exported to: {csv_filepath}")
     else:
@@ -441,9 +470,22 @@ def main_sequential(
         results = []
         for t in tickers:
             try:
-                r = analyze_ticker(
-                    t, enable_multi_timeframe=enable_multi_timeframe, export_to_csv=False
+                from src.application.services.ohlcv_bulk_ops import (  # noqa: PLC0415
+                    record_analysis_yahoo_calls,
+                    reset_symbol_yahoo_counter,
                 )
+
+                reset_symbol_yahoo_counter()
+                from config.settings import NEWS_UNIVERSE_PROFILE
+
+                r = analyze_ticker(
+                    t,
+                    enable_multi_timeframe=enable_multi_timeframe,
+                    export_to_csv=False,
+                    config=analysis_config,
+                    news_profile=NEWS_UNIVERSE_PROFILE,
+                )
+                record_analysis_yahoo_calls(r)
                 results.append(r)
 
                 # Log based on analysis status
@@ -472,6 +514,7 @@ def main(
     json_output_path: str | None = None,
     user_id: int | None = None,
     db_session=None,
+    enable_ml: bool = False,
 ):
     """
     Main function - supports both async and sequential modes
@@ -484,6 +527,7 @@ def main(
         use_async: Use async batch analysis (Phase 2 feature, default: True)
         user_id: Optional user ID to load user-specific config
         db_session: Optional database session for loading user config
+        enable_ml: When no DB-backed config is loaded, use ``StrategyConfig(ml_enabled=True)`` (CLI ``--ml``).
     """
     if use_async:
         # Use async analysis (Phase 2)
@@ -499,6 +543,7 @@ def main(
                     json_output_path=json_output_path,
                     user_id=user_id,
                     db_session=db_session,
+                    enable_ml=enable_ml,
                 )
             )
         except Exception as e:
@@ -509,6 +554,7 @@ def main(
                 enable_backtest_scoring=enable_backtest_scoring,
                 dip_mode=dip_mode,
                 json_output_path=json_output_path,
+                enable_ml=enable_ml,
             )
     else:
         # Use sequential analysis (backward compatible)
@@ -518,6 +564,7 @@ def main(
             enable_backtest_scoring=enable_backtest_scoring,
             dip_mode=dip_mode,
             json_output_path=json_output_path,
+            enable_ml=enable_ml,
         )
 
 
@@ -563,7 +610,21 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Add backtest scoring if enabled (Phase 4: Use BacktestService)
     if enable_backtest_scoring:
         mode_info = " (DIP MODE)" if dip_mode else ""
-        logger.info(f"Running backtest scoring analysis{mode_info}...")
+        try:
+            from config.settings import API_RATE_LIMIT_DELAY, MAX_CONCURRENT_ANALYSES
+            from services.backtest_service import BACKTEST_MODE as available_backtest_engine
+
+            logger.info(
+                "Bulk backtest scoring%s: available_engine=%s, "
+                "MAX_CONCURRENT_ANALYSES=%s, API_RATE_LIMIT_DELAY=%s "
+                "(reliability profile: config/bulk_reliability.env.example)",
+                mode_info,
+                available_backtest_engine,
+                MAX_CONCURRENT_ANALYSES,
+                API_RATE_LIMIT_DELAY,
+            )
+        except Exception:
+            logger.info(f"Running backtest scoring analysis{mode_info}...")
         # Use BacktestService (Phase 4)
         # Config is already extracted above
 
@@ -574,7 +635,7 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
         results.sort(key=lambda x: -compute_trading_priority_score(x))
         # Export a final CSV with backtest fields for auto-trader
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ts = ist_now_naive().strftime("%Y%m%d_%H%M%S")
             out_dir = "analysis_results"
             os.makedirs(out_dir, exist_ok=True)
             out_path = os.path.join(out_dir, f"bulk_analysis_final_{ts}.csv")
@@ -593,6 +654,9 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
                 "stop",
                 "timeframe_analysis",
                 "backtest",
+                "backtest_mode",
+                "cache_health_status",
+                "yahoo_calls",
                 "execution_capital",
                 "max_capital",
                 "capital_adjusted",
@@ -907,6 +971,18 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     all_recommendations = strong_buys + [
         r for r in buys if r.get("ticker") not in {s.get("ticker") for s in strong_buys}
     ]
+    if all_recommendations:
+        from core.news_sentiment import enrich_filtered_candidates_with_paid_news
+
+        all_recommendations = enrich_filtered_candidates_with_paid_news(all_recommendations)
+        enriched_by_ticker = {r.get("ticker"): r for r in all_recommendations if r.get("ticker")}
+        for idx, row in enumerate(results):
+            ticker = row.get("ticker")
+            if ticker in enriched_by_ticker:
+                results[idx] = enriched_by_ticker[ticker]
+        strong_buys = [enriched_by_ticker.get(r.get("ticker"), r) for r in strong_buys]
+        buys = [enriched_by_ticker.get(r.get("ticker"), r) for r in buys]
+
     # Create a set of strong_buy tickers for quick lookup
     strong_buy_tickers = {s.get("ticker") for s in strong_buys}
 
@@ -988,53 +1064,90 @@ def _process_results(results, enable_backtest_scoring=False, dip_mode=False, con
     # Send Telegram notification with final results (after backtest scoring if enabled)
     if buys:
         # Add timestamp for context
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
+
+        def _rule_verdict(rec: dict) -> str:
+            if enable_backtest_scoring:
+                return (rec.get("final_verdict") or rec.get("verdict") or "unknown").lower()
+            return (rec.get("verdict") or "unknown").lower()
+
+        def _is_rule_buy(rec: dict) -> bool:
+            return _rule_verdict(rec) in ["buy", "strong_buy"]
+
+        def _is_ml_buy(rec: dict) -> bool:
+            return (rec.get("ml_verdict") or "").lower() in ["buy", "strong_buy"]
+
+        # Split candidates into rule-based vs ML-only for clearer alerts
+        candidate_tickers: set[str] = set()
+        candidates: list[dict] = []
+        for rec in (strong_buys or []) + (buys or []):
+            if not isinstance(rec, dict):
+                continue
+            t = rec.get("ticker")
+            if not t or t in candidate_tickers:
+                continue
+            candidate_tickers.add(t)
+            candidates.append(rec)
+
+        rule_candidates = [r for r in candidates if _is_rule_buy(r)]
+        ml_only_candidates = [r for r in candidates if (not _is_rule_buy(r)) and _is_ml_buy(r)]
 
         msg_prefix = "*Reversal Buy Candidates (today)*"
         if enable_backtest_scoring:
             msg_prefix += " *with Backtest Scoring*"
         msg_prefix += (
-            "\n? *Includes: Rule-Based + ML Predictions*"  # 2025-11-12: Clarify inclusion of ML
+            "\n? *Includes: Rule-Based + ML Predictions*"
+            f"\n\n*Summary*: Rule buys: {len(rule_candidates)}, ML-only buys: {len(ml_only_candidates)}"
         )
         msg = msg_prefix + "\n"
 
-        # Highlight strong buys first (sorted by priority)
-        if strong_buys:
-            strong_buys = [r for r in strong_buys if r is not None]  # Filter out None values
-            strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n? *STRONG BUY* (Multi-timeframe confirmed):\n"
-            for i, b in enumerate(strong_buys, 1):
+        # Rule-based strong buys first
+        rule_strong_buys = [
+            r for r in (strong_buys or []) if isinstance(r, dict) and _rule_verdict(r) == "strong_buy"
+        ]
+        if rule_strong_buys:
+            rule_strong_buys.sort(key=lambda x: -compute_trading_priority_score(x))
+            msg += "\n? *STRONG BUY* (Rule-based, multi-timeframe confirmed):\n"
+            for i, b in enumerate(rule_strong_buys, 1):
                 enhanced_info = get_enhanced_stock_info(b, i)
-                if enhanced_info:  # Skip stocks with invalid parameters
+                if enhanced_info:
                     msg += enhanced_info
 
-        # Regular buys (exclude stocks already in strong_buys to avoid duplicates)
-        strong_buy_tickers = {r.get("ticker") for r in strong_buys}
-        if enable_backtest_scoring:
-            # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [
-                r
-                for r in buys
-                if r.get("ticker") not in strong_buy_tickers
-                and (r.get("final_verdict") == "buy" or r.get("ml_verdict") == "buy")
-            ]
-        else:
-            # Include if rule says buy OR ml says buy (but not strong_buy)
-            regular_buys = [
-                r
-                for r in buys
-                if r.get("ticker") not in strong_buy_tickers
-                and (r.get("verdict") == "buy" or r.get("ml_verdict") == "buy")
-            ]
-
-        if regular_buys:
-            regular_buys = [r for r in regular_buys if r is not None]  # Filter out None values
-            regular_buys.sort(key=lambda x: -compute_trading_priority_score(x))  # Sort by priority
-            msg += "\n? *BUY* candidates:\n"
-            for i, b in enumerate(regular_buys, 1):
+        # Rule-based buy candidates (excluding rule strong buys)
+        rule_strong_tickers = {r.get("ticker") for r in rule_strong_buys}
+        rule_buy_candidates = [
+            r for r in (buys or []) if isinstance(r, dict) and _rule_verdict(r) == "buy"
+        ]
+        rule_buy_candidates = [r for r in rule_buy_candidates if r.get("ticker") not in rule_strong_tickers]
+        if rule_buy_candidates:
+            rule_buy_candidates.sort(key=lambda x: -compute_trading_priority_score(x))
+            msg += "\n? *BUY* candidates (Rule-based):\n"
+            for i, b in enumerate(rule_buy_candidates, 1):
                 enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
-                if enhanced_info:  # Skip stocks with invalid parameters
+                if enhanced_info:
                     msg += enhanced_info
+
+        # ML-only candidates (rule verdict is NOT buy/strong_buy)
+        if ml_only_candidates:
+            ml_only_strong = [r for r in ml_only_candidates if (r.get("ml_verdict") or "").lower() == "strong_buy"]
+            ml_only_buy = [r for r in ml_only_candidates if (r.get("ml_verdict") or "").lower() == "buy"]
+            msg += "\n\n? *ML-ONLY candidates* (Rule verdict was not buy):\n"
+
+            if ml_only_strong:
+                ml_only_strong.sort(key=lambda x: -compute_trading_priority_score(x))
+                msg += "\n? *STRONG BUY* (ML-only):\n"
+                for i, b in enumerate(ml_only_strong, 1):
+                    enhanced_info = get_enhanced_stock_info(b, i)
+                    if enhanced_info:
+                        msg += enhanced_info
+
+            if ml_only_buy:
+                ml_only_buy.sort(key=lambda x: -compute_trading_priority_score(x))
+                msg += "\n? *BUY* (ML-only):\n"
+                for i, b in enumerate(ml_only_buy, 1):
+                    enhanced_info = get_enhanced_stock_info(b, i, is_strong_buy=False)
+                    if enhanced_info:
+                        msg += enhanced_info
 
         # Add timestamp at the end for context
         msg += f"\n\n_Generated: {timestamp}_"
@@ -1111,8 +1224,31 @@ if __name__ == "__main__":
         type=str,
         help="Optional path to write analysis results as JSON for downstream services",
     )
+    parser.add_argument(
+        "--ml",
+        "--ml-enabled",
+        action="store_true",
+        dest="ml_enabled",
+        help=(
+            "Enable verdict ML for this run (StrategyConfig.ml_enabled=True) when not using "
+            "TRADE_AGENT_USER_ID / DB trading config. Requires the verdict model file on disk."
+        ),
+    )
+    parser.add_argument(
+        "--ohlcv-cache-debug",
+        action="store_true",
+        help=(
+            "Log OHLCV cache_hit/gap_fill lines at INFO (also set OHLCV_CACHE_DEBUG=true in env)"
+        ),
+    )
 
     args = parser.parse_args()
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_logging import enable_ohlcv_cache_debug
+
+        enable_ohlcv_cache_debug()
+        logger.info("OHLCV cache debug logging enabled (gap_fill / cache_hit / fetch_ohlcv_yf)")
 
     # Load user config if user_id is provided via environment variable
     user_id = None
@@ -1162,4 +1298,10 @@ if __name__ == "__main__":
         json_output_path=args.json_output,
         user_id=user_id,
         db_session=db_session,
+        enable_ml=getattr(args, "ml_enabled", False),
     )
+
+    if getattr(args, "ohlcv_cache_debug", False):
+        from src.application.services.ohlcv_cache_service import get_ohlcv_cache_stats
+
+        logger.info("OHLCV cache run summary: %s", get_ohlcv_cache_stats())

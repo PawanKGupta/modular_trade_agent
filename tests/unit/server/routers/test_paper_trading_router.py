@@ -5,11 +5,9 @@ import pytest
 from server.app.routers import paper_trading as paper_trading_router
 
 
-def test_get_paper_trading_portfolio_returns_empty_when_missing(monkeypatch):
-    monkeypatch.setattr(paper_trading_router.Path, "exists", lambda self: False)
-
+def test_get_paper_trading_portfolio_returns_empty_when_no_db(monkeypatch):
     result = paper_trading_router.get_paper_trading_portfolio(
-        db=SimpleNamespace(),
+        db=None,
         current=SimpleNamespace(id=101),
     )
 
@@ -18,43 +16,18 @@ def test_get_paper_trading_portfolio_returns_empty_when_missing(monkeypatch):
 
 
 def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
-    monkeypatch.setattr(paper_trading_router.Path, "exists", lambda self: True)
+    class DummyUserTradingConfigRepository:
+        def __init__(self, _db):
+            pass
 
-    class FakeStore:
-        def __init__(self, storage_path, auto_save):
-            self.storage_path = storage_path
+        def get_or_create_default(self, user_id):  # noqa: ARG002
+            return SimpleNamespace(paper_trading_initial_capital=1000.0)
 
-        def get_account(self):
-            return {
-                "initial_capital": 1000.0,
-                "available_cash": 400.0,
-                "realized_pnl": 120.0,
-            }
-
-        def get_all_holdings(self):
-            return {}
-
-        def get_all_orders(self):
-            return []
-
-    monkeypatch.setattr(paper_trading_router, "PaperTradeStore", FakeStore)
-
-    class FakeReporter:
-        def __init__(self, store):
-            self.store = store
-
-        def order_statistics(self):
-            return {
-                "total_orders": 1,
-                "buy_orders": 1,
-                "sell_orders": 0,
-                "completed_orders": 1,
-                "pending_orders": 0,
-                "cancelled_orders": 0,
-                "rejected_orders": 0,
-            }
-
-    monkeypatch.setattr(paper_trading_router, "PaperTradeReporter", FakeReporter)
+    monkeypatch.setattr(
+        paper_trading_router,
+        "UserTradingConfigRepository",
+        DummyUserTradingConfigRepository,
+    )
 
     class FakeTicker:
         def __init__(self, ticker):
@@ -130,15 +103,28 @@ def test_get_paper_trading_portfolio_builds_holdings(monkeypatch):
     monkeypatch.setattr(paper_trading_router, "SettingsRepository", mock_settings_repo)
 
     # Avoid any accidental EMA9 fallback network calls
-    monkeypatch.setattr(paper_trading_router, "fetch_ohlcv_yf", lambda *args, **kwargs: None)
+    monkeypatch.setattr(paper_trading_router, "compute_sell_target", lambda *args, **kwargs: None)
 
-    mock_db = SimpleNamespace()
+    from unittest.mock import MagicMock
+
+    closed_at = datetime(2025, 2, 1, 10, 0, 0)
+    closed_pos = SimpleNamespace(
+        symbol="ABC",
+        opened_at=datetime(2025, 1, 1, 10, 0, 0),
+        closed_at=closed_at,
+        realized_pnl=120.0,
+    )
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.all.return_value = [closed_pos]
+
     result = paper_trading_router.get_paper_trading_portfolio(
         db=mock_db,
         current=SimpleNamespace(id=202),
     )
 
+    assert result.account.realized_pnl == pytest.approx(120.0)
     assert result.account.total_pnl == pytest.approx(120.0 + 45.0)
+    assert result.account.total_value == pytest.approx(1000.0 + 120.0 + 45.0)
     assert len(result.holdings) == 1
     assert result.holdings[0].symbol == "ABC"
     # Router loads target prices only from DB sell orders (no file fallback).

@@ -64,9 +64,12 @@ Content-Type: application/json
 {
   "email": "user@example.com",
   "password": "password",
-  "name": "User Name"
+  "name": "User Name",
+  "mobile_number": "9876543210"
 }
 ```
+
+`mobile_number` is optional; when provided it must be a valid 10-digit Indian mobile number (starts with 6–9).
 
 #### Login
 ```http
@@ -85,15 +88,132 @@ GET /api/v1/auth/me
 Authorization: Bearer <token>
 ```
 
-#### Refresh Token
+Response includes `email`, `name`, optional `mobile_number`, `roles`, and `email_verified`.
+
+#### Update Profile
 ```http
-POST /api/v1/auth/refresh
+PATCH /api/v1/auth/profile
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "refresh_token": "eyJ..."
+  "email": "user@example.com",
+  "mobile_number": "9876543210"
 }
 ```
+
+Users may update **email** and **mobile_number** only (name is read-only). **`mobile_number` is optional contact info and is not required to be unique** across accounts.
+
+- **Mobile only:** send `mobile_number` (or `null` / `""` to clear). No password required.
+- **Email change:** include `current_password`. The account is marked unverified and a verification link is sent to the **new** address. If sending that email fails (SMTP configured but delivery fails), the email address is **not** changed — use resend verification or try again.
+- Send `mobile_number: null` or `""` to clear a stored mobile.
+
+```json
+{
+  "email": "new@example.com",
+  "mobile_number": "9876543210",
+  "current_password": "YourCurrentPassword123!"
+}
+```
+
+#### Change Password
+```http
+POST /api/v1/auth/change-password
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "current_password": "OldPassword123!",
+  "new_password": "NewPassword123!"
+}
+```
+
+#### Forgot Password
+```http
+POST /api/v1/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+Always returns 200 when SMTP is configured (does not reveal whether the email exists).
+
+#### Reset Password
+```http
+POST /api/v1/auth/reset-password
+Content-Type: application/json
+
+{
+  "token": "<reset-token-from-email>",
+  "new_password": "NewPassword123!"
+}
+```
+
+#### Verify Email
+```http
+POST /api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "token": "<verification-token-from-email>"
+}
+```
+
+Returns access and refresh tokens on success (auto-login).
+
+#### Resend Verification
+```http
+POST /api/v1/auth/resend-verification
+Content-Type: application/json
+
+{
+  "email": "user@example.com"
+}
+```
+
+Verification links expire **72 hours** after send.
+
+### User Billing
+
+Prefix: `/api/v1/user` (authenticated). See [Billing user traceability matrix](features/BILLING_SUBSCRIPTION_TRACEABILITY_MATRIX.md).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/billing/payment-options` | Offline UPI instructions vs online checkout availability |
+| GET | `/billing/offline-payment-qr` | Admin-uploaded QR image (when offline mode) |
+| GET | `/billing/performance-fee-arrears` | Open arrears summary |
+| GET | `/billing/performance-bills` | User performance-fee invoices |
+| POST | `/billing/performance-bills/{bill_id}/checkout` | Razorpay checkout for a bill (when online enabled) |
+| POST | `/billing/razorpay/create-order` | Generic Razorpay order (prefer performance-bill checkout) |
+| POST | `/billing/razorpay/verify-payment` | Verify Razorpay payment signature |
+| GET | `/billing/transactions` | Payment transaction history |
+
+### Admin Billing
+
+Prefix: `/api/v1/admin` (admin role). See [Billing admin traceability matrix](features/BILLING_ADMIN_TRACEABILITY_MATRIX.md).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/billing/settings` | Payment toggles, offline UPI fields, performance-fee defaults |
+| PATCH | `/billing/settings` | Update settings |
+| POST | `/billing/offline-payment-qr` | Upload offline payment QR (PNG/JPEG/WebP/GIF, max 2 MB) |
+| DELETE | `/billing/offline-payment-qr` | Remove uploaded QR |
+| PATCH | `/billing/razorpay-credentials` | Store encrypted Razorpay keys |
+| GET | `/billing/transactions` | All billing transactions |
+| POST | `/billing/refunds` | Issue refund |
+| POST | `/billing/reconcile` | Mark overdue performance bills |
+| GET | `/billing/performance-bills` | All users' performance bills |
+| POST | `/billing/performance-bills/{bill_id}/record-cash-payment` | Mark bill paid (offline UPI/cash) |
+
+### Billing Webhooks
+
+```http
+POST /api/v1/billing/webhooks/razorpay
+```
+
+Razorpay server-to-server events (signature verified). No JWT.
 
 ### Trading Signals
 
@@ -293,9 +413,12 @@ Content-Type: application/json
 {
   "rsi_period": 10,
   "ema9_period": 9,
-  "user_capital": 300000.0
+  "user_capital": 300000.0,
+  "ml_price_enabled": false
 }
 ```
+
+Optional fields include `ml_enabled`, `ml_price_enabled`, and other knobs from `TradingConfigUpdateRequest` (`server/app/schemas/trading_config.py`).
 
 ### Broker Credentials
 
@@ -524,6 +647,25 @@ Content-Type: application/json
 GET /api/v1/admin/users
 Authorization: Bearer <admin_token>
 ```
+
+Response includes optional `mobile_number` (account contact) per user.
+
+#### Create User
+```http
+POST /api/v1/admin/users
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "Secret123!",
+  "name": "User Name",
+  "role": "user",
+  "mobile_number": "9876543210"
+}
+```
+
+`mobile_number` is optional (same 10-digit Indian validation as signup). Admin-created users are email-verified immediately.
 
 #### Get ML Training Status
 ```http

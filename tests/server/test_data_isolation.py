@@ -1,31 +1,55 @@
+# ruff: noqa: PLC0415
 import os
+import sys
 from datetime import date, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
-
-os.environ["DB_URL"] = os.getenv("DB_URL", "sqlite:///./data/test_api_isolation.db")
-
-from server.app.main import app  # noqa: E402
-from src.infrastructure.db.models import Activity, Orders, OrderStatus, PnlDaily  # noqa: E402
-from src.infrastructure.db.session import SessionLocal  # noqa: E402
+from tests.support.auth_flow import signup_and_verify_payload
 
 
-def _signup(email: str) -> tuple[TestClient, dict, int]:
-    client = TestClient(app)
-    s = client.post("/api/v1/auth/signup", json={"email": email, "password": "secret123"})
-    assert s.status_code == 200, s.text
-    token = s.json()["access_token"]
+def _make_client() -> TestClient:
+    """In-memory DB with explicit schema reset (includes orders, pnl_daily)."""
+    os.environ["DB_URL"] = "sqlite:///:memory:"
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if root not in sys.path:
+        sys.path.append(root)
+
+    import src.infrastructure.db.models  # noqa: F401
+    from src.infrastructure.db.base import Base
+    from src.infrastructure.db.session import engine
+
+    try:
+        Base.metadata.drop_all(bind=engine)
+    except Exception:
+        pass
+    Base.metadata.create_all(bind=engine)
+
+    from server.app.main import app
+
+    return TestClient(app)
+
+
+def _signup(client: TestClient, email: str) -> tuple[dict, int]:
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     me = client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200
     user_id = me.json()["id"]
-    return client, headers, user_id
+    return headers, user_id
 
 
-def test_orders_pnl_activity_are_isolated_by_user_id():
+@pytest.mark.unit
+def test_orders_and_pnl_are_isolated_by_user_id():
+    client = _make_client()
+
     # create two users
-    client, headers_a, user_a = _signup("iso_a@example.com")
-    _, headers_b, _user_b = _signup("iso_b@example.com")
+    headers_a, user_a = _signup(client, "iso_a@example.com")
+    headers_b, _user_b = _signup(client, "iso_b@example.com")
+
+    from src.infrastructure.db.models import Orders, OrderStatus, PnlDaily
+    from src.infrastructure.db.session import SessionLocal
 
     # seed data for user A only
     with SessionLocal() as db:
@@ -50,15 +74,6 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
                 fees=1.0,
             )
         )
-        db.add(
-            Activity(
-                user_id=user_a,
-                type="info",
-                ref_id=None,
-                details_json={"detail": "seed for isolation test"},
-                ts=datetime.utcnow(),
-            )
-        )
         db.commit()
 
     # user B should not see user A data
@@ -74,8 +89,3 @@ def test_orders_pnl_activity_are_isolated_by_user_id():
     assert r_pnl_b.status_code == 200
     assert isinstance(r_pnl_b.json(), list)
     assert len(r_pnl_b.json()) == 0
-
-    r_act_b = client.get("/api/v1/user/activity/", headers=headers_b)
-    assert r_act_b.status_code == 200
-    assert isinstance(r_act_b.json(), list)
-    assert len(r_act_b.json()) == 0

@@ -50,7 +50,11 @@ def test_paper_trading_config_from_dict_restores_max_position_size():
     assert config.max_position_size == 800000.0
 
 
-def test_config_to_response_uses_paper_capital_when_present():
+@patch(
+    "server.app.routers.trading_config.ml_price_target_model_available",
+    return_value=False,
+)
+def test_config_to_response_uses_paper_capital_when_present(_mock_ml_price_avail):
     """Test that _config_to_response uses paper_trading_initial_capital when present"""
     mock_config = MagicMock()
     mock_config.rsi_period = 10
@@ -94,13 +98,18 @@ def test_config_to_response_uses_paper_capital_when_present():
     mock_config.ml_confidence_threshold = 0.7
     mock_config.ml_combine_with_rules = True
 
-    response = _config_to_response(mock_config)
+    response = _config_to_response(mock_config, db=MagicMock())
 
     assert response.user_capital == 200000.0
     assert response.paper_trading_initial_capital == 500000.0
+    assert response.ml_price_models_available is False
 
 
-def test_config_to_response_handles_missing_paper_capital():
+@patch(
+    "server.app.routers.trading_config.ml_price_target_model_available",
+    return_value=False,
+)
+def test_config_to_response_handles_missing_paper_capital(_mock_ml_price_avail):
     """Test that _config_to_response handles missing paper_trading_initial_capital (old DB rows)"""
 
     class OldConfig:
@@ -149,10 +158,11 @@ def test_config_to_response_handles_missing_paper_capital():
     old_config = OldConfig()
 
     # Should NOT raise ValidationError, should use default Rs 10,00,000
-    response = _config_to_response(old_config)
+    response = _config_to_response(old_config, db=MagicMock())
 
     assert response.user_capital == 200000.0
     assert response.paper_trading_initial_capital == 1000000.0  # Default fallback
+    assert response.ml_price_models_available is False
 
 
 @patch("src.application.services.paper_trading_service_adapter.PaperTradingBrokerAdapter")

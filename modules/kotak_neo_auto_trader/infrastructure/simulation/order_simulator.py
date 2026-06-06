@@ -6,12 +6,12 @@ Simulates realistic order execution with slippage and fees
 import random
 import sys
 import time
-from datetime import datetime
 from datetime import time as dt_time
 from pathlib import Path
 
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 from ...config.paper_trading_config import PaperTradingConfig
@@ -193,6 +193,31 @@ class OrderSimulator:
         else:
             return False, f"Unsupported order type for AMO: {order.order_type}", None
 
+    def try_fill_sell_limit_on_session_high(
+        self, order: Order, session_high: float
+    ) -> tuple[bool, str, Money | None]:
+        """
+        Fill a sell limit when session high >= limit (e.g. Yahoo daily high touched target).
+
+        Execution price is the limit price, same as a normal limit fill.
+        """
+        if order.order_type != OrderType.LIMIT or not order.is_sell_order():
+            return False, "Not a sell limit order", None
+        if order.price is None:
+            return False, "Limit order requires price", None
+        if session_high < float(order.price.amount):
+            return False, "Session high below limit", None
+        if not order.is_amo_order() and not self._is_market_open(order):
+            return False, "Market is closed", None
+
+        execution_price = order.price
+        logger.info(
+            f"? Limit SELL filled (daily high touch): {order.symbol} "
+            f"@ Rs {execution_price.amount:.2f} "
+            f"(Limit: Rs {order.price.amount:.2f}, session high: Rs {session_high:.2f})"
+        )
+        return True, "Limit sell filled on daily high touch", execution_price
+
     def _execute_limit_order(
         self, order: Order, current_price: Money
     ) -> tuple[bool, str, Money | None]:
@@ -292,7 +317,7 @@ class OrderSimulator:
             return True
 
         # Check current time
-        now = datetime.now().time()
+        now = ist_now().time()
         market_open = dt_time.fromisoformat(self.config.market_open_time)
         market_close = dt_time.fromisoformat(self.config.market_close_time)
 
@@ -325,7 +350,7 @@ class OrderSimulator:
         if not order.is_amo_order():
             return False
 
-        now = datetime.now().time()
+        now = ist_now().time()
         amo_time = dt_time.fromisoformat(self.config.amo_execution_time)
 
         # Execute if current time >= AMO execution time
@@ -389,5 +414,5 @@ class OrderSimulator:
             "net_value": net_value,
             "order_type": order.order_type.value,
             "transaction_type": order.transaction_type.value,
-            "executed_at": datetime.now().isoformat(),
+            "executed_at": ist_now().isoformat(),
         }

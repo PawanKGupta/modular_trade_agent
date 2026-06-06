@@ -14,6 +14,8 @@ import pytest
 from src.infrastructure.db.models import OrderStatus
 
 # Add project root to path
+
+from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -295,7 +297,7 @@ class TestUnifiedOrderMonitor:
         mock_order1.side = "buy"
         mock_order1.quantity = 10.0
         mock_order1.status = Mock(value="amo")
-        mock_order1.placed_at = datetime.now()
+        mock_order1.placed_at = ist_now_naive()
 
         mock_order2 = Mock()
         mock_order2.id = 2
@@ -305,7 +307,7 @@ class TestUnifiedOrderMonitor:
         mock_order2.side = "buy"
         mock_order2.quantity = 5.0
         mock_order2.status = Mock(value="amo")
-        mock_order2.placed_at = datetime.now()
+        mock_order2.placed_at = ist_now_naive()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order1, mock_order2]
 
@@ -328,7 +330,7 @@ class TestUnifiedOrderMonitor:
         mock_order.side = "buy"
         mock_order.quantity = 10.0
         mock_order.status = Mock(value="amo")
-        mock_order.placed_at = datetime.now()
+        mock_order.placed_at = ist_now_naive()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order]
 
@@ -369,7 +371,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         # Mock broker order response
@@ -402,7 +404,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         broker_order = {
@@ -431,7 +433,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         broker_order = {
@@ -459,7 +461,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         # Mock broker API response
@@ -480,7 +482,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         stats = unified_monitor.check_buy_order_status(broker_orders=[])
@@ -598,7 +600,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         mock_sell_manager.monitor_and_update.return_value = {
@@ -629,7 +631,7 @@ class TestUnifiedOrderMonitor:
         mock_order.quantity = 10.0
         mock_order.side = "buy"
         mock_order.status = Mock(value="amo")
-        mock_order.placed_at = datetime.now()
+        mock_order.placed_at = ist_now_naive()
 
         mock_orders_repo.get_pending_amo_orders.return_value = [mock_order]
 
@@ -696,7 +698,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER123",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         # Mock orders API to raise exception
@@ -736,7 +738,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER1",
             "db_order_id": 1,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
         unified_monitor.active_buy_orders["ORDER2"] = {
             "symbol": "TCS",
@@ -744,7 +746,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER2",
             "db_order_id": 2,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
         unified_monitor.active_buy_orders["ORDER3"] = {
             "symbol": "INFY",
@@ -752,7 +754,7 @@ class TestUnifiedOrderMonitor:
             "order_id": "ORDER3",
             "db_order_id": 3,
             "status": "amo",
-            "placed_at": datetime.now(),
+            "placed_at": ist_now_naive(),
         }
 
         broker_orders = [
@@ -1920,7 +1922,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.status = OrderStatus.ONGOING
         mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None  # Missing!
-        mock_ongoing_order.placed_at = datetime.now()
+        mock_ongoing_order.placed_at = ist_now_naive()
 
         # Mock the list call to return ONGOING order
         mock_orders_repo.list.return_value = [mock_ongoing_order]
@@ -1968,7 +1970,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.status = OrderStatus.ONGOING
         mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = 427.0  # Already has price!
-        mock_ongoing_order.placed_at = datetime.now()
+        mock_ongoing_order.placed_at = ist_now_naive()
 
         mock_orders_repo.list.return_value = [mock_ongoing_order]
 
@@ -2007,7 +2009,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.status = OrderStatus.ONGOING
         mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
-        mock_ongoing_order.placed_at = datetime.now()
+        mock_ongoing_order.placed_at = ist_now_naive()
 
         mock_orders_repo.list.return_value = [mock_ongoing_order]
 
@@ -2047,7 +2049,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_order1.status = OrderStatus.ONGOING
         mock_order1.side = "BUY"  # Add side attribute
         mock_order1.execution_price = None
-        mock_order1.placed_at = datetime.now()
+        mock_order1.placed_at = ist_now_naive()
 
         mock_order2 = Mock()
         mock_order2.broker_order_id = "ORD2"
@@ -2058,7 +2060,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_order2.status = OrderStatus.ONGOING
         mock_order2.side = "BUY"  # Add side attribute
         mock_order2.execution_price = None
-        mock_order2.placed_at = datetime.now()
+        mock_order2.placed_at = ist_now_naive()
 
         mock_orders_repo.list.return_value = [mock_order1, mock_order2]
 
@@ -2121,7 +2123,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.status = OrderStatus.ONGOING
         mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
-        mock_ongoing_order.placed_at = datetime.now()
+        mock_ongoing_order.placed_at = ist_now_naive()
 
         mock_orders_repo.list.return_value = [mock_ongoing_order]
 
@@ -2146,7 +2148,7 @@ class TestCheckBuyOrderStatusOngoingSync:
         mock_ongoing_order.status = OrderStatus.ONGOING
         mock_ongoing_order.side = "BUY"  # Add side attribute
         mock_ongoing_order.execution_price = None
-        mock_ongoing_order.placed_at = datetime.now()
+        mock_ongoing_order.placed_at = ist_now_naive()
 
         mock_orders_repo.list.return_value = [mock_ongoing_order]
         mock_orders_repo.get.return_value = mock_ongoing_order

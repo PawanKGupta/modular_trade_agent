@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,7 +16,7 @@ class MLModelRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(
+    def create(  # noqa: PLR0913
         self,
         *,
         model_type: str,
@@ -24,6 +26,7 @@ class MLModelRepository:
         created_by: int,
         accuracy: float | None = None,
         is_active: bool = False,
+        training_data_through_date: date | None = None,
     ) -> MLModel:
         """Create a new ML model"""
         model = MLModel(
@@ -34,6 +37,7 @@ class MLModelRepository:
             created_by=created_by,
             accuracy=accuracy,
             is_active=is_active,
+            training_data_through_date=training_data_through_date,
         )
         self.db.add(model)
         self.db.commit()
@@ -56,7 +60,7 @@ class MLModelRepository:
         """Get active model for a type"""
         stmt = select(MLModel).where(
             MLModel.model_type == model_type,
-            MLModel.is_active == True,
+            MLModel.is_active.is_(True),
         )
         return self.db.execute(stmt).scalar_one_or_none()
 

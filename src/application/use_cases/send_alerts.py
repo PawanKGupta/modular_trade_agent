@@ -4,7 +4,7 @@ Send Alerts Use Case
 Handles sending trading alerts via notifications.
 """
 
-from datetime import datetime
+from src.infrastructure.db.timezone_utils import ist_now
 
 # Bridge to legacy code
 from core.telegram import send_telegram
@@ -101,7 +101,7 @@ class SendAlertsUseCase:
                 msg += self._format_stock_info(stock, i)
 
         # Add timestamp for context
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
         msg += f"\n\n_Generated: {timestamp}_"
 
         return msg
