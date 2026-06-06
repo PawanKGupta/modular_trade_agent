@@ -93,7 +93,7 @@ describe('authValidation', () => {
 			}),
 		).toEqual([]);
 		expect(
-			validateProfileForm({ email: 'bad', originalEmail: 'user@example.com', mobile: '123' }).map(
+			validateProfileForm({ email: 'bad', originalEmail: 'bad', mobile: '123' }).map(
 				(e) => e.field,
 			),
 		).toEqual(['profileEmail', 'profileMobile']);
@@ -115,6 +115,16 @@ describe('authValidation', () => {
 			password: 'short',
 		});
 		expect(errors.map((e) => e.field)).toEqual(['name', 'email', 'password']);
+	});
+
+	it('validateAdminCreateUserForm validates optional mobile', () => {
+		const errors = validateAdminCreateUserForm({
+			name: 'New User',
+			email: 'user@example.com',
+			password: VALID_PASSWORD,
+			mobile: '123',
+		});
+		expect(errors.map((e) => e.field)).toEqual(['mobile']);
 	});
 
 	it('validateChangePasswordForm collects change-password errors', () => {

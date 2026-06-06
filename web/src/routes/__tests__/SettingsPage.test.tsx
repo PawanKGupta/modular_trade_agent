@@ -57,6 +57,42 @@ describe('SettingsPage', () => {
 		});
 	});
 
+	it('shows validation error for invalid mobile', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+
+		fireEvent.change(screen.getByPlaceholderText('10-digit mobile (optional)'), {
+			target: { value: '123' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText(/10-digit/i)).toBeInTheDocument();
+		});
+	});
+
+	it('shows profile current password field when email is edited', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+		expect(document.getElementById('profileCurrentPassword')).not.toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText(/^Email$/i), { target: { value: 'new@example.com' } });
+
+		expect(document.getElementById('profileCurrentPassword')).toBeInTheDocument();
+	});
+
+	it('requires current password when changing email', async () => {
+		renderPage();
+		await screen.findByText(/Account profile/i);
+
+		fireEvent.change(screen.getByLabelText(/^Email$/i), { target: { value: 'new@example.com' } });
+		fireEvent.click(screen.getByRole('button', { name: /Save profile/i }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Current password is required to change email')).toBeInTheDocument();
+		});
+	});
+
 	it('loads default Paper and saves Broker', async () => {
 		renderPage();
 		await screen.findByText(/Trading mode/i);
@@ -136,9 +172,7 @@ describe('SettingsPage', () => {
 		fireEvent.click(testBtn);
 
 		await waitFor(() => {
-			// Should show test result message
-			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
-			expect(message).toBeInTheDocument();
+			expect(screen.getByText(/Client initialized successfully/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
 	});
 
@@ -169,9 +203,7 @@ describe('SettingsPage', () => {
 		fireEvent.click(testBtn);
 
 		await waitFor(() => {
-			// Should show test result message
-			const message = screen.queryByText(/Connection/i) || screen.queryByText(/successful/i) || screen.queryByText(/failed/i);
-			expect(message).toBeInTheDocument();
+			expect(screen.getByText(/Connection successful/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
 	});
 });
