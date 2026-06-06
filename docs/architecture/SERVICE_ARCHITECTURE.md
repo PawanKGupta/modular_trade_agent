@@ -63,6 +63,8 @@ Each user has their own:
 | `SignalService` | Signal detection | ✅ Complete |
 | `VerdictService` | Verdict determination | ✅ Complete |
 
+**Behavior reference:** [Verdict and Scoring](../features/VERDICT_AND_SCORING.md) (verdict rules, strength/priority/combined scores).
+
 **Benefits:**
 - ✅ Modular, testable components
 - ✅ Clear separation of concerns

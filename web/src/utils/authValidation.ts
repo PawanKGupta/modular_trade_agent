@@ -45,6 +45,24 @@ export function isEmailValid(email: string): boolean {
 	return getEmailRequirements(email).every((rule) => rule.met);
 }
 
+const INDIAN_MOBILE_PATTERN = /^[6-9]\d{9}$/;
+
+export function normalizeMobileDigits(mobile: string): string {
+	return mobile.replace(/\D/g, '');
+}
+
+export function validateMobile(mobile: string): string | null {
+	const trimmed = mobile.trim();
+	if (!trimmed) {
+		return null;
+	}
+	const digits = normalizeMobileDigits(trimmed);
+	if (!INDIAN_MOBILE_PATTERN.test(digits)) {
+		return 'Enter a valid 10-digit Indian mobile number';
+	}
+	return null;
+}
+
 export function validateName(name: string): string | null {
 	const trimmed = name.trim();
 	if (!trimmed) {
@@ -130,6 +148,7 @@ export function validateSignupForm(input: {
 	email: string;
 	password: string;
 	confirmPassword: string;
+	mobile?: string;
 }): FieldError[] {
 	const errors: FieldError[] = [];
 	const nameError = validateName(input.name);
@@ -139,6 +158,10 @@ export function validateSignupForm(input: {
 	const emailError = validateEmail(input.email);
 	if (emailError) {
 		errors.push({ field: 'email', message: emailError });
+	}
+	const mobileError = validateMobile(input.mobile ?? '');
+	if (mobileError) {
+		errors.push({ field: 'mobile', message: mobileError });
 	}
 	const passwordError = validatePassword(input.password);
 	if (passwordError) {
@@ -155,6 +178,7 @@ export function validateAdminCreateUserForm(input: {
 	email: string;
 	name: string;
 	password: string;
+	mobile?: string;
 }): FieldError[] {
 	const errors: FieldError[] = [];
 	const nameError = validateName(input.name);
@@ -164,6 +188,10 @@ export function validateAdminCreateUserForm(input: {
 	const emailError = validateEmail(input.email);
 	if (emailError) {
 		errors.push({ field: 'email', message: emailError });
+	}
+	const mobileError = validateMobile(input.mobile ?? '');
+	if (mobileError) {
+		errors.push({ field: 'mobile', message: mobileError });
 	}
 	const passwordError = validatePassword(input.password);
 	if (passwordError) {
@@ -204,6 +232,32 @@ export function validateChangePasswordForm(input: {
 	const confirmError = validatePasswordConfirm(input.newPassword, input.confirmPassword);
 	if (confirmError) {
 		errors.push({ field: 'confirmPassword', message: confirmError });
+	}
+	return errors;
+}
+
+export function validateProfileForm(input: {
+	email: string;
+	originalEmail: string;
+	mobile?: string;
+	currentPassword?: string;
+}): FieldError[] {
+	const errors: FieldError[] = [];
+	const emailError = validateEmail(input.email);
+	if (emailError) {
+		errors.push({ field: 'profileEmail', message: emailError });
+	}
+	const mobileError = validateMobile(input.mobile ?? '');
+	if (mobileError) {
+		errors.push({ field: 'profileMobile', message: mobileError });
+	}
+	const emailChanging =
+		input.email.trim().toLowerCase() !== input.originalEmail.trim().toLowerCase();
+	if (emailChanging && !input.currentPassword?.trim()) {
+		errors.push({
+			field: 'profileCurrentPassword',
+			message: 'Current password is required to change email',
+		});
 	}
 	return errors;
 }

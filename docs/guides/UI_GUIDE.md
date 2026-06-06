@@ -473,9 +473,22 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 ### 9. Settings (`/dashboard/settings`)
 
-**Purpose:** Configure system settings.
+**Purpose:** Configure account profile, password, and system settings.
 
 #### Features
+
+**Account profile:**
+- Name (read-only; contact support to change)
+- Email (editable; changing email requires **current password** and re-verification)
+- Mobile number (optional contact number; 10-digit Indian format; **not** the Kotak broker login mobile)
+- Contact mobile is not required to be unique across users
+
+**Resend verification (`/resend-verification`):**
+- Used after signup or after changing email in Account Settings
+- Pre-fills email from query string; may show a message when redirected from profile email change
+
+**Account password:**
+- Change password with current password confirmation
 
 **Broker Credentials:**
 - Consumer Key
@@ -699,15 +712,19 @@ After logging in, you'll see the main dashboard with navigation to all features.
 
 **User List:**
 - View all users
-- User details (email, name, role)
+- User details (email, name, role, contact mobile)
 - User status (active/inactive)
 - Creation date
 
 **User Management:**
-- Create new users
+- Create new users (optional contact mobile; users can also set mobile in Account Settings)
 - Activate/deactivate users
 - Change user roles
 - Delete users (if supported)
+
+**Create user panel:**
+- Collapsed by default — click **Add user** to expand
+- Email change by end users requires their current password (not applicable to admin create)
 
 #### Actions
 - **Create User:** Add new user
@@ -755,7 +772,8 @@ The Activity Log page and `activity` database table were removed. Operational an
 - Email input
 - Password input (minimum 8 characters, at least one letter, one capital letter, one number, and one special character)
 - Confirm password field
-- Name input (optional)
+- Name input (required)
+- Mobile number (optional; 10-digit Indian format)
 - After signup, a verification email is sent. **Login and all protected APIs are blocked** until the user verifies via the link in email.
 - Wrong or typo emails cannot be used without inbox access to the verification link.
 - `/resend-verification` is a public page (like forgot password) for requesting a new link.

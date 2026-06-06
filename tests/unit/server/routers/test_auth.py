@@ -23,6 +23,7 @@ class DummyUser(SimpleNamespace):
             email_verification_sent_at=kwargs.get("email_verification_sent_at", None),
             password_reset_token_hash=kwargs.get("password_reset_token_hash", None),
             password_reset_expires_at=kwargs.get("password_reset_expires_at", None),
+            mobile_number=kwargs.get("mobile_number", None),
         )
 
 
@@ -74,7 +75,7 @@ class DummyUserRepo:
         return self.created_user
 
     def create_pending_verification_user(
-        self, email, password, name, token_hash, sent_at, role=UserRole.USER
+        self, email, password, name, token_hash, sent_at, role=UserRole.USER, mobile_number=None
     ):
         self.created_user = SimpleNamespace(
             id=42,
@@ -87,14 +88,36 @@ class DummyUserRepo:
             email_verification_sent_at=sent_at,
             password_reset_token_hash=None,
             password_reset_expires_at=None,
+            mobile_number=mobile_number,
         )
         return self.created_user
 
-    def update_unverified_signup_credentials(self, user, *, password, name):
+    def update_unverified_signup_credentials(self, user, *, password, name, mobile_number=None):
         user.name = name
+        user.mobile_number = mobile_number
         self.updated_unverified_user = user
         self.password_set_user = user
         self.password_set_value = password
+        return user
+
+    def update_profile(
+        self,
+        user,
+        *,
+        email=None,
+        mobile_number=None,
+        update_email=False,
+        update_mobile=False,
+        reset_email_verification=False,
+    ):
+        if update_mobile:
+            user.mobile_number = mobile_number
+        if update_email and email is not None:
+            user.email = email
+        if reset_email_verification:
+            user.email_verified_at = None
+            user.email_verification_token_hash = None
+            user.email_verification_sent_at = None
         return user
 
     def set_password(self, user, password):
@@ -110,7 +133,10 @@ class DummyUserRepo:
         user.password_reset_expires_at = None
 
     def find_by_reset_token_hash(self, token_hash):
-        if self.by_email and getattr(self.by_email, "password_reset_token_hash", None) == token_hash:
+        if (
+            self.by_email
+            and getattr(self.by_email, "password_reset_token_hash", None) == token_hash
+        ):
             return self.by_email
         return None
 
@@ -126,7 +152,10 @@ class DummyUserRepo:
         user.email_verification_sent_at = None
 
     def find_by_verification_token_hash(self, token_hash):
-        if self.by_email and getattr(self.by_email, "email_verification_token_hash", None) == token_hash:
+        if (
+            self.by_email
+            and getattr(self.by_email, "email_verification_token_hash", None) == token_hash
+        ):
             return self.by_email
         return None
 
@@ -203,19 +232,10 @@ def mock_settings(monkeypatch):
 
 @pytest.fixture
 def mock_auth_email(monkeypatch):
-    sent = SimpleNamespace(reset=[], verify=[])
+    """Replace AuthEmailService with an in-memory recorder (unit tests)."""
+    from tests.support.mock_auth_email import install_mock_auth_email_service
 
-    class MockEmailService:
-        def send_password_reset_email(self, to_email, token):
-            sent.reset.append((to_email, token))
-            return True
-
-        def send_verification_email(self, to_email, token):
-            sent.verify.append((to_email, token))
-            return True
-
-    monkeypatch.setattr(auth, "AuthEmailService", MockEmailService)
-    return sent
+    return install_mock_auth_email_service(monkeypatch)
 
 
 @pytest.fixture
@@ -224,9 +244,7 @@ def dummy_db():
 
 
 # Signup tests
-def test_signup_success(
-    user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db
-):
+def test_signup_success(user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db):
     user_repo.by_email = None  # No existing user
     payload = auth.SignupRequest(email="new@example.com", password="Password123!", name="New User")
 
@@ -246,7 +264,9 @@ def test_signup_duplicate_verified_email(user_repo, settings_repo):
 
     existing_user = DummyUser(email="existing@example.com", email_verified_at=ist_now())
     user_repo.by_email = existing_user
-    payload = auth.SignupRequest(email="existing@example.com", password="Password123!", name="Existing")
+    payload = auth.SignupRequest(
+        email="existing@example.com", password="Password123!", name="Existing"
+    )
 
     with pytest.raises(HTTPException) as exc:
         auth.signup(payload, db=DummyDB())
@@ -263,7 +283,9 @@ def test_signup_unverified_duplicate_resends(user_repo, settings_repo, mock_auth
         email_verification_token_hash="pending-hash",
     )
     user_repo.by_email = existing_user
-    payload = auth.SignupRequest(email="pending@example.com", password="Password123!", name="Pending")
+    payload = auth.SignupRequest(
+        email="pending@example.com", password="Password123!", name="Pending"
+    )
 
     result = auth.signup(payload, db=dummy_db)
 
@@ -531,9 +553,7 @@ def test_refresh_exception_handling(user_repo, mock_settings, monkeypatch):
 # Additional edge case tests for better coverage
 
 
-def test_signup_exception_from_settings_repo(
-    user_repo, settings_repo, mock_settings
-):
+def test_signup_exception_from_settings_repo(user_repo, settings_repo, mock_settings):
     user_repo.by_email = None
 
     def boom(user_id):
@@ -861,7 +881,9 @@ def test_verify_email_expired_token(user_repo, dummy_db):
     token = "expired-verify-token"
     user = DummyUser(email="user@example.com")
     user.email_verification_token_hash = hash_token(token)
-    user.email_verification_sent_at = ist_now_naive() - timedelta(hours=VERIFICATION_TOKEN_HOURS + 1)
+    user.email_verification_sent_at = ist_now_naive() - timedelta(
+        hours=VERIFICATION_TOKEN_HOURS + 1
+    )
     user_repo.find_by_verification_token_hash = lambda h: user if h == hash_token(token) else None
 
     payload = auth.VerifyEmailRequest(token=token)
@@ -929,3 +951,179 @@ def test_me_user_without_verified_at_is_not_verified():
     user.email_verification_token_hash = None
     result = auth.me(current=user)
     assert result.email_verified is False
+
+
+def test_signup_with_optional_mobile(
+    user_repo, settings_repo, mock_settings, mock_auth_email, dummy_db
+):
+    user_repo.by_email = None
+    payload = auth.SignupRequest(
+        email="new@example.com",
+        password="Password123!",
+        name="New User",
+        mobile_number="9876543210",
+    )
+
+    auth.signup(payload, db=dummy_db)
+
+    assert user_repo.created_user.mobile_number == "9876543210"
+
+
+def test_signup_rejects_invalid_mobile():
+    with pytest.raises(ValidationError):
+        auth.SignupRequest(
+            email="new@example.com",
+            password="Password123!",
+            name="New User",
+            mobile_number="12345",
+        )
+
+
+def test_signup_unverified_resubmit_updates_mobile(
+    user_repo, settings_repo, mock_auth_email, dummy_db
+):
+    existing_user = DummyUser(
+        email="pending@example.com",
+        email_verified_at=None,
+        email_verification_token_hash="pending-hash",
+        mobile_number="9876543210",
+    )
+    user_repo.by_email = existing_user
+    payload = auth.SignupRequest(
+        email="pending@example.com",
+        password="Password123!",
+        name="Pending",
+        mobile_number="9123456789",
+    )
+
+    auth.signup(payload, db=dummy_db)
+
+    assert existing_user.mobile_number == "9123456789"
+
+
+def test_update_profile_mobile_only(user_repo, mock_auth_email, dummy_db):
+    user = verified_dummy(id=1, email="user@example.com", mobile_number=None)
+    payload = auth.UpdateProfileRequest(mobile_number="9876543210")
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.mobile_number == "9876543210"
+    assert result.verification_required is False
+    assert result.email_verified is True
+    assert len(mock_auth_email.verify) == 0
+
+
+def test_update_profile_clears_mobile(user_repo, dummy_db):
+    user = verified_dummy(id=1, email="user@example.com", mobile_number="9876543210")
+    payload = auth.UpdateProfileRequest(mobile_number="")
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.mobile_number is None
+    assert result.verification_required is False
+
+
+def test_update_profile_email_change_requires_verification(
+    user_repo, mock_auth_email, mock_verify_password, dummy_db
+):
+    mock_verify_password.verified = True
+    user = verified_dummy(id=1, email="old@example.com")
+    user_repo.by_email = user
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="Password123!",
+    )
+
+    result = auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert user.email == "new@example.com"
+    assert user.email_verified_at is None
+    assert result.verification_required is True
+    assert result.email_verified is False
+    assert len(mock_auth_email.verify) == 1
+    assert mock_auth_email.verify[0][0] == "new@example.com"
+
+
+def test_update_profile_email_change_requires_password(user_repo, dummy_db):
+    user = verified_dummy(id=1, email="old@example.com")
+    payload = auth.UpdateProfileRequest(email="new@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert exc.value.detail == auth.PROFILE_EMAIL_PASSWORD_REQUIRED
+    assert user.email == "old@example.com"
+
+
+def test_update_profile_email_change_wrong_password(user_repo, mock_verify_password, dummy_db):
+    mock_verify_password.verified = False
+    user = verified_dummy(id=1, email="old@example.com")
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="WrongPassword123!",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert user.email == "old@example.com"
+
+
+def test_update_profile_email_change_smtp_failure_rolls_back(
+    user_repo, monkeypatch, mock_verify_password, dummy_db
+):
+    mock_verify_password.verified = True
+    user = verified_dummy(id=1, email="old@example.com")
+    user_repo.by_email = user
+
+    class FailingEmailService:
+        def is_smtp_configured(self):
+            return True
+
+        def send_verification_email(self, to_email, token):
+            return False
+
+    monkeypatch.setattr(auth, "AuthEmailService", FailingEmailService)
+    payload = auth.UpdateProfileRequest(
+        email="new@example.com",
+        current_password="Password123!",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert user.email == "old@example.com"
+    assert user.email_verified_at is not None
+
+
+def test_update_profile_duplicate_email(user_repo, mock_verify_password, dummy_db):
+    mock_verify_password.verified = True
+    user = verified_dummy(id=1, email="user@example.com")
+    taken = verified_dummy(id=2, email="taken@example.com")
+
+    def lookup(email):
+        if email == "taken@example.com":
+            return taken
+        if email == "user@example.com":
+            return user
+        return None
+
+    user_repo.get_by_email = lookup
+    payload = auth.UpdateProfileRequest(
+        email="taken@example.com",
+        current_password="Password123!",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        auth.update_profile(payload, current=user, db=dummy_db)
+
+    assert exc.value.status_code == status.HTTP_409_CONFLICT
+
+
+def test_me_includes_mobile_number():
+    user = verified_dummy(email="user@example.com", mobile_number="9876543210")
+    result = auth.me(current=user)
+    assert result.mobile_number == "9876543210"

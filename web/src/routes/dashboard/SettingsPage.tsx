@@ -1,14 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo, type BrokerTestRequest } from '@/api/user';
-import { changePassword } from '@/api/auth';
+import { changePassword, updateProfile } from '@/api/auth';
 import { useState, useEffect } from 'react';
-import { fieldErrorFor, validateChangePasswordForm } from '@/utils/authValidation';
+import { useNavigate } from 'react-router-dom';
+import { fieldErrorFor, validateChangePasswordForm, validateProfileForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components/PasswordRequirementsChecklist';
 import { PasswordInput } from '@/components/PasswordInput';
+import { EmailInput } from '@/components/EmailInput';
+import { useSessionStore } from '@/state/sessionStore';
 
 export function SettingsPage() {
 	const qc = useQueryClient();
+	const navigate = useNavigate();
+	const { user, refresh, logout } = useSessionStore();
 	const { data, isLoading } = useQuery<Settings>({ queryKey: ['settings'], queryFn: getSettings });
 	const [showFullCreds, setShowFullCreds] = useState(false);
 	const { data: credsInfo } = useQuery({
@@ -38,6 +43,21 @@ export function SettingsPage() {
 	>([]);
 	const [passwordMsg, setPasswordMsg] = useState<string | null>(null);
 	const [passwordSaving, setPasswordSaving] = useState(false);
+	const [profileName, setProfileName] = useState('');
+	const [profileEmail, setProfileEmail] = useState('');
+	const [profileMobile, setProfileMobile] = useState('');
+	const [profileCurrentPassword, setProfileCurrentPassword] = useState('');
+	const [profileFieldErrors, setProfileFieldErrors] = useState<ReturnType<typeof validateProfileForm>>([]);
+	const [profileMsg, setProfileMsg] = useState<string | null>(null);
+	const [profileSaving, setProfileSaving] = useState(false);
+
+	useEffect(() => {
+		if (user) {
+			setProfileName(user.name ?? '');
+			setProfileEmail(user.email);
+			setProfileMobile(user.mobile_number ?? '');
+		}
+	}, [user]);
 
 	useEffect(() => {
 		getBrokerStatus().then(setStatus).catch(() => {});
@@ -71,9 +91,140 @@ export function SettingsPage() {
 	if (isLoading) return <div className="p-2 sm:p-4 text-sm sm:text-base">Loading settings...</div>;
 
 	const isBroker = form.trade_mode === 'broker';
+	const profileEmailChanging =
+		(profileEmail.trim().toLowerCase() || '') !== (user?.email?.trim().toLowerCase() || '');
 
 	return (
 		<div className="p-2 sm:p-4 max-w-xl">
+			<h1 className="text-lg sm:text-xl font-semibold mb-1">Account settings</h1>
+			<p className="text-xs sm:text-sm text-[var(--muted)] mb-4 sm:mb-6">
+				Update your email, mobile number, password, and broker connection.
+			</p>
+			<h2 id="account-profile" className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">
+				Account profile
+			</h2>
+			<div className="space-y-3 mb-6 pb-6 border-b border-[#1e293b]/50">
+				<div>
+					<label className="block text-xs sm:text-sm mb-1" htmlFor="profileName">
+						Name
+					</label>
+					<input
+						id="profileName"
+						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0 opacity-70"
+						value={profileName}
+						readOnly
+						disabled
+					/>
+					<p className="text-xs text-[var(--muted)] mt-1">Contact support if you need to change your name.</p>
+				</div>
+				<div>
+					<label className="block text-xs sm:text-sm mb-1" htmlFor="profileEmail">
+						Email
+					</label>
+					<EmailInput
+						id="profileEmail"
+						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+						value={profileEmail}
+						onChange={(e) => setProfileEmail(e.target.value)}
+						autoComplete="email"
+					/>
+					{fieldErrorFor(profileFieldErrors, 'profileEmail') && (
+						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(profileFieldErrors, 'profileEmail')}</div>
+					)}
+					<p className="text-xs text-[var(--muted)] mt-1">Changing email requires verifying the new address and your current password.</p>
+				</div>
+				{profileEmailChanging ? (
+					<div>
+						<label className="block text-xs sm:text-sm mb-1" htmlFor="profileCurrentPassword">
+							Current password
+						</label>
+						<PasswordInput
+							id="profileCurrentPassword"
+							className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+							value={profileCurrentPassword}
+							onChange={(e) => setProfileCurrentPassword(e.target.value)}
+							autoComplete="current-password"
+						/>
+						{fieldErrorFor(profileFieldErrors, 'profileCurrentPassword') && (
+							<div className="text-red-400 text-xs mt-1">
+								{fieldErrorFor(profileFieldErrors, 'profileCurrentPassword')}
+							</div>
+						)}
+					</div>
+				) : null}
+				<div>
+					<label className="block text-xs sm:text-sm mb-1" htmlFor="profileMobile">
+						Mobile number
+					</label>
+					<input
+						id="profileMobile"
+						type="tel"
+						inputMode="numeric"
+						className="w-full px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+						value={profileMobile}
+						onChange={(e) => setProfileMobile(e.target.value)}
+						autoComplete="tel"
+						placeholder="10-digit mobile (optional)"
+					/>
+					{fieldErrorFor(profileFieldErrors, 'profileMobile') && (
+						<div className="text-red-400 text-xs mt-1">{fieldErrorFor(profileFieldErrors, 'profileMobile')}</div>
+					)}
+					<p className="text-xs text-[var(--muted)] mt-1">
+						Your contact number for account purposes — not the Kotak broker login mobile below.
+					</p>
+				</div>
+				<button
+					type="button"
+					disabled={profileSaving}
+					onClick={async () => {
+						setProfileMsg(null);
+						const errors = validateProfileForm({
+							email: profileEmail,
+							originalEmail: user?.email ?? profileEmail,
+							mobile: profileMobile,
+							currentPassword: profileCurrentPassword,
+						});
+						setProfileFieldErrors(errors);
+						if (errors.length > 0) {
+							return;
+						}
+						setProfileSaving(true);
+						try {
+							const result = await updateProfile({
+								email: profileEmail.trim(),
+								mobile_number: profileMobile.trim() ? profileMobile : null,
+								...(profileEmailChanging
+									? { current_password: profileCurrentPassword }
+									: {}),
+							});
+							setProfileMsg(result.message);
+							if (result.verification_required) {
+								logout();
+								navigate(
+									`/resend-verification?email=${encodeURIComponent(result.email)}`,
+									{ replace: true, state: { profileMessage: result.message } },
+								);
+								return;
+							}
+							await refresh();
+						} catch (err: unknown) {
+							setProfileMsg(getApiErrorMessage(err, 'Profile update failed'));
+						} finally {
+							setProfileSaving(false);
+						}
+					}}
+					className="bg-[var(--accent)] text-black px-4 py-3 sm:py-2 rounded text-sm sm:text-base min-h-[44px] sm:min-h-0 disabled:opacity-60"
+				>
+					{profileSaving ? 'Saving...' : 'Save profile'}
+				</button>
+				{profileMsg && (
+					<div
+						className={`text-xs sm:text-sm ${profileMsg.includes('successfully') || profileMsg.includes('Check your new email') ? 'text-green-400' : 'text-red-400'}`}
+					>
+						{profileMsg}
+					</div>
+				)}
+			</div>
 			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Account password</h2>
 			<div className="space-y-3 mb-6 pb-6 border-b border-[#1e293b]/50">
 				<div>

@@ -176,10 +176,12 @@ The service layer is the **recommended way** to interact with analysis functiona
 - **`VerdictService`** - Verdict determination and trading parameters
   - Replaces `core.analysis.calculate_smart_*()` functions
   - Returns typed `TradingParameters` object
+  - See [Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)
 
 - **`ScoringService`** - Scoring and ranking
   - Replaces `core.scoring.compute_strength_score()`
   - Provides strength scores, priority scores, combined scores
+  - See [Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)
 
 - **`BacktestService`** - Backtesting integration
   - Replaces `core.backtest_scoring` functions

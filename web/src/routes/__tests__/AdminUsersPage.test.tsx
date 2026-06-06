@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { withProviders } from '@/test/utils';
 import { AdminUsersPage } from '../dashboard/AdminUsersPage';
@@ -14,8 +14,8 @@ vi.mock('@/api/admin', () => ({
 }));
 
 const sampleUsers = [
-	{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' as const, is_active: true, created_at: '', updated_at: '' },
-	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, created_at: '', updated_at: '' },
+	{ id: 1, email: 'admin@example.com', name: 'Admin', role: 'admin' as const, is_active: true, mobile_number: null, created_at: '', updated_at: '' },
+	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, mobile_number: '9876543210', created_at: '', updated_at: '' },
 ];
 
 function getCreatePasswordInput() {
@@ -44,12 +44,25 @@ describe('AdminUsersPage', () => {
 		await waitFor(() => {
 			expect(screen.getByText('admin@example.com')).toBeInTheDocument();
 			expect(screen.getByText('user@example.com')).toBeInTheDocument();
+			expect(screen.getByText('9876543210')).toBeInTheDocument();
 		});
+		expect(screen.queryByLabelText(/^Email/i)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument();
+	});
+
+	it('expands create user form on demand', async () => {
+		render(withProviders(<AdminUsersPage />));
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+
+		expect(screen.queryByLabelText(/^Email/i)).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
+		expect(screen.getByLabelText(/^Email/i)).toBeInTheDocument();
 	});
 
 	it('creates a new user', async () => {
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'New User');
@@ -65,7 +78,8 @@ describe('AdminUsersPage', () => {
 
 	it('blocks create when name is missing', async () => {
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
 		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
@@ -81,15 +95,17 @@ describe('AdminUsersPage', () => {
 		render(withProviders(<AdminUsersPage />));
 		await waitFor(() => expect(screen.getByText('user@example.com')).toBeInTheDocument());
 
-		const roleSelects = screen.getAllByRole('combobox');
-		await userEvent.selectOptions(roleSelects[2], 'admin');
+		const userRow = screen.getByText('user@example.com').closest('tr');
+		expect(userRow).not.toBeNull();
+		await userEvent.selectOptions(within(userRow!).getByRole('combobox'), 'admin');
 
 		await waitFor(() => {
 			expect(adminApi.updateUser).toHaveBeenCalledWith(2, { role: 'admin' });
 		});
 
-		const checkboxes = screen.getAllByRole('checkbox');
-		fireEvent.click(checkboxes[0]);
+		const adminRow = screen.getByText('admin@example.com').closest('tr');
+		expect(adminRow).not.toBeNull();
+		fireEvent.click(within(adminRow!).getByRole('checkbox'));
 
 		await waitFor(() => {
 			expect(adminApi.updateUser).toHaveBeenCalledWith(1, { is_active: false });
@@ -127,7 +143,8 @@ describe('AdminUsersPage', () => {
 	it('shows create error state', async () => {
 		vi.mocked(adminApi.createUser).mockRejectedValue(new Error('fail'));
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByLabelText(/^Email/i)).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Add user' })).toBeInTheDocument());
+		await userEvent.click(screen.getByRole('button', { name: 'Add user' }));
 
 		await userEvent.type(screen.getByLabelText(/^Email/i), 'bad@example.com');
 		await userEvent.type(screen.getByLabelText(/^Name/i), 'Bad User');

@@ -8,8 +8,10 @@ import {
 	validateChangePasswordForm,
 	validateEmail,
 	validateLoginForm,
+	validateMobile,
 	validatePassword,
 	validatePasswordConfirm,
+	validateProfileForm,
 	validateSignupForm,
 } from '../authValidation';
 
@@ -76,6 +78,36 @@ describe('authValidation', () => {
 		expect(errors.map((e) => e.field)).toEqual(['name', 'email', 'password', 'confirmPassword']);
 	});
 
+	it('validateMobile accepts empty and valid Indian numbers', () => {
+		expect(validateMobile('')).toBeNull();
+		expect(validateMobile('9876543210')).toBeNull();
+		expect(validateMobile('12345')).toContain('10-digit');
+	});
+
+	it('validateProfileForm validates email and optional mobile', () => {
+		expect(
+			validateProfileForm({
+				email: 'user@example.com',
+				originalEmail: 'user@example.com',
+				mobile: '9876543210',
+			}),
+		).toEqual([]);
+		expect(
+			validateProfileForm({ email: 'bad', originalEmail: 'user@example.com', mobile: '123' }).map(
+				(e) => e.field,
+			),
+		).toEqual(['profileEmail', 'profileMobile', 'profileCurrentPassword']);
+	});
+
+	it('validateProfileForm requires password when email changes', () => {
+		const errors = validateProfileForm({
+			email: 'new@example.com',
+			originalEmail: 'user@example.com',
+			mobile: '',
+		});
+		expect(errors.map((e) => e.field)).toEqual(['profileCurrentPassword']);
+	});
+
 	it('validateAdminCreateUserForm collects admin create field errors', () => {
 		const errors = validateAdminCreateUserForm({
 			name: '',
@@ -83,6 +115,16 @@ describe('authValidation', () => {
 			password: 'short',
 		});
 		expect(errors.map((e) => e.field)).toEqual(['name', 'email', 'password']);
+	});
+
+	it('validateAdminCreateUserForm validates optional mobile', () => {
+		const errors = validateAdminCreateUserForm({
+			name: 'New User',
+			email: 'user@example.com',
+			password: VALID_PASSWORD,
+			mobile: '123',
+		});
+		expect(errors.map((e) => e.field)).toEqual(['mobile']);
 	});
 
 	it('validateChangePasswordForm collects change-password errors', () => {

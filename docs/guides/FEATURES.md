@@ -49,6 +49,8 @@ Complete documentation of all features in Rebound — Modular Trade Agent system
 - Volume ratios
 - Fundamental data (PE, PB)
 
+**Verdict and scoring logic:** See [Verdict and Scoring Reference](../features/VERDICT_AND_SCORING.md) for `VerdictService` / `ScoringService` rules, thresholds, and score breakdowns.
+
 ### 2. Order Management
 
 **Purpose:** Monitor and manage trading orders (buy/sell).

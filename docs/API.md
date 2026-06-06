@@ -64,9 +64,12 @@ Content-Type: application/json
 {
   "email": "user@example.com",
   "password": "password",
-  "name": "User Name"
+  "name": "User Name",
+  "mobile_number": "9876543210"
 }
 ```
+
+`mobile_number` is optional; when provided it must be a valid 10-digit Indian mobile number (starts with 6–9).
 
 #### Login
 ```http
@@ -83,6 +86,34 @@ Content-Type: application/json
 ```http
 GET /api/v1/auth/me
 Authorization: Bearer <token>
+```
+
+Response includes `email`, `name`, optional `mobile_number`, `roles`, and `email_verified`.
+
+#### Update Profile
+```http
+PATCH /api/v1/auth/profile
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "mobile_number": "9876543210"
+}
+```
+
+Users may update **email** and **mobile_number** only (name is read-only). **`mobile_number` is optional contact info and is not required to be unique** across accounts.
+
+- **Mobile only:** send `mobile_number` (or `null` / `""` to clear). No password required.
+- **Email change:** include `current_password`. The account is marked unverified and a verification link is sent to the **new** address. If sending that email fails (SMTP configured but delivery fails), the email address is **not** changed — use resend verification or try again.
+- Send `mobile_number: null` or `""` to clear a stored mobile.
+
+```json
+{
+  "email": "new@example.com",
+  "mobile_number": "9876543210",
+  "current_password": "YourCurrentPassword123!"
+}
 ```
 
 #### Refresh Token
@@ -527,6 +558,25 @@ Content-Type: application/json
 GET /api/v1/admin/users
 Authorization: Bearer <admin_token>
 ```
+
+Response includes optional `mobile_number` (account contact) per user.
+
+#### Create User
+```http
+POST /api/v1/admin/users
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "Secret123!",
+  "name": "User Name",
+  "role": "user",
+  "mobile_number": "9876543210"
+}
+```
+
+`mobile_number` is optional (same 10-digit Indian validation as signup). Admin-created users are email-verified immediately.
 
 #### Get ML Training Status
 ```http

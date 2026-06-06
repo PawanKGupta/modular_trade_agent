@@ -22,11 +22,27 @@ def validate_password_strength(value: str) -> str:
 
 PasswordStr = Annotated[str, Field(min_length=_PASSWORD_MIN_LENGTH)]
 
+_INDIAN_MOBILE_RE = re.compile(r"^[6-9]\d{9}$")
+
+
+def normalize_optional_mobile(value: str | None) -> str | None:
+    """Normalize optional Indian mobile: empty -> None, else 10 digits starting 6-9."""
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    digits = re.sub(r"\D", "", trimmed)
+    if not _INDIAN_MOBILE_RE.match(digits):
+        raise ValueError("Enter a valid 10-digit Indian mobile number")
+    return digits
+
 
 class SignupRequest(BaseModel):
     email: EmailStr
     password: PasswordStr
     name: str = Field(min_length=1, max_length=255)
+    mobile_number: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -35,6 +51,18 @@ class SignupRequest(BaseModel):
         if not trimmed:
             raise ValueError("Name is required")
         return trimmed
+
+    @field_validator("mobile_number", mode="before")
+    @classmethod
+    def mobile_optional(cls, value: str | None) -> str | None:
+        if value == "":
+            return None
+        return value
+
+    @field_validator("mobile_number")
+    @classmethod
+    def mobile_valid(cls, value: str | None) -> str | None:
+        return normalize_optional_mobile(value)
 
     @field_validator("password")
     @classmethod
@@ -101,5 +129,34 @@ class MeResponse(BaseModel):
     id: int
     email: EmailStr
     name: str | None = None
+    mobile_number: str | None = None
     roles: list[Literal["admin", "user"]]
     email_verified: bool = True
+
+
+class UpdateProfileRequest(BaseModel):
+    email: EmailStr | None = None
+    mobile_number: str | None = None
+    current_password: str | None = None
+
+    @field_validator("mobile_number", mode="before")
+    @classmethod
+    def mobile_optional(cls, value: str | None) -> str | None:
+        if value == "":
+            return None
+        return value
+
+    @field_validator("mobile_number")
+    @classmethod
+    def mobile_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_optional_mobile(value)
+
+
+class ProfileUpdateResponse(BaseModel):
+    message: str
+    email: EmailStr
+    mobile_number: str | None = None
+    email_verified: bool
+    verification_required: bool = False

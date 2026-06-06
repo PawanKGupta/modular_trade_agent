@@ -4,8 +4,17 @@ export type MeResponse = {
 	id: number;
 	email: string;
 	name?: string | null;
+	mobile_number?: string | null;
 	roles: ('admin' | 'user')[];
 	email_verified: boolean;
+};
+
+export type ProfileUpdateResponse = {
+	message: string;
+	email: string;
+	mobile_number?: string | null;
+	email_verified: boolean;
+	verification_required: boolean;
 };
 
 type TokenResponse = {
@@ -31,8 +40,18 @@ function persistTokens(tokens: TokenResponse) {
 	setRefreshToken(refresh);
 }
 
-export async function signup(email: string, password: string, name: string): Promise<SignupResponse> {
-	const res = await api.post<SignupResponse>('/auth/signup', { email, password, name });
+export async function signup(
+	email: string,
+	password: string,
+	name: string,
+	mobileNumber?: string,
+): Promise<SignupResponse> {
+	const body: Record<string, string> = { email, password, name };
+	const mobileDigits = mobileNumber?.trim() ? mobileNumber.replace(/\D/g, '') : '';
+	if (mobileDigits) {
+		body.mobile_number = mobileDigits;
+	}
+	const res = await api.post<SignupResponse>('/auth/signup', body);
 	return res.data;
 }
 
@@ -52,6 +71,29 @@ export async function changePassword(currentPassword: string, newPassword: strin
 		current_password: currentPassword,
 		new_password: newPassword,
 	});
+}
+
+export async function updateProfile(input: {
+	email: string;
+	mobile_number?: string | null;
+	current_password?: string;
+}): Promise<ProfileUpdateResponse> {
+	const body: {
+		email: string;
+		mobile_number?: string | null;
+		current_password?: string;
+	} = {
+		email: input.email.trim(),
+	};
+	if (input.mobile_number !== undefined) {
+		const trimmed = (input.mobile_number ?? '').trim();
+		body.mobile_number = trimmed ? trimmed.replace(/\D/g, '') : null;
+	}
+	if (input.current_password) {
+		body.current_password = input.current_password;
+	}
+	const res = await api.patch<ProfileUpdateResponse>('/auth/profile', body);
+	return res.data;
 }
 
 export async function forgotPassword(email: string): Promise<void> {

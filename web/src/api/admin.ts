@@ -6,6 +6,7 @@ export interface AdminUser {
 	id: number;
 	email: string;
 	name?: string | null;
+	mobile_number?: string | null;
 	role: Role;
 	is_active: boolean;
 	created_at: string;
@@ -17,6 +18,7 @@ export interface CreateUserPayload {
 	password: string;
 	name: string;
 	role?: Role;
+	mobile_number?: string | null;
 }
 
 export interface UpdateUserPayload {
@@ -37,7 +39,17 @@ export async function listUsers(params?: { q?: string; limit?: number }): Promis
 }
 
 export async function createUser(payload: CreateUserPayload): Promise<AdminUser> {
-	const { data } = await api.post<AdminUser>('/admin/users', payload);
+	const body: CreateUserPayload = {
+		email: payload.email.trim(),
+		password: payload.password,
+		name: payload.name.trim(),
+		role: payload.role ?? 'user',
+	};
+	const mobileDigits = (payload.mobile_number ?? '').toString().trim().replace(/\D/g, '');
+	if (mobileDigits) {
+		body.mobile_number = mobileDigits;
+	}
+	const { data } = await api.post<AdminUser>('/admin/users', body);
 	return data;
 }
 

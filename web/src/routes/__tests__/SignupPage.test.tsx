@@ -30,11 +30,13 @@ function submitSignupForm() {
 function fillSignupForm(options: {
 	email?: string;
 	name?: string;
+	mobile?: string;
 	password?: string;
 	confirmPassword?: string;
 } = {}) {
 	const email = options.email ?? 'new@example.com';
 	const name = options.name ?? 'New User';
+	const mobile = options.mobile ?? '';
 	const password = options.password ?? 'Secret123!';
 	const confirmPassword = options.confirmPassword ?? password;
 
@@ -44,6 +46,11 @@ function fillSignupForm(options: {
 	fireEvent.change(document.getElementById('name')!, {
 		target: { value: name },
 	});
+	if (mobile) {
+		fireEvent.change(document.getElementById('mobile')!, {
+			target: { value: mobile },
+		});
+	}
 	const passwords = document.querySelectorAll('input[type="password"]');
 	fireEvent.change(passwords[0], { target: { value: password } });
 	fireEvent.change(passwords[1], { target: { value: confirmPassword } });
@@ -115,6 +122,34 @@ describe('SignupPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Email already registered')).toBeInTheDocument();
+		});
+	});
+
+	it('includes optional mobile in signup request', async () => {
+		let capturedBody: Record<string, string> | null = null;
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/signup', async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, string>;
+				return HttpResponse.json({
+					message: 'Account created. Check your email and click the verification link before logging in.',
+				});
+			}),
+		);
+
+		renderWithRouter(<SignupPage />);
+		fillSignupForm({ mobile: '9876543210' });
+		submitSignupForm();
+
+		await screen.findByRole('heading', { name: /check your email/i });
+		expect(capturedBody?.mobile_number).toBe('9876543210');
+	});
+
+	it('shows validation error for invalid mobile', async () => {
+		renderWithRouter(<SignupPage />);
+		fillSignupForm({ mobile: '12345' });
+		submitSignupForm();
+		await waitFor(() => {
+			expect(screen.getByText(/10-digit Indian mobile/i)).toBeInTheDocument();
 		});
 	});
 });

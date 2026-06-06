@@ -26,16 +26,28 @@ export function AdminUsersPage() {
 		enabled: isAdmin,
 	});
 
-	const [newUser, setNewUser] = useState<CreateUserPayload>({ email: '', password: '', name: '', role: 'user' });
+	const [newUser, setNewUser] = useState<CreateUserPayload & { mobile?: string }>({
+		email: '',
+		password: '',
+		name: '',
+		role: 'user',
+		mobile: '',
+	});
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateAdminCreateUserForm>>([]);
 	const [createError, setCreateError] = useState<string | null>(null);
+	const [showCreateForm, setShowCreateForm] = useState(false);
+
+	const resetCreateForm = () => {
+		setNewUser({ email: '', password: '', name: '', role: 'user', mobile: '' });
+		setFieldErrors([]);
+		setCreateError(null);
+	};
 
 	const createMut = useMutation({
 		mutationFn: createUser,
 		onSuccess: () => {
-			setNewUser({ email: '', password: '', name: '', role: 'user' });
-			setFieldErrors([]);
-			setCreateError(null);
+			resetCreateForm();
+			setShowCreateForm(false);
 			qc.invalidateQueries({ queryKey: ['admin-users'] });
 		},
 		onError: (err: unknown) => {
@@ -58,16 +70,23 @@ export function AdminUsersPage() {
 
 	function handleCreate() {
 		setCreateError(null);
-		const validationErrors = validateAdminCreateUserForm(newUser);
+		const validationErrors = validateAdminCreateUserForm({
+			email: newUser.email,
+			name: newUser.name,
+			password: newUser.password,
+			mobile: newUser.mobile,
+		});
 		setFieldErrors(validationErrors);
 		if (validationErrors.length > 0) {
 			return;
 		}
+		const mobileDigits = (newUser.mobile ?? '').trim().replace(/\D/g, '');
 		createMut.mutate({
 			email: newUser.email.trim(),
 			password: newUser.password,
 			name: newUser.name.trim(),
 			role: newUser.role ?? 'user',
+			mobile_number: mobileDigits ? mobileDigits : null,
 		});
 	}
 
@@ -80,11 +99,35 @@ export function AdminUsersPage() {
 			<h1 className="text-lg sm:text-xl font-semibold text-[var(--text)]">Users</h1>
 
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded p-3 sm:p-4">
-				<h2 className="text-sm sm:text-base font-medium mb-2 text-[var(--text)]">Create user</h2>
-				<p className="text-xs text-[var(--muted)] mb-3">
-					<span className="text-red-400">*</span> Required fields
-				</p>
-				<div className="flex flex-col gap-2 max-w-xl">
+				<div className="flex items-center justify-between gap-3 mb-2">
+					<h2 className="text-sm sm:text-base font-medium text-[var(--text)]">Create user</h2>
+					{showCreateForm ? (
+						<button
+							type="button"
+							className="text-xs sm:text-sm text-[var(--muted)] hover:text-[var(--text)] px-2 py-1 rounded min-h-[36px] sm:min-h-0"
+							onClick={() => {
+								resetCreateForm();
+								setShowCreateForm(false);
+							}}
+						>
+							Cancel
+						</button>
+					) : (
+						<button
+							type="button"
+							className="bg-blue-600 text-white rounded px-3 py-2 sm:py-1 text-sm disabled:opacity-50 min-h-[36px] sm:min-h-0"
+							onClick={() => setShowCreateForm(true)}
+						>
+							Add user
+						</button>
+					)}
+				</div>
+				{showCreateForm ? (
+					<>
+						<p className="text-xs text-[var(--muted)] mb-3">
+							<span className="text-red-400">*</span> Required fields
+						</p>
+						<div className="flex flex-col gap-2 max-w-xl">
 					<FormLabel htmlFor="admin-create-email" required>
 						Email
 					</FormLabel>
@@ -132,6 +175,26 @@ export function AdminUsersPage() {
 					)}
 					<PasswordRequirementsChecklist password={newUser.password} />
 
+					<FormLabel htmlFor="admin-create-mobile" className="mt-1">
+						Contact mobile
+					</FormLabel>
+					<input
+						id="admin-create-mobile"
+						className={inputClass}
+						type="tel"
+						inputMode="numeric"
+						value={newUser.mobile ?? ''}
+						onChange={(e) => setNewUser((s) => ({ ...s, mobile: e.target.value }))}
+						autoComplete="off"
+						placeholder="10-digit mobile (optional)"
+					/>
+					{fieldErrorFor(fieldErrors, 'mobile') && (
+						<div className="text-red-400 text-xs sm:text-sm">{fieldErrorFor(fieldErrors, 'mobile')}</div>
+					)}
+					<p className="text-xs text-[var(--muted)]">
+						Optional account contact number. Users can also set this themselves after signup.
+					</p>
+
 					<FormLabel htmlFor="admin-create-role" className="mt-1">
 						Role
 					</FormLabel>
@@ -153,7 +216,13 @@ export function AdminUsersPage() {
 					>
 						{createMut.isPending ? 'Creating...' : 'Create'}
 					</button>
-				</div>
+						</div>
+					</>
+				) : (
+					<p className="text-xs sm:text-sm text-[var(--muted)]">
+						Add a new account manually. Optional contact mobile can be set here or by the user later.
+					</p>
+				)}
 			</div>
 
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded">
@@ -167,6 +236,7 @@ export function AdminUsersPage() {
 						<tr>
 							<th className="text-left p-2">Email</th>
 							<th className="text-left p-2">Name</th>
+							<th className="text-left p-2">Mobile</th>
 							<th className="text-left p-2">Role</th>
 							<th className="text-left p-2">Active</th>
 							<th className="text-left p-2">Actions</th>
@@ -177,6 +247,7 @@ export function AdminUsersPage() {
 							<tr key={u.id} className="border-t border-[#1e293b]">
 								<td className="p-2 text-[var(--text)]">{u.email}</td>
 								<td className="p-2 text-[var(--text)]">{u.name ?? '-'}</td>
+								<td className="p-2 text-[var(--text)]">{u.mobile_number ?? '-'}</td>
 								<td className="p-2">
 									<select
 										className="bg-[#0f1720] border border-[#1e293b] rounded px-2 py-1 text-[var(--text)]"
@@ -208,7 +279,7 @@ export function AdminUsersPage() {
 						))}
 						{(data ?? []).length === 0 && !isLoading && (
 							<tr>
-								<td className="p-2 text-[var(--muted)]" colSpan={5}>
+								<td className="p-2 text-[var(--muted)]" colSpan={6}>
 									No users found
 								</td>
 							</tr>

@@ -16,6 +16,7 @@ class DummyUser(SimpleNamespace):
             name=kwargs.get("name", "User"),
             role=kwargs.get("role", UserRole.USER),
             is_active=kwargs.get("is_active", True),
+            mobile_number=kwargs.get("mobile_number", None),
         )
 
 
@@ -43,9 +44,20 @@ class DummyUserRepo:
     def get_by_email(self, email):
         return self.by_email
 
-    def create_user(self, **kwargs):
-        self.created = kwargs
-        return DummyUser(**kwargs)
+    def create_user(self, email, password, name, role, mobile_number=None):
+        self.created = {
+            "email": email,
+            "password": password,
+            "name": name,
+            "role": role,
+            "mobile_number": mobile_number,
+        }
+        return DummyUser(
+            email=email,
+            name=name,
+            role=role,
+            mobile_number=mobile_number,
+        )
 
     def mark_email_verified(self, user):
         return None
@@ -86,12 +98,19 @@ def settings_repo(monkeypatch):
 def test_list_users_transforms_response(user_repo):
     user_repo._users = [
         DummyUser(id=1, email="a@x.com", name="A", role=UserRole.ADMIN),
-        DummyUser(id=2, email="b@x.com", name="B", role=UserRole.USER),
+        DummyUser(
+            id=2,
+            email="b@x.com",
+            name="B",
+            role=UserRole.USER,
+            mobile_number="9876543210",
+        ),
     ]
     result = admin.list_users(db=None, q=None, limit=50)
     assert user_repo.listed_active_only is False
     assert result[0].role == "admin"
     assert result[1].email == "b@x.com"
+    assert result[1].mobile_number == "9876543210"
 
 
 def test_list_users_with_search_uses_repo(user_repo):
@@ -115,9 +134,16 @@ def test_create_user_conflict(user_repo):
 
 def test_create_user_success(user_repo, settings_repo):
     user_repo.by_email = None
-    payload = admin.AdminUserCreate(email="new@x.com", password="Password123!", name="New", role="user")
+    payload = admin.AdminUserCreate(
+        email="new@x.com",
+        password="Password123!",
+        name="New",
+        role="user",
+        mobile_number="9876543210",
+    )
     resp = admin.create_user(payload, db=None)
     assert resp.email == "new@x.com"
+    assert resp.mobile_number == "9876543210"
     assert settings_repo.ids == [resp.id]
 
 

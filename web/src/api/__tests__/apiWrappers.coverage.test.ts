@@ -81,6 +81,18 @@ describe('api wrappers (mocked client)', () => {
 		await auth.resendVerification('user@example.com');
 		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
 		await auth.changePassword('OldSecret123!', 'NewSecret123!');
+		hoisted.api.patch.mockResolvedValueOnce({
+			data: { message: 'Profile updated successfully.', email: 'user@example.com', verification_required: false },
+		});
+		await auth.updateProfile({ email: 'user@example.com', mobile_number: '9876543210' });
+		hoisted.api.patch.mockResolvedValueOnce({
+			data: { message: 'Check your new email', email: 'new@example.com', verification_required: true },
+		});
+		await auth.updateProfile({
+			email: 'new@example.com',
+			mobile_number: null,
+			current_password: 'Secret123!',
+		});
 		auth.logout();
 	});
 
@@ -88,7 +100,13 @@ describe('api wrappers (mocked client)', () => {
 		await admin.listUsers();
 		await admin.listUsers({ q: '  ' });
 		await admin.listUsers({ q: 'alice', limit: 10 });
-		await admin.createUser({ email: 'a@b.com', password: 'x' });
+		await admin.createUser({ email: 'a@b.com', password: 'x', name: 'Test User' });
+		await admin.createUser({
+			email: 'b@c.com',
+			password: 'y',
+			name: 'Mobile User',
+			mobile_number: '9876543210',
+		});
 		await admin.updateUser(1, { name: 'N' });
 		await admin.deleteUser(2);
 		await admin.listServiceSchedules();

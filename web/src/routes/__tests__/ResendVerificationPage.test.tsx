@@ -28,6 +28,26 @@ describe('ResendVerificationPage', () => {
 		expect(document.querySelector('input[type="email"]')).toHaveValue('pending@example.com');
 	});
 
+	it('shows profile message from navigation state', () => {
+		render(
+			withProviders(
+				<MemoryRouter
+					initialEntries={[
+						{
+							pathname: '/resend-verification',
+							state: { profileMessage: 'Check your new email and verify.' },
+						},
+					]}
+				>
+					<Routes>
+						<Route path="/resend-verification" element={<ResendVerificationPage />} />
+					</Routes>
+				</MemoryRouter>,
+			),
+		);
+		expect(screen.getByText('Check your new email and verify.')).toBeInTheDocument();
+	});
+
 	it('shows success message after submitting a valid email', async () => {
 		renderWithRouter();
 		fireEvent.change(document.querySelector('input[type="email"]')!, {

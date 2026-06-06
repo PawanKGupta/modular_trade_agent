@@ -41,7 +41,7 @@ test.describe('Dashboard & Navigation', () => {
 			{ category: /Trading/i, name: /Targets/i, url: /\/dashboard\/targets/ },
 			{ category: /System/i, name: /Service Status/i, url: /\/dashboard\/service/ },
 			{ category: /Settings/i, name: /Trading Config/i, url: /\/dashboard\/trading-config/ },
-			{ category: /Settings/i, name: /Broker Settings/i, url: /\/dashboard\/settings/ },
+			{ category: /Settings/i, name: /Account Settings/i, url: /\/dashboard\/settings/ },
 			{ category: /Settings/i, name: /Notification Settings/i, url: /\/dashboard\/notification-preferences/ },
 			{ category: /Logs/i, name: /System Logs/i, url: /\/dashboard\/logs/ },
 			{ category: /Notifications/i, name: /Notifications/i, url: /\/dashboard\/notifications/ },

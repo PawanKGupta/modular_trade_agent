@@ -47,7 +47,11 @@ test.describe('Admin Features', () => {
 		await authenticatedPage.goto('/dashboard/admin/users');
 		await authenticatedPage.waitForLoadState('networkidle');
 
-		// Fill user details first (form is already visible)
+		// Expand create form on demand
+		const addUserButton = authenticatedPage.getByRole('button', { name: /Add user/i });
+		await addUserButton.click();
+
+		// Fill user details
 		const timestamp = Date.now();
 		const email = `newuser${timestamp}@rebound.com`;
 		const password = 'TestPassword123!';

@@ -12,6 +12,7 @@ import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components
 export function SignupPage() {
 	const [email, setEmail] = useState('');
 	const [name, setName] = useState('');
+	const [mobile, setMobile] = useState('');
 	const [password, setPassword] = useState('');
 	const [confirmPassword, setConfirmPassword] = useState('');
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateSignupForm>>([]);
@@ -23,14 +24,14 @@ export function SignupPage() {
 		e.preventDefault();
 		setError(null);
 		setSuccessMessage(null);
-		const validationErrors = validateSignupForm({ name, email, password, confirmPassword });
+		const validationErrors = validateSignupForm({ name, email, password, confirmPassword, mobile });
 		setFieldErrors(validationErrors);
 		if (validationErrors.length > 0) {
 			return;
 		}
 		setLoading(true);
 		try {
-			const result = await signup(email.trim(), password, name.trim());
+			const result = await signup(email.trim(), password, name.trim(), mobile.trim() || undefined);
 			setSuccessMessage(result.message);
 		} catch (err: unknown) {
 			setError(getApiErrorMessage(err, 'Signup failed'));
@@ -107,6 +108,23 @@ export function SignupPage() {
 				/>
 				{fieldErrorFor(fieldErrors, 'name') && (
 					<div className="text-red-400 text-xs sm:text-sm mb-2">{fieldErrorFor(fieldErrors, 'name')}</div>
+				)}
+				<FormLabel htmlFor="mobile" className="mt-2">
+					Mobile number
+				</FormLabel>
+				<input
+					id="mobile"
+					name="mobile"
+					className={`${inputClass} mb-3`}
+					value={mobile}
+					onChange={(e) => setMobile(e.target.value)}
+					type="tel"
+					autoComplete="tel"
+					inputMode="numeric"
+					placeholder="10-digit mobile (optional)"
+				/>
+				{fieldErrorFor(fieldErrors, 'mobile') && (
+					<div className="text-red-400 text-xs sm:text-sm mb-2">{fieldErrorFor(fieldErrors, 'mobile')}</div>
 				)}
 				<FormLabel htmlFor="password" required>
 					Password
