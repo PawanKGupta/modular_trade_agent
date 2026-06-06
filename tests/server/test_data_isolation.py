@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.auth_flow import signup_and_verify_payload
 
 
 def _make_client() -> TestClient:
@@ -30,9 +31,8 @@ def _make_client() -> TestClient:
 
 
 def _signup(client: TestClient, email: str) -> tuple[dict, int]:
-    s = client.post("/api/v1/auth/signup", json={"email": email, "password": "secret123"})
-    assert s.status_code == 200, s.text
-    token = s.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     me = client.get("/api/v1/auth/me", headers=headers)
     assert me.status_code == 200

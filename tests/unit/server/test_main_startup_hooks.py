@@ -234,6 +234,9 @@ def test_ensure_db_schema_creates_tables_and_bootstraps_admin(monkeypatch: pytes
             created["create_user"] += 1
             return SimpleNamespace(id=123)
 
+        def mark_email_verified(self, _user):
+            return None
+
     class _SettingsRepo:
         def __init__(self, db):
             self.db = db

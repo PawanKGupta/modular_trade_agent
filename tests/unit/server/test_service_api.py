@@ -44,15 +44,15 @@ def client(db_session):
 def test_user(db_session):
     """Create a test user"""
     from src.infrastructure.persistence import UserRepository
+    from tests.support.test_users import create_verified_user
 
-    repo = UserRepository(db_session)
-    user = repo.create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="test@example.com",
         password="Test123!",
         name="Test User",
         role=UserRole.USER,
     )
-    return user
 
 
 @pytest.fixture

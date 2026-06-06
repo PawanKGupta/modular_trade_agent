@@ -47,6 +47,9 @@ class DummyUserRepo:
         self.created = kwargs
         return DummyUser(**kwargs)
 
+    def mark_email_verified(self, user):
+        return None
+
     def get_by_id(self, user_id):
         return self.by_id
 
@@ -104,7 +107,7 @@ def test_list_users_with_search_uses_repo(user_repo):
 
 def test_create_user_conflict(user_repo):
     user_repo.by_email = DummyUser()
-    payload = admin.AdminUserCreate(email="dup@x.com", password="secret1", name="Dup", role="admin")
+    payload = admin.AdminUserCreate(email="dup@x.com", password="Password123!", name="Dup", role="admin")
     with pytest.raises(HTTPException) as exc:
         admin.create_user(payload, db=None)
     assert exc.value.status_code == status.HTTP_409_CONFLICT
@@ -112,7 +115,7 @@ def test_create_user_conflict(user_repo):
 
 def test_create_user_success(user_repo, settings_repo):
     user_repo.by_email = None
-    payload = admin.AdminUserCreate(email="new@x.com", password="secret1", name="New", role="user")
+    payload = admin.AdminUserCreate(email="new@x.com", password="Password123!", name="New", role="user")
     resp = admin.create_user(payload, db=None)
     assert resp.email == "new@x.com"
     assert settings_repo.ids == [resp.id]

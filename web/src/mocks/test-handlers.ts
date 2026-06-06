@@ -195,9 +195,7 @@ http.post(API('/auth/login'), async () => {
 	}),
 http.post(API('/auth/signup'), async () => {
 		return HttpResponse.json({
-			access_token: 'test-token',
-			refresh_token: 'refresh-token',
-			token_type: 'bearer',
+			message: 'Account created. Check your email and click the verification link before logging in.',
 		});
 	}),
 http.post(API('/auth/refresh'), async () => {
@@ -208,7 +206,28 @@ http.post(API('/auth/refresh'), async () => {
 		});
 	}),
 	http.get(API('/auth/me'), async () => {
-		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'] });
+		return HttpResponse.json({ id: 1, email: 'test@example.com', roles: ['admin'], email_verified: true });
+	}),
+	http.post(API('/auth/forgot-password'), async () => {
+		return HttpResponse.json({ message: 'If an account exists for that email, we sent password reset instructions.' });
+	}),
+	http.post(API('/auth/reset-password'), async () => {
+		return HttpResponse.json({ message: 'Password reset successfully' });
+	}),
+	http.post(API('/auth/verify-email'), async () => {
+		return HttpResponse.json({
+			access_token: 'test-token',
+			refresh_token: 'refresh-token',
+			token_type: 'bearer',
+		});
+	}),
+	http.post(API('/auth/change-password'), async () => {
+		return HttpResponse.json({ message: 'Password updated successfully' });
+	}),
+	http.post(API('/auth/resend-verification'), async () => {
+		return HttpResponse.json({
+			message: 'If an account exists and is not yet verified, we sent a verification link.',
+		});
 	}),
 	// settings
 	http.get(API('/user/settings'), async () => {

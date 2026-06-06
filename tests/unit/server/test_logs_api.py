@@ -10,32 +10,39 @@ from server.app.main import app
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.error_log_repository import ErrorLogRepository
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 from tests.ist_clock import IST, ist_now, ist_now_naive
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="admin-logs@example.com",
         password="Admin@123",
+        name="Admin Logs",
         role=UserRole.ADMIN,
     )
 
 
 @pytest.fixture
 def normal_user(db_session):
-    return UserRepository(db_session).create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="user-logs@example.com",
         password="User@123",
+        name="User Logs",
         role=UserRole.USER,
     )
 
 
 @pytest.fixture
 def other_user(db_session):
-    return UserRepository(db_session).create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="other-logs@example.com",
         password="Other@123",
+        name="Other Logs",
         role=UserRole.USER,
     )
 

@@ -16,6 +16,7 @@ from src.application.services.ml_training_service import MLTrainingService, Trai
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.ml_model_repository import MLModelRepository
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 def _write_verdict_csv(path: Path) -> None:
@@ -34,8 +35,11 @@ def _write_verdict_csv(path: Path) -> None:
 
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
-        email="admin@example.com", password="Admin@123", role=UserRole.ADMIN
+    return create_verified_user(
+        UserRepository(db_session),
+        email="admin@example.com",
+        password="Admin@123",
+        role=UserRole.ADMIN,
     )
 
 

@@ -41,11 +41,13 @@ def test_buying_zone_returns_seeded_rows():
     # need auth token: create user and login
     import random
 
-    resp = client.post(
-        "/api/v1/auth/signup",
-        json={"email": f"s{random.randint(1, 1_000_000)}@example.com", "password": "Secret123"},
+    from tests.support.auth_flow import signup_and_verify_payload
+
+    email = f"s{random.randint(1, 1_000_000)}@example.com"
+    tokens = signup_and_verify_payload(
+        client, None, {"email": email, "password": "Secret123!"}
     )
-    token = resp.json()["access_token"]
+    token = tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     r = client.get("/api/v1/signals/buying-zone?limit=10", headers=headers)
     assert r.status_code == 200

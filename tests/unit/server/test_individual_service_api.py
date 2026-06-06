@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from server.app.main import app
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 @pytest.fixture
@@ -36,32 +37,18 @@ def client(db_session):
 @pytest.fixture
 def sample_user(db_session):
     """Create a sample user for testing"""
-    return UserRepository(db_session).create_user(
+    return create_verified_user(
+        UserRepository(db_session),
         email="test@example.com",
-        password="password123",
+        password="Password123!",
         role=UserRole.USER,
     )
 
 
-def login(client: TestClient, email: str, password: str) -> str:
-    """Helper to login and get token"""
-    # Try signup first (in case user doesn't exist)
-    signup_response = client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": password},
-    )
-    # If user already exists (409), that's fine - just proceed to login
-    # If signup succeeded (200), we can use that token or login
-    if signup_response.status_code == 200:
-        return signup_response.json()["access_token"]
+def login(client: TestClient, db_session, email: str, password: str) -> str:
+    from tests.support.auth_flow import get_access_token
 
-    # User exists, so login
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"email": email, "password": password},
-    )
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    return response.json()["access_token"]
+    return get_access_token(client, db_session, email, password)
 
 
 def test_get_individual_services_status_requires_auth(client):
@@ -72,7 +59,7 @@ def test_get_individual_services_status_requires_auth(client):
 
 def test_get_individual_services_status_success(client, db_session, sample_user):
     """Test successfully getting individual services status"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with patch(
         "src.application.services.individual_service_manager.IndividualServiceManager.get_status"
@@ -109,7 +96,7 @@ def test_start_individual_service_requires_auth(client):
 
 def test_start_individual_service_success(client, db_session, sample_user):
     """Test successfully starting an individual service"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with patch(
         "src.application.services.individual_service_manager.IndividualServiceManager.start_service"
@@ -129,7 +116,7 @@ def test_start_individual_service_success(client, db_session, sample_user):
 
 def test_start_individual_service_failure(client, db_session, sample_user):
     """Test starting individual service when it fails"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with patch(
         "src.application.services.individual_service_manager.IndividualServiceManager.start_service"
@@ -148,7 +135,7 @@ def test_start_individual_service_failure(client, db_session, sample_user):
 
 def test_stop_individual_service_success(client, db_session, sample_user):
     """Test successfully stopping an individual service"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with patch(
         "src.application.services.individual_service_manager.IndividualServiceManager.stop_service"
@@ -168,7 +155,7 @@ def test_stop_individual_service_success(client, db_session, sample_user):
 
 def test_run_task_once_success(client, db_session, sample_user):
     """Test successfully running a task once"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with (
         patch(
@@ -195,7 +182,7 @@ def test_run_task_once_success(client, db_session, sample_user):
 
 def test_run_task_once_with_conflict(client, db_session, sample_user):
     """Test running a task once when there's a conflict"""
-    token = login(client, sample_user.email, "password123")
+    token = login(client, db_session, sample_user.email, "Password123!")
 
     with (
         patch(

@@ -13,17 +13,13 @@ test.describe('Authentication', () => {
 		// Track user for cleanup
 		testDataTracker.trackUser(email);
 
-		// Complete signup flow
+		// Complete signup flow — hard verification: stay on check-email screen
 		await signupPage.signup(email, password, name);
 
-		// Should redirect to dashboard - wait with longer timeout for signup processing
-		await expect(page).toHaveURL(/\/dashboard/, { timeout: 15000 });
-
-		// Wait for network to be idle to ensure all API calls complete
-		await page.waitForLoadState('networkidle', { timeout: 10000 });
-
-		// Wait for dashboard to load - check for main content area with retry
-		await expect(page.locator('main, [role="main"]')).toBeVisible({ timeout: 10000 });
+		await expect(page.getByRole('heading', { name: /check your email/i })).toBeVisible({
+			timeout: 15000,
+		});
+		await expect(page.getByText(/We sent a verification link/i)).toBeVisible();
 	});
 
 	test('user can login with correct credentials', async ({ loginPage, page }) => {
@@ -45,19 +41,16 @@ test.describe('Authentication', () => {
 		await loginPage.goto();
 		await loginPage.fillEmail(loginPage['config'].users.admin.email);
 		await loginPage.fillPassword('WrongPassword123!');
-		await loginPage.clickLogin();
+		await Promise.all([
+			loginPage.page.waitForResponse(
+				(response) => response.url().includes('/auth/login') && response.status() === 401,
+			),
+			loginPage.clickLogin(),
+		]);
 
-		// Wait for error message to appear (wait for API response or error element)
-		// The error message appears after the login API call fails
-		await expect(loginPage['errorMessage']).toBeVisible({ timeout: 10000 });
-
-		// Verify error message is visible
-		const hasError = await loginPage.hasError();
-		expect(hasError).toBe(true);
-
-		// Get and verify error message content
+		expect(await loginPage.hasError(10000)).toBe(true);
 		const errorMessage = await loginPage.getErrorMessage();
-		expect(errorMessage.toLowerCase()).toMatch(/invalid|incorrect|wrong|error|failed|login/i);
+		expect(errorMessage.toLowerCase()).toMatch(/invalid|incorrect|wrong|credentials|failed|login/i);
 
 		// Should remain on login page
 		await expect(page).toHaveURL(/\//);
@@ -76,6 +69,13 @@ test.describe('Authentication', () => {
 		await expect(page).toHaveURL(/\/dashboard/);
 		// Wait for dashboard to load - check for main content area
 		await expect(page.locator('main, [role="main"]')).toBeVisible();
+	});
+
+	test('forgot password form shows generic success message', async ({ page }) => {
+		await page.goto('/forgot-password');
+		await page.locator('input[type="email"]').fill('test@example.com');
+		await page.getByRole('button', { name: /send reset link/i }).click();
+		await expect(page.getByText(/If an account exists/i)).toBeVisible({ timeout: 10000 });
 	});
 
 	test('user can logout and session is cleared', async ({ loginPage, page }) => {

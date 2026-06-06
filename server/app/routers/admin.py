@@ -52,6 +52,7 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
     u = repo.create_user(
         email=payload.email, password=payload.password, name=payload.name, role=role
     )
+    repo.mark_email_verified(u)
 
     # Create default settings for new user (required for trading service)
     SettingsRepository(db).ensure_default(u.id)

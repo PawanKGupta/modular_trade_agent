@@ -18,6 +18,10 @@ const sampleUsers = [
 	{ id: 2, email: 'user@example.com', name: 'User', role: 'user' as const, is_active: true, created_at: '', updated_at: '' },
 ];
 
+function getCreatePasswordInput() {
+	return document.getElementById('admin-create-password') as HTMLInputElement;
+}
+
 describe('AdminUsersPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -47,16 +51,30 @@ describe('AdminUsersPage', () => {
 		render(withProviders(<AdminUsersPage />));
 		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
 
-		await userEvent.type(screen.getByPlaceholderText('Email'), 'new@example.com');
-		await userEvent.type(screen.getByPlaceholderText('Password'), 'secret123');
-		await userEvent.type(screen.getByPlaceholderText('Name (optional)'), 'New User');
+		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
+		await userEvent.type(screen.getByLabelText(/^Name/i), 'New User');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 		await waitFor(() => {
 			expect(adminApi.createUser.mock.calls[0][0]).toEqual(
-				expect.objectContaining({ email: 'new@example.com', password: 'secret123', name: 'New User' })
+				expect.objectContaining({ email: 'new@example.com', password: 'Secret123!', name: 'New User' })
 			);
 		});
+	});
+
+	it('blocks create when name is missing', async () => {
+		render(withProviders(<AdminUsersPage />));
+		await waitFor(() => expect(screen.getByText('Create user')).toBeInTheDocument());
+
+		await userEvent.type(screen.getByLabelText(/^Email/i), 'new@example.com');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
+		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+
+		await waitFor(() => {
+			expect(screen.getByText('Name is required')).toBeInTheDocument();
+		});
+		expect(adminApi.createUser).not.toHaveBeenCalled();
 	});
 
 	it('updates user role and active status', async () => {
@@ -109,14 +127,15 @@ describe('AdminUsersPage', () => {
 	it('shows create error state', async () => {
 		vi.mocked(adminApi.createUser).mockRejectedValue(new Error('fail'));
 		render(withProviders(<AdminUsersPage />));
-		await waitFor(() => expect(screen.getByPlaceholderText('Email')).toBeInTheDocument());
+		await waitFor(() => expect(screen.getByLabelText(/^Email/i)).toBeInTheDocument());
 
-		await userEvent.type(screen.getByPlaceholderText('Email'), 'bad@example.com');
-		await userEvent.type(screen.getByPlaceholderText('Password'), 'secret123');
+		await userEvent.type(screen.getByLabelText(/^Email/i), 'bad@example.com');
+		await userEvent.type(screen.getByLabelText(/^Name/i), 'Bad User');
+		await userEvent.type(getCreatePasswordInput(), 'Secret123!');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 		await waitFor(() => {
-			expect(screen.getByText('Create failed')).toBeInTheDocument();
+			expect(screen.getByText('fail')).toBeInTheDocument();
 		});
 	});
 });

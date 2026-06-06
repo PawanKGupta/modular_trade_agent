@@ -81,6 +81,15 @@ def ensure_schema(recreate: bool = False):
         print("✓ Created database schema")
 
 
+def _ensure_email_verified(db, user: Users) -> Users:
+    """E2E admins must be verified to pass login and API gates on a fresh DB."""
+    if user.email_verified_at is None:
+        from src.infrastructure.persistence.user_repository import UserRepository  # noqa: PLC0415
+
+        UserRepository(db).mark_email_verified(user)
+    return user
+
+
 def get_or_create_test_user(db) -> Users:
     """Get or create the test admin user"""
     from src.infrastructure.db.models import UserRole  # noqa: PLC0415
@@ -90,7 +99,7 @@ def get_or_create_test_user(db) -> Users:
     user = db.query(Users).filter(Users.role == UserRole.ADMIN).first()
 
     if user:
-        return user
+        return _ensure_email_verified(db, user)
 
     # Try common admin emails
     common_emails = [
@@ -104,13 +113,13 @@ def get_or_create_test_user(db) -> Users:
     for email in [e for e in common_emails if e]:
         user = db.query(Users).filter(Users.email == email).first()
         if user:
-            return user
+            return _ensure_email_verified(db, user)
 
     # If no user found, try to find ANY user
     user = db.query(Users).first()
     if user:
         print(f"⚠ Using existing user: {user.email} (ID: {user.id})")
-        return user
+        return _ensure_email_verified(db, user)
 
     # Create admin user if none exists
     admin_email = (
@@ -129,6 +138,7 @@ def get_or_create_test_user(db) -> Users:
         name=admin_name,
         role=UserRole.ADMIN,
     )
+    repo.mark_email_verified(user)
 
     # Also create default settings for the user (required for services)
     try:

@@ -737,12 +737,12 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 #### Features
 - Email/password login
-- Remember me option (if implemented)
-- Forgot password link (if implemented)
+- **Forgot password** link to `/forgot-password` (sends reset email when SMTP is configured)
 - Link to signup page
 
 #### Actions
 - **Login:** Authenticate and access dashboard
+- **Forgot password:** Request a password reset email
 - **Sign Up:** Navigate to signup page
 
 ---
@@ -753,13 +753,49 @@ The Activity Log page and `activity` database table were removed. Operational an
 
 #### Features
 - Email input
-- Password input (with requirements)
-- Name input
-- Terms acceptance (if implemented)
+- Password input (minimum 8 characters, at least one letter, one capital letter, one number, and one special character)
+- Confirm password field
+- Name input (optional)
+- After signup, a verification email is sent. **Login and all protected APIs are blocked** until the user verifies via the link in email.
+- Wrong or typo emails cannot be used without inbox access to the verification link.
+- `/resend-verification` is a public page (like forgot password) for requesting a new link.
 
 #### Actions
 - **Sign Up:** Create new account
 - **Login:** Navigate to login page
+
+---
+
+### 18. Forgot password (`/forgot-password`)
+
+**Purpose:** Request a password reset link by email.
+
+#### Features
+- Email input
+- Generic success message (does not reveal whether the email is registered)
+- Reset links expire after one hour
+
+---
+
+### 19. Reset password (`/reset-password?token=...`)
+
+**Purpose:** Set a new password from the email reset link.
+
+---
+
+### 20. Verify email (`/verify-email?token=...`)
+
+**Purpose:** Confirm email ownership from the verification link sent after signup. On success, the app stores auth tokens and redirects to the dashboard (auto-login).
+
+Verification links expire **72 hours** after they are sent; use resend verification if the link is older than that.
+
+---
+
+### 21. Resend verification (`/resend-verification`)
+
+**Purpose:** Public form to request a new verification email when signup succeeded but the link was lost or expired. Linked from login and the post-signup “check your email” screen.
+
+Each new link is valid for **72 hours** from when the email is sent (same window as the original signup verification email).
 
 ---
 

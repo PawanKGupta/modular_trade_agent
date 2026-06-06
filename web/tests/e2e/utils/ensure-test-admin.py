@@ -40,17 +40,20 @@ def ensure_test_admin():
         if user:
             print(f"[OK] Test admin user already exists: {test_admin_email} (ID: {user.id})")
             # Ensure user is admin
+            repo = UserRepository(db)
             if user.role != UserRole.ADMIN:
                 print("[INFO] Updating user role to admin...")
-                repo = UserRepository(db)
                 repo.update_user(user, role=UserRole.ADMIN)
                 print("[OK] User role updated to admin")
 
             # Ensure user is active
             if not user.is_active:
                 print("[INFO] Activating user...")
-                repo = UserRepository(db)
                 repo.update_user(user, is_active=True)
+
+            if user.email_verified_at is None:
+                print("[INFO] Marking test admin email as verified...")
+                repo.mark_email_verified(user)
 
             # Ensure settings exist
             SettingsRepository(db).ensure_default(user.id)
@@ -66,6 +69,7 @@ def ensure_test_admin():
             name="Test Admin",
             role=UserRole.ADMIN,
         )
+        repo.mark_email_verified(user)
 
         # Create default settings
         SettingsRepository(db).ensure_default(user.id)

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from server.app.core.security import hash_password
 from src.infrastructure.db.models import UserRole, Users
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository:
@@ -66,15 +71,92 @@ class UserRepository:
         try:
             self.db.commit()
         except Exception as e:
-            # Print to stdout so it appears in simple logs
-            print(f"[UserRepository] commit failed: {e}")
+            logger.exception("UserRepository create_user commit failed")
             raise
+        self.db.refresh(user)
+        return user
+
+    def create_pending_verification_user(
+        self,
+        email: str,
+        password: str,
+        name: str,
+        token_hash: str,
+        sent_at: datetime,
+        role: UserRole = UserRole.USER,
+    ) -> Users:
+        """Create an unverified user with a pending verification token in one commit."""
+        user = Users(
+            email=email,
+            name=name,
+            role=role,
+            is_active=True,
+            password_hash=hash_password(password),
+            email_verified_at=None,
+            email_verification_token_hash=token_hash,
+            email_verification_sent_at=sent_at,
+        )
+        self.db.add(user)
+        try:
+            self.db.commit()
+        except Exception:
+            logger.exception("UserRepository create_pending_verification_user commit failed")
+            raise
+        self.db.refresh(user)
+        return user
+
+    def update_unverified_signup_credentials(
+        self, user: Users, *, password: str, name: str
+    ) -> Users:
+        user.name = name.strip()
+        user.password_hash = hash_password(password)
+        self.db.commit()
         self.db.refresh(user)
         return user
 
     def set_password(self, user: Users, new_password: str) -> None:
         user.password_hash = hash_password(new_password)
         self.db.commit()
+
+    def set_password_reset_token(self, user: Users, token_hash: str, expires_at) -> None:
+        user.password_reset_token_hash = token_hash
+        user.password_reset_expires_at = expires_at
+        self.db.commit()
+
+    def clear_password_reset_token(self, user: Users) -> None:
+        user.password_reset_token_hash = None
+        user.password_reset_expires_at = None
+        self.db.commit()
+
+    def find_by_reset_token_hash(self, token_hash: str) -> Users | None:
+        return (
+            self.db.query(Users)
+            .filter(Users.password_reset_token_hash == token_hash)
+            .first()
+        )
+
+    def set_verification_token(self, user: Users, token_hash: str, sent_at) -> None:
+        user.email_verification_token_hash = token_hash
+        user.email_verification_sent_at = sent_at
+        self.db.commit()
+
+    def mark_email_verified(self, user: Users) -> None:
+        from src.infrastructure.db.timezone_utils import ist_now_naive
+
+        user.email_verified_at = ist_now_naive()
+        user.email_verification_token_hash = None
+        user.email_verification_sent_at = None
+        self.db.commit()
+
+    def clear_verification(self, user: Users) -> None:
+        self.mark_email_verified(user)
+
+    def find_by_verification_token_hash(self, token_hash: str) -> Users | None:
+        return (
+            self.db.query(Users)
+            .filter(Users.email_verification_token_hash == token_hash)
+            .first()
+        )
 
     def update_user(
         self,

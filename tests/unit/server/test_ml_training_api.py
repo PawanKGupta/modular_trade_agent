@@ -16,6 +16,7 @@ from server.app.routers.ml import get_ml_training_service
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.models import UserRole
 from src.infrastructure.persistence.user_repository import UserRepository
+from tests.support.test_users import create_verified_user
 
 
 def _write_verdict_csv(path: Path) -> None:
@@ -34,15 +35,21 @@ def _write_verdict_csv(path: Path) -> None:
 
 @pytest.fixture
 def admin_user(db_session):
-    return UserRepository(db_session).create_user(
-        email="admin@example.com", password="Admin@123", role=UserRole.ADMIN
+    return create_verified_user(
+        UserRepository(db_session),
+        email="admin@example.com",
+        password="Admin@123",
+        role=UserRole.ADMIN,
     )
 
 
 @pytest.fixture
 def normal_user(db_session):
-    return UserRepository(db_session).create_user(
-        email="user@example.com", password="User@123", role=UserRole.USER
+    return create_verified_user(
+        UserRepository(db_session),
+        email="user@example.com",
+        password="User@123",
+        role=UserRole.USER,
     )
 
 

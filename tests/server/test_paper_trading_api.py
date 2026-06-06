@@ -14,6 +14,7 @@ from datetime import UTC
 from fastapi.testclient import TestClient  # noqa: E402
 
 from server.app.main import app  # noqa: E402
+from tests.support.auth_flow import signup_and_verify_payload
 
 _test_counter = [0]  # Mutable counter for unique emails
 
@@ -28,13 +29,8 @@ def auth_client():
     email = f"test_history_{_test_counter[0]}@example.com"
 
     # Signup user
-    signup_resp = client.post(
-        "/api/v1/auth/signup",
-        json={"email": email, "password": "testpass123"},
-    )
-    assert signup_resp.status_code == 200
-
-    token = signup_resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": email, "password": "Testpass123!"})
+    token = _auth_tokens["access_token"]
 
     # Set paper mode
     client.headers = {"Authorization": f"Bearer {token}"}
@@ -47,12 +43,8 @@ def test_portfolio_uses_yfinance_for_live_prices(monkeypatch):
     """Test that portfolio fetches live prices from yfinance instead of using stored prices"""
     # Create test client and auth
     client = TestClient(app)
-    signup = client.post(
-        "/api/v1/auth/signup",
-        json={"email": "test_live_price@example.com", "password": "testpass"},
-    )
-    assert signup.status_code == 200
-    token = signup.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, None, {"email": "test_live_price@example.com", "password": "Testpass1!"})
+    token = _auth_tokens["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
     # Fetch current user to determine ID (not always 1 when whole suite runs)

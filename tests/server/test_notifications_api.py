@@ -7,6 +7,7 @@ Tests the REST API endpoints for managing in-app notifications.
 from fastapi.testclient import TestClient
 
 from server.app.main import app
+from tests.support.auth_flow import signup_and_verify_payload
 
 client = TestClient(app)
 
@@ -17,14 +18,11 @@ def test_get_notifications_requires_auth():
     assert resp.status_code == 401
 
 
-def test_get_notifications_empty(client):
+def test_get_notifications_empty(client, db_session):
     """Test getting notifications for a new user (should be empty)"""
     # Create user via signup
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif1@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif1@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get notifications
     resp = client.get(
@@ -37,14 +35,11 @@ def test_get_notifications_empty(client):
     assert len(data) == 0
 
 
-def test_get_notifications_with_filters(client):
+def test_get_notifications_with_filters(client, db_session):
     """Test getting notifications with filters"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif2@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif2@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get notifications with type filter
     resp = client.get(
@@ -74,14 +69,11 @@ def test_get_notifications_with_filters(client):
     assert isinstance(data, list)
 
 
-def test_get_unread_notifications(client):
+def test_get_unread_notifications(client, db_session):
     """Test getting unread notifications"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif3@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif3@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get unread notifications
     resp = client.get(
@@ -96,14 +88,11 @@ def test_get_unread_notifications(client):
         assert notification["read"] is False
 
 
-def test_get_notification_count(client):
+def test_get_notification_count(client, db_session):
     """Test getting notification count"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif4@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif4@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get notification count
     resp = client.get(
@@ -123,14 +112,11 @@ def test_mark_notification_read_requires_auth():
     assert resp.status_code == 401
 
 
-def test_mark_notification_read_not_found(client):
+def test_mark_notification_read_not_found(client, db_session):
     """Test marking a non-existent notification as read"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif5@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif5@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Try to mark non-existent notification as read
     resp = client.post(
@@ -140,14 +126,11 @@ def test_mark_notification_read_not_found(client):
     assert resp.status_code == 404
 
 
-def test_mark_all_notifications_read(client):
+def test_mark_all_notifications_read(client, db_session):
     """Test marking all notifications as read"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif6@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif6@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Mark all as read (should work even with no notifications)
     resp = client.post(
@@ -160,18 +143,14 @@ def test_mark_all_notifications_read(client):
     assert isinstance(data["marked_read"], int)
 
 
-def test_notifications_user_isolation(client):
+def test_notifications_user_isolation(client, db_session):
     """Test that notifications are isolated per user"""
     # Create two users
-    resp1 = client.post(
-        "/api/v1/auth/signup", json={"email": "user1@example.com", "password": "Secret123"}
-    )
-    token1 = resp1.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "user1@example.com", "password": "Secret123!"})
+    token1 = _auth_tokens["access_token"]
 
-    resp2 = client.post(
-        "/api/v1/auth/signup", json={"email": "user2@example.com", "password": "Secret123"}
-    )
-    token2 = resp2.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "user2@example.com", "password": "Secret123!"})
+    token2 = _auth_tokens["access_token"]
 
     # Get notifications for both users (should be empty)
     resp1 = client.get(
@@ -193,14 +172,11 @@ def test_notifications_user_isolation(client):
     assert len(data2) == 0
 
 
-def test_notifications_response_structure(client):
+def test_notifications_response_structure(client, db_session):
     """Test that notification response has correct structure"""
     # Create user
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "notif7@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "notif7@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # Get notifications
     resp = client.get(

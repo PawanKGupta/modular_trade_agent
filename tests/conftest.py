@@ -545,6 +545,7 @@ def ensure_system_user(db_session):
     from sqlalchemy.orm import Session
 
     from src.infrastructure.db.models import UserRole, Users
+    from src.infrastructure.db.timezone_utils import ist_now
 
     # Handle tuple-returning fixtures: extract the session
     if isinstance(db_session, tuple):
@@ -558,8 +559,15 @@ def ensure_system_user(db_session):
     user = session.query(Users).filter_by(id=1).first()
     if not user:
         user = Users(
-            id=1, email="system@tradeagent.example.com", password_hash="system", role=UserRole.ADMIN
+            id=1,
+            email="system@tradeagent.example.com",
+            password_hash="system",
+            role=UserRole.ADMIN,
+            email_verified_at=ist_now(),
         )
         session.add(user)
+        session.commit()
+    elif user.email_verified_at is None:
+        user.email_verified_at = ist_now()
         session.commit()
     yield

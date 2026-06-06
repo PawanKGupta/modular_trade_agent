@@ -31,10 +31,12 @@ def _make_client() -> TestClient:
     return TestClient(app)
 
 
-def _signup(client: TestClient, email: str, password: str = "secret123") -> dict:
-    s = client.post("/api/v1/auth/signup", json={"email": email, "password": password})
-    assert s.status_code == 200, s.text
-    return {"Authorization": f"Bearer {s.json()['access_token']}"}
+from tests.support.auth_flow import get_access_token
+
+
+def _signup(client: TestClient, email: str, password: str = "Secret123!") -> dict:
+    token = get_access_token(client, None, email, password)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _promote_to_admin(email: str) -> None:
@@ -57,7 +59,7 @@ def test_admin_create_and_update_user():
     r = client.post(
         "/api/v1/admin/users",
         headers=admin_headers,
-        json={"email": "target@example.com", "password": "secret123", "name": "Target"},
+        json={"email": "target@example.com", "password": "Secret123!", "name": "Target"},
     )
     assert r.status_code == 200, r.text
     user_id = r.json()["id"]

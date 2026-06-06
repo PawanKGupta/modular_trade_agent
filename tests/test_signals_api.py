@@ -1,10 +1,8 @@
-def test_buying_zone_empty(client):
+from tests.support.auth_flow import signup_and_verify_payload
+def test_buying_zone_empty(client, db_session):
     # Create user via signup to get token
-    resp = client.post(
-        "/api/v1/auth/signup", json={"email": "bz@example.com", "password": "Secret123"}
-    )
-    assert resp.status_code == 200
-    token = resp.json()["access_token"]
+    _auth_tokens = signup_and_verify_payload(client, db_session, {"email": "bz@example.com", "password": "Secret123!"})
+    token = _auth_tokens["access_token"]
 
     # No signals inserted yet -> expect empty list
     resp = client.get(

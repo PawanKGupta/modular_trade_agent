@@ -62,6 +62,11 @@ class Users(Base):
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    email_verification_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email_verification_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    password_reset_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ist_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=ist_now, onupdate=ist_now, nullable=False

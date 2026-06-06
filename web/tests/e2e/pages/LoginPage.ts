@@ -17,12 +17,12 @@ export class LoginPage extends BasePage {
 	constructor(page: Page) {
 		super(page);
 
-		// Initialize selectors with multiple strategies for reliability
-		this.emailInput = page.locator('input[type="email"], input#email, input[name="email"]').first();
-		this.passwordInput = page.locator('input[type="password"], input#password, input[name="password"]').first();
-		this.loginButton = page.getByRole('button', { name: /login/i });
+		this.emailInput = page.locator('#email');
+		this.passwordInput = page.locator('#password');
+		this.loginButton = page.getByRole('button', { name: /^login$/i });
 		this.signupLink = page.getByRole('link', { name: /sign up/i });
-		this.errorMessage = page.locator('.text-red-400, [role="alert"]');
+		// API errors use mb-3; field validation and required-field markers use mb-2 or inline asterisks.
+		this.errorMessage = page.locator('form div.text-red-400.mb-3');
 		this.heading = page.getByRole('heading', { name: /login/i });
 	}
 
