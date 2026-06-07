@@ -106,6 +106,11 @@ export function LoginPage() {
 				<div className="mt-3 text-xs sm:text-sm text-[var(--muted)]">
 					No account? <Link to="/signup" className="text-[var(--accent)]">Sign up</Link>
 				</div>
+				<div className="mt-2 text-xs sm:text-sm text-[var(--muted)]">
+					<Link to="/help" className="text-[var(--accent)]">
+						Help &amp; setup guide
+					</Link>
+				</div>
 				{showResendVerification ? (
 					<div className="mt-2 text-xs sm:text-sm text-[var(--muted)]">
 						Need to verify?{' '}

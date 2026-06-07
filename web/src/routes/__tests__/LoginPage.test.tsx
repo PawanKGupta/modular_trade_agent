@@ -37,6 +37,11 @@ describe('LoginPage', () => {
 		);
 	});
 
+	it('shows help center link', () => {
+		renderWithRouter(<LoginPage />);
+		expect(screen.getByRole('link', { name: /help & setup guide/i })).toHaveAttribute('href', '/help');
+	});
+
 	it('toggles password visibility with Show/Hide', () => {
 		renderWithRouter(<LoginPage />);
 		const password = document.getElementById('password') as HTMLInputElement;

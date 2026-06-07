@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo, type BrokerTestRequest } from '@/api/user';
 import { changePassword, updateProfile } from '@/api/auth';
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { fieldErrorFor, validateChangePasswordForm, validateProfileForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components/PasswordRequirementsChecklist';
@@ -314,6 +314,13 @@ export function SettingsPage() {
 				)}
 			</div>
 			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Trading mode</h2>
+			<p className="text-xs sm:text-sm text-[var(--muted)] mb-3">
+				Setting up Kotak for live trading? See the{' '}
+				<Link to="/help/connect-kotak" className="text-[var(--accent)] hover:underline">
+					Help — Connect Rebound
+				</Link>{' '}
+				guide.
+			</p>
 			<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
 				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
 					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} className="w-4 h-4" />

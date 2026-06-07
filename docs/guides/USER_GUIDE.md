@@ -2,6 +2,8 @@
 
 Complete guide to using the Rebound — Modular Trade Agent web interface.
 
+**End-user help (web):** Operators should point users to the in-app help center at **`/help`** (public, no login required). It covers onboarding, Kotak Neo API setup, connecting Rebound, performance fees, and FAQ — without developer or GitHub documentation.
+
 ## Getting Started
 
 ### First Login

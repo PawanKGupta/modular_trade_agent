@@ -29,6 +29,13 @@ import { MonitoringDashboardPage } from './routes/dashboard/MonitoringDashboardP
 import { BillingPage } from './routes/dashboard/BillingPage';
 import { AdminBillingPage } from './routes/dashboard/AdminBillingPage';
 import { RequireAuth } from './routes/RequireAuth';
+import { HelpLayout } from './routes/help/HelpLayout';
+import { HelpHomePage } from './routes/help/HelpHomePage';
+import { HelpGetStartedPage } from './routes/help/HelpGetStartedPage';
+import { HelpKotakApiPage } from './routes/help/HelpKotakApiPage';
+import { HelpConnectKotakPage } from './routes/help/HelpConnectKotakPage';
+import { HelpBillingPage } from './routes/help/HelpBillingPage';
+import { HelpFaqPage } from './routes/help/HelpFaqPage';
 
 export function createAppRouter() {
 	return createBrowserRouter([
@@ -39,6 +46,18 @@ export function createAppRouter() {
 		{ path: '/reset-password', element: <ResetPasswordPage /> },
 		{ path: '/verify-email', element: <VerifyEmailPage /> },
 		{ path: '/resend-verification', element: <ResendVerificationPage /> },
+		{
+			path: '/help',
+			element: <HelpLayout />,
+			children: [
+				{ index: true, element: <HelpHomePage /> },
+				{ path: 'get-started', element: <HelpGetStartedPage /> },
+				{ path: 'kotak-api', element: <HelpKotakApiPage /> },
+				{ path: 'connect-kotak', element: <HelpConnectKotakPage /> },
+				{ path: 'billing', element: <HelpBillingPage /> },
+				{ path: 'faq', element: <HelpFaqPage /> },
+			],
+		},
 		{
 			path: '/dashboard',
 			element: (
