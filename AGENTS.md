@@ -11,9 +11,11 @@ This document merges **repository standards** with **Cursor project rules** unde
 | [`.cursor/rules/python.mdc`](.cursor/rules/python.mdc) | Python/FastAPI/`src/` layout, venv, Ruff/Black, tests |
 | [`.cursor/rules/web.mdc`](.cursor/rules/web.mdc) | React/TypeScript, API client, Vite conventions |
 | [`.cursor/mcp.json`](.cursor/mcp.json) | Graphify MCP server bootstrapping |
+| [`.cursor/rules/dev-team.mdc`](.cursor/rules/dev-team.mdc) | Cursor-native dev team loop (planner → implementer → reviewer → tester) |
+| [`docs/development/CURSOR_DEV_TEAM.md`](docs/development/CURSOR_DEV_TEAM.md) | Dev team workflow guide (Path A) |
 | [`docs/DOCUMENTATION_RULES.md`](docs/DOCUMENTATION_RULES.md) | Canonical documentation and docstring policy |
 
-**Note:** This repo’s `.cursor/` tree contains **rules** (`.mdc`) and **MCP config**; there is no separate skills bundle checked in under `.cursor/`. If the host environment injects additional Cursor skills, they apply in addition to this file.
+**Note:** This repo’s `.cursor/` tree contains **rules** (`.mdc`), **slash commands** (`.cursor/commands/`), and **MCP config**; there is no separate skills bundle checked in under `.cursor/`. If the host environment injects additional Cursor skills, they apply in addition to this file.
 
 ---
 
@@ -242,6 +244,7 @@ Before sending a substantive technical answer about this repo, confirm:
 - [ ] **Uncertainties** and **stale/missing graph** caveats are explicit where relevant.
 - [ ] **Git remote** policy (no push/PR unless asked) observed.
 - [ ] **Docs/tests** consideration noted when the change is user-facing or non-trivial.
+- [ ] **Dev team loop** (if used): plan → implement → review → test → document per §14 and [`CURSOR_DEV_TEAM.md`](docs/development/CURSOR_DEV_TEAM.md).
 
 ---
 
@@ -257,3 +260,23 @@ Before sending a substantive technical answer about this repo, confirm:
 | MCP | [`.cursor/mcp.json`](.cursor/mcp.json) + `tools/graphify_mcp_stdio.py` |
 
 For full detail, CLI options, `.graphifyignore`, and troubleshooting, read [`.cursor/rules/graphify.mdc`](.cursor/rules/graphify.mdc).
+
+---
+
+## 14. Dev team workflow (Path A — Cursor-native)
+
+Use **Cursor** as the orchestrator for a small engineering team. Do **not** use a separate Python/LangGraph agent loop in this repo.
+
+| Role | How |
+|------|-----|
+| Planner | `/plan-feature` or planner chat — plan only, no code |
+| Implementer | Agent mode + `/implement-plan` — small diffs; **root `.venv/`** for all Python |
+| Reviewer | `/review-changes` or readonly subagent — **PASS** / **FAIL** |
+| Tester | `/tester` — root `.venv`: `python -m pytest`, coverage (>90%), `-n auto` |
+| Documenter | `/documenter` — update/write docs and docstrings per `DOCUMENTATION_RULES.md` |
+
+**Loop:** requirement → plan → implement → review → test → document → (user commit). On review, test, or doc/code mismatch, return to implementer.
+
+**Human gates:** user reviews diff; no push/PR without explicit permission; extra care on trading/broker paths.
+
+**Enable:** `@dev-team` rule or [`.cursor/rules/dev-team.mdc`](.cursor/rules/dev-team.mdc). Full guide: [`docs/development/CURSOR_DEV_TEAM.md`](docs/development/CURSOR_DEV_TEAM.md).
