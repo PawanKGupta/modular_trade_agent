@@ -1,5 +1,4 @@
 import {
-	HelpAppLink,
 	HelpBullets,
 	HelpCallout,
 	HelpEmphasis,
