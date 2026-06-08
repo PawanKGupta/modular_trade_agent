@@ -1,3 +1,8 @@
+from unittest.mock import patch
+
+from src.infrastructure.brokers.tradable_equity_resolver import (
+    build_scrip_master_from_instruments,
+)
 from src.infrastructure.web_scraping.chartink_scraper import ChartInkScraper
 
 
@@ -34,6 +39,31 @@ def test_chartink_scraper_excludes_bharat_bond(monkeypatch):
     s = ChartInkScraper()
     assert s.get_stocks() == ["POWERGRID", "KSB"]
     assert s.get_stocks_with_suffix(".NS") == ["POWERGRID.NS", "KSB.NS"]
+
+
+def test_chartink_scraper_uses_resolver_when_scrip_cache_available(monkeypatch):
+    import src.infrastructure.web_scraping.chartink_scraper as mod
+
+    monkeypatch.setattr(
+        mod,
+        "get_stock_list",
+        lambda: "GALLANTT, SILVERAG, SALSTEEL, RELIANCE",
+    )
+    sm = build_scrip_master_from_instruments(
+        [
+            {"pTrdSymbol": "GALLANTT-EQ", "pISIN": "INE297H01019"},
+            {"pTrdSymbol": "SILVERAG-EQ", "pISIN": "INF769K01KG6"},
+            {"pTrdSymbol": "SALSTEEL-BE", "pISIN": "INE999A01099"},
+            {"pTrdSymbol": "RELIANCE-EQ", "pISIN": "INE002A01018"},
+        ]
+    )
+    with patch(
+        "src.infrastructure.brokers.tradable_equity_resolver.load_cached_scrip_master",
+        return_value=sm,
+    ):
+        s = ChartInkScraper()
+        assert s.get_stocks() == ["GALLANTT", "RELIANCE"]
+        assert s.get_stocks_with_suffix(".NS") == ["GALLANTT.NS", "RELIANCE.NS"]
 
 
 def test_chartink_scraper_failures(monkeypatch):

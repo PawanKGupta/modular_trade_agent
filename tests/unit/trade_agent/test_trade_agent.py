@@ -137,6 +137,34 @@ def test_get_stocks_handles_failure(monkeypatch):
     assert trade_agent.get_stocks() == []
 
 
+def test_get_stocks_uses_resolver_when_scrip_cache_available(monkeypatch):
+    """Exercise full tradability path (heuristics + scrip resolver), not name-only degraded mode."""
+    from unittest.mock import patch
+
+    from src.infrastructure.brokers.tradable_equity_resolver import (
+        build_scrip_master_from_instruments,
+    )
+
+    monkeypatch.setattr(
+        trade_agent,
+        "get_stock_list",
+        lambda: "GALLANTT, SILVERAG, SALSTEEL, RELIANCE",
+    )
+    sm = build_scrip_master_from_instruments(
+        [
+            {"pTrdSymbol": "GALLANTT-EQ", "pISIN": "INE297H01019"},
+            {"pTrdSymbol": "SILVERAG-EQ", "pISIN": "INF769K01KG6"},
+            {"pTrdSymbol": "SALSTEEL-BE", "pISIN": "INE999A01099"},
+            {"pTrdSymbol": "RELIANCE-EQ", "pISIN": "INE002A01018"},
+        ]
+    )
+    with patch(
+        "src.infrastructure.brokers.tradable_equity_resolver.load_cached_scrip_master",
+        return_value=sm,
+    ):
+        assert trade_agent.get_stocks() == ["GALLANTT.NS", "RELIANCE.NS"]
+
+
 def test_compute_trading_priority_score_success(monkeypatch):
     mock_service = Mock()
     mock_service.compute_trading_priority_score.return_value = 42

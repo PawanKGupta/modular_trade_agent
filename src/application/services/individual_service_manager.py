@@ -1314,31 +1314,6 @@ class IndividualServiceManager:
                 pass
             return False
 
-    def _is_t2t_segment(self, ticker: str) -> bool:
-        """
-        Check if a ticker is T2T-only (no tradable ``-EQ`` listing).
-
-        Delegates to ``resolve_tradable_equity`` (EQ-first; no bare-base first-wins).
-        """
-        try:
-            from src.infrastructure.brokers.tradable_equity_resolver import (
-                DeniedEquity,
-                TradabilityDenyReason,
-                load_cached_scrip_master,
-                resolve_tradable_equity,
-            )
-
-            scrip_master = load_cached_scrip_master()
-            if scrip_master is None:
-                return False
-            result = resolve_tradable_equity(ticker, scrip_master)
-            return (
-                isinstance(result, DeniedEquity)
-                and result.reason == TradabilityDenyReason.T2T_ONLY
-            )
-        except Exception:
-            return False
-
     def _persist_analysis_results(
         self, results: list[dict], logger, user_id: int | None = None
     ) -> dict[str, int]:
@@ -1350,7 +1325,7 @@ class IndividualServiceManager:
         )
 
         processed_rows = []
-        t2t_filtered_count = 0
+        tradability_filtered_count = 0
         for row in results:
             if not isinstance(row, dict) or row.get("status") not in {"success", None}:
                 continue
@@ -1362,7 +1337,7 @@ class IndividualServiceManager:
             # Thin re-check: non-tradable equity (ETF/MF, T2T-only, no EQ)
             ticker = row.get("ticker") or row.get("symbol")
             if ticker and self._is_non_tradable_equity(ticker):
-                t2t_filtered_count += 1
+                tradability_filtered_count += 1
                 logger.debug(
                     f"Skipping non-tradable equity at persist: {ticker}",
                     action="run_analysis",
@@ -1380,12 +1355,13 @@ class IndividualServiceManager:
             "updated": 0,
             "skipped": len(results) - len(processed_rows),
             "expired": 0,
-            "t2t_filtered": t2t_filtered_count,
+            "tradability_filtered": tradability_filtered_count,
         }
 
-        if t2t_filtered_count > 0:
+        if tradability_filtered_count > 0:
             logger.info(
-                f"Filtered {t2t_filtered_count} T2T segment stocks (same-day selling not allowed)",
+                f"Filtered {tradability_filtered_count} non-tradable symbols at persist "
+                f"(ETF/MF, missing ISIN, T2T-only, or no -EQ listing)",
                 action="run_analysis",
                 task_name="analysis",
             )

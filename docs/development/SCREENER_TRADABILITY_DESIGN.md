@@ -62,12 +62,13 @@ Morning live buys used a **stale Jun 5** `AVANTIFEED` signal, not this afternoon
 
 Does **not** block `SILVERAG`, `AXISILVER`, or `CNXPSE`.
 
-### Layer B — T2T check at persist
+### Layer B — Tradability re-check at persist
 
-**File:** `src/application/services/individual_service_manager.py` — `_is_t2t_segment()`
+**File:** `src/application/services/individual_service_manager.py` — `_is_non_tradable_equity()`
 
-- Loads scrip master cache, calls `get_instrument(base_symbol)` on bare base.
-- If resolved symbol ends with `-BE`, `-BL`, or `-BZ` → skip signal.
+- Thin defense-in-depth via `resolve_tradable_equity()` (EQ-first, `pISIN` `INF`/`INE`).
+- Denies ETF/MF units, T2T-only listings, missing ISIN, and symbols with no `-EQ` row.
+- Summary counter: `tradability_filtered` (log: non-tradable symbols at persist).
 
 ### Layer C — Order symbol resolution
 
@@ -133,7 +134,7 @@ Scrape size **varies per run**; counts in examples are illustrative, not fixed p
 | `trade_agent.get_stocks()` | Name heuristics only | Unified filter → `.NS` suffix |
 | `ChartInkScraper.get_stocks()` | Name heuristics only | Same unified filter |
 
-**Scrip master:** load from `data/scrip_master/` cache only (no broker auth) — same pattern as `_is_t2t_segment()` today.
+**Scrip master:** load from `data/scrip_master/` cache only (no broker auth) — same pattern as persist re-check.
 
 #### Step A — Name heuristics (fast, first pass)
 
@@ -204,7 +205,7 @@ Non-tradable symbols **never** enter this stage.
 | Load JSON | All analyzed rows |
 | Verdict gate | `buy` / `strong_buy` only (unchanged) |
 | Tradability | **Optional thin re-check** via same resolver; log if mismatch (should not happen) |
-| Remove | `_is_t2t_segment()` bare-base path — superseded by pre-filter |
+| Done | `_is_t2t_segment()` removed; persist uses `_is_non_tradable_equity()` only |
 | Dedup / expiry | Unchanged (`AnalysisDeduplicationService`) |
 | Trading hours | Unchanged (`should_update_signals()` 9–16 block) |
 
@@ -393,7 +394,7 @@ STAR, GALLANTT, RAMRAT
 1. **`resolve_tradable_equity()`** — EQ-first + `pISIN` `INF`/`INE`; unit tests with scrip fixture.
 2. **`filter_tradable_screener_symbols()`** — name heuristics + resolver; wire into `trade_agent.get_stocks()` and `ChartInkScraper`.
 3. **Orders** — refactor `_resolve_broker_symbol()` to use same helper (defense in depth).
-4. **Persist cleanup** — remove `_is_t2t_segment()` bare-base path; optional thin re-check only.
+4. **Persist cleanup** — done: `tradability_filtered` counter + `_is_non_tradable_equity()` re-check.
 5. **Scrip map** — prefer `-EQ` for base keys when both exist.
 6. **Regression tests** — `GALLANTT`/`STAR`/`RAMRAT` in analyze output; `SILVERAG`/`AXISILVER` absent from tickers passed to analysis.
 
@@ -429,10 +430,10 @@ STAR, GALLANTT, RAMRAT
 
 ## Edge cases / notes
 
-- **Conservative vs aggressive heuristics:** start conservative (`SILVER`, `CPSE`, blocklist). Avoid broad rules like `*AG` suffix or very short tickers until validated against historical scrapes.
+- **Conservative vs aggressive heuristics:** start conservative (`SILVER`, `CPSE`, blocklist). `SILVER` substring may rarely false-positive on legitimate equity tickers; exact blocklist + resolver mitigate most cases. Avoid broad rules like `*AG` suffix until validated against historical scrapes.
 - **ISIN is the authoritative ETF vs equity split** for NSE `-EQ` listings in scrip master; do not rely on `pGroup`, bhavcopy series, or yfinance `quoteType`.
 - **Missing `pISIN`:** fail closed in pre-filter (deny) — do not pass to analysis.
-- **Missing scrip cache:** fail closed in pre-filter (deny or abort run with clear log); do not analyze unvalidated symbols.
+- **Missing scrip cache (degraded mode):** `filter_tradable_screener_symbols()` and persist re-check fall back to **name heuristics only** / allow-through at persist. Ops should keep `data/scrip_master/` refreshed (Kotak scrip download or deploy sync); otherwise new ETF tickers not matching heuristics (e.g. a novel `*SILVER*` pattern) could reach analysis until the resolver runs again.
 - **yfinance `no_data`:** pre-filter reduces wasted runs; it does not guarantee OHLCV for thin names that pass `INE`/EQ.
 - **T2T-only stocks (`-BE` only):** denied in pre-filter; never reach analysis or signals.
 - **Persist re-check:** optional; if pre-filter and persist disagree, log at ERROR for investigation.

@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_SUFFIXES = ("BEES",)
 
 # Substrings that indicate non-equity instruments (case-insensitive check).
+# Note: "SILVER" may false-positive on rare equity tickers containing that substring;
+# exact blocklist + scrip resolver (INF/INE, EQ-first) catch most commodity ETFs.
 _EXCLUDED_CONTAINS = (
     "ETF",
     "NIFTY",

@@ -6,7 +6,7 @@ Tests for:
 - Field normalization from nested structures
 - Time-based update blocking
 - Boolean conversion in normalization
-- T2T segment filtering (hard filter)
+- Tradability filtering at persist (ETF/MF, T2T-only, no -EQ)
 """
 
 from unittest.mock import MagicMock, patch

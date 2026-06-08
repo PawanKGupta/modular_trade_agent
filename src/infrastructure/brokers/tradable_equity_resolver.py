@@ -175,13 +175,3 @@ def build_scrip_master_from_instruments(
     return scrip_master
 
 
-def is_tradable_equity(
-    symbol: str,
-    scrip_master: KotakNeoScripMaster | None,
-    *,
-    exchange: str = "NSE",
-) -> bool:
-    """Return True when ``symbol`` resolves to tradable company equity."""
-    if scrip_master is None:
-        return True
-    return isinstance(resolve_tradable_equity(symbol, scrip_master, exchange=exchange), ResolvedEquity)

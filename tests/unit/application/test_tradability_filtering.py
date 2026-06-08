@@ -5,6 +5,12 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from src.application.services.individual_service_manager import IndividualServiceManager
+from src.infrastructure.brokers.tradable_equity_resolver import (
+    DeniedEquity,
+    ResolvedEquity,
+    TradabilityDenyReason,
+    resolve_tradable_equity,
+)
 
 _SCRIP_CACHE_PATCH = (
     "src.infrastructure.brokers.tradable_equity_resolver.load_cached_scrip_master"
@@ -25,15 +31,20 @@ def _patch_scrip_cache(instruments: list[dict]):
 
 
 class TestTradabilityFiltering:
-    def test_is_t2t_segment_be_only(self, db_session):
-        manager = IndividualServiceManager(db_session)
+    def test_t2t_only_denied_by_resolver(self, db_session):
+        from src.infrastructure.brokers.tradable_equity_resolver import (
+            build_scrip_master_from_instruments,
+        )
+
         instruments = [
             _inst_row("SALSTEEL-BE"),
             _inst_row("RELIANCE-EQ", "INE002A01018"),
         ]
-        with _patch_scrip_cache(instruments):
-            assert manager._is_t2t_segment("SALSTEEL.NS") is True
-            assert manager._is_t2t_segment("RELIANCE.NS") is False
+        sm = build_scrip_master_from_instruments(instruments)
+        denied = resolve_tradable_equity("SALSTEEL.NS", sm)
+        assert isinstance(denied, DeniedEquity)
+        assert denied.reason == TradabilityDenyReason.T2T_ONLY
+        assert isinstance(resolve_tradable_equity("RELIANCE.NS", sm), ResolvedEquity)
 
     def test_gallantt_not_t2t_when_eq_and_bl_listed(self, db_session):
         manager = IndividualServiceManager(db_session)
@@ -42,7 +53,6 @@ class TestTradabilityFiltering:
             _inst_row("GALLANTT-EQ", "INE297H01019"),
         ]
         with _patch_scrip_cache(instruments):
-            assert manager._is_t2t_segment("GALLANTT.NS") is False
             assert manager._is_non_tradable_equity("GALLANTT.NS") is False
 
     def test_non_tradable_etf_at_persist(self, db_session):
@@ -70,9 +80,15 @@ class TestTradabilityFiltering:
         ):
             summary = manager._persist_analysis_results(results, logger)
         assert summary["processed"] == 1
-        assert summary["t2t_filtered"] == 1
+        assert summary["tradability_filtered"] == 1
 
-    def test_cache_missing_allows_through(self, db_session):
+    def test_cache_missing_allows_through_at_persist(self, db_session):
         manager = IndividualServiceManager(db_session)
         with patch(_SCRIP_CACHE_PATCH, return_value=None):
-            assert manager._is_t2t_segment("SALSTEEL.NS") is False
+            assert manager._is_non_tradable_equity("SALSTEEL.NS") is False
+
+    def test_t2t_only_is_non_tradable_at_persist(self, db_session):
+        manager = IndividualServiceManager(db_session)
+        instruments = [_inst_row("SALSTEEL-BE")]
+        with _patch_scrip_cache(instruments):
+            assert manager._is_non_tradable_equity("SALSTEEL.NS") is True
