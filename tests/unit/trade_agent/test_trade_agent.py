@@ -159,7 +159,7 @@ def test_get_stocks_uses_resolver_when_scrip_cache_available(monkeypatch):
         ]
     )
     with patch(
-        "src.infrastructure.brokers.tradable_equity_resolver.load_cached_scrip_master",
+        "src.infrastructure.web_scraping.screener_symbol_filters.load_cached_scrip_master",
         return_value=sm,
     ):
         assert trade_agent.get_stocks() == ["GALLANTT.NS", "RELIANCE.NS"]
