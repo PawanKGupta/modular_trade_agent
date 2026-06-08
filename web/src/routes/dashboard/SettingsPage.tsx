@@ -316,8 +316,8 @@ export function SettingsPage() {
 			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Trading mode</h2>
 			<p className="text-xs sm:text-sm text-[var(--muted)] mb-3">
 				Setting up Kotak for live trading? See the{' '}
-				<Link to="/help/connect-kotak" className="text-[var(--accent)] hover:underline">
-					Help — Connect Rebound
+				<Link to="/help/connect-broker" className="text-[var(--accent)] hover:underline">
+					Help — Connect your broker
 				</Link>{' '}
 				guide.
 			</p>

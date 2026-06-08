@@ -1,18 +1,27 @@
 import type { ReactNode } from 'react';
-import { HelpAppLink, HelpMuted, HelpPage, HelpSection } from './HelpProse';
+import {
+	HelpAppLink,
+	HelpEmphasis,
+	HelpFaqList,
+	HelpInternalLink,
+	HelpMuted,
+	HelpPage,
+} from './HelpProse';
+import { HELP_SLUG } from './helpNav';
 
 const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
 	{
-		q: 'Do I need Kotak for everything?',
+		q: 'Do I need a broker for everything?',
 		a: (
 			<>
-				No. Paper mode works without Kotak. <strong className="text-[var(--text)]">Live automation requires Kotak Neo.</strong>
+				No. Paper mode works without a broker.{' '}
+				<HelpEmphasis>Live automation requires a supported broker with API access.</HelpEmphasis>
 			</>
 		),
 	},
 	{
-		q: 'Is my Kotak website password stored?',
-		a: 'Rebound stores encrypted Kotak API credentials (App Token, Client ID, mobile, MPIN, TOTP secret). Your separate Rebound login password is stored securely for app access.',
+		q: 'Is my broker website password stored?',
+		a: 'Rebound stores encrypted broker API credentials (for Kotak Neo today: App Token, Client ID, mobile, MPIN, TOTP secret). Your separate Rebound login password is stored securely for app access.',
 	},
 	{
 		q: 'Can I stop automation anytime?',
@@ -38,15 +47,32 @@ const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
 	},
 	{
 		q: 'How do performance fees work?',
-		a: 'See the Performance fees help page for a summary, or open Billing in the app for your invoices.',
+		a: (
+			<>
+				See <HelpInternalLink slug={HELP_SLUG.billing}>Performance fees</HelpInternalLink> for a summary, or open{' '}
+				<HelpAppLink to="/dashboard/billing">Billing</HelpAppLink> for your invoices.
+			</>
+		),
 	},
 	{
 		q: 'Which brokers are supported for live trading?',
-		a: 'Kotak Neo only today. Other brokers are not supported for automated live orders yet.',
+		a: (
+			<>
+				That depends on your operator. <HelpEmphasis>Kotak Neo</HelpEmphasis> is supported today; additional
+				brokers are planned. Check Account Settings or ask your operator which live broker appears in your app.
+			</>
+		),
 	},
 	{
 		q: 'How do I get help with setup?',
-		a: 'Follow Get started, Kotak Neo API, and Connect Rebound in this help center. Contact your operator for account-specific support.',
+		a: (
+			<>
+				Follow <HelpInternalLink slug={HELP_SLUG.getStarted}>Get started</HelpInternalLink>,{' '}
+				<HelpInternalLink slug={HELP_SLUG.brokerApi}>Broker API setup</HelpInternalLink>, and{' '}
+				<HelpInternalLink slug={HELP_SLUG.connectBroker}>Connect your broker</HelpInternalLink> in this help
+				center. Contact your operator for account-specific support.
+			</>
+		),
 	},
 ];
 
@@ -54,13 +80,7 @@ export function HelpFaqPage() {
 	return (
 		<HelpPage title="FAQ">
 			<HelpMuted>Quick answers about using Rebound.</HelpMuted>
-			<div className="space-y-6 pt-2">
-				{FAQ_ITEMS.map((item) => (
-					<HelpSection key={item.q} title={item.q}>
-						<p className="text-[var(--muted)]">{item.a}</p>
-					</HelpSection>
-				))}
-			</div>
+			<HelpFaqList items={FAQ_ITEMS} />
 		</HelpPage>
 	);
 }

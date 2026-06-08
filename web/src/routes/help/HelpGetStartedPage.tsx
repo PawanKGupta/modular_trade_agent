@@ -1,12 +1,15 @@
 import {
 	HelpAppLink,
-	HelpBullets,
+	HelpEmphasis,
 	HelpInternalLink,
 	HelpList,
 	HelpMuted,
 	HelpPage,
+	HelpParagraph,
 	HelpSection,
+	HelpSubBullets,
 } from './HelpProse';
+import { HELP_SLUG } from './helpNav';
 
 export function HelpGetStartedPage() {
 	return (
@@ -35,17 +38,18 @@ export function HelpGetStartedPage() {
 							Go to <HelpAppLink to="/dashboard/settings">Account Settings</HelpAppLink>.
 						</>,
 						<>
-							Under <strong className="text-[var(--text)]">Trading mode</strong>, choose:
-							<ul className="list-disc list-inside mt-2 space-y-1 text-[var(--muted)]">
-								<li>
-									<strong className="text-[var(--text)]">Paper Trade</strong> — simulated money, no Kotak
-									needed
-								</li>
-								<li>
-									<strong className="text-[var(--text)]">Kotak Neo</strong> — real orders on your broker
-									account
-								</li>
-							</ul>
+							Under <HelpEmphasis>Trading mode</HelpEmphasis>, choose:
+							<HelpSubBullets
+								items={[
+									<>
+										<HelpEmphasis>Paper Trade</HelpEmphasis> — simulated money, no broker setup needed
+									</>,
+									<>
+										<HelpEmphasis>Live broker</HelpEmphasis> — real orders on your broker account (label
+										in the app matches your supported broker, e.g. Kotak Neo)
+									</>,
+								]}
+							/>
 						</>,
 						<>Click Save if you changed trade mode.</>,
 					]}
@@ -65,18 +69,18 @@ export function HelpGetStartedPage() {
 						</>,
 					]}
 				/>
-				<p className="text-[var(--muted)]">No Kotak setup is required for paper mode.</p>
+				<HelpParagraph>No broker setup is required for paper mode.</HelpParagraph>
 			</HelpSection>
 
-			<HelpSection title="Step 4 — Live trading with Kotak">
+			<HelpSection title="Step 4 — Live trading with your broker">
 				<HelpList
 					items={[
 						<>
-							Complete <HelpInternalLink slug="kotak-api">Kotak Neo API setup</HelpInternalLink> on the Kotak
-							side.
+							Complete <HelpInternalLink slug={HELP_SLUG.brokerApi}>Broker API setup</HelpInternalLink> on the
+							broker side.
 						</>,
 						<>
-							Complete <HelpInternalLink slug="connect-kotak">Connect Rebound to Kotak</HelpInternalLink> in
+							Complete <HelpInternalLink slug={HELP_SLUG.connectBroker}>Connect your broker</HelpInternalLink> in
 							Account Settings.
 						</>,
 						<>
@@ -96,17 +100,17 @@ export function HelpGetStartedPage() {
 			</HelpSection>
 
 			<HelpSection title="Step 5 — Notifications (recommended)">
-				<p>
+				<HelpParagraph>
 					Open <HelpAppLink to="/dashboard/notification-preferences">Notification Settings</HelpAppLink> and
 					enable in-app and/or Telegram alerts for order placed, filled, rejected, and similar events.
-				</p>
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpSection title="Step 6 — Billing (live users)">
-				<p>
-					Read <HelpInternalLink slug="billing">Performance fees</HelpInternalLink> and keep{' '}
+				<HelpParagraph>
+					Read <HelpInternalLink slug={HELP_SLUG.billing}>Performance fees</HelpInternalLink> and keep{' '}
 					<HelpAppLink to="/dashboard/billing">Billing</HelpAppLink> invoices paid on time.
-				</p>
+				</HelpParagraph>
 			</HelpSection>
 		</HelpPage>
 	);

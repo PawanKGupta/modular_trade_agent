@@ -1,11 +1,11 @@
-import { HelpAppLink, HelpBullets, HelpMuted, HelpPage, HelpSection } from './HelpProse';
+import { HelpAppLink, HelpBullets, HelpEmphasis, HelpMuted, HelpPage, HelpParagraph, HelpSection } from './HelpProse';
 
 export function HelpBillingPage() {
 	return (
 		<HelpPage title="Performance fees">
 			<HelpMuted>
-				If you use <strong className="text-[var(--text)]">Kotak Neo live</strong> mode, Rebound may bill a
-				performance fee each calendar month.
+				If you use <HelpEmphasis>live broker</HelpEmphasis> mode, Rebound may bill a performance fee each calendar
+				month.
 			</HelpMuted>
 
 			<HelpSection title="In simple terms">
@@ -20,18 +20,18 @@ export function HelpBillingPage() {
 			</HelpSection>
 
 			<HelpSection title="If an invoice is overdue">
-				<p>
-					Unpaid performance bills past the due date may <strong className="text-[var(--text)]">pause new buy
-					orders</strong>. Sell monitoring continues so you can exit open positions. Pay from{' '}
+				<HelpParagraph>
+					Unpaid performance bills past the due date may <HelpEmphasis>pause new buy orders</HelpEmphasis>. Sell
+					monitoring continues so you can exit open positions. Pay from{' '}
 					<HelpAppLink to="/dashboard/billing">Billing</HelpAppLink> to restore new entries.
-				</p>
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpSection title="View your invoices">
-				<p>
+				<HelpParagraph>
 					Open <HelpAppLink to="/dashboard/billing">Billing</HelpAppLink> for open bills, payment history, and
 					payment instructions (offline UPI or online checkout when enabled).
-				</p>
+				</HelpParagraph>
 			</HelpSection>
 		</HelpPage>
 	);

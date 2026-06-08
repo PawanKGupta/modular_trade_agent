@@ -1,46 +1,59 @@
 import {
 	HelpAppLink,
 	HelpBullets,
+	HelpCallout,
+	HelpCode,
+	HelpEmphasis,
 	HelpInternalLink,
 	HelpList,
 	HelpMuted,
 	HelpPage,
+	HelpParagraph,
 	HelpSection,
 	HelpTable,
 } from './HelpProse';
+import { HELP_SLUG } from './helpNav';
 
 export function HelpConnectKotakPage() {
 	return (
-		<HelpPage title="Connect Rebound to Kotak Neo">
+		<HelpPage title="Connect your broker">
 			<HelpMuted>
-				Complete <HelpInternalLink slug="kotak-api">Kotak Neo API setup</HelpInternalLink> first, then enter
-				credentials in the app.
+				Complete <HelpInternalLink slug={HELP_SLUG.brokerApi}>Broker API setup</HelpInternalLink> with your broker
+				first, then enter credentials in the app.
 			</HelpMuted>
 
+			<HelpCallout>
+				Account Settings shows the broker name your operator supports (e.g. <HelpEmphasis>Kotak Neo</HelpEmphasis>{' '}
+				today). Field labels may differ when additional brokers are added.
+			</HelpCallout>
+
 			<HelpSection title="1. Open Account Settings">
-				<p>
+				<HelpParagraph>
 					Sidebar → <HelpAppLink to="/dashboard/settings">Account Settings</HelpAppLink> (
-					<code className="text-xs bg-[#0f172a] px-1 rounded">/dashboard/settings</code>).
-				</p>
+					<HelpCode>/dashboard/settings</HelpCode>).
+				</HelpParagraph>
 			</HelpSection>
 
-			<HelpSection title="2. Select live mode">
+			<HelpSection title="2. Select live broker mode">
 				<HelpBullets
 					items={[
 						<>
-							Under <strong className="text-[var(--text)]">Trading mode</strong>, select{' '}
-							<strong className="text-[var(--text)]">Kotak Neo</strong> (not Paper Trade).
+							Under <HelpEmphasis>Trading mode</HelpEmphasis>, select your live broker (not Paper Trade). The
+							label matches what your deployment supports — e.g. <HelpEmphasis>Kotak Neo</HelpEmphasis>.
 						</>,
 						<>
-							<strong className="text-[var(--text)]">Broker</strong> should be{' '}
-							<code className="text-xs bg-[#0f172a] px-1 rounded">kotak-neo</code>.
+							<HelpEmphasis>Broker</HelpEmphasis> should match your operator (e.g. <HelpCode>kotak-neo</HelpCode>{' '}
+							for Kotak Neo).
 						</>,
 						<>Click Save if you changed trade mode.</>,
 					]}
 				/>
 			</HelpSection>
 
-			<HelpSection title="3. Enter credentials">
+			<HelpSection title="3. Enter credentials (Kotak Neo)">
+				<HelpParagraph>
+					For Kotak Neo, map your API portal values to these Account Settings fields:
+				</HelpParagraph>
 				<HelpTable
 					headers={['Rebound field (Account Settings)', 'What to enter']}
 					rows={[
@@ -55,25 +68,27 @@ export function HelpConnectKotakPage() {
 						['Environment', 'prod for live trading (unless told otherwise)'],
 					]}
 				/>
-				<p className="pt-2">
-					Click <strong className="text-[var(--text)]">Save Credentials</strong>. You should see credentials
-					stored confirmation.
-				</p>
+				<HelpParagraph>
+					Click <HelpEmphasis>Save Credentials</HelpEmphasis>. You should see credentials stored confirmation.
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpSection title="4. Test the connection">
 				<HelpBullets
 					items={[
 						<>
-							<strong className="text-[var(--text)]">Basic Test</strong> — checks App Token and Client ID only.
+							<HelpEmphasis>Basic Test</HelpEmphasis> — checks App Token and Client ID only.
 						</>,
 						<>
-							<strong className="text-[var(--text)]">Full Test</strong> — REST login and MPIN validation. Use
-							this before going live.
+							<HelpEmphasis>Full Test</HelpEmphasis> — REST login and MPIN validation. Use this before going
+							live.
 						</>,
 					]}
 				/>
-				<p>Click Test Connection. On success, broker status should show Connected.</p>
+				<HelpParagraph>
+					Choose Full Test, then click <HelpEmphasis>Test Full Connection</HelpEmphasis>. On success, broker
+					status should show Connected.
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpSection title="5. Start automation">
@@ -103,9 +118,12 @@ export function HelpConnectKotakPage() {
 					rows={[
 						[
 							'Missing field error on save',
-							'Fill App Token, Client ID, Mobile, MPIN, and TOTP Secret before saving.',
+							'Fill all required broker fields before saving (for Kotak Neo: App Token, Client ID, Mobile, MPIN, TOTP Secret).',
 						],
-						['Full test fails', 'Verify API is enabled at Kotak; re-check mobile, MPIN, and TOTP secret.'],
+						[
+							'Full test fails',
+							'Verify API is enabled at your broker; for Kotak Neo, re-check mobile, MPIN, and TOTP secret.',
+						],
 						[
 							'Connected but no orders',
 							'Confirm Service Status is running, Trading Config has capital, and signals are available.',

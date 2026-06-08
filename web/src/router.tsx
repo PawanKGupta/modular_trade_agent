@@ -52,8 +52,10 @@ export function createAppRouter() {
 			children: [
 				{ index: true, element: <HelpHomePage /> },
 				{ path: 'get-started', element: <HelpGetStartedPage /> },
-				{ path: 'kotak-api', element: <HelpKotakApiPage /> },
-				{ path: 'connect-kotak', element: <HelpConnectKotakPage /> },
+				{ path: 'broker-api', element: <HelpKotakApiPage /> },
+				{ path: 'connect-broker', element: <HelpConnectKotakPage /> },
+				{ path: 'kotak-api', element: <Navigate to="/help/broker-api" replace /> },
+				{ path: 'connect-kotak', element: <Navigate to="/help/connect-broker" replace /> },
 				{ path: 'billing', element: <HelpBillingPage /> },
 				{ path: 'faq', element: <HelpFaqPage /> },
 			],

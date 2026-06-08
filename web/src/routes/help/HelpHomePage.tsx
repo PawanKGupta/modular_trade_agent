@@ -2,25 +2,28 @@ import {
 	HelpAppLink,
 	HelpBullets,
 	HelpCallout,
+	HelpEmphasis,
 	HelpInternalLink,
 	HelpMuted,
 	HelpPage,
+	HelpParagraph,
 	HelpSection,
 } from './HelpProse';
+import { HELP_SLUG } from './helpNav';
 
 export function HelpHomePage() {
 	return (
 		<HelpPage title="Welcome to Rebound">
 			<HelpMuted>
-				Rebound is a web platform that connects to your <strong className="text-[var(--text)]">Kotak Neo</strong>{' '}
-				trading account and can automate order placement and monitoring using rules you configure in the app.
+				Rebound is a web platform that connects to your <HelpEmphasis>broker</HelpEmphasis> trading account and
+				can automate order placement and monitoring using rules you configure in the app.
 			</HelpMuted>
 
 			<HelpSection title="How it works">
 				<HelpBullets
 					items={[
-						<>Your money stays in your Kotak account — Rebound does not hold your funds.</>,
-						<>You sign in to Rebound in your browser and choose Paper (practice) or Kotak Neo (live).</>,
+						<>Your money stays in your broker account — Rebound does not hold your funds.</>,
+						<>You sign in to Rebound in your browser and choose Paper (practice) or live broker mode.</>,
 						<>Broker API details are stored encrypted and used only when you start the trading service.</>,
 					]}
 				/>
@@ -31,32 +34,32 @@ export function HelpHomePage() {
 					items={[
 						<>A Rebound account with a verified email address</>,
 						<>
-							For <strong className="text-[var(--text)]">live trading</strong>: an active Kotak Neo account with
-							API access, plus mobile number, MPIN, and TOTP secret (same family of credentials you use for
-							Kotak login)
+							For <HelpEmphasis>live trading</HelpEmphasis>: a supported broker account with API access, plus the
+							credentials your broker requires for automated login (often mobile, MPIN, and TOTP)
 						</>,
 					]}
 				/>
 				<HelpCallout>
-					Live automated trading is <strong className="text-[var(--text)]">Kotak Neo only</strong> today. Other
-					brokers are not supported for live orders yet.
+					Supported brokers and live automation depend on your operator. See{' '}
+					<HelpInternalLink slug={HELP_SLUG.connectBroker}>Connect your broker</HelpInternalLink> for setup
+					steps that apply to your deployment.
 				</HelpCallout>
 			</HelpSection>
 
 			<HelpSection title="Performance fees (live trading)">
-				<p>
-					On live Kotak mode, Rebound may invoice a <strong className="text-[var(--text)]">performance fee</strong>{' '}
-					each month — a percentage of net realized profit after losses are recovered. See{' '}
+				<HelpParagraph>
+					On live broker mode, Rebound may invoice a <HelpEmphasis>performance fee</HelpEmphasis> each month — a
+					percentage of net realized profit after losses are recovered. See{' '}
 					<HelpInternalLink slug="billing">Performance fees</HelpInternalLink> for details.
-				</p>
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpSection title="Start here">
-				<p>
+				<HelpParagraph>
 					New user? Follow the <HelpInternalLink slug="get-started">Get started</HelpInternalLink> guide. Going
-					live? Read <HelpInternalLink slug="kotak-api">Kotak Neo API</HelpInternalLink> then{' '}
-					<HelpInternalLink slug="connect-kotak">Connect Rebound</HelpInternalLink>.
-				</p>
+					live? Read <HelpInternalLink slug={HELP_SLUG.brokerApi}>Broker API setup</HelpInternalLink> then{' '}
+					<HelpInternalLink slug={HELP_SLUG.connectBroker}>Connect your broker</HelpInternalLink>.
+				</HelpParagraph>
 			</HelpSection>
 
 			<HelpCallout>
