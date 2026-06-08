@@ -442,10 +442,17 @@ class KotakNeoScripMaster:
                 if exchange == "NSE" and trading_symbol not in self.symbol_map:
                     self.symbol_map[trading_symbol] = self.symbol_map[key]
 
-                # Also store base symbol without suffix (e.g., GLENMARK from GLENMARK-EQ)
+                # Also store base symbol without suffix; prefer -EQ over other segments
                 base_symbol = trading_symbol.split("-")[0]
-                if exchange == "NSE" and base_symbol not in self.symbol_map:
-                    self.symbol_map[base_symbol] = self.symbol_map[key]
+                segment_suffix = trading_symbol.rsplit("-", 1)[-1] if "-" in trading_symbol else ""
+                if exchange == "NSE":
+                    existing = self.symbol_map.get(base_symbol)
+                    if existing is None:
+                        self.symbol_map[base_symbol] = self.symbol_map[key]
+                    elif segment_suffix == "EQ":
+                        existing_sym = (existing.get("symbol") or "").upper()
+                        if not existing_sym.endswith("-EQ"):
+                            self.symbol_map[base_symbol] = self.symbol_map[key]
 
     def get_instrument(self, symbol: str, exchange: str = "NSE") -> dict | None:
         """

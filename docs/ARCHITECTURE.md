@@ -122,11 +122,14 @@ src/
 - Conflict detection with unified service
 - Schedule management
 
-**T2T Segment Filtering:**
-- Hard filter at signal generation stage
-- Filters out Trade-to-Trade segment stocks (-BE, -BL, -BZ)
-- Uses scrip master for robust symbol resolution
-- Prevents same-day selling issues
+**Screener tradability (planned):**
+- Unified pre-analysis filter before batch analyze (name heuristics + scrip `pISIN` / EQ-first)
+- Drops ETFs (`INF`), T2T-only listings, and non-equities before yfinance/backtest
+- See [Screener tradability design](development/SCREENER_TRADABILITY_DESIGN.md)
+
+**T2T Segment Filtering (current code):**
+- Hard filter at persist today; moves to pre-analysis filter in planned design
+- **Known gap:** bare-base scrip lookup can false-positive T2T when `-EQ` exists
 
 #### MultiUserTradingService
 **Location:** `src/application/services/multi_user_trading_service.py`
@@ -374,24 +377,25 @@ See [Notification Event Types](#notification-event-types) section below.
 ```
 1. Scheduled Service Trigger (IndividualServiceManager)
    ↓
-2. Analysis Service
+2. ChartInk scrape + unified tradability pre-filter (planned; see design doc)
+   ├─→ Name heuristics (ETF, NIFTY, SILVER, …)
+   └─→ Scrip resolver (EQ-first, deny INF / T2T-only)
+   ↓
+3. Analysis Service (survivors only)
    ├─→ Data Service (fetch stock data)
    ├─→ Indicator Service (calculate indicators)
    ├─→ Signal Service (generate signals)
    └─→ Verdict Service (determine verdict)
    ↓
-3. ML Service (optional - enhance verdict)
+4. Backtest scoring (trade_agent --backtest)
    ↓
-4. T2T Segment Filtering (hard filter)
-   ├─→ Check scrip master for symbol resolution
-   ├─→ Filter out -BE, -BL, -BZ stocks
-   └─→ Skip T2T stocks from persistence
+5. ML Service (optional - enhance verdict)
    ↓
-5. Save to Database (Signals table)
-   ├─→ IndividualServiceManager._persist_analysis_results()
-   └─→ T2T filtered count tracked in summary
+6. Save to Database (Signals table)
+   ├─→ IndividualServiceManager._persist_analysis_results() (buy/strong_buy + dedup)
+   └─→ Optional thin tradability re-check
    ↓
-6. Web UI displays signals
+7. Web UI displays signals
 ```
 
 ### Order Execution Flow
