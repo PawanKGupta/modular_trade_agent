@@ -7,6 +7,7 @@ from datetime import date
 import pandas as pd
 
 from src.application.services.ohlcv_fetch_validation import (
+    drop_incomplete_weekly_tail_bar,
     meets_indicator_history_requirement,
     validate_yahoo_ohlcv_frame,
 )
@@ -88,3 +89,37 @@ def test_validate_fails_on_invalid_close():
     )
     assert result.status == "failed"
     assert result.invalid_ohlc_rows >= 1
+
+
+def _weekly_frame(n: int = 3) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-18", "2026-05-25", "2026-06-08"]),
+            "open": [1100.0, 1125.0, 987.9],
+            "high": [1150.0, 1149.8, 1006.7],
+            "low": [1050.0, 1091.0, 975.6],
+            "close": [1120.0, 1100.1, float("nan")],
+            "volume": [1000000, 1500000, 185871],
+        }
+    ).head(n)
+
+
+def test_drop_incomplete_weekly_tail_bar_removes_nan_close():
+    df = _weekly_frame(3)
+    trimmed = drop_incomplete_weekly_tail_bar(df)
+    assert len(trimmed) == 2
+    assert trimmed.iloc[-1]["date"].date() == date(2026, 5, 25)
+
+
+def test_validate_weekly_ok_when_only_tail_bar_incomplete():
+    df = _weekly_frame(3)
+    result = validate_yahoo_ohlcv_frame(
+        df,
+        symbol="GABRIEL.NS",
+        interval="1wk",
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 6, 8),
+        min_coverage_pct=50.0,
+    )
+    assert result.status in ("ok", "partial")
+    assert result.invalid_ohlc_rows == 0

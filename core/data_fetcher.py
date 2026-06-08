@@ -478,6 +478,21 @@ def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_curre
                 logger.warning(error_msg)
                 raise ValueError(error_msg)
 
+        if interval == "1wk":
+            from src.application.services.ohlcv_fetch_validation import (  # noqa: PLC0415
+                drop_incomplete_weekly_tail_bar,
+            )
+
+            before = len(df)
+            df = drop_incomplete_weekly_tail_bar(df)
+            if len(df) < before:
+                logger.debug(
+                    "Dropped incomplete weekly tail bar for %s (%s -> %s rows)",
+                    ticker,
+                    before,
+                    len(df),
+                )
+
         logger.debug(f"Successfully processed data for {ticker} [{interval}]: {len(df)} rows")
         return df
 
