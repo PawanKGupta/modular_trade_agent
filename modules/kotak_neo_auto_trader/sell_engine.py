@@ -5277,33 +5277,31 @@ class SellOrderManager:
                     symbol
                 )
 
-                # Check if any result shows EXECUTED status (completed sell order)
+                # Check if any result shows EXECUTED status for a SELL order only.
+                # Buy executions share the same symbol cache and must not block sell placement.
                 for result in verification_results:
-                    if result.get("status") == "EXECUTED":
-                        # Extract price from broker_order if available
-                        broker_order = result.get("broker_order")
-                        order_price = 0.0
-                        if broker_order:
-                            order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
+                    if result.get("status") != "EXECUTED":
+                        continue
 
-                        order_id = result.get("order_id", "")
-                        # Try to get filled quantity from broker_order if available
-                        filled_qty = 0
-                        order_qty = 0
-                        if broker_order:
-                            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
-                            order_qty = OrderFieldExtractor.get_quantity(broker_order)
-                        logger.info(
-                            f"Found completed sell order for {symbol} from OrderStatusVerifier: "
-                            f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
-                            f"Filled: {filled_qty}/{order_qty}"
-                        )
-                        return {
-                            "order_id": order_id,
-                            "price": order_price,
-                            "filled_qty": filled_qty,
-                            "order_qty": order_qty,
-                        }
+                    broker_order = result.get("broker_order")
+                    if not broker_order or not OrderFieldExtractor.is_sell_order(broker_order):
+                        continue
+
+                    order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
+                    order_id = result.get("order_id", "")
+                    filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                    order_qty = OrderFieldExtractor.get_quantity(broker_order)
+                    logger.info(
+                        f"Found completed sell order for {symbol} from OrderStatusVerifier: "
+                        f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
+                        f"Filled: {filled_qty}/{order_qty}"
+                    )
+                    return {
+                        "order_id": order_id,
+                        "price": order_price,
+                        "filled_qty": filled_qty,
+                        "order_qty": order_qty,
+                    }
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
