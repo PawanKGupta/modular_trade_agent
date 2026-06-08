@@ -83,7 +83,9 @@ describe('Help center', () => {
 	it('renders FAQ with in-app billing links', () => {
 		renderHelpAt('/help/faq');
 		expect(screen.getByRole('heading', { name: /how do performance fees work/i })).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: /performance fees/i })).toHaveAttribute('href', '/help/billing');
+		const main = screen.getByRole('main');
+		expect(within(main).getByRole('link', { name: /performance fees/i })).toHaveAttribute('href', '/help/billing');
+		expect(within(main).getByRole('link', { name: /^billing$/i })).toHaveAttribute('href', '/dashboard/billing');
 	});
 
 	it('nav items use broker-neutral slugs', () => {
