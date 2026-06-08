@@ -484,13 +484,7 @@ def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_curre
             )
 
             before = len(df)
-            dropped_tail_date = None
-            if before >= 2 and not df.empty:
-                last_close = df.iloc[-1].get("close")
-                if last_close is None or (
-                    isinstance(last_close, float) and pd.isna(last_close)
-                ):
-                    dropped_tail_date = df.iloc[-1].get("date")
+            dropped_tail_date = df.iloc[-1].get("date") if not df.empty else None
             df = drop_incomplete_weekly_tail_bar(df)
             if len(df) < before:
                 tail_label = (

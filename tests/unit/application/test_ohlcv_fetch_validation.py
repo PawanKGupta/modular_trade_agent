@@ -123,3 +123,44 @@ def test_validate_weekly_ok_when_only_tail_bar_incomplete():
     )
     assert result.status in ("ok", "partial")
     assert result.invalid_ohlc_rows == 0
+
+
+def _single_incomplete_weekly_bar() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-06-08"]),
+            "open": [987.9],
+            "high": [1006.7],
+            "low": [975.6],
+            "close": [float("nan")],
+            "volume": [185871],
+        }
+    )
+
+
+def test_drop_incomplete_weekly_tail_bar_single_row_no_op():
+    """len < 2: helper leaves frame unchanged; upsert/validation handle elsewhere."""
+    df = _single_incomplete_weekly_bar()
+    assert len(drop_incomplete_weekly_tail_bar(df)) == 1
+
+
+def test_validate_weekly_single_incomplete_row_passes_last_bar_exemption():
+    """len < 2: drop helper no-ops; validator exempts missing close on last weekly bar."""
+    result = validate_yahoo_ohlcv_frame(
+        _single_incomplete_weekly_bar(),
+        symbol="GABRIEL.NS",
+        interval="1wk",
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 8),
+        min_coverage_pct=50.0,
+    )
+    assert result.status in ("ok", "partial")
+    assert result.invalid_ohlc_rows == 0
+
+
+def test_weekly_single_incomplete_row_not_upserted():
+    """Belt-and-suspenders: upsert path skips rows with missing close."""
+    from src.application.services.ohlcv_cache_service import _dataframe_to_upsert_rows
+
+    rows = _dataframe_to_upsert_rows("G.NS", _single_incomplete_weekly_bar(), interval="1wk")
+    assert rows == []
