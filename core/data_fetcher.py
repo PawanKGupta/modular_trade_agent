@@ -484,11 +484,25 @@ def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_curre
             )
 
             before = len(df)
+            dropped_tail_date = None
+            if before >= 2 and not df.empty:
+                last_close = df.iloc[-1].get("close")
+                if last_close is None or (
+                    isinstance(last_close, float) and pd.isna(last_close)
+                ):
+                    dropped_tail_date = df.iloc[-1].get("date")
             df = drop_incomplete_weekly_tail_bar(df)
             if len(df) < before:
-                logger.debug(
-                    "Dropped incomplete weekly tail bar for %s (%s -> %s rows)",
+                tail_label = (
+                    pd.Timestamp(dropped_tail_date).strftime("%Y-%m-%d")
+                    if dropped_tail_date is not None
+                    else "unknown"
+                )
+                logger.info(
+                    "OHLCV weekly: dropped incomplete tail bar for %s "
+                    "(date=%s, rows %s -> %s; open week not cached until close is available)",
                     ticker,
+                    tail_label,
                     before,
                     len(df),
                 )
