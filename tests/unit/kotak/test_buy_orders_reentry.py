@@ -384,7 +384,11 @@ class TestPlaceReentryOrders:
         engine._calculate_execution_capital = Mock(return_value=10000.0)
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
@@ -489,7 +493,11 @@ class TestPlaceReentryOrders:
         engine.portfolio.get_available_cash = Mock(return_value=50.0)  # Very low balance
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
@@ -588,14 +596,18 @@ class TestPlaceReentryOrders:
         # Mock parse_symbol_for_broker
         def parse_symbol_side_effect(ticker):
             if "RELIANCE" in ticker:
-                return "RELIANCE-EQ"
+                return "RELIANCE"
             elif "TCS" in ticker:
-                return "TCS-EQ"
+                return "TCS"
             elif "INFY" in ticker:
-                return "INFY-EQ"
+                return "INFY"
             return None
 
         engine.parse_symbol_for_broker = Mock(side_effect=parse_symbol_side_effect)
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE", "TCS", "INFY")
 
         # Mock strategy config
         engine.strategy_config = Mock()
