@@ -455,8 +455,7 @@ service returns zero, both runtimes fall back to `user_capital`.
 | Capital service | `LiquidityCapitalService` | Same |
 | Config source | `strategy_config` / `UserTradingConfig` | Same |
 | Fresh entries | `place_new_entries` (recalculates from indicators + volume) | `place_new_entries` |
-| Re-entry (production) | `place_reentry_orders` via `run_buy_orders` (9:01) | Same |
-| Legacy re-entry | `monitor_positions` (deprecated; tests only) | N/A |
+| Re-entry | `place_reentry_orders` via `run_buy_orders` (9:01) | Same |
 
 **Fresh buy entries** (`place_new_entries`): paper recalculates execution capital from
 `_get_daily_indicators` average volume and close (same as live), not only stored
