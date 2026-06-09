@@ -2841,7 +2841,11 @@ class PaperTradingEngineAdapter:
 
     def place_reentry_orders(self) -> dict[str, int]:
         """
-        Check re-entry conditions and place LIMIT buy orders for re-entries (9:05 premarket adjust).
+        Check re-entry conditions and place buy orders for re-entries.
+
+        Pre-open (9:00–9:15 IST): REGULAR LIMIT at reference close; after 9:15 or off-hours:
+        MARKET (variety from ``_buy_order_variety_for_market_hours``). Pending buys are
+        eligible for 9:05 adjustment via ``adjust_amo_quantities_premarket``.
 
         Called from ``run_buy_orders`` (default 9:01 IST), same as live trading.
 
