@@ -202,9 +202,10 @@ class Order:
 
     def is_pending_open_buy_for_premarket_adjustment(self) -> bool:
         """
-        Paper-side mirror of live ``OrderFieldExtractor.is_pending_open_buy_order``.
+        Paper-side approximate mirror of live ``OrderFieldExtractor.is_pending_open_buy_order``.
 
-        Live 9:05 adjustment includes open/pending DAY buy orders at the broker (IOC excluded).
+        Live 9:05 adjustment requires broker status tokens (open/pending/trigger/…) and
+        non-IOC validity. Paper uses active buy orders with non-IOC ``validity`` only.
         """
         if not self.is_buy_order() or not self.is_active():
             return False
