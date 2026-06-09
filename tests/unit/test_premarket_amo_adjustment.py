@@ -494,8 +494,11 @@ def test_database_update_on_success(mock_auto_trade_engine):
                 assert call_args[1]["severity"] == "INFO"
 
 
-def test_paper_trading_adjustment_updates_quantity(db_session, test_user):
+@patch("src.application.services.paper_trading_service_adapter.get_user_logger")
+def test_paper_trading_adjustment_updates_quantity(mock_get_user_logger, db_session, test_user):
     """Test that paper trading adjustment updates quantity (not just skips)"""
+    from unittest.mock import MagicMock as MockMagic
+
     from config.strategy_config import StrategyConfig
     from modules.kotak_neo_auto_trader.domain import (
         Order,
@@ -505,6 +508,7 @@ def test_paper_trading_adjustment_updates_quantity(db_session, test_user):
         TransactionType,
     )
 
+    mock_get_user_logger.return_value = MockMagic()
     strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
     adapter = PaperTradingServiceAdapter(

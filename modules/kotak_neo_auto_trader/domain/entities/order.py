@@ -200,6 +200,16 @@ class Order:
         """Check if order is still active"""
         return self.status.is_active()
 
+    def is_pending_open_buy_for_premarket_adjustment(self) -> bool:
+        """
+        Paper-side mirror of live ``OrderFieldExtractor.is_pending_open_buy_order``.
+
+        Live 9:05 adjustment includes open/pending DAY buy orders at the broker (IOC excluded).
+        """
+        if not self.is_buy_order() or not self.is_active():
+            return False
+        return str(self.validity).upper() != "IOC"
+
     def is_terminal(self) -> bool:
         """Check if order is in terminal state"""
         return self.status.is_terminal()

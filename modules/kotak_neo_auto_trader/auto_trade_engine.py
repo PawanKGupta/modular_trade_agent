@@ -5481,7 +5481,7 @@ class AutoTradeEngine:
     # ---------------------- Re-entry and exit ----------------------
     def place_reentry_orders(self) -> dict[str, int]:
         """
-        Check re-entry conditions and place AMO orders for re-entries.
+        Check re-entry conditions and place buy orders for re-entries (LIMIT pre-open, same as fresh entry).
 
         Called from ``run_buy_orders`` (default 9:01 IST morning placement).
 
@@ -5850,7 +5850,7 @@ class AutoTradeEngine:
                             logger.warning(f"Failed to save re-entry order to failed orders: {e}")
                         continue
 
-                # Place re-entry order (AMO-like)
+                # Place re-entry via _attempt_place_order (LIMIT pre-open, MARKET after 9:15)
                 # Enhanced Hybrid Approach: Include cycle number in order metadata
                 rec_source = "reentry"
                 cycle_meta = self._get_position_cycle_metadata(position)
