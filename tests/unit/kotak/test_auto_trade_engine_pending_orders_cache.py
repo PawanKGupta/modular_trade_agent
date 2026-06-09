@@ -12,6 +12,7 @@ This optimization reduces API calls from 5-6 per "buy once" click to just 1-2.
 from unittest.mock import Mock, patch
 
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine, Recommendation
+from tests.unit.kotak.conftest import assign_tradable_scrip_master
 
 
 class TestPendingOrdersCacheOptimization:
@@ -82,21 +83,7 @@ class TestPendingOrdersCacheOptimization:
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ", "TCS": "TCS-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            # Return broker symbol with suffix
-            symbol_upper = symbol.upper()
-            if symbol_upper == "RELIANCE":
-                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-            elif symbol_upper == "TCS":
-                return {"token": 12346, "symbol": "TCS-EQ", "exchange": exchange}
-            return {"token": 12347, "symbol": f"{symbol_upper}-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE", "TCS")
 
         # Create multiple recommendations to test caching
         recommendations = [
@@ -194,18 +181,7 @@ class TestPendingOrdersCacheOptimization:
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            # Return broker symbol with suffix
-            if symbol.upper() == "RELIANCE":
-                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Create recommendation
         recommendations = [
@@ -293,18 +269,7 @@ class TestPendingOrdersCacheOptimization:
             return_value={"order_id": "NEW_ORD001", "status": "PENDING"}
         )
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            # Return broker symbol with suffix
-            if symbol.upper() == "RELIANCE":
-                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Create recommendation
         recommendations = [

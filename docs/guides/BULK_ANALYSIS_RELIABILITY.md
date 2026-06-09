@@ -107,7 +107,7 @@ The tool compares **open, high, low, close, volume** on each common bar date (`d
 | `OHLCV_REJECT_INVALID_FETCH` | `true` | Do not upsert when ingest validation fails |
 | `OHLCV_MIN_DAILY_BARS_FOR_INDICATORS` | `250` | Warn when `partial` cache has fewer daily bars (EMA200 safety) |
 
-**Ingest validation:** Each `gap_fill` validates the OHLCV frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data.
+**Ingest validation:** Each `gap_fill` validates the OHLCV frame (non-empty, valid OHLCV, no duplicate dates) and stores `fetch_status` (`ok` / `partial` / `failed`) on `ohlcv_symbol_meta`. Failed fetches are not written to cache; `get_ohlcv` returns nothing when `fetch_status=failed` so indicators are not run on corrupt data. For weekly `1wk`, Yahoo’s in-progress open-week bar (missing `close`) is dropped at ingest before validation so gap-fill does not fail on a partial tail bar.
 
 **NSE backfill** (run after deploy or when switching from Yahoo-backed cache):
 

@@ -384,7 +384,11 @@ class TestPlaceReentryOrders:
         engine._calculate_execution_capital = Mock(return_value=10000.0)
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
@@ -455,11 +459,13 @@ class TestPlaceReentryOrders:
         assert summary["skipped_duplicates"] == 1
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_place_reentry_orders_insufficient_balance(self, mock_auth):
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_insufficient_balance(self, mock_login, mock_auth):
         """Test that insufficient balance is handled"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
 
         engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
 
@@ -468,32 +474,51 @@ class TestPlaceReentryOrders:
         mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
+        mock_position.reentry_count = 0
+        mock_position.reentries = None
 
         # Mock positions repository
         mock_positions_repo = Mock()
         mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
         engine.positions_repo = mock_positions_repo
         engine.user_id = 1
 
         # Mock indicators
         engine.get_daily_indicators = Mock(
-            return_value={"rsi10": 18.0, "close": 100.0, "avg_volume": 1000000}
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
         )
 
         # Mock order validation service
         engine.order_validation_service = Mock()
         engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
 
-        # Mock portfolio: insufficient balance
+        # Skip login() re-init (would reload scrip master from disk/API on CI)
+        engine.orders = Mock()
         engine.portfolio = Mock()
         engine.portfolio.get_available_cash = Mock(return_value=50.0)  # Very low balance
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=0)
+        engine._add_failed_order = Mock()
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
         engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
 
         summary = engine.place_reentry_orders()
 
@@ -588,14 +613,18 @@ class TestPlaceReentryOrders:
         # Mock parse_symbol_for_broker
         def parse_symbol_side_effect(ticker):
             if "RELIANCE" in ticker:
-                return "RELIANCE-EQ"
+                return "RELIANCE"
             elif "TCS" in ticker:
-                return "TCS-EQ"
+                return "TCS"
             elif "INFY" in ticker:
-                return "INFY-EQ"
+                return "INFY"
             return None
 
         engine.parse_symbol_for_broker = Mock(side_effect=parse_symbol_side_effect)
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE", "TCS", "INFY")
 
         # Mock strategy config
         engine.strategy_config = Mock()

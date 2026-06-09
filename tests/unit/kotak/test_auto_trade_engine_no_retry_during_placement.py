@@ -15,6 +15,7 @@ from modules.kotak_neo_auto_trader.auto_trade_engine import (
     AutoTradeEngine,
     Recommendation,
 )
+from tests.unit.kotak.conftest import assign_tradable_scrip_master
 
 
 @pytest.fixture
@@ -59,18 +60,7 @@ def auto_trade_engine(mock_auth, strategy_config):
         engine.telegram_notifier = MagicMock()
         engine.telegram_notifier.enabled = True
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            # Return broker symbol with suffix
-            if symbol.upper() == "RELIANCE":
-                return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         return engine
 

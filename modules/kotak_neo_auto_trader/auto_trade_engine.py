@@ -2596,126 +2596,46 @@ class AutoTradeEngine:
         """
         Resolve base symbol to actual broker trading symbol using scrip master.
 
-        Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
-        If scrip master is not available or symbol is not found, raises an error.
-
-        IMPORTANT: Only resolves to -EQ segment symbols. T2T segments (-BE, -BL, -BZ)
-        are rejected as they are not supported for trading.
+        Uses shared ``resolve_tradable_equity`` (EQ-first, deny ``INF`` ISIN / T2T-only).
 
         Args:
-            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-EQ")
+            base_symbol: Base symbol (e.g., "SALSTEEL") or resolved symbol (e.g., "SALSTEEL-EQ")
 
         Returns:
-            Resolved broker symbol (e.g., "SALSTEEL-EQ") - ONLY -EQ symbols
+            Resolved broker symbol (e.g., "SALSTEEL-EQ") — company equity only
 
         Raises:
-            ValueError: If scrip master is not available, symbol cannot be resolved,
-                       or only T2T segment available (no -EQ variant)
+            ValueError: If scrip master is unavailable or symbol is not tradable equity
         """
-        # Get exchange from user's trading config (from database UserTradingConfig)
-        # This is the user's preference stored in their trading configuration
-        # Falls back to config.DEFAULT_EXCHANGE only if strategy_config not available (standalone usage)
+        from src.infrastructure.brokers.tradable_equity_resolver import (
+            DeniedEquity,
+            ResolvedEquity,
+            denial_message,
+            resolve_tradable_equity,
+        )
+
         exchange = (
             self.strategy_config.default_exchange
             if self.strategy_config
             else config.DEFAULT_EXCHANGE
         )
 
-        # If symbol already has suffix, validate it exists in scrip master
-        if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
-            # Reject T2T segments - only -EQ is allowed
-            if any(base_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
-                raise ValueError(
-                    f"Symbol {base_symbol} is a T2T segment stock (-BE/-BL/-BZ) which is not supported. "
-                    f"Only -EQ segment stocks are allowed for trading."
-                )
-
-            # Validate that -EQ symbol exists in scrip master
-            if self.scrip_master and self.scrip_master.symbol_map:
-                instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
-                if instrument and instrument.get("symbol"):
-                    # Symbol exists in scrip master, use as-is
-                    logger.debug(
-                        f"Symbol {base_symbol} already has -EQ suffix and exists in scrip master ({exchange})"
-                    )
-                    return base_symbol
-                else:
-                    # Symbol has suffix but not in scrip master - this is an error
-                    raise ValueError(
-                        f"Symbol {base_symbol} not found in scrip master ({exchange}). "
-                        f"Please verify the symbol is correct."
-                    )
-            else:
-                # Scrip master not available, but symbol has -EQ suffix - assume it's valid
-                logger.warning(
-                    f"Scrip master not available, but symbol {base_symbol} has -EQ suffix. "
-                    f"Using as-is (not validated)."
-                )
-                return base_symbol
-
-        # Scrip master is REQUIRED for symbol resolution
         if not self.scrip_master or not self.scrip_master.symbol_map:
             raise ValueError(
                 f"Scrip master is not available. Cannot resolve symbol {base_symbol}. "
                 f"Please ensure scrip master is loaded before placing orders."
             )
 
-        try:
-            # First, try to get -EQ variant explicitly
-            eq_symbol = f"{base_symbol}-EQ"
-            instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+        result = resolve_tradable_equity(base_symbol, self.scrip_master, exchange=exchange)
+        if isinstance(result, DeniedEquity):
+            raise ValueError(denial_message(result))
+        if not isinstance(result, ResolvedEquity):
+            raise ValueError(f"Unexpected tradability result for {base_symbol}")
 
-            if instrument and instrument.get("symbol"):
-                resolved = instrument["symbol"]
-                # Double-check it's -EQ (safety check)
-                if resolved.upper().endswith("-EQ"):
-                    logger.info(
-                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
-                    )
-                    return resolved
-                else:
-                    logger.warning(f"Expected -EQ variant but got {resolved} for {base_symbol}")
-
-            # If -EQ not found, try base symbol (might resolve to something else)
-            instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
-            if instrument and instrument.get("symbol"):
-                resolved = instrument["symbol"]
-
-                # Check if resolved symbol is T2T segment - reject it
-                if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
-                    raise ValueError(
-                        f"Symbol {base_symbol} resolves to T2T segment {resolved} which is not supported. "
-                        f"Only -EQ segment stocks are allowed for trading. "
-                        f"The stock may only be available in T2T segment on {exchange}."
-                    )
-
-                # Check if it's -EQ
-                if resolved.upper().endswith("-EQ"):
-                    logger.info(
-                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange})"
-                    )
-                    return resolved
-                else:
-                    # Resolved to something unexpected
-                    raise ValueError(
-                        f"Symbol {base_symbol} resolved to unexpected format: {resolved}. "
-                        f"Expected -EQ segment symbol."
-                    )
-            else:
-                # Symbol not found in scrip master
-                raise ValueError(
-                    f"Symbol {base_symbol} not found in scrip master ({exchange}). "
-                    f"Please verify the symbol is correct or check if it's listed on {exchange}."
-                )
-        except ValueError:
-            # Re-raise ValueError (our custom errors)
-            raise
-        except Exception as e:
-            # Wrap other exceptions
-            raise ValueError(
-                f"Failed to resolve symbol {base_symbol} via scrip master: {e}. "
-                f"Scrip master is the single source of truth for symbol resolution."
-            ) from e
+        logger.info(
+            f"Resolved {base_symbol} -> {result.symbol} via tradable equity resolver ({exchange})"
+        )
+        return result.symbol
 
     def _attempt_place_order(
         self,

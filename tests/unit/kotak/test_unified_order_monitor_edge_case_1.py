@@ -260,3 +260,50 @@ class TestUnifiedOrderMonitorSellOrderUpdateOnReentry:
 
         # Verify update_sell_order was NOT called (no existing order)
         mock_sell_manager.update_sell_order.assert_not_called()
+
+    def test_create_position_resolves_zero_broker_price_before_sell_modify(
+        self, unified_monitor, mock_positions_repo, mock_orders_repo, mock_sell_manager
+    ):
+        """Reentry sell qty modify must not pass broker-reported price 0 to Kotak."""
+        existing_position = Mock()
+        existing_position.quantity = 15.0
+        existing_position.avg_price = 642.15
+        existing_position.opened_at = datetime(2026, 6, 4, 9, 15, 0, tzinfo=UTC)
+        existing_position.entry_rsi = 29.0
+        existing_position.closed_at = None
+        existing_position.reentry_count = 0
+        existing_position.reentries = {"_cycle_metadata": {}, "reentries": []}
+        existing_position.last_reentry_price = None
+
+        mock_positions_repo.get_by_symbol_for_update = Mock(return_value=existing_position)
+
+        db_order = Mock()
+        db_order.order_metadata = {"entry_type": "reentry", "entry_rsi": 26.0}
+        db_order.entry_type = "reentry"
+        db_order.filled_at = None
+        db_order.execution_time = None
+        mock_orders_repo.get.return_value = db_order
+
+        mock_sell_manager.get_existing_sell_orders.return_value = {
+            "GALLANTT-EQ": {
+                "order_id": "260609000026807",
+                "qty": 15,
+                "price": 0.0,
+            }
+        }
+        mock_sell_manager.resolve_sell_modify_price = Mock(return_value=651.35)
+
+        unified_monitor._create_position_from_executed_order(
+            order_id="260609000024853",
+            order_info={"symbol": "GALLANTT-EQ", "db_order_id": 281},
+            execution_price=626.45,
+            execution_qty=16.0,
+        )
+
+        mock_sell_manager.resolve_sell_modify_price.assert_called_once()
+        mock_sell_manager.update_sell_order.assert_called_once_with(
+            order_id="260609000026807",
+            symbol="GALLANTT-EQ",
+            qty=31,
+            new_price=651.35,
+        )

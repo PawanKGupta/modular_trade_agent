@@ -14,6 +14,7 @@ from modules.kotak_neo_auto_trader.auto_trade_engine import (
     Recommendation,
 )
 from src.infrastructure.db.models import OrderStatus as DbOrderStatus
+from tests.unit.kotak.conftest import assign_tradable_scrip_master
 
 
 class TestAutoTradeEngineOrderValidationServiceInitialization:
@@ -100,15 +101,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.orders_repo = Mock()
         engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock recommendation
         rec = Recommendation(
@@ -172,15 +165,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.orders_repo = Mock()
         engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock recommendation
         rec = Recommendation(
@@ -240,15 +225,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.orders_repo = Mock()
         engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock recommendation
         rec = Recommendation(
@@ -300,15 +277,7 @@ class TestBuyOrdersServiceOrderValidationServiceIntegration:
         engine.orders_repo = Mock()
         engine.orders_repo.get_by_broker_order_id = Mock(return_value=None)
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"RELIANCE": "RELIANCE-EQ"}  # Truthy value
-
-        def mock_get_instrument(symbol, exchange="NSE"):
-            return {"token": 12345, "symbol": "RELIANCE-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock recommendation
         rec = Recommendation(

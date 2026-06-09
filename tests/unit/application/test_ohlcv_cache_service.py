@@ -343,6 +343,41 @@ def test_gap_fill_weekly_still_yahoo(db_session, monkeypatch):
     assert yahoo_calls["n"] >= 1
 
 
+def _weekly_yahoo_with_incomplete_tail(*_args, **_kwargs):
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-18", "2026-05-25", "2026-06-08"]),
+            "open": [1100.0, 1125.0, 987.9],
+            "high": [1150.0, 1149.8, 1006.7],
+            "low": [1050.0, 1091.0, 975.6],
+            "close": [1120.0, 1100.1, float("nan")],
+            "volume": [1000000, 1500000, 185871],
+        }
+    )
+
+
+def test_gap_fill_weekly_drops_incomplete_open_week_bar(db_session, monkeypatch):
+    """Weekly gap_fill validates after tail drop; incomplete open week is not cached."""
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_weekly_yahoo_with_incomplete_tail)
+    start = date(2026, 5, 1)
+    end = date(2026, 6, 8)
+    n = svc.gap_fill("G.NS", start, end, interval="1wk", yf_end_date="2026-06-08")
+
+    assert n == 2
+    cached = svc.repo.get_range("G.NS", start, end, interval="1wk")
+    assert len(cached) == 2
+    assert all(b.close is not None for b in cached)
+    meta = svc.repo.get_symbol_meta("G.NS", interval="1wk")
+    assert meta is not None
+    assert meta.fetch_status in ("ok", "partial")
+
+
 def test_filter_daily_bars_nse_only_excludes_yfinance(db_session, monkeypatch):
     from src.application.services.ohlcv_cache_service import _filter_daily_bars_for_source_policy
 
