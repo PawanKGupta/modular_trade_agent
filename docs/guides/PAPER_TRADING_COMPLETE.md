@@ -428,15 +428,20 @@ if current_price >= ema9:
     broker.place_order(order)
 ```
 
-### Buy / re-entry capital parity with live Kotak
+### Buy / re-entry parity with live Kotak
 
-Paper re-entry sizing uses the same **`LiquidityCapitalService`** path as live Kotak
-(`AutoTradeEngine._calculate_execution_capital`):
+This area spans **paper staging** (LIMIT pre-open → 9:05 qty adjust → MARKET) and **live sell
+resize** when a re-entry fill increases holdings but the broker pending sell still reports
+price `0` (see [Edge Case #1](../troubleshooting/EDGE_CASES.md) and sell-engine
+`resolve_sell_modify_price` / `_sync_position_qty_from_closed_buys`).
+
+#### Capital sizing (`LiquidityCapitalService`)
+
+Paper and live both use **`LiquidityCapitalService`** via `_calculate_execution_capital`:
 
 - **Module:** `services/liquidity_capital_service.py`
 - **Paper:** `PaperTradingEngineAdapter._calculate_execution_capital()` in
-  `src/application/services/paper_trading_service_adapter.py` (used by `place_reentry_orders`
-  and the `monitor_positions` re-entry path)
+  `src/application/services/paper_trading_service_adapter.py`
 - **Live:** `modules/kotak_neo_auto_trader/auto_trade_engine.py` → same service with per-user
   `strategy_config`
 
@@ -449,11 +454,15 @@ service returns zero, both runtimes fall back to `user_capital`.
 |--------|-------|------------|
 | Capital service | `LiquidityCapitalService` | Same |
 | Config source | `strategy_config` / `UserTradingConfig` | Same |
-| Re-entry call sites | `place_reentry_orders`, `monitor_positions` | `place_reentry_orders`, retries |
+| Fresh entries | `place_new_entries` (recalculates from indicators + volume) | `place_new_entries` |
+| Re-entry (production) | `place_reentry_orders` via `run_buy_orders` (9:01) | Same |
+| Legacy re-entry | `monitor_positions` (deprecated; tests only) | N/A |
 
-**Fresh buy entries** (`place_new_entries`) may still use `rec.execution_capital` from the
-signal or full `user_capital` when not set — that path is unchanged. Re-entry and monitor
-re-entry paths are aligned with live.
+**Fresh buy entries** (`place_new_entries`): paper recalculates execution capital from
+`_get_daily_indicators` average volume and close (same as live), not only stored
+`rec.execution_capital`. Stored signal capital is logged when it differs from the recalc.
+
+**Re-entry quantity:** both use `floor(execution_capital / price)` (live: `max(MIN_QTY, …)`).
 
 For liquidity tiers and chart-quality context, see
 [Chart Quality and Capital Adjustment](../features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md).

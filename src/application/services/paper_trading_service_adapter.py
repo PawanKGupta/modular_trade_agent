@@ -2319,17 +2319,31 @@ class PaperTradingEngineAdapter:
                 continue
 
             try:
-                # Calculate quantity based on execution capital or use strategy config
-                execution_capital = getattr(rec, "execution_capital", None)
-                if not execution_capital or execution_capital <= 0:
-                    # Use user_capital from strategy config (default: 200000.0)
-                    execution_capital = (
-                        self.strategy_config.user_capital
-                        if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-                        else 200000.0
+                # Capital sizing — mirrors live place_new_entries (LiquidityCapitalService).
+                stored_execution_capital = getattr(rec, "execution_capital", None)
+                price = rec.last_close
+                ind = self._get_daily_indicators(rec.ticker)
+                avg_vol = ind.get("avg_volume", 0) if ind else 0
+                if ind and ind.get("close"):
+                    try:
+                        indicator_close = float(ind["close"])
+                        if indicator_close > 0:
+                            price = indicator_close
+                    except (TypeError, ValueError):
+                        pass
+
+                execution_capital = self._calculate_execution_capital(price, avg_vol)
+                if (
+                    stored_execution_capital
+                    and stored_execution_capital > 0
+                    and stored_execution_capital != execution_capital
+                ):
+                    self.logger.info(
+                        f"{rec.ticker}: Execution capital updated from stored "
+                        f"Rs {stored_execution_capital:,.0f} to Rs {execution_capital:,.0f}",
+                        action="place_new_entries",
                     )
 
-                price = rec.last_close
                 if price <= 0:
                     self.logger.warning(
                         f"Invalid price for {rec.ticker}: {price}", action="place_new_entries"
@@ -2519,20 +2533,24 @@ class PaperTradingEngineAdapter:
 
     def monitor_positions(
         self,
-    ):  # Deprecated: Position monitoring removed, re-entry now in buy order service
+    ):
         """
-        Monitor positions for reentry/exit signals (paper trading).
+        .. deprecated::
+            Legacy paper re-entry path. Production scheduling uses ``run_buy_orders`` →
+            ``place_reentry_orders`` (9:01 IST) with session-aware LIMIT/MARKET staging.
+            Retained for unit tests and backward compatibility only.
 
-        Implements the same re-entry logic as real trading:
-        - RSI-based re-entry at levels 30, 20, 10
-        - Daily cap (1 re-entry per symbol per day)
-        - Duplicate prevention (no active buy orders)
-        - Reset logic (when RSI > 30)
+        Monitor positions for reentry/exit signals (paper trading).
 
         Returns:
             Summary dict with monitoring statistics
         """
         from math import floor
+
+        self.logger.warning(
+            "monitor_positions is deprecated; use place_reentry_orders via run_buy_orders",
+            action="monitor_positions",
+        )
 
         summary = {"checked": 0, "reentries": 0, "skipped": 0}
 
@@ -2675,18 +2693,21 @@ class PaperTradingEngineAdapter:
                             summary["skipped"] += 1
                             continue
 
-                        # Place market buy order for re-entry (averaging down)
-                        from modules.kotak_neo_auto_trader.domain import (
-                            Order,
-                            OrderType,
-                            TransactionType,
+                        # Session-aware buy type (same helpers as place_reentry_orders)
+                        from modules.kotak_neo_auto_trader.domain import Order, TransactionType
+
+                        order_variety = self._buy_order_variety_for_market_hours()
+                        reentry_order_type, reentry_price = (
+                            self._buy_order_type_and_price_for_session(price)
                         )
 
                         reentry_order = Order(
                             symbol=ticker,
                             quantity=qty,
-                            order_type=OrderType.MARKET,
+                            order_type=reentry_order_type,
                             transaction_type=TransactionType.BUY,
+                            price=reentry_price,
+                            variety=order_variety,
                         )
 
                         # Tag as re-entry with metadata for tracking
@@ -2852,6 +2873,8 @@ class PaperTradingEngineAdapter:
         Returns:
             Summary dict with placement statistics
         """
+        from math import floor
+
         from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
 
         summary = {
@@ -3083,7 +3106,7 @@ class PaperTradingEngineAdapter:
 
                     # Calculate execution capital and quantity
                     execution_capital = self._calculate_execution_capital(current_price, avg_volume)
-                    qty = int(execution_capital / current_price)
+                    qty = max(1, floor(execution_capital / current_price))
 
                     if qty <= 0:
                         self.logger.warning(

@@ -5804,7 +5804,7 @@ class AutoTradeEngine:
                 execution_capital = self._calculate_execution_capital(
                     ticker, current_price, avg_volume
                 )
-                qty = int(execution_capital / current_price)
+                qty = max(config.MIN_QTY, floor(execution_capital / current_price))
 
                 logger.info(
                     f"Re-entry quantity calculation for {symbol}: "

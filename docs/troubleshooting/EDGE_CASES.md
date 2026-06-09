@@ -92,6 +92,15 @@ Day 3: run_at_market_open() runs
 - `evaluate_reentries_and_exits()` has similar logic to update sell orders (lines 4863-4933)
 - `update_sell_order()` method handles order modification via `modify_order()` API
 
+### Operator note: `_sync_position_qty_from_closed_buys`
+
+When broker holdings exceed the DB open-position row after a re-entry fill, sell monitoring may
+call `SellOrderManager._sync_position_qty_from_closed_buys()` to align qty/avg from **closed
+system buy** history. This sums all closed system buys for the symbol — correct when the DB
+row lagged behind executed re-entries. It does **not** subtract partial sells from that
+history; sync only runs when `broker_qty > positions_qty`, so overstating qty after partial
+exits is unlikely but operators should treat large broker/DB gaps as worth checking in logs.
+
 ---
 
 ## Edge Case #2: Partial Execution Reconciliation

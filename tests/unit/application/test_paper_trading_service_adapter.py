@@ -400,6 +400,48 @@ class TestPaperTradingEngineAdapter:
         assert placed_order.variety == OrderVariety.AMO
         assert placed_order.price is None
 
+    def test_place_new_entries_recalculates_capital_from_liquidity_service(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Fresh entries recalculate execution capital via LiquidityCapitalService (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS",
+                verdict="buy",
+                last_close=50.0,
+                execution_capital=99999.0,
+            )
+        ]
+
+        mock_indicators = {"close": 50.0, "avg_volume": 10000, "rsi10": 25.0, "ema9": 52.0}
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
+        ):
+            summary = adapter.place_new_entries(recommendations)
+
+        assert summary["placed"] == 1
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        # 10% of 10000 * 50 = 50000 capital → 1000 shares
+        assert placed_order.quantity == 1000
+
     def test_place_new_entries_uses_limit_pre_open(self, db_session, test_user, mock_paper_broker):
         """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
         from config.strategy_config import StrategyConfig
@@ -424,9 +466,17 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
         with (
             patch("core.volume_analysis.is_market_hours", return_value=True),
             patch("core.volume_analysis.is_pre_open_session", return_value=True),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
         ):
             summary = adapter.place_new_entries(recommendations)
 
@@ -502,7 +552,15 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        summary = adapter.place_new_entries(recommendations)
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
+        with patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators):
+            summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         # Order should be placed but with adjusted quantity
