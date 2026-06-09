@@ -428,6 +428,36 @@ if current_price >= ema9:
     broker.place_order(order)
 ```
 
+### Buy / re-entry capital parity with live Kotak
+
+Paper re-entry sizing uses the same **`LiquidityCapitalService`** path as live Kotak
+(`AutoTradeEngine._calculate_execution_capital`):
+
+- **Module:** `services/liquidity_capital_service.py`
+- **Paper:** `PaperTradingEngineAdapter._calculate_execution_capital()` in
+  `src/application/services/paper_trading_service_adapter.py` (used by `place_reentry_orders`
+  and the `monitor_positions` re-entry path)
+- **Live:** `modules/kotak_neo_auto_trader/auto_trade_engine.py` → same service with per-user
+  `strategy_config`
+
+**Formula:** `execution_capital = min(user_capital, max_capital_from_liquidity)` where
+`max_capital` is derived from average daily volume, stock price, and
+`max_position_volume_ratio` (default 10%). If volume is below the minimum threshold or the
+service returns zero, both runtimes fall back to `user_capital`.
+
+| Factor | Paper | Live Kotak |
+|--------|-------|------------|
+| Capital service | `LiquidityCapitalService` | Same |
+| Config source | `strategy_config` / `UserTradingConfig` | Same |
+| Re-entry call sites | `place_reentry_orders`, `monitor_positions` | `place_reentry_orders`, retries |
+
+**Fresh buy entries** (`place_new_entries`) may still use `rec.execution_capital` from the
+signal or full `user_capital` when not set — that path is unchanged. Re-entry and monitor
+re-entry paths are aligned with live.
+
+For liquidity tiers and chart-quality context, see
+[Chart Quality and Capital Adjustment](../features/CHART_QUALITY_AND_CAPITAL_ADJUSTMENT.md).
+
 ### Sell target parity with live Kotak (placement time)
 
 Paper trading and live Kotak use the same helper at **sell placement**:

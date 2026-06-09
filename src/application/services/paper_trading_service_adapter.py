@@ -3595,7 +3595,10 @@ class PaperTradingEngineAdapter:
 
     def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
         """
-        Calculate execution capital based on liquidity (matches real trading logic).
+        Calculate execution capital based on liquidity (same path as live AutoTradeEngine).
+
+        Uses ``LiquidityCapitalService`` with this adapter's ``strategy_config`` so paper
+        re-entry sizing matches live Kotak trading.
 
         Args:
             price: Current stock price
@@ -3604,27 +3607,27 @@ class PaperTradingEngineAdapter:
         Returns:
             Execution capital in Rs
         """
-        # Default capital from strategy config
-        default_capital = (
-            self.strategy_config.user_capital
-            if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-            else 20000.0
-        )
+        from services.liquidity_capital_service import LiquidityCapitalService
 
-        # If volume data not available, use default
-        if not avg_volume or avg_volume <= 0:
-            return default_capital
+        liquidity_service = LiquidityCapitalService(config=self.strategy_config)
+        user_capital = liquidity_service.user_capital
 
-        # Calculate liquidity-based capital
-        # This matches the logic from AutoTradeEngine.calculate_execution_capital
-        avg_value = price * avg_volume
+        try:
+            if not avg_volume or avg_volume <= 0:
+                return user_capital
 
-        # Tiers based on daily value traded
-        if avg_value >= 100_000_000:  # >= 10 crore
-            return min(50000.0, default_capital * 2.5)
-        elif avg_value >= 50_000_000:  # >= 5 crore
-            return min(40000.0, default_capital * 2.0)
-        elif avg_value >= 20_000_000:  # >= 2 crore
-            return min(30000.0, default_capital * 1.5)
-        else:
-            return default_capital
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume, stock_price=price
+            )
+            execution_capital = capital_data.get("execution_capital", user_capital)
+
+            if execution_capital <= 0:
+                execution_capital = user_capital
+
+            return execution_capital
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to calculate execution capital: {e}, using user_capital from config",
+                action="_calculate_execution_capital",
+            )
+            return user_capital
