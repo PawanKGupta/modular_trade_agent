@@ -359,22 +359,24 @@ def test_reentry_skipped_when_insufficient_funds(paper_service):
 
 
 def test_reentry_calculates_execution_capital_based_on_liquidity(paper_service):
-    """Test that execution capital is calculated based on liquidity tiers"""
-    # Test high liquidity (>= 10 crore daily traded value)
-    price = 1000.0
-    avg_volume = 200000  # 200k shares * 1000 = 20 crore
+    """Test that execution capital uses LiquidityCapitalService (same as live)."""
+    from config.strategy_config import StrategyConfig
 
-    capital = paper_service.engine._calculate_execution_capital(price, avg_volume)
+    config = StrategyConfig.default()
+    config.user_capital = 100000.0
+    paper_service.engine.strategy_config = config
 
-    # Should get max capital for high liquidity
+    # High liquidity: full user capital
+    capital = paper_service.engine._calculate_execution_capital(1000.0, 200000)
+    assert capital == 100000.0
+
+    # Medium liquidity: capped by max_capital (10% of avg_volume * price)
+    capital = paper_service.engine._calculate_execution_capital(50.0, 10000)
     assert capital == 50000.0
 
-    # Test low liquidity
-    avg_volume = 1000  # 1k shares * 1000 = 10 lakh
-    capital = paper_service.engine._calculate_execution_capital(price, avg_volume)
-
-    # Should get default capital for low liquidity
-    assert capital == 20000.0
+    # Below minimum volume threshold: fallback to user_capital (live behavior)
+    capital = paper_service.engine._calculate_execution_capital(1000.0, 1000)
+    assert capital == 100000.0
 
 
 def test_position_metadata_persists_across_restarts(paper_service, tmp_path):
