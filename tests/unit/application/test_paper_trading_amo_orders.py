@@ -173,12 +173,22 @@ class TestAMOOrderPlacement:
             strategy_config=strategy_config,
             logger=MagicMock(),
         )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 200000.0
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
+
+        mock_indicators = {
+            "close": 100.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 102.0,
+        }
 
         with (
             patch("core.volume_analysis.is_market_hours", return_value=True),
             patch("core.volume_analysis.is_pre_open_session", return_value=True),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
         ):
             adapter.place_new_entries(recommendations)
 
