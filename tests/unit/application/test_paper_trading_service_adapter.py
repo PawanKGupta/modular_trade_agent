@@ -360,7 +360,7 @@ class TestPaperTradingEngineAdapter:
         assert "TCS.NS" in tickers or "TCS" in tickers
 
     def test_place_new_entries(self, db_session, test_user, mock_paper_broker):
-        """Test placing new entries as MARKET AMO orders"""
+        """Off-hours fresh entries use MARKET AMO (live parity after session)."""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
         from modules.kotak_neo_auto_trader.domain import OrderType, OrderVariety
@@ -385,18 +385,57 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        with patch("core.volume_analysis.is_market_hours", return_value=False):
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
             summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         assert summary["placed"] == 1
         assert mock_paper_broker.place_order.called
 
-        # Verify order is MARKET AMO type (matches real broker)
         placed_order = mock_paper_broker.place_order.call_args[0][0]
         assert placed_order.order_type == OrderType.MARKET
         assert placed_order.variety == OrderVariety.AMO
-        assert placed_order.price is None  # MARKET orders don't have price parameter
+        assert placed_order.price is None
+
+    def test_place_new_entries_uses_limit_pre_open(self, db_session, test_user, mock_paper_broker):
+        """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+        from modules.kotak_neo_auto_trader.domain import OrderType, OrderVariety
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="buy", last_close=2500.0, execution_capital=100000.0
+            )
+        ]
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=True),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+        ):
+            summary = adapter.place_new_entries(recommendations)
+
+        assert summary["placed"] == 1
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        assert placed_order.order_type == OrderType.LIMIT
+        assert placed_order.variety == OrderVariety.REGULAR
+        assert placed_order.price is not None
+        assert float(placed_order.price.amount) == 2500.0
 
     def test_place_new_entries_prevents_duplicate_symbols_with_different_formats(
         self, db_session, test_user, mock_paper_broker

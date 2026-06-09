@@ -71,13 +71,15 @@ def mock_paper_broker():
 class TestAMOOrderPlacement:
     """Test AMO order placement (4:05 PM) - No immediate execution"""
 
+    @patch("src.application.services.paper_trading_service_adapter.get_user_logger")
     def test_amo_order_placed_as_pending_not_executed(
-        self, db_session, test_user, mock_paper_broker
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
         """Test that AMO orders are placed but not executed immediately"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(
@@ -101,6 +103,7 @@ class TestAMOOrderPlacement:
                 adapter.engine, "load_latest_recommendations", return_value=recommendations
             ),
             patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
         ):
             adapter.run_buy_orders()
 
@@ -110,7 +113,7 @@ class TestAMOOrderPlacement:
         # Get the order that was placed
         placed_order = mock_paper_broker.place_order.call_args[0][0]
 
-        # Verify it's a MARKET AMO order
+        # Off-hours: MARKET AMO
         assert placed_order.order_type == OrderType.MARKET
         assert placed_order.variety == OrderVariety.AMO
         assert placed_order.price is None  # MARKET orders don't have price
@@ -123,7 +126,7 @@ class TestAMOOrderPlacement:
         )
 
     def test_amo_order_is_market_type(self, db_session, test_user, mock_paper_broker):
-        """Test that AMO orders are placed as MARKET type (not LIMIT)"""
+        """Off-hours fresh entries are MARKET AMO (not LIMIT)."""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
@@ -139,7 +142,10 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        with patch("core.volume_analysis.is_market_hours", return_value=False):
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
             adapter.place_new_entries(recommendations)
 
         # Verify order was placed
@@ -152,6 +158,34 @@ class TestAMOOrderPlacement:
         assert order.order_type == OrderType.MARKET
         assert order.variety == OrderVariety.AMO
         assert order.price is None  # MARKET orders don't have price parameter
+
+    def test_pre_open_fresh_entry_is_limit(self, db_session, test_user, mock_paper_broker):
+        """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=True),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+        ):
+            adapter.place_new_entries(recommendations)
+
+        order = mock_paper_broker.place_order.call_args[0][0]
+        assert order.order_type == OrderType.LIMIT
+        assert order.variety == OrderVariety.REGULAR
+        assert float(order.price.amount) == 100.0
 
     def test_amo_order_saved_as_pending(self, db_session, test_user, mock_paper_broker):
         """Test that AMO orders are saved with OPEN/PENDING status"""
@@ -170,7 +204,11 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        adapter.place_new_entries(recommendations)
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
+            adapter.place_new_entries(recommendations)
 
         # Verify _save_order was called (order saved)
         # The order should be in OPEN status (not executed)

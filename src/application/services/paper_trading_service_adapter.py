@@ -501,10 +501,10 @@ class PaperTradingServiceAdapter:
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
-        9:05 AM - Pre-market AMO quantity adjustment (paper trading)
+        9:05 AM - Pre-market pending buy adjustment (paper trading)
 
-        Adjusts AMO order quantities based on pre-market prices to keep capital constant.
-        This matches the real broker behavior where quantities are adjusted before market open.
+        Adjusts pending buy orders (AMO or REGULAR LIMIT, including re-entries) using
+        pre-market prices — mirrors live ``adjust_amo_quantities_premarket``.
 
         Returns:
             Summary dict with adjustment statistics
@@ -542,25 +542,25 @@ class PaperTradingServiceAdapter:
                 )
                 return summary
 
-            # Get all pending AMO buy orders
             pending_orders = self.broker.get_pending_orders()
-            amo_buy_orders = [
+            adjustable_buy_orders = [
                 order
                 for order in pending_orders
-                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+                if order.is_pending_open_buy_for_premarket_adjustment()
             ]
 
-            if not amo_buy_orders:
+            if not adjustable_buy_orders:
                 self.logger.info(
-                    "No pending AMO buy orders found", action="adjust_amo_quantities_premarket"
+                    "No pending buy orders found for pre-market adjustment",
+                    action="adjust_amo_quantities_premarket",
                 )
                 task_context["total_orders"] = 0
                 return summary
 
-            summary["total_orders"] = len(amo_buy_orders)
-            task_context["total_orders"] = len(amo_buy_orders)
+            summary["total_orders"] = len(adjustable_buy_orders)
+            task_context["total_orders"] = len(adjustable_buy_orders)
             self.logger.info(
-                f"Found {len(amo_buy_orders)} pending AMO buy orders",
+                f"Found {len(adjustable_buy_orders)} pending buy orders for adjustment",
                 action="adjust_amo_quantities_premarket",
             )
 
@@ -573,8 +573,8 @@ class PaperTradingServiceAdapter:
 
             from math import floor
 
-            # Process each AMO order
-            for order in amo_buy_orders:
+            # Process each pending buy (live parity: qty recalc; MKT when qty changes)
+            for order in adjustable_buy_orders:
                 try:
                     # Get original ticker from metadata for price fetching
                     price_symbol = order.symbol
@@ -698,41 +698,25 @@ class PaperTradingServiceAdapter:
                     gap_pct = ((premarket_price - original_price) / original_price) * 100
 
                     self.logger.info(
-                        f"{order.symbol}: Adjusting AMO order: "
+                        f"{order.symbol}: Adjusting pending buy: "
                         f"qty {original_qty} → {new_qty}, "
                         f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
                         f"(gap: {gap_pct:+.2f}%, capital: Rs {target_capital:,.0f})",
                         action="adjust_amo_quantities_premarket",
                     )
 
-                    # Update order quantity (cancel old and place new)
-                    # For MARKET orders, only quantity needs to be updated
-                    # Price is logged for tracking but not used (MARKET orders execute at market price)
+                    # Cancel and replace (live modify uses order_type=MKT when qty changes)
                     try:
-                        # Cancel old order
                         self.broker.cancel_order(order.order_id)
 
-                        # Create new order with adjusted quantity
-                        # For MARKET orders, price parameter is not needed
-                        # For LIMIT orders, update price to pre-market price
-                        from modules.kotak_neo_auto_trader.domain import (
-                            Money,
-                            Order,
-                        )
+                        from modules.kotak_neo_auto_trader.domain import Order, OrderType
 
-                        # Use pre-market price for LIMIT orders, None for MARKET orders
-                        new_price = (
-                            Money(premarket_price)
-                            if order.order_type.value == "LIMIT"
-                            else (order.price if order.price else None)
-                        )
-
+                        # Match live broker: adjusted orders become MARKET for open execution
                         new_order = Order(
                             symbol=order.symbol,
                             quantity=new_qty,
-                            order_type=order.order_type,
+                            order_type=OrderType.MARKET,
                             transaction_type=order.transaction_type,
-                            price=new_price,
                             variety=order.variety,
                             exchange=order.exchange,
                             validity=order.validity,
@@ -747,10 +731,10 @@ class PaperTradingServiceAdapter:
                         # Place new order
                         new_order_id = self.broker.place_order(new_order)
                         self.logger.info(
-                            f"✅ {order.symbol}: AMO order modified successfully "
+                            f"✅ {order.symbol}: Pending buy adjusted (MARKET) "
                             f"(#{order.order_id} → #{new_order_id}, "
                             f"qty: {original_qty} → {new_qty}, "
-                            f"price logged: Rs {original_price:.2f} → Rs {premarket_price:.2f}, "
+                            f"ref Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f}, "
                             f"capital: Rs {original_qty * original_price:,.0f} → Rs {new_qty * premarket_price:,.0f})",
                             action="adjust_amo_quantities_premarket",
                         )
@@ -758,7 +742,7 @@ class PaperTradingServiceAdapter:
 
                     except Exception as modify_error:
                         self.logger.error(
-                            f"{order.symbol}: Failed to modify AMO order: {modify_error}",
+                            f"{order.symbol}: Failed to adjust pending buy: {modify_error}",
                             exc_info=True,
                             action="adjust_amo_quantities_premarket",
                         )
@@ -766,7 +750,7 @@ class PaperTradingServiceAdapter:
 
                 except Exception as e:
                     self.logger.error(
-                        f"Error processing AMO order {order.symbol}: {e}",
+                        f"Error processing pending buy {order.symbol}: {e}",
                         exc_info=True,
                         action="adjust_amo_quantities_premarket",
                     )
@@ -774,7 +758,7 @@ class PaperTradingServiceAdapter:
 
             task_context["summary"] = summary
             self.logger.info(
-                f"Pre-market AMO adjustment completed: {summary}",
+                f"Pre-market pending buy adjustment completed: {summary}",
                 action="adjust_amo_quantities_premarket",
             )
 
@@ -2421,26 +2405,16 @@ class PaperTradingEngineAdapter:
                 # Extract base symbol (remove .NS suffix if present) for order placement
                 symbol = rec.ticker.replace(".NS", "").upper()
 
-                # Create MARKET order - variety depends on market hours
-                # During market hours: REGULAR orders execute immediately
-                # Outside market hours: AMO orders execute at next market open
-                from core.volume_analysis import is_market_hours
-                from modules.kotak_neo_auto_trader.domain import OrderVariety
-
-                # Determine order variety based on market hours
-                if is_market_hours():
-                    order_variety = OrderVariety.REGULAR
-                    self.logger.debug(f"Market is open - using REGULAR order variety for {symbol}")
-                else:
-                    order_variety = OrderVariety.AMO
-                    self.logger.debug(f"Market is closed - using AMO order variety for {symbol}")
+                # Fresh entry: LIMIT pre-open @ signal close; MARKET after 9:15 (live parity)
+                order_variety = self._buy_order_variety_for_market_hours()
+                entry_order_type, entry_price = self._buy_order_type_and_price_for_session(price)
 
                 order = Order(
                     symbol=symbol,
                     quantity=qty,
-                    order_type=OrderType.MARKET,  # MARKET order (matches real broker)
+                    order_type=entry_order_type,
                     transaction_type=TransactionType.BUY,
-                    # price=None for MARKET orders (not used, executes at market price)
+                    price=entry_price,
                     variety=order_variety,
                 )
 
@@ -2833,9 +2807,41 @@ class PaperTradingEngineAdapter:
             self.logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
 
+    def _buy_order_variety_for_market_hours(self):
+        """
+        Order variety for paper buys — mirrors live ``AutoTradeEngine._get_order_variety_for_market_hours``.
+
+        REGULAR during the cash session window (incl. pre-open); ``strategy_config.default_variety`` otherwise.
+        """
+        from core.volume_analysis import is_market_hours
+        from modules.kotak_neo_auto_trader.domain import OrderVariety
+
+        if is_market_hours():
+            return OrderVariety.REGULAR
+        default_variety = (
+            self.strategy_config.default_variety
+            if self.strategy_config and hasattr(self.strategy_config, "default_variety")
+            else "AMO"
+        )
+        return OrderVariety.from_string(str(default_variety))
+
+    def _buy_order_type_and_price_for_session(self, reference_close: float):
+        """
+        Buy order type/price for paper — mirrors live ``_attempt_place_order`` session rules.
+
+        Pre-open (9:00–9:15 IST): REGULAR LIMIT at indicator/signal close.
+        Regular session and after-hours: MARKET (variety from ``_buy_order_variety_for_market_hours``).
+        """
+        from core.volume_analysis import is_pre_open_session
+        from modules.kotak_neo_auto_trader.domain import Money, OrderType
+
+        if is_pre_open_session():
+            return OrderType.LIMIT, Money(reference_close)
+        return OrderType.MARKET, None
+
     def place_reentry_orders(self) -> dict[str, int]:
         """
-        Check re-entry conditions and place AMO orders for re-entries (paper trading).
+        Check re-entry conditions and place LIMIT buy orders for re-entries (9:05 premarket adjust).
 
         Called from ``run_buy_orders`` (default 9:01 IST), same as live trading.
 
@@ -3106,15 +3112,19 @@ class PaperTradingEngineAdapter:
                                 continue
                     # If portfolio is None, proceed without balance check (for testing)
 
-                    # Place re-entry order (AMO-like, similar to fresh entries)
-                    from modules.kotak_neo_auto_trader.domain import Money
+                    # Re-entry: same session rules as fresh entry; 9:05 adjusts qty / MKT
+                    order_variety = self._buy_order_variety_for_market_hours()
+                    reentry_order_type, reentry_price = self._buy_order_type_and_price_for_session(
+                        current_price
+                    )
 
                     reentry_order = Order(
                         symbol=ticker,
                         quantity=qty,
-                        order_type=OrderType.LIMIT,
+                        order_type=reentry_order_type,
                         transaction_type=TransactionType.BUY,
-                        price=Money(current_price),  # AMO order at current price
+                        price=reentry_price,
+                        variety=order_variety,
                     )
 
                     # Tag as re-entry with metadata for tracking

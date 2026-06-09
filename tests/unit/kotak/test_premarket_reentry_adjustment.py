@@ -676,6 +676,10 @@ class TestPaperTradingPremarketAdjustment:
         """Create paper trading service adapter"""
         with (
             patch(
+                "src.application.services.paper_trading_service_adapter.get_user_logger",
+                return_value=Mock(),
+            ),
+            patch(
                 "src.application.services.paper_trading_service_adapter.PaperTradingBrokerAdapter"
             ) as mock_broker_class,
             patch(
@@ -748,9 +752,11 @@ class TestPaperTradingPremarketAdjustment:
         assert paper_adapter.broker.cancel_order.called
         assert paper_adapter.broker.place_order.called
 
-        # Verify new order has adjusted quantity
+        # Verify new order has adjusted quantity and MARKET type (live MKT modify parity)
         new_order = paper_adapter.broker.place_order.call_args[0][0]
         assert new_order.quantity == 38  # 100000 / 2600 = 38.46 -> 38
+        assert new_order.order_type == OrderType.MARKET
+        assert new_order.price is None
 
     def test_paper_trading_reentry_order_cancelled_if_position_closed(
         self, db_session, test_user, paper_adapter
