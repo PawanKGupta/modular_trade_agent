@@ -360,3 +360,44 @@ class TestIndividualServiceManagerNotifications:
         mock_telegram_notifier.notify_system_alert.assert_called_once()
         # In-app and email should not be called
         manager._notification_repo.create.assert_not_called()
+
+    @patch("src.application.services.individual_service_manager.EmailNotifier")
+    @patch("src.application.services.individual_service_manager.EMAIL_NOTIFIER_AVAILABLE", True)
+    def test_premarket_success_skips_telegram_email_keeps_in_app(
+        self, mock_email_notifier_class, manager, sample_preferences
+    ):
+        """9:05 task uses per-order Telegram; service completion is in-app one-liner only."""
+        pref_service = Mock(spec=NotificationPreferenceService)
+        pref_service.get_preferences = Mock(return_value=sample_preferences)
+        pref_service.should_notify = Mock(return_value=True)
+
+        mock_telegram_notifier = Mock()
+        mock_telegram_notifier.enabled = True
+        manager._get_telegram_notifier = Mock(return_value=mock_telegram_notifier)
+
+        mock_email_notifier = Mock()
+        mock_email_notifier.is_available.return_value = True
+        mock_email_notifier_class.return_value = mock_email_notifier
+
+        with patch(
+            "services.notification_preference_service.NotificationPreferenceService",
+            return_value=pref_service,
+        ):
+            manager._notify_service_execution_completed(
+                user_id=1,
+                task_name="premarket_amo_adjustment",
+                status="success",
+                duration=12.0,
+                task_details={
+                    "task": "premarket_amo_adjustment",
+                    "status": "completed",
+                    "summary": {"adjusted": 3, "cancelled_above_ema9": 1},
+                },
+            )
+
+        mock_telegram_notifier.notify_system_alert.assert_not_called()
+        mock_email_notifier.send_service_notification.assert_not_called()
+        manager._notification_repo.create.assert_called_once()
+        create_kwargs = manager._notification_repo.create.call_args[1]
+        assert create_kwargs["title"] == "9:05 Pre-market"
+        assert "3 adjusted" in create_kwargs["message"]

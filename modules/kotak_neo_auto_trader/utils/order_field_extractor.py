@@ -140,6 +140,37 @@ class OrderFieldExtractor:
         )
 
     @staticmethod
+    def get_limit_price(order: dict[str, Any]) -> float:
+        """
+        Extract pending limit price (prefer order price over average fill price).
+
+        Args:
+            order: Order dict from broker API
+
+        Returns:
+            Limit price as float, 0.0 if not found
+        """
+        return float(
+            order.get("prc")
+            or order.get("price")
+            or order.get("orderPrice")
+            or order.get("avgPrc")
+            or 0.0
+        )
+
+    @staticmethod
+    def get_price_type(order: dict[str, Any]) -> str:
+        """Return broker price type code (e.g. ``L``, ``MKT``)."""
+        return str(
+            order.get("prcTp") or order.get("pt") or order.get("orderType") or "MKT"
+        ).upper()
+
+    @staticmethod
+    def is_limit_broker_order(order: dict[str, Any]) -> bool:
+        """Return True when broker order dict represents a LIMIT order."""
+        return OrderFieldExtractor.get_price_type(order) in ("L", "LIMIT")
+
+    @staticmethod
     def get_rejection_reason(order: dict[str, Any]) -> str:
         """
         Extract rejection reason with fallbacks.

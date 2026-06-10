@@ -38,7 +38,8 @@ def main() -> None:
     if not graph_path.is_file():
         print(
             f"graphify-out/graph.json not found at {graph_path}.\n"
-            "Run from repo root: .\\.venv-graphify\\Scripts\\graphify update .",
+            "Run from repo root: .venv-graphify/bin/graphify update . "
+            "(Linux) or .\\.venv-graphify\\Scripts\\graphify update . (Windows)",
             file=sys.stderr,
         )
         raise SystemExit(1)

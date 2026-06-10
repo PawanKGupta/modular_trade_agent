@@ -579,3 +579,25 @@ def ensure_system_user(db_session):
         user.email_verified_at = ist_now()
         session.commit()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_trading_notification_dedupe():
+    """Isolate PR3 in-process dedupe state across tests."""
+    try:
+        from modules.kotak_neo_auto_trader.trading_notification_dedupe import (
+            trading_notification_dedupe,
+        )
+
+        trading_notification_dedupe.clear()
+    except ImportError:
+        pass
+    yield
+    try:
+        from modules.kotak_neo_auto_trader.trading_notification_dedupe import (
+            trading_notification_dedupe,
+        )
+
+        trading_notification_dedupe.clear()
+    except ImportError:
+        pass

@@ -4065,15 +4065,18 @@ class AutoTradeEngine:
                 # Extract base symbol (remove -EQ suffix if present)
                 base_symbol = symbol.replace("-EQ", "")
 
-                # Get ticker from order metadata or construct from symbol
+                # Get ticker / entry type from order metadata or construct from symbol
                 ticker = None
+                entry_type = None
                 if self.orders_repo and self.user_id:
                     try:
                         db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
-                        if db_order and db_order.order_metadata:
-                            ticker = db_order.order_metadata.get(
-                                "ticker"
-                            ) or db_order.order_metadata.get("original_ticker")
+                        if db_order:
+                            entry_type = db_order.entry_type
+                            if db_order.order_metadata:
+                                ticker = db_order.order_metadata.get(
+                                    "ticker"
+                                ) or db_order.order_metadata.get("original_ticker")
                     except Exception:
                         pass  # Ignore errors - will construct ticker below
 
@@ -4089,12 +4092,15 @@ class AutoTradeEngine:
                         "ticker": ticker,
                         "order_id": order_id,
                         "original_qty": original_qty,
+                        "entry_type": entry_type,
                     }
                 )
 
             # Fetch prices and calculate EMA9 for all orders in parallel
             price_results = {}
             ema9_results = {}
+            avg_volume_results = {}
+            market_depth_results = {}
             if order_data:
                 logger.info(
                     f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
@@ -4110,24 +4116,72 @@ class AutoTradeEngine:
                         "order_id": order_id,
                         "price": None,
                         "ema9": None,
+                        "avg_volume": 0.0,
+                        "market_depth": None,
                     }
                     try:
+                        indicator_service = getattr(self, "indicator_service", None)
+                        if indicator_service:
+                            try:
+                                indicators = indicator_service.get_daily_indicators_dict(
+                                    ticker
+                                )
+                                if indicators:
+                                    result["avg_volume"] = float(
+                                        indicators.get("avg_volume") or 0
+                                    )
+                            except Exception as e:
+                                logger.debug(
+                                    f"{base_symbol}: Failed to load avg_volume: {e}"
+                                )
+
                         # Fetch pre-market price
                         price = market_data.get_ltp(symbol, exchange="NSE")
                         if price and price > 0:
                             result["price"] = price
 
-                            # Calculate EMA9 using fetched price
+                        # Log-only: bid + ask depth (5 levels each; does not affect sizing)
+                        from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                            DEPTH_DETAIL_FETCH_ERROR,
+                            DEPTH_DETAIL_NO_TOKEN,
+                            unavailable_depth_snapshot,
+                        )
+
+                        scrip_master = getattr(self, "scrip_master", None)
+                        if scrip_master:
                             try:
-                                ema9 = self.indicator_service.calculate_ema9_realtime(
-                                    ticker=ticker,
-                                    broker_symbol=symbol,
-                                    current_ltp=price,
+                                token = scrip_master.get_token(symbol, exchange="NSE")
+                                if token:
+                                    result["market_depth"] = market_data.get_market_depth(
+                                        token
+                                    )
+                                else:
+                                    result["market_depth"] = unavailable_depth_snapshot(
+                                        DEPTH_DETAIL_NO_TOKEN
+                                    )
+                            except Exception as depth_err:
+                                logger.debug(
+                                    f"{base_symbol}: pre-market depth fetch failed: {depth_err}"
                                 )
-                                if ema9 and ema9 > 0:
-                                    result["ema9"] = ema9
-                            except Exception as e:
-                                logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                                result["market_depth"] = unavailable_depth_snapshot(
+                                    DEPTH_DETAIL_FETCH_ERROR
+                                )
+
+                        if price and price > 0:
+                            # Calculate EMA9 using fetched price
+                            if indicator_service:
+                                try:
+                                    ema9 = indicator_service.calculate_ema9_realtime(
+                                        ticker=ticker,
+                                        broker_symbol=symbol,
+                                        current_ltp=price,
+                                    )
+                                    if ema9 and ema9 > 0:
+                                        result["ema9"] = ema9
+                                except Exception as e:
+                                    logger.debug(
+                                        f"{base_symbol}: Failed to calculate EMA9: {e}"
+                                    )
                     except Exception as e:
                         logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
 
@@ -4141,6 +4195,8 @@ class AutoTradeEngine:
                         order_id, result = future.result()
                         price_results[order_id] = result["price"]
                         ema9_results[order_id] = result["ema9"]
+                        avg_volume_results[order_id] = result["avg_volume"]
+                        market_depth_results[order_id] = result["market_depth"]
 
                 logger.info(
                     f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
@@ -4166,6 +4222,23 @@ class AutoTradeEngine:
                     continue
 
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                    DEPTH_DETAIL_NOT_FETCHED,
+                    log_premarket_depth,
+                    unavailable_depth_snapshot,
+                )
+
+                snapshot = market_depth_results.get(order_id)
+                if snapshot is None:
+                    snapshot = unavailable_depth_snapshot(DEPTH_DETAIL_NOT_FETCHED)
+                log_premarket_depth(
+                    logger,
+                    base_symbol,
+                    ltp=premarket_price,
+                    snapshot=snapshot,
+                    entry_type=order_info.get("entry_type"),
+                )
 
                 # Use pre-calculated EMA9
                 ema9 = ema9_results.get(order_id)
@@ -4210,27 +4283,21 @@ class AutoTradeEngine:
                                             f"{base_symbol}: Failed to update DB record: {db_err}"
                                         )
 
-                                # Send Telegram notification
-                                if self.telegram_notifier and self.telegram_notifier.enabled:
-                                    try:
-                                        message_text = (
-                                            f"🚫 *Order Cancelled - Gap Up Above EMA9*\n\n"
-                                            f"Symbol: `{base_symbol}`\n"
-                                            f"Pre-market: Rs {premarket_price:.2f}\n"
-                                            f"EMA9: Rs {ema9:.2f}\n"
-                                            f"Threshold: Rs {ema9_threshold:.2f} (EMA9 - 1%)\n"
-                                            f"Reason: Price gap-up above entry target"
-                                        )
-                                        self.telegram_notifier.notify_system_alert(
-                                            alert_type="ORDER_CANCELLED_EMA9",
-                                            message_text=message_text,
-                                            severity="WARNING",
-                                            user_id=self.user_id,
-                                        )
-                                    except Exception as notify_err:
-                                        logger.warning(
-                                            f"Failed to send Telegram notification: {notify_err}"
-                                        )
+                                from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                                    notify_premarket_ema9_cancelled,
+                                )
+
+                                notify_premarket_ema9_cancelled(
+                                    engine_or_adapter=self,
+                                    user_id=self.user_id,
+                                    db_session=self.db,
+                                    symbol=base_symbol,
+                                    order_id=order_id,
+                                    entry_type=order_info.get("entry_type"),
+                                    premarket_ltp=premarket_price,
+                                    ema9=ema9,
+                                    ema9_threshold=ema9_threshold,
+                                )
 
                                 continue  # Skip quantity adjustment for cancelled order
                             else:
@@ -4247,31 +4314,52 @@ class AutoTradeEngine:
                         f"{base_symbol}: EMA9 calculation failed - proceeding with quantity adjustment"
                     )
 
-                # 4. Recalculate quantity to keep capital constant
-                target_capital = self.strategy_config.user_capital
-                new_qty = max(config.MIN_QTY, floor(target_capital / premarket_price))
+                from modules.kotak_neo_auto_trader.utils.premarket_adjustment import (
+                    PREMARKET_LIMIT_PROXY_LOG,
+                    compute_premarket_qty,
+                    needs_premarket_market_finalize,
+                )
 
-                # 5. Check if quantity adjustment is needed
-                if new_qty == original_qty:
-                    logger.info(f"{base_symbol}: No adjustment needed (qty={original_qty})")
+                ticker = order_info["ticker"]
+                avg_volume = avg_volume_results.get(order_id, 0.0)
+                execution_capital = self._calculate_execution_capital(
+                    ticker, premarket_price, avg_volume
+                )
+                new_qty = compute_premarket_qty(
+                    execution_capital,
+                    premarket_price,
+                    min_qty=config.MIN_QTY,
+                )
+                is_limit = OrderFieldExtractor.is_limit_broker_order(order)
+
+                if not needs_premarket_market_finalize(
+                    is_limit=is_limit,
+                    new_qty=new_qty,
+                    original_qty=original_qty,
+                ):
+                    logger.info(
+                        f"{base_symbol}: No adjustment needed (MARKET, qty={original_qty})"
+                    )
                     summary["no_adjustment_needed"] += 1
                     continue
 
-                # Calculate gap percentage
-                original_value = original_qty * premarket_price
                 gap_pct = (
-                    (premarket_price - (target_capital / original_qty))
-                    / (target_capital / original_qty)
+                    (premarket_price - (execution_capital / original_qty))
+                    / (execution_capital / original_qty)
                 ) * 100
 
                 original_price = float(
                     order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
                 )
+                qty_changed = new_qty != original_qty
+                if is_limit:
+                    logger.info(f"{base_symbol}: {PREMARKET_LIMIT_PROXY_LOG}")
                 logger.info(
-                    f"{base_symbol}: Adjusting AMO order: "
-                    f"qty {original_qty} → {new_qty}, "
-                    f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
-                    f"(gap: {gap_pct:+.2f}%, capital: Rs {self.strategy_config.user_capital:,.0f})"
+                    f"{base_symbol}: Finalizing pending buy as MARKET: "
+                    f"qty {original_qty} → {new_qty}"
+                    f"{'' if qty_changed else ' (unchanged)'}, "
+                    f"close proxy Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f} "
+                    f"(gap: {gap_pct:+.2f}%, execution_capital: Rs {execution_capital:,.0f})"
                 )
 
                 try:
@@ -4304,26 +4392,24 @@ class AutoTradeEngine:
                                     f"{base_symbol}: Failed to update DB record: {db_err}"
                                 )
 
-                        # Send Telegram notification
-                        if self.telegram_notifier and self.telegram_notifier.enabled:
-                            try:
-                                message_text = (
-                                    f"📊 *Pre-Market Adjustment*\n\n"
-                                    f"Symbol: `{base_symbol}`\n"
-                                    f"Qty: {original_qty} → {new_qty} ({new_qty - original_qty:+d})\n"
-                                    f"Gap: {gap_pct:+.2f}%\n"
-                                    f"Pre-market: Rs {premarket_price:.2f}"
-                                )
-                                self.telegram_notifier.notify_system_alert(
-                                    alert_type="PRE_MARKET_ADJUSTMENT",
-                                    message_text=message_text,
-                                    severity="INFO",
-                                    user_id=self.user_id,
-                                )
-                            except Exception as notify_err:
-                                logger.warning(
-                                    f"Failed to send Telegram notification: {notify_err}"
-                                )
+                        from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                            notify_premarket_adjusted,
+                        )
+
+                        depth_snapshot = market_depth_results.get(order_id)
+                        notify_premarket_adjusted(
+                            engine_or_adapter=self,
+                            user_id=self.user_id,
+                            db_session=self.db,
+                            symbol=base_symbol,
+                            order_id=order_id,
+                            entry_type=order_info.get("entry_type"),
+                            original_qty=original_qty,
+                            new_qty=new_qty,
+                            premarket_ltp=premarket_price,
+                            gap_pct=gap_pct,
+                            market_depth=depth_snapshot,
+                        )
                     else:
                         logger.error(f"❌ {base_symbol}: AMO modification failed: {result}")
                         summary["modification_failed"] += 1

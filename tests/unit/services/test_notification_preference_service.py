@@ -149,7 +149,7 @@ class TestNotificationPreferenceService:
         assert result.telegram_enabled is False
         assert result.email_enabled is False
         assert result.notify_order_placed is True
-        assert result.notify_order_modified is False
+        assert result.notify_order_modified is True
         assert result.notify_system_warnings is False
         assert result.notify_service_started is True
         assert result.notify_service_stopped is True

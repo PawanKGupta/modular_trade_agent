@@ -8,9 +8,16 @@ GET <baseUrl>/script-details/1.0/quotes/neosymbol/<query>/<filter>
 
 from __future__ import annotations
 
-from typing import Optional, Dict, Any
+from typing import Any, Optional
 
 from utils.logger import logger
+
+from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+    DepthLevel,
+    MarketDepthSnapshot,
+    extract_best_ask_from_quote_payload,
+    extract_market_depth_from_quote_payload,
+)
 
 try:
     from .auth import KotakNeoAuth
@@ -54,5 +61,44 @@ class KotakNeoMarketData:
                 return float(str(data[0].get("ltp") or 0)) or None
         except Exception:
             return None
+        return None
+
+    def get_market_depth(
+        self, instrument_token: str, *, exchange_segment: str = "nse_cm"
+    ) -> MarketDepthSnapshot:
+        """
+        Fetch up to five bid and ask levels (``filter=all`` → ``depth.buy`` / ``depth.sell``).
+
+        Log-only helper for 9:05 observability.
+        """
+        query = f"{exchange_segment}|{instrument_token}"
+        data = self.get_quote(query, filter_name="all")
+        return extract_market_depth_from_quote_payload(data)
+
+    def get_sell_depth(
+        self, instrument_token: str, *, exchange_segment: str = "nse_cm"
+    ) -> tuple[DepthLevel | None, ...]:
+        """Ask levels from :meth:`get_market_depth`."""
+        return self.get_market_depth(
+            instrument_token, exchange_segment=exchange_segment
+        ).ask_levels
+
+    def get_buy_depth(
+        self, instrument_token: str, *, exchange_segment: str = "nse_cm"
+    ) -> tuple[DepthLevel | None, ...]:
+        """Bid levels from :meth:`get_market_depth`."""
+        return self.get_market_depth(
+            instrument_token, exchange_segment=exchange_segment
+        ).bid_levels
+
+    def get_best_ask(
+        self, instrument_token: str, *, exchange_segment: str = "nse_cm"
+    ) -> DepthLevel | None:
+        """First non-zero ask level from :meth:`get_market_depth`."""
+        for level in self.get_sell_depth(
+            instrument_token, exchange_segment=exchange_segment
+        ):
+            if level is not None:
+                return level
         return None
 

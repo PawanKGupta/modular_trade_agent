@@ -973,7 +973,7 @@ class UserNotificationPreferences(Base):
     notify_order_rejected: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_order_executed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_order_cancelled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notify_order_modified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notify_order_modified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_retry_queue_added: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_retry_queue_updated: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_retry_queue_removed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

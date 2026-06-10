@@ -2,9 +2,9 @@
   "mcpServers": {
     "graphify": {
       "type": "stdio",
-      "command": "${workspaceFolder}${/}.venv-graphify${/}Scripts${/}python.exe",
+      "command": "python3",
       "args": [
-        "${workspaceFolder}${/}tools${/}graphify_mcp_stdio.py"
+        "${workspaceFolder}${/}tools${/}graphify_mcp_launcher.py"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1"
