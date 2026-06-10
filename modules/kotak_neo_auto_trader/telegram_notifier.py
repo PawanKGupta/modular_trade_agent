@@ -443,6 +443,15 @@ class TelegramNotifier:
             event_type = NotificationEventType.SERVICE_STOPPED
         elif alert_type == "SERVICE_EXECUTION":
             event_type = NotificationEventType.SERVICE_EXECUTION_COMPLETED
+        elif alert_type == "PREMARKET_ADJUSTED":
+            event_type = NotificationEventType.ORDER_MODIFIED
+        elif alert_type == "PREMARKET_EMA9_CANCEL":
+            event_type = NotificationEventType.ORDER_CANCELLED
+        elif alert_type == "PRE_MARKET_ADJUSTMENT":
+            # Legacy call sites — route to ORDER_MODIFIED, not SYSTEM_INFO
+            event_type = NotificationEventType.ORDER_MODIFIED
+        elif alert_type == "ORDER_CANCELLED_EMA9":
+            event_type = NotificationEventType.ORDER_CANCELLED
         else:
             event_type_map = {
                 "ERROR": NotificationEventType.SYSTEM_ERROR,
@@ -469,6 +478,8 @@ class TelegramNotifier:
             "POSITION_ALERT",
             "MANUAL_TRADE",
             "PRE_MARKET_ADJUSTMENT",
+            "PREMARKET_ADJUSTED",
+            "PREMARKET_EMA9_CANCEL",
         )
         if alert_type in clean_format_alert_types:
             message = f"{emoji} {message_text}\n\nTime: {timestamp}\n"
@@ -729,6 +740,46 @@ class TelegramNotifier:
 
         logger.info(f"Sending order modification notification for {symbol}")
         return self.send_message(message, user_id=user_id)
+
+    def notify_premarket_adjusted(
+        self,
+        symbol: str,
+        order_id: str,
+        message_text: str,
+        user_id: int | None = None,
+    ) -> bool:
+        """
+        9:05 pre-market system adjust (MARKET finalize / qty change).
+
+        Uses ORDER_MODIFIED preference — not sell-monitor or manual broker edits.
+        """
+        if not self._should_send_notification(user_id, NotificationEventType.ORDER_MODIFIED):
+            return False
+        logger.info(f"Sending 9:05 pre-market adjust notification for {symbol} (#{order_id})")
+        return self.notify_system_alert(
+            alert_type="PREMARKET_ADJUSTED",
+            message_text=message_text,
+            severity="INFO",
+            user_id=user_id,
+        )
+
+    def notify_premarket_cancelled_ema9(
+        self,
+        symbol: str,
+        order_id: str,
+        message_text: str,
+        user_id: int | None = None,
+    ) -> bool:
+        """9:05 gap-up cancel above EMA9−1% (ORDER_CANCELLED preference)."""
+        if not self._should_send_notification(user_id, NotificationEventType.ORDER_CANCELLED):
+            return False
+        logger.info(f"Sending 9:05 EMA9 cancel notification for {symbol} (#{order_id})")
+        return self.notify_system_alert(
+            alert_type="PREMARKET_EMA9_CANCEL",
+            message_text=message_text,
+            severity="WARNING",
+            user_id=user_id,
+        )
 
     def notify_order_skipped(
         self,

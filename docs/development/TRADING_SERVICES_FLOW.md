@@ -80,6 +80,7 @@ Uses the same pre-open placement rules as **9:01** (`is_pre_open_session()` → 
 - EMA9 gap-up cancel when pre-market > EMA9 − 1%
 - Finalize as **MARKET** when LTP/EMA9 gates pass (LIMIT always; MARKET only on qty change) — live: `modify_order(..., order_type="MKT")`; paper: cancel + replace
 - **Live only (log-only):** Kotak `filter=all` quote → log all **5 bid** (`depth.buy`) and **5 ask** (`depth.sell`) levels per pending entry/re-entry buy. INFO line is tagged `[ok]`, `[empty]` (API ok, no live levels), or `[unavailable]` (API fault / no quote / token missing); does not change qty, price, or order type
+- **Notifications (Telegram / in-app):** Per-order Telegram when a buy is adjusted or EMA9-cancelled (respects **Order modified** / **Order cancelled** prefs and **quiet hours**). Service task completion sends an **in-app one-liner** only (e.g. `3 adjusted, 1 cancelled (EMA9)`); duplicate Telegram/email for `SERVICE_EXECUTION_COMPLETED` is suppressed. Sell-monitor programmatic edits do **not** use **Order modified**. Failures in notify paths are logged only — trading is not blocked.
 
 See **[Morning buy flow (9:01 → 9:05 → 9:15)](#morning-buy-flow-901--905--915)** below for product intent, code validation, and edge cases.
 

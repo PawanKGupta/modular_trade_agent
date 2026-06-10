@@ -32,7 +32,8 @@ class NotificationPreferencesResponse(BaseModel):
     notify_order_executed: bool = Field(default=True, description="Notify when order is executed")
     notify_order_cancelled: bool = Field(default=True, description="Notify when order is cancelled")
     notify_order_modified: bool = Field(
-        default=False, description="Notify when order is manually modified (opt-in)"
+        default=True,
+        description="Notify on 9:05 pre-market order adjustments (not sell-monitor edits)",
     )
     notify_retry_queue_added: bool = Field(
         default=True, description="Notify when order added to retry queue"
@@ -89,7 +90,7 @@ class NotificationPreferencesResponse(BaseModel):
                 "notify_order_rejected": True,
                 "notify_order_executed": True,
                 "notify_order_cancelled": True,
-                "notify_order_modified": False,
+                "notify_order_modified": True,
                 "notify_retry_queue_added": True,
                 "notify_retry_queue_updated": True,
                 "notify_retry_queue_removed": True,

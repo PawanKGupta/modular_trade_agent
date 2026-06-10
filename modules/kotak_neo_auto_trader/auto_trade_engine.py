@@ -4282,27 +4282,21 @@ class AutoTradeEngine:
                                             f"{base_symbol}: Failed to update DB record: {db_err}"
                                         )
 
-                                # Send Telegram notification
-                                if self.telegram_notifier and self.telegram_notifier.enabled:
-                                    try:
-                                        message_text = (
-                                            f"🚫 *Order Cancelled - Gap Up Above EMA9*\n\n"
-                                            f"Symbol: `{base_symbol}`\n"
-                                            f"Pre-market: Rs {premarket_price:.2f}\n"
-                                            f"EMA9: Rs {ema9:.2f}\n"
-                                            f"Threshold: Rs {ema9_threshold:.2f} (EMA9 - 1%)\n"
-                                            f"Reason: Price gap-up above entry target"
-                                        )
-                                        self.telegram_notifier.notify_system_alert(
-                                            alert_type="ORDER_CANCELLED_EMA9",
-                                            message_text=message_text,
-                                            severity="WARNING",
-                                            user_id=self.user_id,
-                                        )
-                                    except Exception as notify_err:
-                                        logger.warning(
-                                            f"Failed to send Telegram notification: {notify_err}"
-                                        )
+                                from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                                    notify_premarket_ema9_cancelled,
+                                )
+
+                                notify_premarket_ema9_cancelled(
+                                    engine_or_adapter=self,
+                                    user_id=self.user_id,
+                                    db_session=self.db,
+                                    symbol=base_symbol,
+                                    order_id=order_id,
+                                    entry_type=order_info.get("entry_type"),
+                                    premarket_ltp=premarket_price,
+                                    ema9=ema9,
+                                    ema9_threshold=ema9_threshold,
+                                )
 
                                 continue  # Skip quantity adjustment for cancelled order
                             else:
@@ -4397,26 +4391,24 @@ class AutoTradeEngine:
                                     f"{base_symbol}: Failed to update DB record: {db_err}"
                                 )
 
-                        # Send Telegram notification
-                        if self.telegram_notifier and self.telegram_notifier.enabled:
-                            try:
-                                message_text = (
-                                    f"📊 *Pre-Market Adjustment*\n\n"
-                                    f"Symbol: `{base_symbol}`\n"
-                                    f"Qty: {original_qty} → {new_qty} ({new_qty - original_qty:+d})\n"
-                                    f"Gap: {gap_pct:+.2f}%\n"
-                                    f"Pre-market: Rs {premarket_price:.2f}"
-                                )
-                                self.telegram_notifier.notify_system_alert(
-                                    alert_type="PRE_MARKET_ADJUSTMENT",
-                                    message_text=message_text,
-                                    severity="INFO",
-                                    user_id=self.user_id,
-                                )
-                            except Exception as notify_err:
-                                logger.warning(
-                                    f"Failed to send Telegram notification: {notify_err}"
-                                )
+                        from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                            notify_premarket_adjusted,
+                        )
+
+                        depth_snapshot = market_depth_results.get(order_id)
+                        notify_premarket_adjusted(
+                            engine_or_adapter=self,
+                            user_id=self.user_id,
+                            db_session=self.db,
+                            symbol=base_symbol,
+                            order_id=order_id,
+                            entry_type=order_info.get("entry_type"),
+                            original_qty=original_qty,
+                            new_qty=new_qty,
+                            premarket_ltp=premarket_price,
+                            gap_pct=gap_pct,
+                            market_depth=depth_snapshot,
+                        )
                     else:
                         logger.error(f"❌ {base_symbol}: AMO modification failed: {result}")
                         summary["modification_failed"] += 1

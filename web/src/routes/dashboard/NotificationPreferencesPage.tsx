@@ -367,8 +367,10 @@ export function NotificationPreferencesPage() {
 							onChange={(e) => handleChange('notify_order_modified', e.target.checked)}
 							className="w-4 h-4"
 						/>
-						<span>Order Modified (Manual)</span>
-						<span className="text-xs text-[var(--muted)]">(Opt-in)</span>
+						<span>Order modified (incl. 9:05 pre-market)</span>
+						<span className="text-xs text-[var(--muted)]">
+							(not sell-monitor edits)
+						</span>
 					</label>
 					<label className="flex items-center gap-3">
 						<input

@@ -664,6 +664,36 @@ class PaperTradingServiceAdapter:
                                             action="adjust_amo_quantities_premarket",
                                         )
 
+                                entry_type = None
+                                if self.db:
+                                    try:
+                                        from src.infrastructure.persistence.orders_repository import (
+                                            OrdersRepository,
+                                        )
+
+                                        db_o = OrdersRepository(self.db).get_by_broker_order_id(
+                                            self.user_id, order.order_id
+                                        )
+                                        if db_o:
+                                            entry_type = db_o.entry_type
+                                    except Exception:
+                                        pass
+                                from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                                    notify_premarket_ema9_cancelled,
+                                )
+
+                                notify_premarket_ema9_cancelled(
+                                    engine_or_adapter=self,
+                                    user_id=self.user_id,
+                                    db_session=self.db,
+                                    symbol=order.symbol,
+                                    order_id=order.order_id,
+                                    entry_type=entry_type,
+                                    premarket_ltp=premarket_price,
+                                    ema9=ema9,
+                                    ema9_threshold=ema9_threshold,
+                                )
+
                                 continue  # Skip quantity adjustment for cancelled order
                             except Exception as cancel_err:
                                 self.logger.error(
@@ -779,6 +809,27 @@ class PaperTradingServiceAdapter:
                             action="adjust_amo_quantities_premarket",
                         )
                         summary["adjusted"] += 1
+
+                        entry_type = merged_metadata.get("entry_type") if merged_metadata else None
+                        if not entry_type and cancelled_db_order:
+                            entry_type = cancelled_db_order.entry_type
+                        from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                            notify_premarket_adjusted,
+                        )
+
+                        notify_premarket_adjusted(
+                            engine_or_adapter=self,
+                            user_id=self.user_id,
+                            db_session=self.db,
+                            symbol=order.symbol,
+                            order_id=str(new_order_id),
+                            entry_type=entry_type,
+                            original_qty=original_qty,
+                            new_qty=new_qty,
+                            premarket_ltp=premarket_price,
+                            gap_pct=gap_pct,
+                            market_depth=None,
+                        )
 
                     except Exception as modify_error:
                         self.logger.error(

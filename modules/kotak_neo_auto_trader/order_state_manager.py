@@ -274,6 +274,30 @@ class OrderStateManager:
                 logger.error(f"Error registering buy order {order_id}: {e}")
                 return False
 
+    def record_system_modification(
+        self,
+        order_id: str,
+        *,
+        quantity: int | float | None = None,
+        price: float | None = None,
+    ) -> None:
+        """
+        Update tracked baselines after our system modifies a buy (e.g. 9:05 pre-market).
+
+        Prevents sell-monitor sync from treating the change as a manual broker edit.
+        """
+        with self._lock:
+            order_info = self.active_buy_orders.get(order_id)
+            if not order_info:
+                return
+            if quantity is not None:
+                order_info["quantity"] = quantity
+                order_info["original_quantity"] = quantity
+            if price is not None:
+                order_info["price"] = price
+                order_info["original_price"] = price
+            order_info["last_system_modify_source"] = "premarket"
+
     def mark_order_executed(
         self,
         symbol: str,

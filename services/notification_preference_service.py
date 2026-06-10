@@ -163,7 +163,7 @@ class NotificationPreferenceService:
                 notify_order_rejected=True,
                 notify_order_executed=True,
                 notify_order_cancelled=True,
-                notify_order_modified=False,  # New event, opt-in
+                notify_order_modified=True,  # 9:05 pre-market adjusts; not sell-monitor edits
                 notify_retry_queue_added=True,
                 notify_retry_queue_updated=True,
                 notify_retry_queue_removed=True,

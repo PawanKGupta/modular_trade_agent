@@ -548,19 +548,22 @@ def test_database_update_on_success(mock_auto_trade_engine):
                 engine.indicator_service = Mock()
                 engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
 
-                summary = engine.adjust_amo_quantities_premarket()
+                with patch(
+                    "modules.kotak_neo_auto_trader.premarket_notification_dispatcher.notify_premarket_adjusted"
+                ) as mock_notify:
+                    summary = engine.adjust_amo_quantities_premarket()
 
-                # Verify DB update was attempted
-                # get_by_broker_order_id is called twice: once to get ticker, once to update DB
-                assert engine.orders_repo.get_by_broker_order_id.call_count == 2
-                engine.orders_repo.get_by_broker_order_id.assert_any_call(1, "ORD001")
-                engine.orders_repo.update.assert_called_once()
+                    # Verify DB update was attempted
+                    assert engine.orders_repo.get_by_broker_order_id.call_count == 2
+                    engine.orders_repo.get_by_broker_order_id.assert_any_call(1, "ORD001")
+                    engine.orders_repo.update.assert_called_once()
 
-                # Verify Telegram notification was sent
-                engine.telegram_notifier.notify_system_alert.assert_called_once()
-                call_args = engine.telegram_notifier.notify_system_alert.call_args
-                assert call_args[1]["alert_type"] == "PRE_MARKET_ADJUSTMENT"
-                assert call_args[1]["severity"] == "INFO"
+                    mock_notify.assert_called_once()
+                    call_kwargs = mock_notify.call_args[1]
+                    assert call_kwargs["symbol"] == "RELIANCE"
+                    assert call_kwargs["original_qty"] == 100
+                    assert call_kwargs["new_qty"] == new_qty
+                    assert summary["adjusted"] == 1
 
 
 @patch("src.application.services.paper_trading_service_adapter.get_user_logger")

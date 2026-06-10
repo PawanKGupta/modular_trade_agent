@@ -815,7 +815,12 @@ class IndividualServiceManager:
 
                 # Send notification for successful execution
                 self._notify_service_execution_completed(
-                    user_id, task_name, "success", duration, db_override=task_db
+                    user_id,
+                    task_name,
+                    "success",
+                    duration,
+                    task_details=result,
+                    db_override=task_db,
                 )
             else:
                 # TIMEOUT: Task exceeded maximum execution time
@@ -842,7 +847,13 @@ class IndividualServiceManager:
 
                 # Send notification for timeout
                 self._notify_service_execution_completed(
-                    user_id, task_name, "failed", duration, timeout_msg, db_override=task_db
+                    user_id,
+                    task_name,
+                    "failed",
+                    duration,
+                    timeout_msg,
+                    task_details=result,
+                    db_override=task_db,
                 )
 
                 raise TimeoutError(timeout_msg)
@@ -877,7 +888,13 @@ class IndividualServiceManager:
 
             # Send notification for failed execution
             self._notify_service_execution_completed(
-                user_id, task_name, "failed", duration, str(e), db_override=task_db
+                user_id,
+                task_name,
+                "failed",
+                duration,
+                str(e),
+                task_details=None,
+                db_override=task_db,
             )
 
         finally:
@@ -2313,6 +2330,7 @@ class IndividualServiceManager:
         status: str,
         duration: float,
         error: str | None = None,
+        task_details: dict | None = None,
         db_override: Session | None = None,
     ) -> None:
         """Send notification when a service execution completes (success or failure).
@@ -2334,11 +2352,25 @@ class IndividualServiceManager:
         pref_service = NotificationPreferenceService(db)
         preferences = pref_service.get_preferences(user_id)
 
+        premarket_summary = None
+        if task_name == "premarket_amo_adjustment" and status == "success":
+            raw_summary = (task_details or {}).get("summary")
+            if isinstance(raw_summary, dict):
+                premarket_summary = raw_summary
+
         if status == "success":
-            title = "Service Execution Completed"
-            message_text = (
-                f"Service: {task_display_name}\nStatus: Success\nDuration: {duration_str}"
-            )
+            if premarket_summary is not None:
+                from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+                    format_premarket_task_in_app_summary,
+                )
+
+                title = "9:05 Pre-market"
+                message_text = format_premarket_task_in_app_summary(premarket_summary)
+            else:
+                title = "Service Execution Completed"
+                message_text = (
+                    f"Service: {task_display_name}\nStatus: Success\nDuration: {duration_str}"
+                )
             level = "info"
             severity = "SUCCESS"
         else:
@@ -2351,9 +2383,13 @@ class IndividualServiceManager:
             level = "error"
             severity = "ERROR"
 
-        # Send Telegram notification if enabled and preference allows
-        if pref_service.should_notify(
-            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
+        # 9:05 task: per-order Telegram already sent; only in-app one-liner here.
+        skip_service_broadcast = premarket_summary is not None and status == "success"
+        if (
+            not skip_service_broadcast
+            and pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
+            )
         ):
             notifier = self._get_telegram_notifier(user_id)
             if notifier and notifier.enabled:
@@ -2395,8 +2431,11 @@ class IndividualServiceManager:
 
         # Send Email notification if enabled and preference allows
         email_sent = False
-        if pref_service.should_notify(
-            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
+        if (
+            not skip_service_broadcast
+            and pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
+            )
         ):
             preferences = pref_service.get_preferences(user_id)
             if preferences and preferences.email_address:
