@@ -18,6 +18,9 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from modules.kotak_neo_auto_trader.telegram_notifier import TelegramNotifier, get_telegram_notifier
+from modules.kotak_neo_auto_trader.trading_notification_dedupe import (
+    trading_notification_dedupe,
+)
 
 
 class TestTelegramNotifierPhase9(unittest.TestCase):
@@ -25,6 +28,7 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures"""
+        trading_notification_dedupe.clear()
         self.bot_token = "test_bot_token"
         self.chat_id = "test_chat_id"
         self.notifier = TelegramNotifier(
@@ -197,28 +201,35 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
 
     @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
     def test_rate_limit_per_minute(self, mock_post):
-        """Test rate limiting per minute"""
+        """Test rate limiting per minute on generic send_message (non-order path)"""
         mock_response = Mock()
         mock_response.status_code = 200
         mock_post.return_value = mock_response
 
-        # Send notifications up to limit
         for i in range(5):
+            result = self.notifier.send_message(f"Service alert {i}")
+            self.assertTrue(result, f"Notification {i} should succeed")
+
+        result = self.notifier.send_message("Service alert 6")
+        self.assertFalse(result, "Notification should be rate limited")
+        self.assertEqual(mock_post.call_count, 5)
+
+    @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
+    def test_order_events_bypass_rate_limit(self, mock_post):
+        """PR3: order notify_* paths exempt from Telegram rate caps (9:05 bursts)."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        for i in range(6):
             result = self.notifier.notify_order_placed(
                 symbol=f"STOCK{i}",
                 order_id=f"ORDER{i}",
                 quantity=10,
             )
-            self.assertTrue(result, f"Notification {i} should succeed")
+            self.assertTrue(result, f"Order notification {i} should bypass rate limit")
 
-        # Next notification should be rate limited
-        result = self.notifier.notify_order_placed(
-            symbol="STOCK6",
-            order_id="ORDER6",
-            quantity=10,
-        )
-        self.assertFalse(result, "Notification should be rate limited")
-        self.assertEqual(mock_post.call_count, 5)
+        self.assertEqual(mock_post.call_count, 6)
 
     @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
     def test_rate_limit_cleanup(self, mock_post):
@@ -246,13 +257,8 @@ class TestTelegramNotifierPhase9(unittest.TestCase):
         recent_time = ist_now() - timedelta(minutes=30)
         self.notifier._notification_timestamps = [recent_time] * 20
 
-        # Next notification should be rate limited
-        result = self.notifier.notify_order_placed(
-            symbol="STOCK",
-            order_id="ORDER",
-            quantity=10,
-        )
-        self.assertFalse(result, "Notification should be rate limited by hourly limit")
+        result = self.notifier.send_message("Hourly cap test")
+        self.assertFalse(result, "Generic send_message should be rate limited by hourly limit")
 
     @patch("modules.kotak_neo_auto_trader.telegram_notifier.requests.post")
     def test_rate_limit_only_applies_to_successful_sends(self, mock_post):

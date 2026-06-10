@@ -202,6 +202,8 @@ class TelegramNotifier:
         telegram_body: str | None = None,
         level: str = "info",
         log_label: str,
+        order_id: str | None = None,
+        dedupe: bool = True,
     ) -> bool:
         """Send order event on Telegram, in-app, and email (PR2)."""
         logger.info(log_label)
@@ -219,10 +221,16 @@ class TelegramNotifier:
             db_session=self.db_session,
             preference_service=self.preference_service,
             telegram_notifier=self,
+            order_id=order_id,
+            dedupe=dedupe,
         )
 
     def send_message(
-        self, message: str, parse_mode: str = "Markdown", user_id: int | None = None
+        self,
+        message: str,
+        parse_mode: str = "Markdown",
+        user_id: int | None = None,
+        rate_limit_exempt: bool = False,
     ) -> bool:
         """
         Send text message to Telegram.
@@ -234,6 +242,7 @@ class TelegramNotifier:
             message: Message text (supports Markdown)
             parse_mode: Parse mode ('Markdown', 'HTML', or None)
             user_id: Optional user ID for preference checking
+            rate_limit_exempt: When True, skip per-minute/hour caps (order events, PR3)
 
         Returns:
             True if sent successfully, False otherwise
@@ -248,8 +257,8 @@ class TelegramNotifier:
             # Specific notification methods will check preferences before calling send_message
             pass
 
-        # Phase 9: Check rate limit
-        if not self._check_rate_limit():
+        # Phase 9: Check rate limit (order events bypass via dispatcher, PR3)
+        if not rate_limit_exempt and not self._check_rate_limit():
             logger.debug("Telegram notification skipped due to rate limit")
             return False
 
@@ -347,6 +356,7 @@ class TelegramNotifier:
             telegram_body=message,
             level="error",
             log_label=f"Sending rejection notification for {symbol}",
+            order_id=order_id,
         )
 
     def notify_order_execution(
@@ -404,6 +414,7 @@ class TelegramNotifier:
             telegram_body=message,
             level="info",
             log_label=f"Sending execution notification for {symbol}",
+            order_id=order_id,
         )
 
     def notify_partial_fill(
@@ -462,6 +473,8 @@ class TelegramNotifier:
             telegram_body=message,
             level="info",
             log_label=f"Sending partial fill notification for {symbol}",
+            order_id=order_id,
+            dedupe=False,
         )
 
     def notify_system_alert(
@@ -693,6 +706,8 @@ class TelegramNotifier:
             telegram_body=message,
             level="info",
             log_label=f"Sending order placed notification for {symbol}",
+            order_id=order_id,
+            dedupe=False,
         )
 
     def notify_order_cancelled(
@@ -746,6 +761,7 @@ class TelegramNotifier:
             telegram_body=message,
             level="warning",
             log_label=f"Sending cancellation notification for {symbol}",
+            order_id=order_id,
         )
 
     def notify_order_modified(
@@ -810,6 +826,8 @@ class TelegramNotifier:
             telegram_body=message,
             level="warning",
             log_label=f"Sending order modification notification for {symbol}",
+            order_id=order_id,
+            dedupe=False,
         )
 
     def notify_premarket_adjusted(
@@ -838,6 +856,8 @@ class TelegramNotifier:
             telegram_body=telegram_body,
             level="info",
             log_label=f"Sending 9:05 pre-market adjust notification for {symbol} (#{order_id})",
+            order_id=order_id,
+            dedupe=False,
         )
 
     def notify_premarket_cancelled_ema9(
@@ -862,6 +882,7 @@ class TelegramNotifier:
             telegram_body=telegram_body,
             level="warning",
             log_label=f"Sending 9:05 EMA9 cancel notification for {symbol} (#{order_id})",
+            order_id=order_id,
         )
 
     def notify_order_skipped(
@@ -923,6 +944,7 @@ class TelegramNotifier:
             telegram_body=message,
             level="info",
             log_label=f"Sending order skipped notification for {symbol}: {reason}",
+            dedupe=False,
         )
 
     def notify_retry_queue_updated(
@@ -984,6 +1006,7 @@ class TelegramNotifier:
             telegram_body=message,
             level="info",
             log_label=f"Sending retry queue update notification for {symbol}",
+            dedupe=False,
         )
 
     def test_connection(self) -> bool:

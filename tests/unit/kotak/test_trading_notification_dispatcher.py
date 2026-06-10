@@ -4,10 +4,20 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from modules.kotak_neo_auto_trader.trading_notification_dedupe import (
+    trading_notification_dedupe,
+)
 from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
     dispatch_trading_notification,
 )
 from services.notification_preference_service import NotificationEventType
+
+
+@pytest.fixture(autouse=True)
+def _clear_dedupe():
+    trading_notification_dedupe.clear()
+    yield
+    trading_notification_dedupe.clear()
 
 
 @pytest.fixture
@@ -109,8 +119,63 @@ def test_dispatch_legacy_telegram_only_without_preferences(mock_telegram_notifie
 
     assert result is True
     mock_telegram_notifier.send_message.assert_called_once_with(
-        "plain", user_id=None
+        "plain", user_id=None, rate_limit_exempt=True
     )
+
+
+def test_dispatch_dedupes_terminal_order_events(mock_pref_service, mock_telegram_notifier):
+    """Second dispatch for same user/order/event is suppressed (PR3)."""
+    mock_db = Mock()
+
+    with patch(
+        "src.infrastructure.persistence.notification_repository.NotificationRepository"
+    ) as repo_cls:
+        repo = Mock()
+        repo_cls.return_value = repo
+
+        first = dispatch_trading_notification(
+            user_id=1,
+            event_type=NotificationEventType.ORDER_EXECUTED,
+            title="Order Executed",
+            message_plain="Filled",
+            order_id="ORD-99",
+            telegram_notifier=mock_telegram_notifier,
+            db_session=mock_db,
+            preference_service=mock_pref_service,
+        )
+        second = dispatch_trading_notification(
+            user_id=1,
+            event_type=NotificationEventType.ORDER_EXECUTED,
+            title="Order Executed",
+            message_plain="Filled again",
+            order_id="ORD-99",
+            telegram_notifier=mock_telegram_notifier,
+            db_session=mock_db,
+            preference_service=mock_pref_service,
+        )
+
+    assert first is True
+    assert second is False
+    assert mock_telegram_notifier.send_message.call_count == 1
+    assert repo.create.call_count == 1
+
+
+def test_dispatch_telegram_rate_limit_exempt(mock_pref_service, mock_telegram_notifier):
+    """Order events pass rate_limit_exempt to Telegram send_message."""
+    dispatch_trading_notification(
+        user_id=1,
+        event_type=NotificationEventType.ORDER_REJECTED,
+        title="Order Rejected",
+        message_plain="Rejected",
+        order_id="ORD-1",
+        telegram_notifier=mock_telegram_notifier,
+        db_session=Mock(),
+        preference_service=mock_pref_service,
+    )
+
+    mock_telegram_notifier.send_message.assert_called_once()
+    _, kwargs = mock_telegram_notifier.send_message.call_args
+    assert kwargs.get("rate_limit_exempt") is True
 
 
 def test_dispatch_never_raises_on_in_app_failure(

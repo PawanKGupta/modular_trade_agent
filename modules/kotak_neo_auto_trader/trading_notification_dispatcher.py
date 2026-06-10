@@ -1,8 +1,9 @@
 """
-Multi-channel trading notification dispatcher (PR2).
+Multi-channel trading notification dispatcher (PR2 + PR3).
 
 Delivers order events to Telegram, in-app, and email based on per-channel
-user preferences and quiet hours. Failures are logged only — never raises.
+user preferences and quiet hours. PR3 adds terminal-event dedupe and
+rate-limit-exempt Telegram for order events. Failures are logged only — never raises.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ def dispatch_trading_notification(
     db_session: Session | None = None,
     preference_service: NotificationPreferenceService | None = None,
     level: NotificationLevel = "info",
+    order_id: str | None = None,
+    dedupe: bool = True,
 ) -> bool:
     """
     Send a trading notification on all enabled channels.
@@ -41,13 +44,28 @@ def dispatch_trading_notification(
     """
     body_for_telegram = telegram_body or message_plain
 
+    if dedupe and order_id:
+        from modules.kotak_neo_auto_trader.trading_notification_dedupe import (
+            trading_notification_dedupe,
+        )
+
+        effective_user_id = user_id if user_id is not None else 0
+        if not trading_notification_dedupe.try_acquire(
+            effective_user_id, order_id, event_type
+        ):
+            return False
+
     # Legacy path: no user context — Telegram only (preference service unavailable).
     if user_id is None or preference_service is None:
         if telegram_notifier is None or not getattr(telegram_notifier, "enabled", False):
             return False
         try:
             return bool(
-                telegram_notifier.send_message(body_for_telegram, user_id=user_id)
+                telegram_notifier.send_message(
+                    body_for_telegram,
+                    user_id=user_id,
+                    rate_limit_exempt=True,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -80,7 +98,11 @@ def dispatch_trading_notification(
         if telegram_notifier is not None and getattr(telegram_notifier, "enabled", False):
             try:
                 telegram_sent = bool(
-                    telegram_notifier.send_message(body_for_telegram, user_id=user_id)
+                    telegram_notifier.send_message(
+                        body_for_telegram,
+                        user_id=user_id,
+                        rate_limit_exempt=True,
+                    )
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
