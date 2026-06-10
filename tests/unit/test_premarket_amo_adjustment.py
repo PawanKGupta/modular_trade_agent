@@ -1056,3 +1056,99 @@ class TestEMAPreMarketValidation:
                     db_session.refresh(db_order)
                     assert db_order.status == DbOrderStatus.CANCELLED
                     assert "EMA9" in db_order.reason or "Pre-market price" in db_order.reason
+
+
+class TestPremarketScripMasterHardening:
+    """Regression: optional scrip_master must not break LTP/EMA9 prefetch (production-safe)."""
+
+    def test_ema9_cancel_when_scrip_master_explicitly_none(self, mock_auto_trade_engine):
+        """Mirrors production __init__ default (scrip_master=None) — trading path unchanged."""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 100,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_pending_orders = Mock(return_value=orders)
+            engine.orders.cancel_order = Mock(return_value=True)
+            engine.orders.modify_order = Mock()
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = None
+            engine.orders_repo = None
+            engine.user_id = 1
+            engine.telegram_notifier = None
+            engine.scrip_master = None  # production default after __init__
+            engine.indicator_service = _mock_indicator_service(100.0)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md = Mock()
+                mock_md.get_ltp = Mock(return_value=101.0)
+                mock_md.get_market_depth = Mock()
+                mock_market_data.return_value = mock_md
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+                    with patch(
+                        "modules.kotak_neo_auto_trader.premarket_notification_dispatcher.notify_premarket_ema9_cancelled"
+                    ):
+                        summary = engine.adjust_amo_quantities_premarket()
+
+        assert summary["cancelled_above_ema9"] == 1
+        mock_md.get_market_depth.assert_not_called()
+
+    def test_depth_prefetch_when_scrip_master_loaded(self, mock_auto_trade_engine):
+        """When scrip_master is available (post-login), depth fetch is attempted (log-only)."""
+        orders = [
+            {
+                "symbol": "RELIANCE-EQ",
+                "quantity": 100,
+                "nOrdNo": "ORD001",
+                "orderValidity": "DAY",
+                "orderStatus": "PENDING",
+                "transactionType": "BUY",
+            },
+        ]
+        with patch.object(AutoTradeEngine, "__init__", return_value=None):
+            engine = AutoTradeEngine()
+            engine.strategy_config = mock_auto_trade_engine.strategy_config
+            engine.auth = mock_auto_trade_engine.auth
+            engine.orders = Mock()
+            engine.orders.get_pending_orders = Mock(return_value=orders)
+            engine.orders.modify_order = Mock(return_value={"stat": "ok"})
+            engine.portfolio = mock_auto_trade_engine.portfolio
+            engine.login = mock_auto_trade_engine.login
+            engine.db = None
+            engine.orders_repo = None
+            engine.user_id = 1
+            engine.telegram_notifier = None
+            engine.scrip_master = Mock()
+            engine.scrip_master.get_token = Mock(return_value="12345")
+            engine.indicator_service = _mock_indicator_service(100.0)
+
+            with patch(
+                "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+            ) as mock_market_data:
+                mock_md = Mock()
+                mock_md.get_ltp = Mock(return_value=98.0)
+                mock_md.get_market_depth = Mock(return_value=None)
+                mock_market_data.return_value = mock_md
+
+                with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                    mock_config.MIN_QTY = 1
+                    summary = engine.adjust_amo_quantities_premarket()
+
+        assert summary["adjusted"] == 1
+        engine.scrip_master.get_token.assert_called()
+        mock_md.get_market_depth.assert_called_once_with("12345")
