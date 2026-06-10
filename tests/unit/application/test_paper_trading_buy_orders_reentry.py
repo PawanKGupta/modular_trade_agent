@@ -687,3 +687,31 @@ class TestPaperTradingRunBuyOrdersWithReentry:
         assert placed.order_type.value == "LIMIT"
         assert placed.price is not None
         assert placed.quantity > 0
+
+
+class TestPaperTradingReentryExecutionCapital:
+    """LiquidityCapitalService parity for paper re-entry sizing."""
+
+    def test_calculate_execution_capital_matches_live_service(self, db_session, test_user):
+        """Execution capital uses LiquidityCapitalService (same as live)."""
+        from config.strategy_config import StrategyConfig
+
+        mock_broker = MagicMock()
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        engine = PaperTradingEngineAdapter(
+            broker=mock_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        # High liquidity: full user capital
+        assert engine._calculate_execution_capital(1000.0, 200000) == 100000.0
+
+        # Medium liquidity: capped by max_capital (10% of avg_volume * price)
+        assert engine._calculate_execution_capital(50.0, 10000) == 50000.0
+
+        # Below minimum volume threshold: fallback to user_capital (live behavior)
+        assert engine._calculate_execution_capital(1000.0, 1000) == 100000.0

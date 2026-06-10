@@ -5,6 +5,22 @@ from __future__ import annotations
 from typing import Any
 
 
+def is_reentry_db_order(db_order: Any) -> bool:
+    """Return True when a persisted buy order is a strategy re-entry.
+
+    Pre-market quantity adjustments and other add-to-position buys on an existing
+    holding must not be classified as re-entries unless explicitly marked.
+    """
+    if not db_order:
+        return False
+    if getattr(db_order, "entry_type", None) == "reentry":
+        return True
+    metadata = getattr(db_order, "order_metadata", None)
+    if isinstance(metadata, dict) and metadata.get("entry_type") == "reentry":
+        return True
+    return False
+
+
 def _int(summary: dict[str, Any], key: str) -> int:
     return int(summary.get(key, 0) or 0)
 

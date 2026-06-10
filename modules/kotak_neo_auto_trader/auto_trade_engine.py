@@ -4348,6 +4348,90 @@ class AutoTradeEngine:
             logger.error(f"Error during pre-market AMO adjustment: {e}", exc_info=True)
             return summary
 
+    def cancel_unexecuted_day_buy_orders_at_eod(self) -> dict[str, int]:
+        """
+        Cancel unexecuted REGULAR/DAY pending buys at end of session (EOD task).
+
+        AMO pending buys are left open for next-morning ``adjust_amo_quantities_premarket``.
+        Also marks orphan PENDING non-AMO rows in the database as cancelled.
+        """
+        from .utils.order_field_extractor import (
+            EOD_DAY_BUY_CANCEL_REASON,
+            OrderFieldExtractor,
+        )
+
+        summary = {"cancelled": 0, "failed": 0, "skipped_amo": 0, "db_only_cancelled": 0}
+        broker_cancelled_ids: set[str] = set()
+
+        if not self.orders:
+            logger.warning("Orders client not initialized — skipping EOD day-buy cancellation")
+            return summary
+
+        if not self.auth or not self.auth.is_authenticated():
+            if not self.login():
+                logger.error("Re-authentication failed — cannot cancel EOD day-buy orders")
+                return summary
+
+        logger.info("Cancelling unexecuted DAY/REGULAR pending buy orders (EOD)...")
+
+        try:
+            pending_orders = self.orders.get_pending_orders() or []
+        except Exception as e:
+            logger.warning(f"Could not fetch pending orders for EOD day-buy cancel: {e}")
+            pending_orders = []
+
+        for order in pending_orders:
+            if OrderFieldExtractor.is_pending_open_buy_order(order) and (
+                OrderFieldExtractor.is_amo_broker_order(order)
+            ):
+                summary["skipped_amo"] += 1
+                continue
+            if not OrderFieldExtractor.is_eod_cancellable_day_buy_broker_order(order):
+                continue
+
+            order_id = OrderFieldExtractor.get_order_id(order)
+            symbol = OrderFieldExtractor.get_symbol(order)
+            if not order_id:
+                continue
+
+            try:
+                if self.orders.cancel_order(order_id):
+                    summary["cancelled"] += 1
+                    broker_cancelled_ids.add(order_id)
+                    logger.info(f"Cancelled pending DAY buy {symbol} (#{order_id}) at EOD")
+                else:
+                    summary["failed"] += 1
+            except Exception as e:
+                summary["failed"] += 1
+                logger.warning(f"Failed to cancel day buy {symbol} (#{order_id}) at EOD: {e}")
+
+        if self.orders_repo and self.user_id:
+            try:
+                db_orders, _ = self.orders_repo.list(self.user_id)
+                for db_order in db_orders:
+                    if not OrderFieldExtractor.is_eod_cancellable_day_buy_db_order(db_order):
+                        continue
+                    broker_id = str(db_order.broker_order_id or db_order.order_id or "")
+                    if broker_id and broker_id in broker_cancelled_ids:
+                        continue
+                    self.orders_repo.mark_cancelled(
+                        db_order, cancelled_reason=EOD_DAY_BUY_CANCEL_REASON
+                    )
+                    summary["db_only_cancelled"] += 1
+                    logger.info(
+                        f"Marked PENDING DAY buy {db_order.symbol} "
+                        f"(#{broker_id or db_order.id}) cancelled in DB at EOD"
+                    )
+            except Exception as e:
+                logger.warning(f"EOD day-buy DB sweep failed: {e}", exc_info=True)
+
+        logger.info(
+            f"EOD day-buy cancellation complete: broker_cancelled={summary['cancelled']}, "
+            f"db_only_cancelled={summary['db_only_cancelled']}, "
+            f"skipped_amo={summary['skipped_amo']}, failed={summary['failed']}"
+        )
+        return summary
+
     # ---------------------- New entries ----------------------
     def preview_evening_buy_margins(self) -> dict[str, int | list]:
         """
@@ -5804,7 +5888,7 @@ class AutoTradeEngine:
                 execution_capital = self._calculate_execution_capital(
                     ticker, current_price, avg_volume
                 )
-                qty = int(execution_capital / current_price)
+                qty = max(config.MIN_QTY, floor(execution_capital / current_price))
 
                 logger.info(
                     f"Re-entry quantity calculation for {symbol}: "

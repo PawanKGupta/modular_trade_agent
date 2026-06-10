@@ -5419,7 +5419,16 @@ class SellOrderManager:
         return total_qty, total_cost / total_qty
 
     def _sync_position_qty_from_closed_buys(self, symbol: str, current_qty: float) -> bool:
-        """Raise open position qty/avg when closed system buys exceed the DB row."""
+        """
+        Raise open position qty/avg when closed system buys exceed the DB row.
+
+        Operator note: totals sum **all** closed system buys for the symbol (re-entry
+        fills while the DB row was stale). This only runs when broker holdings exceed DB
+        qty; it does not reconcile partial sells — if holdings were reduced by sells but
+        closed buy history remains cumulative, sync could theoretically overstate qty.
+        Mitigated because sync applies only when broker_qty > positions_qty and only
+        system (non-manual) closed buys are counted.
+        """
         if not self.positions_repo or not self.user_id:
             return False
 

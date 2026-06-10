@@ -419,7 +419,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                 existing_pos = positions_repo.get_by_symbol(user_id, symbol)
 
                 if existing_pos and existing_pos.closed_at is None:
-                    # Update existing open position (reentry)
+                    # Add to existing open position
                     existing_qty = existing_pos.quantity
                     existing_avg_price = existing_pos.avg_price
 
@@ -430,66 +430,89 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                     new_qty = existing_qty + execution_qty
                     new_avg_price = total_cost / new_qty if new_qty > 0 else execution_price_float
 
-                    # Update reentry tracking
-                    reentry_count = (existing_pos.reentry_count or 0) + 1
-                    reentries_array = []
-                    if existing_pos.reentries:
-                        if isinstance(existing_pos.reentries, dict):
-                            reentries_array = list(existing_pos.reentries.get("reentries", []))
-                        elif isinstance(existing_pos.reentries, list):
-                            reentries_array = list(existing_pos.reentries)
+                    from modules.kotak_neo_auto_trader.reentry_logging import is_reentry_db_order
 
-                    # Add new reentry entry
-                    # placed_at may be datetime or str depending on DB driver/serialization
-                    placed_at_val = db_order.placed_at
-                    if placed_at_val is None:
-                        placed_at_str = ist_now().date().isoformat()
-                    elif hasattr(placed_at_val, "date"):
-                        placed_at_str = placed_at_val.date().isoformat()
-                    elif isinstance(placed_at_val, str) and len(placed_at_val) >= 10:
-                        placed_at_str = placed_at_val[:10]
-                    else:
-                        placed_at_str = ist_now().date().isoformat()
+                    if is_reentry_db_order(db_order):
+                        # Update reentry tracking only for explicit re-entry orders
+                        reentry_count = (existing_pos.reentry_count or 0) + 1
+                        reentries_array = []
+                        if existing_pos.reentries:
+                            if isinstance(existing_pos.reentries, dict):
+                                reentries_array = list(
+                                    existing_pos.reentries.get("reentries", [])
+                                )
+                            elif isinstance(existing_pos.reentries, list):
+                                reentries_array = list(existing_pos.reentries)
 
-                    reentry_data = {
-                        "qty": int(execution_qty),
-                        "level": None,  # Will be set if available in metadata
-                        "rsi": float(entry_rsi),
-                        "price": float(execution_price_float),
-                        "time": ist_now().isoformat(),
-                        "placed_at": placed_at_str,
-                        "order_id": order.order_id,
-                    }
+                        # placed_at may be datetime or str depending on DB driver/serialization
+                        placed_at_val = db_order.placed_at
+                        if placed_at_val is None:
+                            placed_at_str = ist_now().date().isoformat()
+                        elif hasattr(placed_at_val, "date"):
+                            placed_at_str = placed_at_val.date().isoformat()
+                        elif isinstance(placed_at_val, str) and len(placed_at_val) >= 10:
+                            placed_at_str = placed_at_val[:10]
+                        else:
+                            placed_at_str = ist_now().date().isoformat()
 
-                    # Extract reentry level from metadata if available
-                    if db_order.order_metadata:
-                        metadata = (
-                            db_order.order_metadata
-                            if isinstance(db_order.order_metadata, dict)
-                            else {}
+                        reentry_data = {
+                            "qty": int(execution_qty),
+                            "level": None,  # Will be set if available in metadata
+                            "rsi": float(entry_rsi),
+                            "price": float(execution_price_float),
+                            "time": ist_now().isoformat(),
+                            "placed_at": placed_at_str,
+                            "order_id": order.order_id,
+                        }
+
+                        # Extract reentry level from metadata if available
+                        if db_order.order_metadata:
+                            metadata = (
+                                db_order.order_metadata
+                                if isinstance(db_order.order_metadata, dict)
+                                else {}
+                            )
+                            level = (
+                                metadata.get("rsi_level")
+                                or metadata.get("level")
+                                or metadata.get("reentry_level")
+                            )
+                            if level is not None:
+                                reentry_data["level"] = int(level)
+
+                        reentries_array.append(reentry_data)
+
+                        positions_repo.upsert(
+                            user_id=user_id,
+                            symbol=symbol,
+                            quantity=new_qty,
+                            avg_price=new_avg_price,
+                            reentry_count=reentry_count,
+                            reentries={"reentries": reentries_array},
+                            last_reentry_price=execution_price_float,
+                            auto_commit=False,  # Commit with order
                         )
-                        if metadata.get("rsi_level") is not None:
-                            reentry_data["level"] = int(metadata["rsi_level"])
-
-                    reentries_array.append(reentry_data)
-
-                    # Update position
-                    positions_repo.upsert(
-                        user_id=user_id,
-                        symbol=symbol,
-                        quantity=new_qty,
-                        avg_price=new_avg_price,
-                        reentry_count=reentry_count,
-                        reentries={"reentries": reentries_array},
-                        last_reentry_price=execution_price_float,
-                        auto_commit=False,  # Commit with order
-                    )
-                    logger.debug(
-                        f"[PaperTrading] Updated position for {symbol}: "
-                        f"qty {existing_qty} -> {new_qty}, "
-                        f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}, "
-                        f"reentry_count: {reentry_count}"
-                    )
+                        logger.debug(
+                            f"[PaperTrading] Updated position for {symbol}: "
+                            f"qty {existing_qty} -> {new_qty}, "
+                            f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f}, "
+                            f"reentry_count: {reentry_count}"
+                        )
+                    else:
+                        # Pre-market adjustment / other add-to-position: qty only, no reentry record
+                        positions_repo.upsert(
+                            user_id=user_id,
+                            symbol=symbol,
+                            quantity=new_qty,
+                            avg_price=new_avg_price,
+                            auto_commit=False,  # Commit with order
+                        )
+                        logger.debug(
+                            f"[PaperTrading] Updated position for {symbol}: "
+                            f"qty {existing_qty} -> {new_qty}, "
+                            f"avg_price Rs {existing_avg_price:.2f} -> Rs {new_avg_price:.2f} "
+                            f"(non-reentry buy)"
+                        )
                 else:
                     # Create new position
                     positions_repo.upsert(

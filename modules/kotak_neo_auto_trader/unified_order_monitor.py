@@ -1488,10 +1488,10 @@ class UnifiedOrderMonitor:
                 last_reentry_price = existing_pos.last_reentry_price
                 reentry_data = None  # Initialize to None, will be set if is_reentry is True
 
-                # Check if this is a reentry: existing position OR order marked as reentry
-                if db_order and db_order.entry_type == "reentry":
-                    is_reentry = True
-                elif existing_pos:  # Position already exists, so this is likely a reentry
+                # Only explicit re-entry orders update reentry tracking (not pre-market adjustments)
+                from modules.kotak_neo_auto_trader.reentry_logging import is_reentry_db_order
+
+                if is_reentry_db_order(db_order):
                     is_reentry = True
 
                 if is_reentry:

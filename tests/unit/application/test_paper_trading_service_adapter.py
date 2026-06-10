@@ -400,6 +400,48 @@ class TestPaperTradingEngineAdapter:
         assert placed_order.variety == OrderVariety.AMO
         assert placed_order.price is None
 
+    def test_place_new_entries_recalculates_capital_from_liquidity_service(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Fresh entries recalculate execution capital via LiquidityCapitalService (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS",
+                verdict="buy",
+                last_close=50.0,
+                execution_capital=99999.0,
+            )
+        ]
+
+        mock_indicators = {"close": 50.0, "avg_volume": 10000, "rsi10": 25.0, "ema9": 52.0}
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
+        ):
+            summary = adapter.place_new_entries(recommendations)
+
+        assert summary["placed"] == 1
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        # 10% of 10000 * 50 = 50000 capital → 1000 shares
+        assert placed_order.quantity == 1000
+
     def test_place_new_entries_uses_limit_pre_open(self, db_session, test_user, mock_paper_broker):
         """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
         from config.strategy_config import StrategyConfig
@@ -424,9 +466,17 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
         with (
             patch("core.volume_analysis.is_market_hours", return_value=True),
             patch("core.volume_analysis.is_pre_open_session", return_value=True),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
         ):
             summary = adapter.place_new_entries(recommendations)
 
@@ -502,7 +552,15 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        summary = adapter.place_new_entries(recommendations)
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
+        with patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators):
+            summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         # Order should be placed but with adjusted quantity
@@ -739,10 +797,15 @@ class TestPaperTradingSellMonitoring:
     """Test frozen EMA9 sell monitoring strategy"""
 
     @pytest.fixture
-    def adapter_with_holdings(self, db_session, test_user):
+    def adapter_with_holdings(self, db_session, test_user, monkeypatch):
         """Create adapter with mock holdings for sell monitoring tests"""
         from config.strategy_config import StrategyConfig
         from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        monkeypatch.setattr(
+            "src.application.services.paper_trading_service_adapter.get_user_logger",
+            lambda **kwargs: MagicMock(),
+        )
 
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
 
@@ -1002,6 +1065,52 @@ class TestPaperTradingSellMonitoring:
         assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
         assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
         adapter_with_holdings.broker.place_order.assert_not_called()
+
+    def test_monitor_sell_orders_syncs_sell_qty_after_reentry_fill(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """After a pending buy fills at open, sell qty should match total holdings (AVANTIFEED case)."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter_with_holdings.active_sell_orders = {
+            "AVANTIFEED": {
+                "order_id": "SELL_88",
+                "target_price": 1116.9,
+                "qty": 88,
+                "ticker": "AVANTIFEED.NS",
+                "entry_date": "2026-06-10",
+            }
+        }
+
+        mock_holding = MagicMock()
+        mock_holding.symbol = "AVANTIFEED"
+        mock_holding.quantity = 185
+        adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"checked": 1, "executed": 1, "still_pending": 0}
+        )
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "SELL_185"
+
+        mock_data = _set_today_like_index(
+            pd.DataFrame({"high": [1000.0], "close": [1000.0]})
+        )
+
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+            patch.object(adapter_with_holdings, "_calculate_ema9", return_value=1116.9),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file"),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
+
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["qty"] == 185
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["order_id"] == "SELL_185"
 
     def test_monitor_sell_orders_daily_high_fills_pending_limit(
         self, db_session, test_user, adapter_with_holdings
@@ -1530,6 +1639,41 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.cancel_order.assert_called_with("EOD_SELL_1")
         assert adapter_with_holdings.active_sell_orders == {}
+
+    def test_eod_cleanup_cancels_pending_day_buy_not_amo(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """EOD cleanup cancels REGULAR/DAY pending buys but preserves AMO."""
+        from unittest.mock import MagicMock, patch
+
+        day_buy = MagicMock()
+        day_buy.symbol = "GALLANTT.NS"
+        day_buy.is_buy_order.return_value = True
+        day_buy.is_sell_order.return_value = False
+        day_buy.is_active.return_value = True
+        day_buy.is_amo_order.return_value = False
+        day_buy.is_eod_cancellable_day_buy.return_value = True
+        day_buy.order_id = "EOD_BUY_DAY_1"
+
+        amo_buy = MagicMock()
+        amo_buy.symbol = "RELIANCE.NS"
+        amo_buy.is_buy_order.return_value = True
+        amo_buy.is_sell_order.return_value = False
+        amo_buy.is_active.return_value = True
+        amo_buy.is_amo_order.return_value = True
+        amo_buy.is_eod_cancellable_day_buy.return_value = False
+        amo_buy.order_id = "EOD_BUY_AMO_1"
+
+        adapter_with_holdings.broker.get_pending_orders.return_value = [day_buy, amo_buy]
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.reporter = None
+        adapter_with_holdings.active_sell_orders = {}
+
+        with patch.object(adapter_with_holdings, "_save_sell_orders_to_file"):
+            with patch.object(adapter_with_holdings, "_cancel_unexecuted_sell_orders", return_value={}):
+                adapter_with_holdings.run_eod_cleanup()
+
+        adapter_with_holdings.broker.cancel_order.assert_called_once_with("EOD_BUY_DAY_1")
 
     @pytest.mark.skip(
         reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
