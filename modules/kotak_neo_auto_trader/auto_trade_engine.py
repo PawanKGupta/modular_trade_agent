@@ -4065,15 +4065,18 @@ class AutoTradeEngine:
                 # Extract base symbol (remove -EQ suffix if present)
                 base_symbol = symbol.replace("-EQ", "")
 
-                # Get ticker from order metadata or construct from symbol
+                # Get ticker / entry type from order metadata or construct from symbol
                 ticker = None
+                entry_type = None
                 if self.orders_repo and self.user_id:
                     try:
                         db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
-                        if db_order and db_order.order_metadata:
-                            ticker = db_order.order_metadata.get(
-                                "ticker"
-                            ) or db_order.order_metadata.get("original_ticker")
+                        if db_order:
+                            entry_type = db_order.entry_type
+                            if db_order.order_metadata:
+                                ticker = db_order.order_metadata.get(
+                                    "ticker"
+                                ) or db_order.order_metadata.get("original_ticker")
                     except Exception:
                         pass  # Ignore errors - will construct ticker below
 
@@ -4089,6 +4092,7 @@ class AutoTradeEngine:
                         "ticker": ticker,
                         "order_id": order_id,
                         "original_qty": original_qty,
+                        "entry_type": entry_type,
                     }
                 )
 
@@ -4096,6 +4100,7 @@ class AutoTradeEngine:
             price_results = {}
             ema9_results = {}
             avg_volume_results = {}
+            market_depth_results = {}
             if order_data:
                 logger.info(
                     f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
@@ -4112,6 +4117,7 @@ class AutoTradeEngine:
                         "price": None,
                         "ema9": None,
                         "avg_volume": 0.0,
+                        "market_depth": None,
                     }
                     try:
                         indicator_service = getattr(self, "indicator_service", None)
@@ -4134,6 +4140,20 @@ class AutoTradeEngine:
                         if price and price > 0:
                             result["price"] = price
 
+                        # Log-only: bid + ask depth (5 levels each; does not affect sizing)
+                        if self.scrip_master:
+                            try:
+                                token = self.scrip_master.get_token(symbol, exchange="NSE")
+                                if token:
+                                    result["market_depth"] = market_data.get_market_depth(
+                                        token
+                                    )
+                            except Exception as depth_err:
+                                logger.debug(
+                                    f"{base_symbol}: pre-market depth fetch failed: {depth_err}"
+                                )
+
+                        if price and price > 0:
                             # Calculate EMA9 using fetched price
                             if indicator_service:
                                 try:
@@ -4162,6 +4182,7 @@ class AutoTradeEngine:
                         price_results[order_id] = result["price"]
                         ema9_results[order_id] = result["ema9"]
                         avg_volume_results[order_id] = result["avg_volume"]
+                        market_depth_results[order_id] = result["market_depth"]
 
                 logger.info(
                     f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
@@ -4187,6 +4208,28 @@ class AutoTradeEngine:
                     continue
 
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                    KOTAK_DEPTH_LEVELS,
+                    log_premarket_depth,
+                )
+
+                empty_levels = tuple(None for _ in range(KOTAK_DEPTH_LEVELS))
+                snapshot = market_depth_results.get(order_id)
+                bid_levels = (
+                    snapshot.bid_levels if snapshot is not None else empty_levels
+                )
+                ask_levels = (
+                    snapshot.ask_levels if snapshot is not None else empty_levels
+                )
+                log_premarket_depth(
+                    logger,
+                    base_symbol,
+                    ltp=premarket_price,
+                    bid_levels=bid_levels,
+                    ask_levels=ask_levels,
+                    entry_type=order_info.get("entry_type"),
+                )
 
                 # Use pre-calculated EMA9
                 ema9 = ema9_results.get(order_id)
