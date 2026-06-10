@@ -4095,6 +4095,7 @@ class AutoTradeEngine:
             # Fetch prices and calculate EMA9 for all orders in parallel
             price_results = {}
             ema9_results = {}
+            avg_volume_results = {}
             if order_data:
                 logger.info(
                     f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
@@ -4110,24 +4111,43 @@ class AutoTradeEngine:
                         "order_id": order_id,
                         "price": None,
                         "ema9": None,
+                        "avg_volume": 0.0,
                     }
                     try:
+                        indicator_service = getattr(self, "indicator_service", None)
+                        if indicator_service:
+                            try:
+                                indicators = indicator_service.get_daily_indicators_dict(
+                                    ticker
+                                )
+                                if indicators:
+                                    result["avg_volume"] = float(
+                                        indicators.get("avg_volume") or 0
+                                    )
+                            except Exception as e:
+                                logger.debug(
+                                    f"{base_symbol}: Failed to load avg_volume: {e}"
+                                )
+
                         # Fetch pre-market price
                         price = market_data.get_ltp(symbol, exchange="NSE")
                         if price and price > 0:
                             result["price"] = price
 
                             # Calculate EMA9 using fetched price
-                            try:
-                                ema9 = self.indicator_service.calculate_ema9_realtime(
-                                    ticker=ticker,
-                                    broker_symbol=symbol,
-                                    current_ltp=price,
-                                )
-                                if ema9 and ema9 > 0:
-                                    result["ema9"] = ema9
-                            except Exception as e:
-                                logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                            if indicator_service:
+                                try:
+                                    ema9 = indicator_service.calculate_ema9_realtime(
+                                        ticker=ticker,
+                                        broker_symbol=symbol,
+                                        current_ltp=price,
+                                    )
+                                    if ema9 and ema9 > 0:
+                                        result["ema9"] = ema9
+                                except Exception as e:
+                                    logger.debug(
+                                        f"{base_symbol}: Failed to calculate EMA9: {e}"
+                                    )
                     except Exception as e:
                         logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
 
@@ -4141,6 +4161,7 @@ class AutoTradeEngine:
                         order_id, result = future.result()
                         price_results[order_id] = result["price"]
                         ema9_results[order_id] = result["ema9"]
+                        avg_volume_results[order_id] = result["avg_volume"]
 
                 logger.info(
                     f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
@@ -4247,31 +4268,52 @@ class AutoTradeEngine:
                         f"{base_symbol}: EMA9 calculation failed - proceeding with quantity adjustment"
                     )
 
-                # 4. Recalculate quantity to keep capital constant
-                target_capital = self.strategy_config.user_capital
-                new_qty = max(config.MIN_QTY, floor(target_capital / premarket_price))
+                from modules.kotak_neo_auto_trader.utils.premarket_adjustment import (
+                    PREMARKET_LIMIT_PROXY_LOG,
+                    compute_premarket_qty,
+                    needs_premarket_market_finalize,
+                )
 
-                # 5. Check if quantity adjustment is needed
-                if new_qty == original_qty:
-                    logger.info(f"{base_symbol}: No adjustment needed (qty={original_qty})")
+                ticker = order_info["ticker"]
+                avg_volume = avg_volume_results.get(order_id, 0.0)
+                execution_capital = self._calculate_execution_capital(
+                    ticker, premarket_price, avg_volume
+                )
+                new_qty = compute_premarket_qty(
+                    execution_capital,
+                    premarket_price,
+                    min_qty=config.MIN_QTY,
+                )
+                is_limit = OrderFieldExtractor.is_limit_broker_order(order)
+
+                if not needs_premarket_market_finalize(
+                    is_limit=is_limit,
+                    new_qty=new_qty,
+                    original_qty=original_qty,
+                ):
+                    logger.info(
+                        f"{base_symbol}: No adjustment needed (MARKET, qty={original_qty})"
+                    )
                     summary["no_adjustment_needed"] += 1
                     continue
 
-                # Calculate gap percentage
-                original_value = original_qty * premarket_price
                 gap_pct = (
-                    (premarket_price - (target_capital / original_qty))
-                    / (target_capital / original_qty)
+                    (premarket_price - (execution_capital / original_qty))
+                    / (execution_capital / original_qty)
                 ) * 100
 
                 original_price = float(
                     order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
                 )
+                qty_changed = new_qty != original_qty
+                if is_limit:
+                    logger.info(f"{base_symbol}: {PREMARKET_LIMIT_PROXY_LOG}")
                 logger.info(
-                    f"{base_symbol}: Adjusting AMO order: "
-                    f"qty {original_qty} → {new_qty}, "
-                    f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
-                    f"(gap: {gap_pct:+.2f}%, capital: Rs {self.strategy_config.user_capital:,.0f})"
+                    f"{base_symbol}: Finalizing pending buy as MARKET: "
+                    f"qty {original_qty} → {new_qty}"
+                    f"{'' if qty_changed else ' (unchanged)'}, "
+                    f"close proxy Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f} "
+                    f"(gap: {gap_pct:+.2f}%, execution_capital: Rs {execution_capital:,.0f})"
                 )
 
                 try:

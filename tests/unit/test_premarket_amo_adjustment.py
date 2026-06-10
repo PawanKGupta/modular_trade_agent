@@ -219,6 +219,12 @@ def test_adjustment_with_gap_up(mock_auto_trade_engine):
         engine.orders_repo = mock_auto_trade_engine.orders_repo
         engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
         engine.user_id = 1
+        engine.indicator_service = Mock()
+        engine.indicator_service.get_daily_indicators_dict = Mock(
+            return_value={"avg_volume": 1_000_000}
+        )
+        engine.indicator_service.calculate_ema9_realtime = Mock(return_value=200.0)
+        engine._calculate_execution_capital = Mock(return_value=200_000.0)
 
         with patch(
             "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -325,6 +331,12 @@ def test_no_adjustment_needed(mock_auto_trade_engine):
         engine.db = None
         engine.orders_repo = None
         engine.telegram_notifier = None
+        engine.indicator_service = Mock()
+        engine.indicator_service.get_daily_indicators_dict = Mock(
+            return_value={"avg_volume": 1_000_000}
+        )
+        engine.indicator_service.calculate_ema9_realtime = Mock(return_value=520.0)
+        engine._calculate_execution_capital = Mock(return_value=200_000.0)
 
         with patch(
             "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -344,6 +356,63 @@ def test_no_adjustment_needed(mock_auto_trade_engine):
 
                 # Verify modify_order was NOT called
                 engine.orders.modify_order.assert_not_called()
+
+
+def test_limit_finalized_as_market_when_qty_unchanged(mock_auto_trade_engine):
+    """Pre-open LIMIT @ close is modified to MKT at 9:05 even when qty is unchanged."""
+    original_qty = floor(200_000 / 500.0)
+
+    orders = [
+        {
+            "symbol": "HCLTECH-EQ",
+            "quantity": original_qty,
+            "nOrdNo": "ORD001",
+            "orderValidity": "DAY",
+            "orderStatus": "PENDING",
+            "transactionType": "BUY",
+            "prcTp": "L",
+            "prc": "500.0",
+        },
+    ]
+
+    with patch.object(AutoTradeEngine, "__init__", return_value=None):
+        engine = AutoTradeEngine()
+        engine.strategy_config = mock_auto_trade_engine.strategy_config
+        engine.auth = mock_auto_trade_engine.auth
+        engine.orders = Mock()
+        engine.orders.get_pending_orders = Mock(return_value=orders)
+        engine.orders.modify_order = Mock(return_value={"stat": "ok"})
+        engine.portfolio = mock_auto_trade_engine.portfolio
+        engine.login = mock_auto_trade_engine.login
+        engine.db = None
+        engine.orders_repo = None
+        engine.telegram_notifier = None
+        engine.user_id = 1
+        engine.indicator_service = Mock()
+        engine.indicator_service.get_daily_indicators_dict = Mock(
+            return_value={"avg_volume": 1_000_000}
+        )
+        engine.indicator_service.calculate_ema9_realtime = Mock(return_value=520.0)
+        engine._calculate_execution_capital = Mock(return_value=200_000.0)
+
+        with patch(
+            "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
+        ) as mock_market_data:
+            mock_md_instance = Mock()
+            mock_md_instance.get_ltp = Mock(return_value=500.0)
+            mock_market_data.return_value = mock_md_instance
+
+            with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
+                mock_config.MIN_QTY = 1
+
+                summary = engine.adjust_amo_quantities_premarket()
+
+                assert summary["adjusted"] == 1
+                assert summary["no_adjustment_needed"] == 0
+                engine.orders.modify_order.assert_called_once()
+                call_args = engine.orders.modify_order.call_args[1]
+                assert call_args["order_type"] == "MKT"
+                assert call_args["quantity"] == original_qty
 
 
 def test_price_unavailable(mock_auto_trade_engine):

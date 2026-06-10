@@ -564,16 +564,13 @@ class PaperTradingServiceAdapter:
                 action="adjust_amo_quantities_premarket",
             )
 
-            # Get target capital from strategy config
-            target_capital = (
-                self.strategy_config.user_capital
-                if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-                else 200000.0
+            from modules.kotak_neo_auto_trader.utils.premarket_adjustment import (
+                PREMARKET_LIMIT_PROXY_LOG,
+                compute_premarket_qty,
+                needs_premarket_market_finalize,
             )
 
-            from math import floor
-
-            # Process each pending buy (live parity: qty recalc; MKT when qty changes)
+            # Process each pending buy (qty from execution_capital; always MARKET for LIMIT)
             for order in adjustable_buy_orders:
                 try:
                     # Get original ticker from metadata for price fetching
@@ -681,27 +678,42 @@ class PaperTradingServiceAdapter:
                             action="adjust_amo_quantities_premarket",
                         )
 
-                    # Recalculate quantity to keep capital constant
-                    new_qty = max(1, floor(target_capital / premarket_price))
+                    execution_capital = self._resolve_premarket_target_capital(
+                        price_symbol, premarket_price
+                    )
+                    new_qty = compute_premarket_qty(execution_capital, premarket_price)
 
-                    # Check if adjustment is needed
-                    if new_qty == original_qty:
+                    if not needs_premarket_market_finalize(
+                        is_limit=order.is_limit_order(),
+                        new_qty=new_qty,
+                        original_qty=original_qty,
+                    ):
                         self.logger.info(
-                            f"{order.symbol}: No adjustment needed (qty={original_qty})",
+                            f"{order.symbol}: No adjustment needed (MARKET, qty={original_qty})",
                             action="adjust_amo_quantities_premarket",
                         )
                         summary["no_adjustment_needed"] += 1
                         continue
 
-                    # Calculate gap percentage
                     original_price = float(order.price.amount) if order.price else premarket_price
-                    gap_pct = ((premarket_price - original_price) / original_price) * 100
+                    gap_pct = (
+                        ((premarket_price - original_price) / original_price) * 100
+                        if original_price > 0
+                        else 0.0
+                    )
+                    qty_changed = new_qty != original_qty
+                    if order.is_limit_order():
+                        self.logger.info(
+                            f"{order.symbol}: {PREMARKET_LIMIT_PROXY_LOG}",
+                            action="adjust_amo_quantities_premarket",
+                        )
 
                     self.logger.info(
-                        f"{order.symbol}: Adjusting pending buy: "
-                        f"qty {original_qty} → {new_qty}, "
-                        f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
-                        f"(gap: {gap_pct:+.2f}%, capital: Rs {target_capital:,.0f})",
+                        f"{order.symbol}: Finalizing pending buy as MARKET: "
+                        f"qty {original_qty} → {new_qty}"
+                        f"{'' if qty_changed else ' (unchanged)'}, "
+                        f"close proxy Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f} "
+                        f"(gap: {gap_pct:+.2f}%, execution_capital: Rs {execution_capital:,.0f})",
                         action="adjust_amo_quantities_premarket",
                     )
 
@@ -2145,6 +2157,52 @@ class PaperTradingServiceAdapter:
         except Exception as e:
             self.logger.debug(f"Failed to calculate EMA9 for {ticker}: {e}")
             return None
+
+    def _resolve_premarket_target_capital(self, ticker: str, premarket_price: float) -> float:
+        """
+        Execution capital for 9:05 qty recalc (liquidity-aware, same basis as 9:01).
+
+        Args:
+            ticker: Yahoo-style ticker (e.g. ``RELIANCE.NS``).
+            premarket_price: Pre-market LTP used for liquidity cap sizing.
+
+        Returns:
+            Capital budget in Rs for ``compute_premarket_qty``.
+        """
+        avg_volume = 0.0
+        indicator_service = getattr(self, "indicator_service", None)
+        if indicator_service is None and self.engine is not None:
+            indicator_service = getattr(self.engine, "indicator_service", None)
+        if indicator_service:
+            try:
+                indicators = indicator_service.get_daily_indicators_dict(ticker)
+                if indicators:
+                    avg_volume = float(indicators.get("avg_volume") or 0)
+            except Exception as e:
+                self.logger.debug(
+                    f"Could not load avg_volume for {ticker}: {e}",
+                    action="_resolve_premarket_target_capital",
+                )
+        if self.engine is not None:
+            return self.engine._calculate_execution_capital(premarket_price, avg_volume)
+        from services.liquidity_capital_service import LiquidityCapitalService
+
+        liquidity_service = LiquidityCapitalService(config=self.strategy_config)
+        user_capital = liquidity_service.user_capital
+        try:
+            if not avg_volume or avg_volume <= 0:
+                return user_capital
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume, stock_price=premarket_price
+            )
+            execution_capital = capital_data.get("execution_capital", user_capital)
+            return execution_capital if execution_capital > 0 else user_capital
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to calculate execution capital: {e}, using user_capital",
+                action="_resolve_premarket_target_capital",
+            )
+            return user_capital
 
 
 class PaperTradingEngineAdapter:
