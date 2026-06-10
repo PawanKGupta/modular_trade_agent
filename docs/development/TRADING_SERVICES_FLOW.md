@@ -25,7 +25,7 @@ The unified trading service (`run_trading_service.py`) runs continuously 24/7 an
 | **09:03** | `premarket_retry` | Retry failed buys from DB |
 | **09:05** | `premarket_amo_adjustment` | Adjust open **pending BUY** qty (if enabled in config) |
 | **09:15** | `sell_monitor` | Place/monitor sells (continuous until 15:30) |
-| **18:00** | `eod_cleanup` | End-of-day reset |
+| **18:00** | `eod_cleanup` | End-of-day reset; cancels unexecuted **DAY sell limits** and **REGULAR/DAY pending buys** (AMO buys kept for 9:05 adjustment) |
 
 ---
 

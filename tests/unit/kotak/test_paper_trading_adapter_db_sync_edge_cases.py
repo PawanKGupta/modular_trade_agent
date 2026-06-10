@@ -339,3 +339,56 @@ class TestPaperTradingAdapterDBSyncEdgeCases:
                 if "failed to sync" in str(call).lower()
             ]
             assert len(error_calls) > 0
+
+    def test_premarket_adjustment_buy_on_existing_position_not_recorded_as_reentry(self):
+        """9:05 AM qty adjustment must not append a spurious reentry (GALLANTT regression)."""
+        order = Order(
+            order_id="PT20260610U10003",
+            symbol="GALLANTT.NS",
+            exchange=Exchange.NSE,
+            transaction_type=TransactionType.BUY,
+            quantity=159,
+            order_type=OrderType.MARKET,
+            status=OrderStatus.EXECUTED,
+        )
+
+        execution_price = Money(Decimal("630.16"))
+
+        db_order = MagicMock()
+        db_order.id = 436
+        db_order.user_id = self.user_id
+        db_order.symbol = "GALLANTT.NS"
+        db_order.broker_order_id = "PT20260610U10003"
+        db_order.entry_type = None
+        db_order.order_metadata = None
+        db_order.placed_at = datetime(2026, 6, 10, 9, 5, 1)
+        self.mock_orders_repo.get_by_broker_order_id.return_value = db_order
+
+        existing_pos = MagicMock()
+        existing_pos.closed_at = None
+        existing_pos.quantity = 316.0
+        existing_pos.avg_price = 621.0
+        existing_pos.reentry_count = 1
+        existing_pos.reentries = {
+            "reentries": [
+                {
+                    "qty": 161,
+                    "level": 30,
+                    "placed_at": "2026-06-09",
+                    "order_id": "PT20260609U10005",
+                }
+            ]
+        }
+        self.mock_positions_repo.get_by_symbol.return_value = existing_pos
+
+        with patch("src.infrastructure.db.timezone_utils.ist_now") as mock_ist_now:
+            mock_ist_now.return_value = ist_now_naive()
+            self.adapter._sync_order_execution_to_db(order, execution_price)
+
+        self.mock_positions_repo.upsert.assert_called_once()
+        call_kwargs = self.mock_positions_repo.upsert.call_args[1]
+        assert call_kwargs["symbol"] == "GALLANTT"
+        assert call_kwargs["quantity"] == 475.0
+        assert "reentry_count" not in call_kwargs
+        assert "reentries" not in call_kwargs
+        assert "last_reentry_price" not in call_kwargs

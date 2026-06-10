@@ -175,10 +175,10 @@ class TestReentryTrackingInDatabase:
             time_date = datetime.fromisoformat(reentry["time"]).date()
             assert placed_at_date == time_date
 
-    def test_reentry_detected_by_existing_position(
+    def test_existing_position_buy_without_entry_type_not_treated_as_reentry(
         self, unified_monitor, positions_repo, orders_repo
     ):
-        """Test that reentry is detected even if entry_type is not set, when position exists"""
+        """Pre-market adjustments must not append reentry records when entry_type is unset."""
         # Create initial position
         initial_position = Positions(
             id=1,
@@ -195,7 +195,7 @@ class TestReentryTrackingInDatabase:
 
         positions_repo.get_by_symbol_for_update = Mock(return_value=initial_position)
 
-        # Create order without entry_type (but position exists, so it's a reentry)
+        # Buy on existing position without entry_type (e.g. pre-market qty adjustment)
         order = Orders(
             id=1,
             user_id=1,
@@ -203,7 +203,7 @@ class TestReentryTrackingInDatabase:
             side="buy",
             order_type="market",
             quantity=5,
-            entry_type=None,  # Not explicitly marked as reentry
+            entry_type=None,
             order_metadata={},
         )
 
@@ -218,7 +218,6 @@ class TestReentryTrackingInDatabase:
 
         positions_repo.upsert = Mock(side_effect=capture_upsert)
 
-        # Execute order
         unified_monitor._create_position_from_executed_order(
             order_id="ORDER123",
             order_info={"symbol": "RELIANCE-EQ"},
@@ -226,10 +225,12 @@ class TestReentryTrackingInDatabase:
             execution_qty=5.0,
         )
 
-        # Verify reentry was detected and tracked
-        assert upsert_call_args.get("reentry_count") == 1
-        assert upsert_call_args.get("last_reentry_price") == 2480.0
-        assert upsert_call_args.get("reentries") is not None
+        # Position qty/avg updated, but reentry tracking must be unchanged
+        assert upsert_call_args.get("quantity") == 15.0
+        assert upsert_call_args.get("avg_price") == pytest.approx(2493.333, rel=1e-3)
+        assert upsert_call_args.get("reentry_count") is None
+        assert upsert_call_args.get("last_reentry_price") is None
+        assert upsert_call_args.get("reentries") is None
 
     def test_multiple_reentries_accumulate(self, unified_monitor, positions_repo, orders_repo):
         """Test that multiple reentries accumulate correctly"""

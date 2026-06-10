@@ -707,6 +707,23 @@ class PaperTradingServiceAdapter:
 
                     # Cancel and replace (live modify uses order_type=MKT when qty changes)
                     try:
+                        cancelled_db_order = None
+                        if self.db and order.order_id:
+                            try:
+                                from src.infrastructure.persistence.orders_repository import (
+                                    OrdersRepository,
+                                )
+
+                                cancelled_db_order = OrdersRepository(self.db).get_by_broker_order_id(
+                                    self.user_id, order.order_id
+                                )
+                            except Exception as db_lookup_err:
+                                self.logger.warning(
+                                    f"{order.symbol}: Could not load DB order before adjustment: "
+                                    f"{db_lookup_err}",
+                                    action="adjust_amo_quantities_premarket",
+                                )
+
                         self.broker.cancel_order(order.order_id)
 
                         from modules.kotak_neo_auto_trader.domain import Order, OrderType
@@ -722,11 +739,22 @@ class PaperTradingServiceAdapter:
                             validity=order.validity,
                         )
 
-                        # Preserve metadata
-                        if hasattr(order, "metadata") and order.metadata:
-                            new_order.metadata = order.metadata
-                        elif hasattr(order, "_metadata") and order._metadata:
-                            new_order._metadata = order._metadata
+                        # Preserve metadata (in-memory + DB record for entry_type / re-entry fields)
+                        merged_metadata: dict = {}
+                        if hasattr(order, "_metadata") and isinstance(order._metadata, dict):
+                            merged_metadata.update(order._metadata)
+                        if hasattr(order, "metadata") and isinstance(order.metadata, dict):
+                            merged_metadata.update(order.metadata)
+                        if cancelled_db_order and isinstance(
+                            cancelled_db_order.order_metadata, dict
+                        ):
+                            merged_metadata.update(cancelled_db_order.order_metadata)
+                        if cancelled_db_order and cancelled_db_order.entry_type:
+                            merged_metadata.setdefault(
+                                "entry_type", cancelled_db_order.entry_type
+                            )
+                        if merged_metadata:
+                            new_order._metadata = merged_metadata
 
                         # Place new order
                         new_order_id = self.broker.place_order(new_order)
@@ -1016,6 +1044,21 @@ class PaperTradingServiceAdapter:
                     exc_info=True,
                 )
 
+            try:
+                buy_cancel_summary = self._cancel_unexecuted_day_buy_orders(
+                    "EOD cleanup — unexecuted DAY/REGULAR buys expire after session"
+                )
+                task_context["day_buy_orders_cancelled"] = buy_cancel_summary.get("cancelled", 0)
+                task_context["day_buy_orders_db_cancelled"] = buy_cancel_summary.get(
+                    "db_only_cancelled", 0
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"EOD day-buy cancellation failed: {e}",
+                    action="run_eod_cleanup",
+                    exc_info=True,
+                )
+
             # Reset ALL flags for next day (including eod_cleanup — otherwise it
             # stays True forever and never runs again on subsequent days)
             self.logger.info(
@@ -1101,6 +1144,100 @@ class PaperTradingServiceAdapter:
                 f"Sell cancellation summary: cancelled={summary['cancelled']}, "
                 f"failed={summary['failed']}",
                 action="_cancel_unexecuted_sell_orders",
+            )
+        return summary
+
+    def _cancel_unexecuted_day_buy_orders(self, reason: str) -> dict[str, int]:
+        """
+        Cancel open/pending REGULAR/DAY buy orders at EOD (broker + DB).
+
+        AMO pending buys are preserved for next-morning pre-market adjustment.
+        Mirrors NSE DAY order expiry on live; aligns paper simulator with live behavior.
+        """
+        from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+            EOD_DAY_BUY_CANCEL_REASON,
+            OrderFieldExtractor,
+        )
+
+        summary = {"cancelled": 0, "failed": 0, "skipped_amo": 0, "db_only_cancelled": 0}
+        cancel_reason = reason or EOD_DAY_BUY_CANCEL_REASON
+        broker_cancelled_ids: set[str] = set()
+
+        if not self.broker:
+            return summary
+
+        self.logger.info(
+            f"Cancelling unexecuted DAY/REGULAR buy orders: {cancel_reason}",
+            action="_cancel_unexecuted_day_buy_orders",
+        )
+
+        try:
+            pending_orders = self.broker.get_pending_orders() or []
+        except Exception as e:
+            self.logger.warning(
+                f"Could not list pending orders for day-buy cancellation: {e}",
+                action="_cancel_unexecuted_day_buy_orders",
+            )
+            pending_orders = []
+
+        for order in pending_orders:
+            if order.is_buy_order() and order.is_active() and order.is_amo_order():
+                summary["skipped_amo"] += 1
+                continue
+            if not order.is_eod_cancellable_day_buy():
+                continue
+            order_id = getattr(order, "order_id", None)
+            if not order_id:
+                continue
+            try:
+                if self.broker.cancel_order(order_id):
+                    summary["cancelled"] += 1
+                    broker_cancelled_ids.add(str(order_id))
+                    self.logger.info(
+                        f"Cancelled pending DAY buy {order.symbol} (#{order_id})",
+                        action="_cancel_unexecuted_day_buy_orders",
+                    )
+                else:
+                    summary["failed"] += 1
+            except Exception as cancel_err:
+                summary["failed"] += 1
+                self.logger.warning(
+                    f"Failed to cancel day buy order {order_id}: {cancel_err}",
+                    action="_cancel_unexecuted_day_buy_orders",
+                )
+
+        if self.db:
+            try:
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                orders_repo = OrdersRepository(self.db)
+                db_orders, _ = orders_repo.list(self.user_id)
+                for db_order in db_orders:
+                    if not OrderFieldExtractor.is_eod_cancellable_day_buy_db_order(db_order):
+                        continue
+                    broker_id = str(db_order.broker_order_id or db_order.order_id or "")
+                    if broker_id and broker_id in broker_cancelled_ids:
+                        continue
+                    orders_repo.mark_cancelled(db_order, cancelled_reason=cancel_reason)
+                    summary["db_only_cancelled"] += 1
+                    self.logger.info(
+                        f"Marked PENDING DAY buy {db_order.symbol} "
+                        f"(#{broker_id or db_order.id}) cancelled in DB",
+                        action="_cancel_unexecuted_day_buy_orders",
+                    )
+            except Exception as db_err:
+                self.logger.warning(
+                    f"EOD day-buy DB sweep failed: {db_err}",
+                    action="_cancel_unexecuted_day_buy_orders",
+                    exc_info=True,
+                )
+
+        if any(summary[k] for k in ("cancelled", "failed", "db_only_cancelled", "skipped_amo")):
+            self.logger.info(
+                f"Day-buy cancellation summary: cancelled={summary['cancelled']}, "
+                f"db_only_cancelled={summary['db_only_cancelled']}, "
+                f"skipped_amo={summary['skipped_amo']}, failed={summary['failed']}",
+                action="_cancel_unexecuted_day_buy_orders",
             )
         return summary
 

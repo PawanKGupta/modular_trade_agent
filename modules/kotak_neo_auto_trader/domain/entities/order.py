@@ -211,6 +211,18 @@ class Order:
             return False
         return str(self.validity).upper() != "IOC"
 
+    def is_eod_cancellable_day_buy(self) -> bool:
+        """
+        Return True for active REGULAR/DAY buys that should be cancelled at session EOD.
+
+        AMO buys are excluded so they can be adjusted at 9:05 the next session.
+        """
+        if not self.is_buy_order() or not self.is_active():
+            return False
+        if self.is_amo_order():
+            return False
+        return str(self.validity).upper() != "IOC"
+
     def is_terminal(self) -> bool:
         """Check if order is in terminal state"""
         return self.status.is_terminal()

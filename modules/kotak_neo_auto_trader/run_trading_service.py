@@ -1129,6 +1129,18 @@ class TradingService:
             except Exception as e:
                 logger.warning(f"EOD sync failed (user {self.user_id}): {e}")
 
+            try:
+                if self.engine and hasattr(self.engine, "cancel_unexecuted_day_buy_orders_at_eod"):
+                    buy_cancel_summary = self.engine.cancel_unexecuted_day_buy_orders_at_eod()
+                    task_context["day_buy_orders_cancelled"] = buy_cancel_summary.get(
+                        "cancelled", 0
+                    )
+                    task_context["day_buy_orders_db_cancelled"] = buy_cancel_summary.get(
+                        "db_only_cancelled", 0
+                    )
+            except Exception as e:
+                logger.warning(f"EOD day-buy cancellation failed: {e}", exc_info=True)
+
             # Run EOD cleanup if available
             if hasattr(self.engine, "eod_cleanup") and self.engine.eod_cleanup:
                 self.engine.eod_cleanup.run_eod_cleanup()

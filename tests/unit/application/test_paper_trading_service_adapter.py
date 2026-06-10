@@ -797,10 +797,15 @@ class TestPaperTradingSellMonitoring:
     """Test frozen EMA9 sell monitoring strategy"""
 
     @pytest.fixture
-    def adapter_with_holdings(self, db_session, test_user):
+    def adapter_with_holdings(self, db_session, test_user, monkeypatch):
         """Create adapter with mock holdings for sell monitoring tests"""
         from config.strategy_config import StrategyConfig
         from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        monkeypatch.setattr(
+            "src.application.services.paper_trading_service_adapter.get_user_logger",
+            lambda **kwargs: MagicMock(),
+        )
 
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
 
@@ -1588,6 +1593,41 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.cancel_order.assert_called_with("EOD_SELL_1")
         assert adapter_with_holdings.active_sell_orders == {}
+
+    def test_eod_cleanup_cancels_pending_day_buy_not_amo(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """EOD cleanup cancels REGULAR/DAY pending buys but preserves AMO."""
+        from unittest.mock import MagicMock, patch
+
+        day_buy = MagicMock()
+        day_buy.symbol = "GALLANTT.NS"
+        day_buy.is_buy_order.return_value = True
+        day_buy.is_sell_order.return_value = False
+        day_buy.is_active.return_value = True
+        day_buy.is_amo_order.return_value = False
+        day_buy.is_eod_cancellable_day_buy.return_value = True
+        day_buy.order_id = "EOD_BUY_DAY_1"
+
+        amo_buy = MagicMock()
+        amo_buy.symbol = "RELIANCE.NS"
+        amo_buy.is_buy_order.return_value = True
+        amo_buy.is_sell_order.return_value = False
+        amo_buy.is_active.return_value = True
+        amo_buy.is_amo_order.return_value = True
+        amo_buy.is_eod_cancellable_day_buy.return_value = False
+        amo_buy.order_id = "EOD_BUY_AMO_1"
+
+        adapter_with_holdings.broker.get_pending_orders.return_value = [day_buy, amo_buy]
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.reporter = None
+        adapter_with_holdings.active_sell_orders = {}
+
+        with patch.object(adapter_with_holdings, "_save_sell_orders_to_file"):
+            with patch.object(adapter_with_holdings, "_cancel_unexecuted_sell_orders", return_value={}):
+                adapter_with_holdings.run_eod_cleanup()
+
+        adapter_with_holdings.broker.cancel_order.assert_called_once_with("EOD_BUY_DAY_1")
 
     @pytest.mark.skip(
         reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."
