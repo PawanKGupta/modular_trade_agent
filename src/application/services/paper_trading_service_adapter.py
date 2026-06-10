@@ -949,6 +949,16 @@ class PaperTradingServiceAdapter:
                 if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
+                # Fill pending limit buys (e.g. pre-open re-entries) before sizing sells
+                try:
+                    self._execute_pending_limit_buys_before_sell_placement()
+                except Exception as e:
+                    self.logger.warning(
+                        f"Pre-sell pending buy execution failed: {e}",
+                        action="run_sell_monitor",
+                        exc_info=True,
+                    )
+
                 # Place sell orders for all holdings at frozen EMA9 target
                 try:
                     self._place_sell_orders()
@@ -1241,6 +1251,58 @@ class PaperTradingServiceAdapter:
             )
         return summary
 
+    def _execute_pending_limit_buys_before_sell_placement(self) -> int:
+        """
+        Execute open LIMIT buy orders before morning sell placement.
+
+        Pre-open re-entries are REGULAR LIMIT orders that fill at the open. Running
+        this before ``_place_sell_orders`` avoids placing sells sized to the
+        pre-reentry quantity (AVANTIFEED-style race at 9:15).
+        """
+        if not self.broker:
+            return 0
+
+        executed = 0
+        try:
+            pending_orders = self.broker.get_pending_orders() or []
+        except Exception as e:
+            self.logger.warning(
+                f"Could not list pending orders before sell placement: {e}",
+                action="_execute_pending_limit_buys_before_sell_placement",
+            )
+            return 0
+
+        from modules.kotak_neo_auto_trader.domain import OrderType
+
+        for order in pending_orders:
+            if not order.is_buy_order() or order.order_type != OrderType.LIMIT:
+                continue
+            if not order.is_active():
+                continue
+            try:
+                self.broker._execute_order(order)
+                if order.is_executed():
+                    executed += 1
+                    self.logger.info(
+                        f"Executed pending LIMIT buy before sell placement: "
+                        f"{order.symbol} x{order.quantity}",
+                        action="_execute_pending_limit_buys_before_sell_placement",
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to execute pending buy {order.order_id} before sell placement: {e}",
+                    action="_execute_pending_limit_buys_before_sell_placement",
+                )
+
+        if executed:
+            updated = self._sync_sell_order_quantities_with_holdings()
+            if updated:
+                self.logger.info(
+                    f"Synced {updated} sell order(s) after pre-placement buy fills",
+                    action="_execute_pending_limit_buys_before_sell_placement",
+                )
+        return executed
+
     def _place_sell_orders(self):
         """
         Place sell orders for all holdings at current EMA9 target.
@@ -1393,13 +1455,28 @@ class PaperTradingServiceAdapter:
                     executed = 0
             if executed > 0:
                 self.logger.info(
-                    f"Executed {executed} pending sell orders",
+                    f"Executed {executed} pending limit order(s)",
                     action="_monitor_sell_orders",
                 )
         except Exception as e:
             self.logger.error(
                 f"Error checking pending orders: {e}",
                 action="_monitor_sell_orders",
+            )
+
+        try:
+            sell_synced = self._sync_sell_order_quantities_with_holdings()
+            if sell_synced > 0:
+                self.logger.info(
+                    f"Updated {sell_synced} sell order quantity(ies) to match holdings "
+                    f"after re-entry execution",
+                    action="_monitor_sell_orders",
+                )
+        except Exception as e:
+            self.logger.warning(
+                f"Sell quantity sync after pending fills failed: {e}",
+                action="_monitor_sell_orders",
+                exc_info=True,
             )
 
         # Drop tracking for positions closed by limit fills
@@ -1862,15 +1939,18 @@ class PaperTradingServiceAdapter:
         # Normalize for comparison
         from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
-        holdings_map = {extract_base_symbol(h.symbol).upper(): h.quantity for h in holdings}
+        holdings_map: dict[str, int] = {}
+        for holding in holdings:
+            symbol_base = extract_base_symbol(holding.symbol).upper()
+            holdings_map[symbol_base] = holdings_map.get(symbol_base, 0) + int(holding.quantity)
 
         updated_count = 0
         for symbol, order_info in list(self.active_sell_orders.items()):
             # Normalize symbol from active_sell_orders (might be base or full)
             symbol_base = extract_base_symbol(symbol).upper()
             if symbol_base in holdings_map:
-                current_qty = order_info.get("qty", 0)
-                holdings_qty = holdings_map[symbol_base]
+                current_qty = int(order_info.get("qty", 0) or 0)
+                holdings_qty = int(holdings_map[symbol_base])
 
                 # If holdings quantity is greater than sell order quantity, update it
                 if holdings_qty > current_qty:

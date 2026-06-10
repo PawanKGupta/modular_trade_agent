@@ -1066,6 +1066,52 @@ class TestPaperTradingSellMonitoring:
         assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
         adapter_with_holdings.broker.place_order.assert_not_called()
 
+    def test_monitor_sell_orders_syncs_sell_qty_after_reentry_fill(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """After a pending buy fills at open, sell qty should match total holdings (AVANTIFEED case)."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter_with_holdings.active_sell_orders = {
+            "AVANTIFEED": {
+                "order_id": "SELL_88",
+                "target_price": 1116.9,
+                "qty": 88,
+                "ticker": "AVANTIFEED.NS",
+                "entry_date": "2026-06-10",
+            }
+        }
+
+        mock_holding = MagicMock()
+        mock_holding.symbol = "AVANTIFEED"
+        mock_holding.quantity = 185
+        adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"checked": 1, "executed": 1, "still_pending": 0}
+        )
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "SELL_185"
+
+        mock_data = _set_today_like_index(
+            pd.DataFrame({"high": [1000.0], "close": [1000.0]})
+        )
+
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+            patch.object(adapter_with_holdings, "_calculate_ema9", return_value=1116.9),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file"),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
+
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["qty"] == 185
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["order_id"] == "SELL_185"
+
     def test_monitor_sell_orders_daily_high_fills_pending_limit(
         self, db_session, test_user, adapter_with_holdings
     ):
