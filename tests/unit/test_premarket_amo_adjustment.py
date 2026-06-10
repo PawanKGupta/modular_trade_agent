@@ -67,6 +67,19 @@ def mock_auto_trade_engine():
     return engine
 
 
+def _attach_premarket_engine_defaults(engine, mock_auto_trade_engine, *, user_id: int = 1) -> None:
+    """Set attributes normally initialized in AutoTradeEngine.__init__ (bypassed in tests)."""
+    engine.scrip_master = None
+
+
+def _mock_indicator_service(ema9: float | None) -> Mock:
+    """Indicator service mock compatible with parallel premarket prefetch."""
+    indicator_service = Mock()
+    indicator_service.get_daily_indicators_dict = Mock(return_value={"avg_volume": 0})
+    indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+    return indicator_service
+
+
 def test_adjustment_disabled_in_config(mock_auto_trade_engine):
     """Test that adjustment is skipped when disabled in config"""
     # Create real instance with mocked dependencies
@@ -784,10 +797,8 @@ class TestEMAPreMarketValidation:
             engine.orders_repo = mock_auto_trade_engine.orders_repo
             engine.user_id = 1
             engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
-
-            # Mock indicator service
-            engine.indicator_service = Mock()
-            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+            _attach_premarket_engine_defaults(engine, mock_auto_trade_engine)
+            engine.indicator_service = _mock_indicator_service(ema9)
 
             with patch(
                 "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -799,7 +810,10 @@ class TestEMAPreMarketValidation:
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
                     mock_config.MIN_QTY = 1
 
-                    summary = engine.adjust_amo_quantities_premarket()
+                    with patch(
+                        "modules.kotak_neo_auto_trader.premarket_notification_dispatcher.notify_premarket_ema9_cancelled"
+                    ):
+                        summary = engine.adjust_amo_quantities_premarket()
 
                     # Verify order was cancelled
                     assert summary["cancelled_above_ema9"] == 1
@@ -841,10 +855,8 @@ class TestEMAPreMarketValidation:
             engine.orders_repo = mock_auto_trade_engine.orders_repo
             engine.user_id = 1
             engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
-
-            # Mock indicator service
-            engine.indicator_service = Mock()
-            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+            _attach_premarket_engine_defaults(engine, mock_auto_trade_engine)
+            engine.indicator_service = _mock_indicator_service(ema9)
 
             with patch(
                 "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -896,10 +908,8 @@ class TestEMAPreMarketValidation:
             engine.orders_repo = mock_auto_trade_engine.orders_repo
             engine.user_id = 1
             engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
-
-            # Mock indicator service
-            engine.indicator_service = Mock()
-            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+            _attach_premarket_engine_defaults(engine, mock_auto_trade_engine)
+            engine.indicator_service = _mock_indicator_service(ema9)
 
             with patch(
                 "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -948,10 +958,8 @@ class TestEMAPreMarketValidation:
             engine.orders_repo = mock_auto_trade_engine.orders_repo
             engine.user_id = 1
             engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
-
-            # Mock indicator service - EMA9 calculation fails (returns None)
-            engine.indicator_service = Mock()
-            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=None)
+            _attach_premarket_engine_defaults(engine, mock_auto_trade_engine)
+            engine.indicator_service = _mock_indicator_service(None)
 
             with patch(
                 "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -1023,10 +1031,8 @@ class TestEMAPreMarketValidation:
             engine.orders_repo = orders_repo
             engine.user_id = test_user.id
             engine.telegram_notifier = mock_auto_trade_engine.telegram_notifier
-
-            # Mock indicator service
-            engine.indicator_service = Mock()
-            engine.indicator_service.calculate_ema9_realtime = Mock(return_value=ema9)
+            _attach_premarket_engine_defaults(engine, mock_auto_trade_engine)
+            engine.indicator_service = _mock_indicator_service(ema9)
 
             with patch(
                 "modules.kotak_neo_auto_trader.market_data.KotakNeoMarketData"
@@ -1038,7 +1044,10 @@ class TestEMAPreMarketValidation:
                 with patch("modules.kotak_neo_auto_trader.auto_trade_engine.config") as mock_config:
                     mock_config.MIN_QTY = 1
 
-                    summary = engine.adjust_amo_quantities_premarket()
+                    with patch(
+                        "modules.kotak_neo_auto_trader.premarket_notification_dispatcher.notify_premarket_ema9_cancelled"
+                    ):
+                        summary = engine.adjust_amo_quantities_premarket()
 
                     # Verify order was cancelled
                     assert summary["cancelled_above_ema9"] == 1

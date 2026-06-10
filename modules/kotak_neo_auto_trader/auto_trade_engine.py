@@ -4147,9 +4147,10 @@ class AutoTradeEngine:
                             unavailable_depth_snapshot,
                         )
 
-                        if self.scrip_master:
+                        scrip_master = getattr(self, "scrip_master", None)
+                        if scrip_master:
                             try:
-                                token = self.scrip_master.get_token(symbol, exchange="NSE")
+                                token = scrip_master.get_token(symbol, exchange="NSE")
                                 if token:
                                     result["market_depth"] = market_data.get_market_depth(
                                         token
