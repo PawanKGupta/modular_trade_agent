@@ -4141,6 +4141,12 @@ class AutoTradeEngine:
                             result["price"] = price
 
                         # Log-only: bid + ask depth (5 levels each; does not affect sizing)
+                        from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                            DEPTH_DETAIL_FETCH_ERROR,
+                            DEPTH_DETAIL_NO_TOKEN,
+                            unavailable_depth_snapshot,
+                        )
+
                         if self.scrip_master:
                             try:
                                 token = self.scrip_master.get_token(symbol, exchange="NSE")
@@ -4148,9 +4154,16 @@ class AutoTradeEngine:
                                     result["market_depth"] = market_data.get_market_depth(
                                         token
                                     )
+                                else:
+                                    result["market_depth"] = unavailable_depth_snapshot(
+                                        DEPTH_DETAIL_NO_TOKEN
+                                    )
                             except Exception as depth_err:
                                 logger.debug(
                                     f"{base_symbol}: pre-market depth fetch failed: {depth_err}"
+                                )
+                                result["market_depth"] = unavailable_depth_snapshot(
+                                    DEPTH_DETAIL_FETCH_ERROR
                                 )
 
                         if price and price > 0:
@@ -4210,24 +4223,19 @@ class AutoTradeEngine:
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
 
                 from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
-                    KOTAK_DEPTH_LEVELS,
+                    DEPTH_DETAIL_NOT_FETCHED,
                     log_premarket_depth,
+                    unavailable_depth_snapshot,
                 )
 
-                empty_levels = tuple(None for _ in range(KOTAK_DEPTH_LEVELS))
                 snapshot = market_depth_results.get(order_id)
-                bid_levels = (
-                    snapshot.bid_levels if snapshot is not None else empty_levels
-                )
-                ask_levels = (
-                    snapshot.ask_levels if snapshot is not None else empty_levels
-                )
+                if snapshot is None:
+                    snapshot = unavailable_depth_snapshot(DEPTH_DETAIL_NOT_FETCHED)
                 log_premarket_depth(
                     logger,
                     base_symbol,
                     ltp=premarket_price,
-                    bid_levels=bid_levels,
-                    ask_levels=ask_levels,
+                    snapshot=snapshot,
                     entry_type=order_info.get("entry_type"),
                 )
 
