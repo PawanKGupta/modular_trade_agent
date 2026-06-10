@@ -873,6 +873,63 @@ class TestPaperTradingSellMonitoring:
 
         return adapter
 
+    def test_paper_place_sell_matches_system_holdings_when_aligned(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """P4: when paper holdings match system positions, sell qty equals system qty."""
+        from unittest.mock import patch
+
+        placed = []
+
+        def capture_place(order):
+            placed.append(order)
+            return "SELL_ALIGNED"
+
+        adapter_with_holdings.broker.place_order.side_effect = capture_place
+        adapter_with_holdings.broker.get_pending_orders.return_value = []
+
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", side_effect=_ema9_for_ticker
+        ):
+            adapter_with_holdings._place_sell_orders()
+
+        reliance_orders = [o for o in placed if "RELIANCE" in o.symbol]
+        assert len(reliance_orders) == 1
+        assert reliance_orders[0].quantity == 40
+
+    def test_paper_place_sell_uses_full_holdings_when_manual_excess_on_broker(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """
+        P4 / paper vs live divergence: paper sizes sells from broker holdings only.
+
+        Live broker path caps with positions table (min). Paper does not — if holdings
+        include shares not tracked in positions (simulated manual buy on paper broker),
+        sell placement uses the full holdings quantity.
+        """
+        from unittest.mock import MagicMock, patch
+
+        placed = []
+
+        def capture_place(order):
+            placed.append(order)
+            return "SELL_MANUAL_EXCESS"
+
+        inflated = MagicMock()
+        inflated.symbol = "RELIANCE-EQ"
+        inflated.quantity = 50
+        adapter_with_holdings.broker.get_holdings.return_value = [inflated]
+        adapter_with_holdings.broker.place_order.side_effect = capture_place
+        adapter_with_holdings.broker.get_pending_orders.return_value = []
+
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", side_effect=_ema9_for_ticker
+        ):
+            adapter_with_holdings._place_sell_orders()
+
+        assert len(placed) == 1
+        assert placed[0].quantity == 50
+
     def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):
         """Test that sell orders are placed at frozen EMA9 target"""
         from unittest.mock import patch

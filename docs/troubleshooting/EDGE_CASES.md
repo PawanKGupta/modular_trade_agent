@@ -92,14 +92,26 @@ Day 3: run_at_market_open() runs
 - `evaluate_reentries_and_exits()` has similar logic to update sell orders (lines 4863-4933)
 - `update_sell_order()` method handles order modification via `modify_order()` API
 
+### Regression tests (manual / system / mixed)
+
+Gap coverage lives in:
+
+- `tests/unit/kotak/test_sell_engine_manual_holdings_gaps.py` — X3 holdings-only misread, order-book close, M4 re-entry + manual, T3 recent-buy skip
+- `tests/unit/kotak/test_unified_order_monitor_position_sync_gaps.py` — U3 cycle-scoped position reflection
+- `tests/unit/kotak/test_sell_engine_reentry_position_sync.py` — multi-cycle + manual buy, cycle-scoped closed-buy sync
+- `tests/unit/application/test_paper_trading_service_adapter.py` — P4 paper holdings vs live `min(positions, broker)` divergence
+
 ### Operator note: `_sync_position_qty_from_closed_buys`
 
 When broker holdings exceed the DB open-position row after a re-entry fill, sell monitoring may
 call `SellOrderManager._sync_position_qty_from_closed_buys()` to align qty/avg from **closed
-system buy** history. This sums all closed system buys for the symbol — correct when the DB
-row lagged behind executed re-entries. It does **not** subtract partial sells from that
-history; sync only runs when `broker_qty > positions_qty`, so overstating qty after partial
-exits is unlikely but operators should treat large broker/DB gaps as worth checking in logs.
+system buy** history for the **current open position cycle** only (buys executed on or after
+`positions.opened_at`). Prior trade cycles for the same symbol are excluded. Live broker sync
+counts only `trade_mode = broker` rows (legacy `NULL` trade_mode is ignored).
+
+Sync is skipped when scoped system qty exceeds broker holdings (manual buy on top of system
+qty). Sync never raises DB qty above broker qty. Operators should still treat large broker/DB
+gaps as worth checking in logs.
 
 ---
 
@@ -256,6 +268,10 @@ sell_qty = min(positions_qty, broker_qty)  # ✅ Correct: Only sells system hold
 - **Edge Case #17**: Sell order quantity validation (FIXED - validates against broker holdings)
 
 **Note**: Edge Cases #14, #15, #17 handle when manual trades affect **system's own holdings**. Edge Case #3 is about manual holdings that are **separate from system holdings**.
+
+**Known limitation (X3):** Holdings-only reconciliation cannot tell “user sold all system shares but manual shares remain” from a partial system sell. Broker qty below DB may **reduce** the positions row toward the manual remainder. Use broker **order-book** manual-sell detection (`_detect_manual_sells_from_orders`) to close the system position when a full untracked sell executed. See `test_reconcile_only_manual_shares_remaining_misreduces_db` and `test_detect_manual_sells_closes_position_on_untracked_full_system_sell`.
+
+**Paper vs live (P4):** Live sell sizing uses `min(positions_qty, broker_qty)`. Paper `_place_sell_orders()` sizes from **paper broker holdings** only; inflated holdings (simulated manual buy on paper) can produce a larger sell than the positions table.
 
 ---
 

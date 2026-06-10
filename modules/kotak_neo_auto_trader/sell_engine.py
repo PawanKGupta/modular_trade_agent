@@ -23,6 +23,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.infrastructure.db.timezone_utils import (  # noqa: E402
+    as_ist_aware,
     coerce_db_timestamp_to_ist,
     ist_now,
     ist_now_naive,
@@ -2776,7 +2777,9 @@ class SellOrderManager:
 
                 # Case 3: Broker qty exceeds DB — sync from closed system buys when applicable
                 elif broker_qty > positions_qty:
-                    if self._sync_position_qty_from_closed_buys(symbol, float(positions_qty)):
+                    if self._sync_position_qty_from_closed_buys(
+                        symbol, float(positions_qty), broker_qty=float(broker_qty)
+                    ):
                         stats["updated"] += 1
                     else:
                         stats["ignored"] += 1
@@ -5364,8 +5367,31 @@ class SellOrderManager:
             logger.debug(f"Error checking for completed sell order for {symbol}: {e}")
             return None
 
-    def _closed_system_buy_totals(self, full_symbol: str) -> tuple[float, float] | None:
-        """Sum closed system buy executions for *full_symbol* (qty, volume-weighted avg)."""
+    def _closed_buy_execution_time(self, order: Any) -> datetime | None:
+        """Best-effort execution timestamp for cycle-scoped closed-buy totals."""
+        for attr in ("execution_time", "filled_at", "closed_at", "placed_at"):
+            value = getattr(order, attr, None)
+            if value is None or not isinstance(value, datetime):
+                continue
+            try:
+                return coerce_db_timestamp_to_ist(value)
+            except Exception:
+                continue
+        return None
+
+    def _closed_system_buy_totals(
+        self,
+        full_symbol: str,
+        *,
+        opened_at: datetime | None = None,
+        require_broker_trade_mode: bool = True,
+    ) -> tuple[float, float] | None:
+        """
+        Sum closed system buy executions for *full_symbol* (qty, volume-weighted avg).
+
+        When *opened_at* is set, only buys executed on or after the current open
+        position's ``opened_at`` are included (current trade cycle).
+        """
         if not self.orders_repo or not self.user_id or DbOrderStatus is None:
             return None
 
@@ -5373,6 +5399,13 @@ class SellOrderManager:
         base_symbol = extract_base_symbol(symbol_upper).upper()
         total_qty = 0.0
         total_cost = 0.0
+        opened_at_ist = None
+        if opened_at is not None:
+            opened_at_ist = (
+                coerce_db_timestamp_to_ist(opened_at)
+                if opened_at.tzinfo is None
+                else as_ist_aware(opened_at)
+            )
 
         try:
             orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.CLOSED, limit=None)
@@ -5389,8 +5422,16 @@ class SellOrderManager:
             if str(getattr(order, "orig_source", "") or "").lower() == "manual":
                 continue
             trade_mode = getattr(order, "trade_mode", None)
-            if trade_mode is not None and trade_mode != TradeMode.BROKER:
+            if require_broker_trade_mode:
+                if trade_mode != TradeMode.BROKER:
+                    continue
+            elif trade_mode is not None and trade_mode != TradeMode.BROKER:
                 continue
+
+            if opened_at_ist is not None:
+                order_time = self._closed_buy_execution_time(order)
+                if order_time is None or order_time < opened_at_ist:
+                    continue
 
             try:
                 exec_qty = float(getattr(order, "execution_qty", None) or order.quantity or 0)
@@ -5418,41 +5459,61 @@ class SellOrderManager:
             return None
         return total_qty, total_cost / total_qty
 
-    def _sync_position_qty_from_closed_buys(self, symbol: str, current_qty: float) -> bool:
+    def _sync_position_qty_from_closed_buys(
+        self,
+        symbol: str,
+        current_qty: float,
+        broker_qty: float | None = None,
+    ) -> bool:
         """
-        Raise open position qty/avg when closed system buys exceed the DB row.
+        Raise open position qty/avg when closed system buys in the current cycle exceed DB.
 
-        Operator note: totals sum **all** closed system buys for the symbol (re-entry
-        fills while the DB row was stale). This only runs when broker holdings exceed DB
-        qty; it does not reconcile partial sells — if holdings were reduced by sells but
-        closed buy history remains cumulative, sync could theoretically overstate qty.
-        Mitigated because sync applies only when broker_qty > positions_qty and only
-        system (non-manual) closed buys are counted.
+        Totals are scoped to the open position's ``opened_at`` and explicit broker
+        ``trade_mode`` rows only. Sync is skipped when scoped system qty exceeds broker
+        holdings (manual buy on top of system qty).
         """
         if not self.positions_repo or not self.user_id:
             return False
 
-        totals = self._closed_system_buy_totals(symbol)
+        try:
+            existing = self.positions_repo.get_by_symbol(self.user_id, symbol)
+        except Exception as exc:
+            logger.debug(f"Could not load position for closed-buy sync {symbol}: {exc}")
+            return False
+
+        if not existing or getattr(existing, "closed_at", None) is not None:
+            return False
+
+        totals = self._closed_system_buy_totals(
+            symbol,
+            opened_at=getattr(existing, "opened_at", None),
+            require_broker_trade_mode=True,
+        )
         if totals is None:
             return False
 
         expected_qty, expected_avg = totals
-        if expected_qty <= current_qty + 0.01:
+        if broker_qty is not None and expected_qty > float(broker_qty) + 0.01:
+            return False
+
+        sync_qty = (
+            min(expected_qty, float(broker_qty)) if broker_qty is not None else expected_qty
+        )
+        if sync_qty <= current_qty + 0.01:
             return False
 
         try:
-            existing = self.positions_repo.get_by_symbol(self.user_id, symbol)
             self.positions_repo.upsert(
                 user_id=self.user_id,
                 symbol=symbol,
-                quantity=expected_qty,
+                quantity=sync_qty,
                 avg_price=expected_avg,
-                opened_at=getattr(existing, "opened_at", None) if existing else None,
-                entry_rsi=getattr(existing, "entry_rsi", None) if existing else None,
+                opened_at=getattr(existing, "opened_at", None),
+                entry_rsi=getattr(existing, "entry_rsi", None),
             )
             logger.info(
                 f"Synced position {symbol} from closed buy orders: "
-                f"qty {current_qty} -> {expected_qty}, avg Rs {expected_avg:.2f}"
+                f"qty {current_qty} -> {sync_qty}, avg Rs {expected_avg:.2f}"
             )
             return True
         except Exception as exc:

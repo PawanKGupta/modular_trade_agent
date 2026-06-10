@@ -214,7 +214,11 @@ class UnifiedOrderMonitor:
         pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
         if not pos or pos.closed_at is not None:
             return False
-        totals = self.sell_manager._closed_system_buy_totals(symbol)
+        totals = self.sell_manager._closed_system_buy_totals(
+            symbol,
+            opened_at=getattr(pos, "opened_at", None),
+            require_broker_trade_mode=True,
+        )
         if totals is None:
             return True
         expected_qty, _ = totals
