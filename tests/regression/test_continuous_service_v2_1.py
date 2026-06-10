@@ -8,7 +8,7 @@ with single login session and automatic task execution.
 import sys
 from datetime import time as dt_time
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from freezegun import freeze_time
@@ -392,13 +392,17 @@ class TestEODCleanupBehavior:
         db_session.commit()
         db_session.refresh(user)
 
-        service = TradingService(
-            user_id=user.id,
-            db_session=db_session,
-            broker_creds=None,
-            strategy_config=None,
-            env_file="test.env",
-        )
+        with patch(
+            "src.infrastructure.logging.get_user_logger",
+            return_value=MagicMock(),
+        ):
+            service = TradingService(
+                user_id=user.id,
+                db_session=db_session,
+                broker_creds=None,
+                strategy_config=None,
+                env_file="test.env",
+            )
 
         # Simulate tasks completed
         service.tasks_completed["analysis"] = True
@@ -407,10 +411,20 @@ class TestEODCleanupBehavior:
         service.tasks_completed["sell_monitor_started"] = True
         # Position monitor removed in Phase 3 (RSI Exit & Re-entry integration)
 
-        # Mock engine with eod_cleanup
+        # Mock engine: explicit attrs so task_context stays JSON-serializable
+        # (bare Mock().get() returns Mock, which breaks service_task_execution logging).
         mock_engine = Mock()
+        mock_engine.orders_repo = None
         mock_engine.eod_cleanup = Mock()
-        mock_engine.eod_cleanup.run = Mock()
+        mock_engine.eod_cleanup.run_eod_cleanup = Mock()
+        mock_engine.cancel_unexecuted_day_buy_orders_at_eod = Mock(
+            return_value={
+                "cancelled": 0,
+                "db_only_cancelled": 0,
+                "failed": 0,
+                "skipped_amo": 0,
+            }
+        )
         service.engine = mock_engine
 
         # Run EOD cleanup
