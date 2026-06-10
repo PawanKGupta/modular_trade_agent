@@ -192,6 +192,35 @@ class TelegramNotifier:
             logger.warning(f"Error checking notification preferences: {e}. Sending notification.")
             return True
 
+    def _dispatch_order_event(
+        self,
+        *,
+        user_id: int | None,
+        event_type: str,
+        title: str,
+        message_plain: str,
+        telegram_body: str | None = None,
+        level: str = "info",
+        log_label: str,
+    ) -> bool:
+        """Send order event on Telegram, in-app, and email (PR2)."""
+        logger.info(log_label)
+        from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
+            dispatch_trading_notification,
+        )
+
+        return dispatch_trading_notification(
+            user_id=user_id,
+            event_type=event_type,
+            title=title,
+            message_plain=message_plain,
+            telegram_body=telegram_body or message_plain,
+            level=level,  # type: ignore[arg-type]
+            db_session=self.db_session,
+            preference_service=self.preference_service,
+            telegram_notifier=self,
+        )
+
     def send_message(
         self, message: str, parse_mode: str = "Markdown", user_id: int | None = None
     ) -> bool:
@@ -288,10 +317,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_REJECTED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
@@ -310,8 +335,19 @@ class TelegramNotifier:
 
         message += "\n_Please review and take necessary action._"
 
-        logger.info(f"Sending rejection notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_REJECTED,
+            title="Order Rejected",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="error",
+            log_label=f"Sending rejection notification for {symbol}",
+        )
 
     def notify_order_execution(
         self,
@@ -338,10 +374,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_EXECUTED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
@@ -360,8 +392,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending execution notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_EXECUTED,
+            title="Order Executed",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="info",
+            log_label=f"Sending execution notification for {symbol}",
+        )
 
     def notify_partial_fill(
         self,
@@ -390,10 +433,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.PARTIAL_FILL):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
         fill_percentage = (filled_qty / total_qty * 100) if total_qty > 0 else 0
 
@@ -411,8 +450,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending partial fill notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.PARTIAL_FILL,
+            title="Partial Fill",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="info",
+            log_label=f"Sending partial fill notification for {symbol}",
+        )
 
     def notify_system_alert(
         self,
@@ -611,10 +661,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_PLACED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
@@ -635,8 +681,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending order placed notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_PLACED,
+            title="Order Placed",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="info",
+            log_label=f"Sending order placed notification for {symbol}",
+        )
 
     def notify_order_cancelled(
         self,
@@ -662,10 +719,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_CANCELLED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
@@ -681,8 +734,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending cancellation notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_CANCELLED,
+            title="Order Cancelled",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="warning",
+            log_label=f"Sending cancellation notification for {symbol}",
+        )
 
     def notify_order_modified(
         self,
@@ -708,10 +772,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_MODIFIED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = (
@@ -738,8 +798,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending order modification notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_MODIFIED,
+            title="Order Modified",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="warning",
+            log_label=f"Sending order modification notification for {symbol}",
+        )
 
     def notify_premarket_adjusted(
         self,
@@ -753,14 +824,20 @@ class TelegramNotifier:
 
         Uses ORDER_MODIFIED preference — not sell-monitor or manual broker edits.
         """
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_MODIFIED):
-            return False
-        logger.info(f"Sending 9:05 pre-market adjust notification for {symbol} (#{order_id})")
-        return self.notify_system_alert(
-            alert_type="PREMARKET_ADJUSTED",
-            message_text=message_text,
-            severity="INFO",
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
+        telegram_body = f"{message_text}\n\nTime: {timestamp}\n"
+        return self._dispatch_order_event(
             user_id=user_id,
+            event_type=NotificationEventType.ORDER_MODIFIED,
+            title="9:05 Pre-market",
+            message_plain=strip_markdown_for_plain(telegram_body),
+            telegram_body=telegram_body,
+            level="info",
+            log_label=f"Sending 9:05 pre-market adjust notification for {symbol} (#{order_id})",
         )
 
     def notify_premarket_cancelled_ema9(
@@ -771,14 +848,20 @@ class TelegramNotifier:
         user_id: int | None = None,
     ) -> bool:
         """9:05 gap-up cancel above EMA9−1% (ORDER_CANCELLED preference)."""
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_CANCELLED):
-            return False
-        logger.info(f"Sending 9:05 EMA9 cancel notification for {symbol} (#{order_id})")
-        return self.notify_system_alert(
-            alert_type="PREMARKET_EMA9_CANCEL",
-            message_text=message_text,
-            severity="WARNING",
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
+        telegram_body = f"{message_text}\n\nTime: {timestamp}\n"
+        return self._dispatch_order_event(
             user_id=user_id,
+            event_type=NotificationEventType.ORDER_CANCELLED,
+            title="9:05 Cancelled",
+            message_plain=strip_markdown_for_plain(telegram_body),
+            telegram_body=telegram_body,
+            level="warning",
+            log_label=f"Sending 9:05 EMA9 cancel notification for {symbol} (#{order_id})",
         )
 
     def notify_order_skipped(
@@ -802,10 +885,6 @@ class TelegramNotifier:
         Returns:
             True if sent successfully
         """
-        # Phase 3: Check preferences
-        if not self._should_send_notification(user_id, NotificationEventType.ORDER_SKIPPED):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Format reason for display
@@ -832,8 +911,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending order skipped notification for {symbol}: {reason}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=NotificationEventType.ORDER_SKIPPED,
+            title="Order Skipped",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="info",
+            log_label=f"Sending order skipped notification for {symbol}: {reason}",
+        )
 
     def notify_retry_queue_updated(
         self,
@@ -868,9 +958,6 @@ class TelegramNotifier:
         }
         event_type = action_event_map.get(action.lower(), NotificationEventType.RETRY_QUEUE_UPDATED)
 
-        if not self._should_send_notification(user_id, event_type):
-            return False
-
         timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
 
         message = f"RETRY QUEUE UPDATE\n\nSymbol: `{symbol}`\nAction: {action}\n"
@@ -885,8 +972,19 @@ class TelegramNotifier:
             for key, value in additional_info.items():
                 message += f"  - {key}: {value}\n"
 
-        logger.info(f"Sending retry queue update notification for {symbol}")
-        return self.send_message(message, user_id=user_id)
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            strip_markdown_for_plain,
+        )
+
+        return self._dispatch_order_event(
+            user_id=user_id,
+            event_type=event_type,
+            title="Retry Queue Update",
+            message_plain=strip_markdown_for_plain(message),
+            telegram_body=message,
+            level="info",
+            log_label=f"Sending retry queue update notification for {symbol}",
+        )
 
     def test_connection(self) -> bool:
         """

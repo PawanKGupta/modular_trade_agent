@@ -163,6 +163,46 @@ This is an automated message. Please do not reply.
 
         return self.send_email(to_email=to_email, subject=subject, body=body)
 
+    def send_trading_notification(
+        self,
+        to_email: str,
+        title: str,
+        message: str,
+        level: str = "info",
+    ) -> bool:
+        """
+        Send a trading event notification email.
+
+        Args:
+            to_email: Recipient email address
+            title: Notification title
+            message: Notification message (plain text)
+            level: Notification level (info, warning, error, critical)
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        level_emoji = {
+            "info": "ℹ️",
+            "warning": "⚠️",
+            "error": "❌",
+            "critical": "🚨",
+        }
+        emoji = level_emoji.get(level, "ℹ️")
+        subject = f"{emoji} {title} - Rebound"
+
+        body = f"""
+{title}
+
+{message}
+
+---
+Rebound — Modular Trade Agent
+This is an automated message. Please do not reply.
+        """.strip()
+
+        return self.send_email(to_email=to_email, subject=subject, body=body)
+
     def is_available(self) -> bool:
         """
         Check if email notifier is available and configured.

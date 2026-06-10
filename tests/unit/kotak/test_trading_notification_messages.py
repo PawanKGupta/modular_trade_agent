@@ -9,6 +9,7 @@ from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
     format_premarket_adjusted_telegram,
     format_premarket_ema9_cancel_telegram,
     format_premarket_task_in_app_summary,
+    strip_markdown_for_plain,
 )
 
 
@@ -45,6 +46,10 @@ def test_format_premarket_ema9_cancel_telegram():
     assert "*9:05 Cancelled*" in message
     assert "`TCS`" in message
     assert "EMA9" in message
+
+
+def test_strip_markdown_for_plain():
+    assert strip_markdown_for_plain("*9:05* · `RELIANCE`") == "9:05 · RELIANCE"
 
 
 def test_format_premarket_task_in_app_summary():

@@ -64,6 +64,14 @@ def format_premarket_ema9_cancel_telegram(
     )
 
 
+def strip_markdown_for_plain(text: str) -> str:
+    """Best-effort plain text from Telegram Markdown bodies."""
+    plain = text.replace("`", "")
+    for marker in ("**", "*", "__", "_"):
+        plain = plain.replace(marker, "")
+    return plain
+
+
 def format_premarket_task_in_app_summary(summary: dict[str, int]) -> str:
     """One-line in-app summary after premarket_amo_adjustment task completes."""
     adjusted = int(summary.get("adjusted") or 0)
