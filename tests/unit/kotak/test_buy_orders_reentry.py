@@ -541,7 +541,7 @@ class TestPlaceReentryOrders:
     def test_place_reentry_orders_partial_balance_still_places_reduced_qty(
         self, mock_login, mock_place_order, mock_auth
     ):
-        """Partial funds should reduce qty and place — not treat as full shortfall."""
+        """Partial funds should notify full-qty shortfall, reduce qty, and still place."""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
@@ -593,7 +593,12 @@ class TestPlaceReentryOrders:
 
         assert summary["failed_balance"] == 0
         assert summary["placed"] == 1
-        engine._notify_balance_shortfall.assert_not_called()
+        engine._notify_balance_shortfall.assert_called_once()
+        notify_kwargs = engine._notify_balance_shortfall.call_args.kwargs
+        assert notify_kwargs["qty"] == 100
+        assert notify_kwargs["shortfall"] == 5000.0
+        assert notify_kwargs["affordable_qty"] == 50
+        assert notify_kwargs["entry_type"] == "reentry"
         engine._add_failed_order.assert_not_called()
         place_args = mock_place_order.call_args[0]
         assert place_args[2] == 50

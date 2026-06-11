@@ -49,6 +49,22 @@ def test_format_balance_shortfall_reentry_evening_preview():
     assert "INFY-EQ" in body
 
 
+def test_format_balance_shortfall_reentry_partial_live():
+    body = format_balance_shortfall_telegram(
+        broker_symbol="RELIANCE-EQ",
+        qty=100,
+        close=100.0,
+        required_cash=10000.0,
+        avail_cash=5000.0,
+        shortfall=5000.0,
+        dry_run=False,
+        entry_type="reentry",
+        affordable_qty=50,
+    )
+    assert "reduced from 100" in body
+    assert "Placing re-entry for 50 shares" in body
+
+
 def test_format_balance_shortfall_morning_buy():
     body = format_balance_shortfall_telegram(
         broker_symbol="TCS-EQ",

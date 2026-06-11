@@ -82,18 +82,38 @@ def format_balance_shortfall_telegram(
     shortfall: float,
     dry_run: bool,
     entry_type: str = "entry",
+    affordable_qty: int | None = None,
 ) -> str:
     """Telegram body for insufficient buy margin (evening preview or morning buy)."""
     is_reentry = entry_type == "reentry"
+    partial_reentry = (
+        is_reentry
+        and affordable_qty is not None
+        and affordable_qty > 0
+        and affordable_qty < qty
+    )
     if dry_run:
         if is_reentry:
             header = "*Insufficient Margin (Evening Re-entry Preview)*"
         else:
             header = "*Insufficient Margin (Evening Preview)*"
-        footer = "No order placed. Fund account before morning buy run (9:01 AM IST)."
+        if partial_reentry:
+            footer = (
+                f"No order placed. Full re-entry needs more funds; "
+                f"affordable size would be {affordable_qty} shares. "
+                "Fund account before morning buy run (9:01 AM IST)."
+            )
+        else:
+            footer = "No order placed. Fund account before morning buy run (9:01 AM IST)."
     elif is_reentry:
         header = "*Insufficient Balance - Re-entry BUY*"
-        footer = "Re-entry saved for retry at premarket_retry or manually."
+        if partial_reentry:
+            footer = (
+                f"Placing re-entry for {affordable_qty} shares (reduced from {qty}). "
+                "Add funds for the full planned re-entry size."
+            )
+        else:
+            footer = "Re-entry saved for retry at premarket_retry or manually."
     else:
         header = "*Insufficient Balance - BUY*"
         footer = "Order saved for retry at premarket_retry or manually."
@@ -117,6 +137,7 @@ def format_balance_shortfall_plain(
     shortfall: float,
     dry_run: bool,
     entry_type: str = "entry",
+    affordable_qty: int | None = None,
 ) -> str:
     """Plain-text body for in-app and email balance shortfall alerts."""
     return strip_markdown_for_plain(
@@ -129,6 +150,7 @@ def format_balance_shortfall_plain(
             shortfall=shortfall,
             dry_run=dry_run,
             entry_type=entry_type,
+            affordable_qty=affordable_qty,
         )
     )
 

@@ -340,6 +340,7 @@ class AutoTradeEngine:
         shortfall: float,
         dry_run: bool,
         entry_type: str = "entry",
+        affordable_qty: int | None = None,
     ) -> None:
         """Send balance shortfall on all enabled channels (Telegram, in-app, email)."""
         from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
@@ -359,6 +360,7 @@ class AutoTradeEngine:
             shortfall=shortfall,
             dry_run=dry_run,
             entry_type=entry_type,
+            affordable_qty=affordable_qty,
         )
         message_plain = format_balance_shortfall_plain(
             broker_symbol=broker_symbol,
@@ -369,6 +371,7 @@ class AutoTradeEngine:
             shortfall=shortfall,
             dry_run=dry_run,
             entry_type=entry_type,
+            affordable_qty=affordable_qty,
         )
         is_reentry = entry_type == "reentry"
         if dry_run:
@@ -6143,17 +6146,18 @@ class AutoTradeEngine:
                         f"requested={requested_qty}, affordable={affordable_qty}, "
                         f"shortfall=Rs {shortfall:,.0f}"
                     )
+                    self._notify_balance_shortfall(
+                        broker_symbol=broker_symbol,
+                        qty=requested_qty,
+                        close=current_price,
+                        required_cash=required_cash,
+                        avail_cash=avail_cash,
+                        shortfall=shortfall,
+                        dry_run=dry_run,
+                        entry_type="reentry",
+                        affordable_qty=affordable_qty if affordable_qty > 0 else None,
+                    )
                     if affordable_qty <= 0:
-                        self._notify_balance_shortfall(
-                            broker_symbol=broker_symbol,
-                            qty=requested_qty,
-                            close=current_price,
-                            required_cash=required_cash,
-                            avail_cash=avail_cash,
-                            shortfall=shortfall,
-                            dry_run=dry_run,
-                            entry_type="reentry",
-                        )
                         summary["failed_balance"] += 1
                         if not dry_run:
                             failed_order_info = {
