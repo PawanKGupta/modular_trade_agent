@@ -525,7 +525,10 @@ class TestUserNotificationPreferences:
         assert prefs.telegram_enabled is False
         assert prefs.email_enabled is False
         assert prefs.in_app_enabled is True
-        assert prefs.notify_service_events is True
+        assert prefs.notify_service_events is False
+        assert prefs.notify_service_started is False
+        assert prefs.notify_service_stopped is False
+        assert prefs.notify_service_execution_completed is False
         assert prefs.notify_trading_events is True
         assert prefs.notify_system_events is True
         assert prefs.notify_errors is True

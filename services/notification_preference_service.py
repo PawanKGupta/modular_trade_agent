@@ -81,6 +81,17 @@ class NotificationEventType:
         ]
 
 
+# Service lifecycle notifications are opt-in (disabled when no preference row exists).
+_SERVICE_EVENT_TYPES = frozenset(
+    {
+        NotificationEventType.SERVICE_STARTED,
+        NotificationEventType.SERVICE_STOPPED,
+        NotificationEventType.SERVICE_EXECUTION_COMPLETED,
+        NotificationEventType.SERVICE_EVENT,
+    }
+)
+
+
 class NotificationPreferenceService:
     """
     Service for managing and checking user notification preferences.
@@ -153,8 +164,8 @@ class NotificationPreferenceService:
                 telegram_enabled=False,
                 email_enabled=False,
                 in_app_enabled=True,  # In-app enabled by default
-                # Legacy types default to True (backward compatibility)
-                notify_service_events=True,
+                # Legacy types: service events opt-in; trading/system stay on
+                notify_service_events=False,
                 notify_trading_events=True,
                 notify_system_events=True,
                 notify_errors=True,
@@ -172,10 +183,10 @@ class NotificationPreferenceService:
                 notify_system_errors=True,
                 notify_system_warnings=False,  # Reduce noise
                 notify_system_info=False,  # Reduce noise
-                # Granular service event preferences
-                notify_service_started=True,
-                notify_service_stopped=True,
-                notify_service_execution_completed=True,
+                # Granular service event preferences (opt-in)
+                notify_service_started=False,
+                notify_service_stopped=False,
+                notify_service_execution_completed=False,
                 notify_payment_failed=True,
             )
             self.db.add(preferences)
@@ -257,9 +268,18 @@ class NotificationPreferenceService:
         """
         preferences = self.get_preferences(user_id)
 
-        # If no preferences exist, use defaults (all enabled for backward compatibility)
+        # If no preferences exist, use defaults (service events off; others on)
         if preferences is None:
-            logger.debug(f"No preferences found for user {user_id}, using defaults (all enabled)")
+            if event_type in _SERVICE_EVENT_TYPES:
+                logger.debug(
+                    f"No preferences found for user {user_id}, "
+                    f"service event {event_type} default disabled"
+                )
+                return False
+            logger.debug(
+                f"No preferences found for user {user_id}, "
+                f"non-service event {event_type} default enabled"
+            )
             return True
 
         # Check channel is enabled

@@ -1799,7 +1799,7 @@ class MultiUserTradingService:
                         preferences = pref_service.get_preferences(user_id)
                         if preferences and preferences.email_address:
                             email_notifier.send_service_notification(
-                                email=preferences.email_address,
+                                to_email=preferences.email_address,
                                 title="Unified Trading Service Started",
                                 message=(  # noqa: E501
                                     "Unified Trading Service has started. "
@@ -1887,7 +1887,7 @@ class MultiUserTradingService:
                         preferences = pref_service.get_preferences(user_id)
                         if preferences and preferences.email_address:
                             email_notifier.send_service_notification(
-                                email=preferences.email_address,
+                                to_email=preferences.email_address,
                                 title="Unified Trading Service Stopped",
                                 message=(  # noqa: E501
                                     "Unified Trading Service has been stopped. "

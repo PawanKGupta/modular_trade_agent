@@ -151,9 +151,10 @@ class TestNotificationPreferenceService:
         assert result.notify_order_placed is True
         assert result.notify_order_modified is True
         assert result.notify_system_warnings is False
-        assert result.notify_service_started is True
-        assert result.notify_service_stopped is True
-        assert result.notify_service_execution_completed is True
+        assert result.notify_service_events is False
+        assert result.notify_service_started is False
+        assert result.notify_service_stopped is False
+        assert result.notify_service_execution_completed is False
         service.db.add.assert_called_once()
         service.db.commit.assert_called_once()
 
@@ -266,8 +267,25 @@ class TestNotificationPreferenceService:
             user_id=1, event_type=NotificationEventType.ORDER_PLACED, channel="telegram"
         )
 
-        # Should default to True for backward compatibility
+        # Non-service events default to enabled when no preference row exists
         assert result is True
+
+    def test_should_notify_no_preferences_service_events_disabled(self, service, mock_db_session):
+        """Service events default off when no preferences exist."""
+        mock_query_result = Mock()
+        mock_query_result.first.return_value = None
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query_result
+        mock_db_session.query.return_value = mock_query
+
+        for event_type in (
+            NotificationEventType.SERVICE_STARTED,
+            NotificationEventType.SERVICE_STOPPED,
+            NotificationEventType.SERVICE_EXECUTION_COMPLETED,
+            NotificationEventType.SERVICE_EVENT,
+        ):
+            result = service.should_notify(user_id=1, event_type=event_type, channel="in_app")
+            assert result is False
 
     def test_is_quiet_hours_no_preferences(self, service, mock_db_session):
         """Test is_quiet_hours when no preferences exist"""
