@@ -89,6 +89,7 @@ def get_portfolio_service(  # noqa: PLR0913
     auth: KotakNeoAuth | None = None,
     strategy_config=None,
     orders_repo=None,
+    positions_repo=None,
     user_id: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 120,
@@ -102,6 +103,7 @@ def get_portfolio_service(  # noqa: PLR0913
         auth: KotakNeoAuth instance (optional, for 2FA handling)
         strategy_config: StrategyConfig instance (optional, for portfolio limits)
         orders_repo: OrdersRepository instance (optional, for database order checks)
+        positions_repo: PositionsRepository instance (optional, for system holdings count)
         user_id: User ID (optional, for database order checks)
         enable_caching: Enable caching (default: True)
         cache_ttl: Cache TTL in seconds (default: 120 / 2 minutes)
@@ -118,6 +120,7 @@ def get_portfolio_service(  # noqa: PLR0913
             auth=auth,
             strategy_config=strategy_config,
             orders_repo=orders_repo,
+            positions_repo=positions_repo,
             user_id=user_id,
             enable_caching=enable_caching,
             cache_ttl=cache_ttl,
@@ -134,6 +137,8 @@ def get_portfolio_service(  # noqa: PLR0913
         _portfolio_service_instance.strategy_config = strategy_config
     if orders_repo is not None:
         _portfolio_service_instance.orders_repo = orders_repo
+    if positions_repo is not None:
+        _portfolio_service_instance.positions_repo = positions_repo
     if user_id is not None:
         _portfolio_service_instance.user_id = user_id
 
@@ -158,6 +163,7 @@ class PortfolioService:
         auth: KotakNeoAuth | None = None,
         strategy_config=None,
         orders_repo=None,
+        positions_repo=None,
         user_id: int | None = None,
         enable_caching: bool = True,
         cache_ttl: int = 120,
@@ -171,6 +177,7 @@ class PortfolioService:
             auth: KotakNeoAuth instance (for 2FA handling)
             strategy_config: StrategyConfig instance (for portfolio limits)
             orders_repo: OrdersRepository instance (optional, for database order checks)
+            positions_repo: PositionsRepository instance (optional, for system holdings count)
             user_id: User ID (optional, for database order checks)
             enable_caching: Enable caching (default: True)
             cache_ttl: Cache TTL in seconds (default: 120 / 2 minutes)
@@ -180,6 +187,7 @@ class PortfolioService:
         self.auth = auth
         self.strategy_config = strategy_config
         self.orders_repo = orders_repo
+        self.positions_repo = positions_repo
         self.user_id = user_id
         self.enable_caching = enable_caching
         self._cache = PortfolioCache(ttl_seconds=cache_ttl) if enable_caching else None
@@ -197,6 +205,30 @@ class PortfolioService:
         """
         base = base.upper()
         return [base, f"{base}-EQ", f"{base}-BE", f"{base}-BL", f"{base}-BZ"]
+
+    @staticmethod
+    def _normalize_base_symbol(sym: str) -> str:
+        """Normalize a trading symbol to its base form (no series suffix)."""
+        return (
+            sym.upper()
+            .replace("-EQ", "")
+            .replace("-BE", "")
+            .replace("-BL", "")
+            .replace("-BZ", "")
+        )
+
+    @staticmethod
+    def _extract_holding_symbol(item: dict) -> str:
+        """Extract symbol from a Kotak holdings API row."""
+        return str(
+            item.get("tradingSymbol")
+            or item.get("symbol")
+            or item.get("instrumentName")
+            or item.get("securitySymbol")
+            or item.get("securityname")
+            or item.get("stockName")
+            or ""
+        ).upper().strip()
 
     def _response_requires_2fa(self, response: dict) -> bool:
         """
@@ -265,35 +297,168 @@ class PortfolioService:
 
         return h
 
-    def _fetch_holdings_symbols(self) -> set[str]:
+    def _fetch_holdings_symbols(self, *, min_qty: int = 0) -> set[str]:
         """
-        Fetch set of symbols currently in holdings
+        Fetch set of symbols from broker holdings API.
+
+        Args:
+            min_qty: When > 0, only include rows with quantity at least this value.
 
         Returns:
-            Set of symbol strings
+            Set of symbol strings (base-normalized when min_qty > 0).
         """
         h = self._fetch_holdings()
         symbols = set()
 
-        def _extract_symbol(item: dict) -> str:
-            # Keep this mapping aligned with KotakNeoPortfolio.get_holdings() display logic
-            # so PortfolioService doesn't silently treat real holdings as "empty".
-            return str(
-                item.get("tradingSymbol")
-                or item.get("symbol")
-                or item.get("instrumentName")
-                or item.get("securitySymbol")
-                or item.get("securityname")
-                or item.get("stockName")
-                or ""
-            ).upper().strip()
-
         for item in h.get("data") or []:
-            sym = _extract_symbol(item)
-            if sym:
-                symbols.add(sym)
+            if min_qty > 0:
+                qty_raw = (
+                    item.get("quantity") if item.get("quantity") is not None else item.get("qty")
+                )
+                qty = int(float(str(qty_raw or 0)))
+                if qty < min_qty:
+                    continue
+
+            sym = self._extract_holding_symbol(item)
+            if not sym:
+                continue
+            if min_qty > 0:
+                sym = self._normalize_base_symbol(sym)
+            symbols.add(sym)
 
         return symbols
+
+    def _fetch_system_position_symbols(self) -> set[str]:
+        """
+        Fetch open system-tracked position symbols (Positions table).
+
+        Manual or pre-existing broker demat holdings are excluded so
+        max_portfolio_size applies to Rebound-managed positions only.
+        """
+        if self.positions_repo and self.user_id:
+            symbols: set[str] = set()
+            try:
+                for pos in self.positions_repo.list(self.user_id):
+                    if pos.closed_at is None and int(pos.quantity or 0) > 0:
+                        base = self._normalize_base_symbol(pos.symbol)
+                        if base:
+                            symbols.add(base)
+            except Exception as e:
+                logger.warning(f"Failed to get system positions from database: {e}")
+            return symbols
+
+        if self.portfolio:
+            logger.debug(
+                "positions_repo not configured; falling back to broker holdings (qty>0) "
+                "for portfolio count"
+            )
+            return self._fetch_holdings_symbols(min_qty=1)
+
+        return set()
+
+    def _add_database_buy_order_symbols(self, symbols: set[str]) -> None:
+        """Reserve portfolio slots for active system buy orders not yet in positions."""
+        if not self.orders_repo or not self.user_id:
+            return
+
+        try:
+            from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
+                get_next_trading_day_close,
+            )
+        except ImportError:
+            from datetime import timedelta  # noqa: PLC0415
+
+            get_next_trading_day_close = None
+
+        from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
+
+        try:
+            db_orders, _ = self.orders_repo.list(self.user_id)
+        except Exception as e:
+            logger.warning(f"Failed to get orders from database: {e}")
+            return
+
+        now = ist_now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=IST)
+        elif now.tzinfo != IST:
+            now = now.astimezone(IST)
+
+        for order in db_orders:
+            if order.side == "buy" and order.status in {
+                DbOrderStatus.ONGOING,
+                DbOrderStatus.CLOSED,
+                DbOrderStatus.PENDING,
+            }:
+                placed_at_val = getattr(order, "placed_at", None)
+                has_real_placed_at = placed_at_val is not None and "Mock" not in type(
+                    placed_at_val
+                ).__name__
+                if order.status == DbOrderStatus.CLOSED and has_real_placed_at:
+                    continue
+
+                if order.status == DbOrderStatus.PENDING and order.placed_at:
+                    is_stale = False
+                    placed_at = order.placed_at
+
+                    try:
+                        if get_next_trading_day_close:
+                            if placed_at.tzinfo is None:
+                                placed_at = placed_at.replace(tzinfo=IST)
+                            elif placed_at.tzinfo != IST:
+                                placed_at = placed_at.astimezone(IST)
+
+                            next_trading_day_close = get_next_trading_day_close(placed_at)
+                            is_stale = now > next_trading_day_close
+
+                            if is_stale:
+                                age_hours = (now - placed_at).total_seconds() / 3600
+                                logger.debug(
+                                    f"Excluding stale PENDING order from portfolio count: "
+                                    f"{order.symbol} (placed_at: {placed_at.strftime('%Y-%m-%d %H:%M')}, "
+                                    f"next trading day close: "
+                                    f"{next_trading_day_close.strftime('%Y-%m-%d %H:%M')}, "
+                                    f"age: {age_hours:.1f}h)"
+                                )
+                        else:
+                            from datetime import timedelta  # noqa: PLC0415
+
+                            stale_cutoff = now - timedelta(hours=24)
+                            if placed_at.tzinfo is None:
+                                placed_at_naive = placed_at.replace(tzinfo=None)
+                                cutoff_naive = (
+                                    stale_cutoff.replace(tzinfo=None)
+                                    if stale_cutoff.tzinfo
+                                    else stale_cutoff
+                                )
+                                is_stale = placed_at_naive < cutoff_naive
+                            else:
+                                placed_at_ist = (
+                                    placed_at.astimezone(IST)
+                                    if placed_at.tzinfo != IST
+                                    else placed_at
+                                )
+                                is_stale = placed_at_ist < stale_cutoff
+
+                            if is_stale:
+                                age_hours = (now - placed_at_ist).total_seconds() / 3600
+                                logger.debug(
+                                    f"Excluding stale PENDING order from portfolio count "
+                                    f"(fallback): {order.symbol} "
+                                    f"(placed_at: {placed_at_ist}, age: {age_hours:.1f}h)"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to check if PENDING order is stale for {order.symbol}: {e}. "
+                            f"Including order in portfolio count to be safe."
+                        )
+
+                    if is_stale:
+                        continue
+
+                sym = self._normalize_base_symbol(order.symbol)
+                if sym:
+                    symbols.add(sym)
 
     def has_position(self, base_symbol: str) -> bool:
         """
@@ -330,165 +495,33 @@ class PortfolioService:
 
     def get_current_positions(self, include_pending: bool = True) -> list[str]:
         """
-        Get list of symbols currently in portfolio
+        Get list of symbols that count toward max_portfolio_size.
 
         Replaces: AutoTradeEngine.current_symbols_in_portfolio()
 
         Includes:
-        - Holdings from broker API
-        - Pending orders from broker API
-        - ONGOING/CLOSED orders from database (executed orders that may not be in broker holdings yet)
-        - PENDING orders from database (if broker API doesn't return them)
+        - Open system positions (Positions table; excludes manual broker holdings)
+        - ONGOING/CLOSED/PENDING buy orders from database (reserves slots for in-flight buys)
 
         Args:
             include_pending: Include pending BUY orders (default: True)
 
         Returns:
-            Sorted list of symbol strings
+            Sorted list of base symbol strings
         """
-        symbols = set(self._fetch_holdings_symbols())
+        symbols = set(self._fetch_system_position_symbols())
 
-        # Include pending BUY orders from broker API if requested
-        if include_pending and self.orders:
-            try:
-                pend = self.orders.get_pending_orders() or []
-                for o in pend:
-                    txn = str(o.get("transactionType", "")).upper()
-                    if txn.startswith("B"):
-                        sym = str(o.get("tradingSymbol") or "").upper()
-                        if sym:
-                            symbols.add(sym)
-            except Exception as e:
-                logger.warning(f"Failed to get pending orders from broker API: {e}")
-
-        # Include database orders (ONGOING, CLOSED, and PENDING)
-        # - PENDING: reserves portfolio slots for orders that broker API might not return
-        # - ONGOING/CLOSED: executed orders that may not appear in broker holdings yet
-        if include_pending and self.orders_repo and self.user_id:
-            try:
-                # Get all buy orders from database with ONGOING, CLOSED (filled), or PENDING status
-                # EXCLUDE stale PENDING orders using same logic as EOD cleanup
-                # (orders past next trading day market close) to prevent them from blocking new orders
-                try:
-                    from modules.kotak_neo_auto_trader.utils.trading_day_utils import (  # noqa: PLC0415
-                        get_next_trading_day_close,
-                    )
-                except ImportError:
-                    # Fallback to 24-hour check if trading_day_utils not available
-                    from datetime import timedelta  # noqa: PLC0415
-
-                    get_next_trading_day_close = None
-
-                from src.infrastructure.db.timezone_utils import IST, ist_now  # noqa: PLC0415
-
-                db_orders, _ = self.orders_repo.list(self.user_id)
-                now = ist_now()
-                # Normalize to IST for consistent comparison
-                if now.tzinfo is None:
-                    now = now.replace(tzinfo=IST)
-                elif now.tzinfo != IST:
-                    now = now.astimezone(IST)
-
-                for order in db_orders:
-                    if order.side == "buy" and order.status in {
-                        DbOrderStatus.ONGOING,  # Legacy executed orders (may not be in broker yet)
-                        DbOrderStatus.CLOSED,  # Legacy filled rows (handled conditionally below)
-                        DbOrderStatus.PENDING,  # Pending orders (if broker API doesn't return them)
-                    }:
-                        # CLOSED orders are only included for legacy rows that don't have a reliable
-                        # placed_at timestamp. If placed_at exists, treat CLOSED as historical and do
-                        # not reserve portfolio capacity.
-                        placed_at_val = getattr(order, "placed_at", None)
-                        has_real_placed_at = placed_at_val is not None and "Mock" not in type(placed_at_val).__name__
-                        if order.status == DbOrderStatus.CLOSED and has_real_placed_at:
-                            continue
-                        # For PENDING orders, check if they're stale using same logic as EOD cleanup
-                        # Stale PENDING orders should not count towards portfolio limit
-                        # as they likely failed or were cancelled but status wasn't updated
-                        if order.status == DbOrderStatus.PENDING and order.placed_at:
-                            is_stale = False
-                            placed_at = order.placed_at
-
-                            try:
-                                if get_next_trading_day_close:
-                                    # Use trading-day-aware logic (same as EOD cleanup)
-                                    # Calculate next trading day market close from when order was placed
-                                    # Normalize placed_at to IST for comparison
-                                    if placed_at.tzinfo is None:
-                                        placed_at = placed_at.replace(tzinfo=IST)
-                                    elif placed_at.tzinfo != IST:
-                                        placed_at = placed_at.astimezone(IST)
-
-                                    next_trading_day_close = get_next_trading_day_close(placed_at)
-
-                                    # If current time is after next trading day market close, order is stale
-                                    is_stale = now > next_trading_day_close
-
-                                    if is_stale:
-                                        age_hours = (now - placed_at).total_seconds() / 3600
-                                        logger.debug(
-                                            f"Excluding stale PENDING order from portfolio count: "
-                                            f"{order.symbol} (placed_at: {placed_at.strftime('%Y-%m-%d %H:%M')}, "
-                                            f"next trading day close: {next_trading_day_close.strftime('%Y-%m-%d %H:%M')}, "
-                                            f"age: {age_hours:.1f}h)"
-                                        )
-                                else:
-                                    # Fallback to 24-hour check if trading_day_utils not available
-                                    from datetime import timedelta  # noqa: PLC0415
-
-                                    stale_cutoff = now - timedelta(hours=24)
-                                    if placed_at.tzinfo is None:
-                                        placed_at_naive = placed_at.replace(tzinfo=None)
-                                        cutoff_naive = (
-                                            stale_cutoff.replace(tzinfo=None)
-                                            if stale_cutoff.tzinfo
-                                            else stale_cutoff
-                                        )
-                                        is_stale = placed_at_naive < cutoff_naive
-                                    else:
-                                        placed_at_ist = (
-                                            placed_at.astimezone(IST)
-                                            if placed_at.tzinfo != IST
-                                            else placed_at
-                                        )
-                                        is_stale = placed_at_ist < stale_cutoff
-
-                                    if is_stale:
-                                        age_hours = (now - placed_at_ist).total_seconds() / 3600
-                                        logger.debug(
-                                            f"Excluding stale PENDING order from portfolio count (fallback): "
-                                            f"{order.symbol} (placed_at: {placed_at_ist}, age: {age_hours:.1f}h)"
-                                        )
-                            except Exception as e:
-                                # If stale check fails (e.g., holiday calendar issue), log and include order
-                                # This is safer than excluding valid orders due to a bug
-                                logger.warning(
-                                    f"Failed to check if PENDING order is stale for {order.symbol}: {e}. "
-                                    f"Including order in portfolio count to be safe."
-                                )
-                                # is_stale remains False, so order will be included
-
-                            if is_stale:
-                                continue  # Skip stale PENDING orders
-
-                        # Normalize symbol (remove -EQ, -BE, etc. suffixes)
-                        sym = (
-                            order.symbol.upper()
-                            .replace("-EQ", "")
-                            .replace("-BE", "")
-                            .replace("-BL", "")
-                            .replace("-BZ", "")
-                        )
-                        if sym:
-                            symbols.add(sym)
-            except Exception as e:
-                logger.warning(f"Failed to get orders from database: {e}")
+        if include_pending:
+            self._add_database_buy_order_symbols(symbols)
 
         return sorted(symbols)
 
     def get_portfolio_count(self, include_pending: bool = True) -> int:
         """
-        Get current portfolio size (number of positions)
+        Get current system portfolio size (number of positions toward max_portfolio_size).
+
+        Counts open system positions plus in-flight system buy orders only;
+        manual broker demat holdings are excluded.
 
         Args:
             include_pending: Include pending BUY orders (default: True)

@@ -38,6 +38,7 @@ def format_reentry_run_buy_orders_detail(summary: dict[str, Any]) -> str:
     skipped_other = (
         _int(summary, "skipped_duplicates")
         + _int(summary, "skipped_duplicate_level")
+        + _int(summary, "skipped_duplicate_level_today")
         + _int(summary, "skipped_missing_data")
         + _int(summary, "skipped_invalid_qty")
         + _int(summary, "skipped_no_position")
@@ -59,6 +60,7 @@ def format_reentry_check_complete(summary: dict[str, Any]) -> str:
     skipped_other = (
         _int(summary, "skipped_duplicates")
         + _int(summary, "skipped_duplicate_level")
+        + _int(summary, "skipped_duplicate_level_today")
         + _int(summary, "skipped_missing_data")
         + _int(summary, "skipped_invalid_qty")
         + _int(summary, "skipped_no_position")

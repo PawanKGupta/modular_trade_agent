@@ -2956,6 +2956,7 @@ class PaperTradingEngineAdapter:
             "placed": 0,
             "failed_balance": 0,
             "skipped_duplicates": 0,
+            "skipped_duplicate_level_today": 0,
             "skipped_invalid_rsi": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
@@ -3159,6 +3160,15 @@ class PaperTradingEngineAdapter:
                             action="place_reentry_orders",
                         )
                         summary["skipped_duplicates"] += 1
+                        continue
+
+                    if self.has_reentry_at_level_today(normalized_symbol, next_level):
+                        self.logger.info(
+                            f"Skipping {symbol}: re-entry at level {next_level} already placed "
+                            f"or filled today (same-day level guard)",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicate_level_today"] += 1
                         continue
 
                     self.logger.info(
@@ -3461,6 +3471,33 @@ class PaperTradingEngineAdapter:
                 f"Error checking reentry level for {base_symbol}: {e}",
                 exc_info=True,
                 action="has_reentry_at_level",
+            )
+            return False
+
+    def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
+        """Return True when a system re-entry at ``level`` was placed or filled today (IST)."""
+        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
+        from src.infrastructure.db.timezone_utils import ist_now
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        try:
+            positions_repo = PositionsRepository(self.db)
+            position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+            orders_repo = OrdersRepository(self.db)
+            orders_list, _ = orders_repo.list(self.user_id)
+            return has_reentry_at_level_today(
+                position=position,
+                orders=list(orders_list or []),
+                base_symbol=base_symbol,
+                level=level,
+                today=ist_now().date(),
+            )
+        except Exception as e:
+            self.logger.error(
+                f"Error checking same-day reentry level for {base_symbol}: {e}",
+                exc_info=True,
+                action="has_reentry_at_level_today",
             )
             return False
 
