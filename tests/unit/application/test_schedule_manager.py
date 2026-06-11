@@ -284,6 +284,34 @@ def test_validate_schedule_analysis_flexible_time(db_session, schedule_manager):
     assert "off-trading hours" in message.lower() or "4:00 PM" in message
 
 
+def test_validate_schedule_buy_margin_preview_valid(db_session, schedule_manager):
+    """Evening margin preview is a valid schedulable task (e.g. 17:00 IST)."""
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="buy_margin_preview",
+        schedule_time=time(17, 0),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert is_valid is True
+    assert message == ""
+
+
+def test_validate_schedule_premarket_amo_adjustment_valid(db_session, schedule_manager):
+    """9:05 pre-market adjustment is a valid schedulable task."""
+    is_valid, message = schedule_manager.validate_schedule(
+        task_name="premarket_amo_adjustment",
+        schedule_time=time(9, 5),
+        is_hourly=False,
+        is_continuous=False,
+        end_time=None,
+        schedule_type="daily",
+    )
+    assert is_valid is True
+    assert message == ""
+
+
 def test_validate_schedule_position_monitor_invalid(db_session, schedule_manager):
     """Test that position_monitor is rejected as invalid task name (removed in Phase 3)"""
     is_valid, message = schedule_manager.validate_schedule(
