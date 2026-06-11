@@ -358,12 +358,24 @@ class MultiUserTradingService:
             )
 
         lock_id: str | None = None
+        scheduler_loop_active = False
         try:
             # Try to acquire lock with retries to handle stale locks from dead threads
             # This is a defensive approach - cleanup in start_service() should handle most cases
             # But we still retry here as a safety net with longer delays for connection pool recycling
             # CRITICAL: Before failing, check if there's actually another running thread
             # If no thread is running, the lock is held by a dead connection - wait longer
+            other_thread = _shared_service_threads.get(user_id)
+            other_thread_alive = (
+                other_thread and other_thread.is_alive() if other_thread else False
+            )
+            is_different_thread = (
+                other_thread is not None
+                and id(other_thread) != id(threading.current_thread())
+            )
+            if not (other_thread_alive and is_different_thread):
+                _cleanup_stale_paper_scheduler_lock(thread_db, user_id, user_logger)
+
             max_lock_retries = 5  # Increased from 3 to 5 to handle slow connection pool recycling
             lock_retry_delays = [
                 2.0,
@@ -533,6 +545,7 @@ class MultiUserTradingService:
             thread_schedule_manager = ScheduleManager(thread_db)
 
             user_logger.info("Paper trading scheduler started", action="scheduler")
+            scheduler_loop_active = True
 
             # Store lock_id in shared state so stop_service() can track it
             self._lock_keys[user_id] = lock_id
@@ -890,12 +903,20 @@ class MultiUserTradingService:
                     )
                 except Exception:
                     pass
-            else:
+            elif scheduler_loop_active:
                 self._apply_paper_scheduler_thread_exit_status(
                     user_id=user_id,
                     thread_db=thread_db,
                     user_logger=user_logger,
                 )
+            else:
+                try:
+                    user_logger.debug(
+                        "Skipping thread-exit status update (scheduler never acquired lock)",
+                        action="scheduler",
+                    )
+                except Exception:
+                    pass
 
             # Release lock BEFORE closing connection (CRITICAL for PostgreSQL advisory locks)
             _release_paper_scheduler_lock(thread_db, lock_id)
@@ -1205,6 +1226,10 @@ class MultiUserTradingService:
                     # Store service instance
                     self._services[user_id] = service
                     service._lifecycle_generation = service_generation
+
+                    existing_thread = self._service_threads.get(user_id)
+                    if not (existing_thread and existing_thread.is_alive()):
+                        _cleanup_stale_paper_scheduler_lock(self.db, user_id, self._logger)
 
                     # Start scheduler in background thread
                     service_thread = threading.Thread(

@@ -81,6 +81,45 @@ def build_snapshot(db: Session, *, source: str) -> dict[str, Any]:
     }
 
 
+def clear_scheduler_locks_for_users(db: Session, user_ids: list[int]) -> int:
+    """
+    Remove scheduler_lock rows for users about to be auto-restored on cold start.
+
+    After API restart, lock rows from the previous process can block new paper
+    scheduler threads until they expire (5 minutes). Clearing them here prevents
+    restore from spawning threads that fail lock acquisition.
+
+    Deletes rows for ``user_ids`` **or** any row with ``expires_at`` in the past
+    (global expired sweep). The sweep is intentional on cold start and runs only
+    when ``cleanup_and_restore_services`` has unified restore targets.
+    """
+    if not user_ids:
+        return 0
+    try:
+        from src.infrastructure.db.models import SchedulerLock
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        deleted = (
+            db.query(SchedulerLock)
+            .filter(
+                (SchedulerLock.user_id.in_(user_ids)) | (SchedulerLock.expires_at < ist_now())
+            )
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        if deleted:
+            logger.info(
+                "Cleared %s scheduler lock row(s) before auto-restore (users=%s)",
+                deleted,
+                sorted(set(user_ids)),
+            )
+        return deleted
+    except Exception as exc:
+        logger.warning("Failed to clear scheduler locks before restore: %s", exc)
+        db.rollback()
+        return 0
+
+
 def merge_restore_targets(
     *payloads: dict[str, Any] | None,
 ) -> tuple[list[int], list[tuple[int, str]]]:
@@ -242,6 +281,14 @@ def cleanup_and_restore_services(db: Session) -> ServiceRestoreSummary:
         f"[Startup] Auto-restoring services "
         f"({len(unified_user_ids)} unified, {len(individual_services)} individual targets)..."
     )
+
+    if unified_user_ids:
+        cleared = clear_scheduler_locks_for_users(db, unified_user_ids)
+        if cleared:
+            print(
+                f"[Startup] Cleared {cleared} stale scheduler lock row(s) "
+                f"before unified service restore"
+            )
 
     try:
         from src.application.services.individual_service_manager import IndividualServiceManager

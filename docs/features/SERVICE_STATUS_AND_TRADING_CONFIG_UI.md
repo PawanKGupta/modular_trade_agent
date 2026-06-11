@@ -83,7 +83,7 @@ Before restarting or redeploying the API container, run:
 docker exec tradeagent-api python /app/tools/backup_service_status.py
 ```
 
-The snapshot is stored on the persistent data volume at `data/service_restore_snapshot.json` (plus rolling history under `data/service_restore_snapshots/`). On API startup, auto-restore merges this file with DB running flags and restarts unified/individual services. A snapshot is also written on graceful API shutdown.
+The snapshot is stored on the persistent data volume at `data/service_restore_snapshot.json` (plus rolling history under `data/service_restore_snapshots/`). On API startup, auto-restore merges this file with DB running flags and restarts unified/individual services. Before paper unified services are auto-restored, startup clears stale `scheduler_lock` rows for those users (see `clear_scheduler_locks_for_users` in `service_restore_snapshot.py`). A snapshot is also written on graceful API shutdown.
 
 ### Status heartbeat timezone (stale detection & API display)
 
@@ -340,3 +340,4 @@ npm run dev:mock
 | --- | --- | --- |
 | 2025-11-17 | Initial guide covering Service Status + Trading Config UI, plus demo instructions and mock screenshots. | GPT-5.1 Codex |
 | 2026-06-10 | Admin schedule redeploy note, heartbeat maintenance note, redeploy/snapshot cross-reference. | — |
+| 2026-06-12 | Note: startup clears `scheduler_lock` before paper auto-restore. | — |
