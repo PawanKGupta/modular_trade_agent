@@ -61,7 +61,7 @@ describe('ServiceSchedulePage', () => {
 				'analysis',
 				expect.objectContaining({ schedule_time: '10:00' })
 			);
-			expect(screen.getByText(/Schedule changes require unified service restart/i)).toBeInTheDocument();
+			expect(screen.getByText(/Redeploy the app or restart running unified services/i)).toBeInTheDocument();
 		});
 	});
 

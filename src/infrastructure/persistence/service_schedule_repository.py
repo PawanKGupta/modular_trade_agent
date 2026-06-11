@@ -18,13 +18,21 @@ class ServiceScheduleRepository:
         self.db = db
 
     def get_all(self) -> list[ServiceSchedule]:
-        """Get all service schedules"""
-        stmt = select(ServiceSchedule).order_by(ServiceSchedule.task_name)
+        """Get all service schedules (always merged from DB, not session cache)."""
+        stmt = (
+            select(ServiceSchedule)
+            .order_by(ServiceSchedule.task_name)
+            .execution_options(populate_existing=True)
+        )
         return list(self.db.execute(stmt).scalars().all())
 
     def get_by_task_name(self, task_name: str) -> ServiceSchedule | None:
-        """Get schedule by task name"""
-        stmt = select(ServiceSchedule).where(ServiceSchedule.task_name == task_name)
+        """Get schedule by task name (always merged from DB, not session cache)."""
+        stmt = (
+            select(ServiceSchedule)
+            .where(ServiceSchedule.task_name == task_name)
+            .execution_options(populate_existing=True)
+        )
         return self.db.execute(stmt).scalar_one_or_none()
 
     def get_enabled(self) -> list[ServiceSchedule]:

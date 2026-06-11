@@ -174,7 +174,6 @@ class TradingService:
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
         }
-
         # User-scoped logger
         from src.infrastructure.logging import get_user_logger
 

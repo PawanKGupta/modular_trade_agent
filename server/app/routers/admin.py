@@ -284,7 +284,7 @@ def update_service_schedule(
             success=True,
             message=f"Schedule for '{task_name}' updated successfully",
             schedule=schedule_response,
-            requires_restart=True,  # Unified service should restart to pick up new schedule
+            requires_restart=True,
         )
     except HTTPException:
         raise
