@@ -28,6 +28,7 @@ from src.infrastructure.db.timezone_utils import (
     db_timestamp_to_utc_for_api,
     ist_now,
     service_status_heartbeat_age_seconds,
+    service_status_heartbeat_to_utc_for_api,
 )
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
@@ -122,7 +123,7 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
             )
 
             if status.last_heartbeat:
-                status.last_heartbeat = db_timestamp_to_utc_for_api(
+                status.last_heartbeat = service_status_heartbeat_to_utc_for_api(
                     status.last_heartbeat, reference=now
                 )
             if status.last_task_execution:

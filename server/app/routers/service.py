@@ -12,7 +12,11 @@ from src.application.services.conflict_detection_service import ConflictDetectio
 from src.application.services.individual_service_manager import IndividualServiceManager
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
-from src.infrastructure.db.timezone_utils import db_timestamp_to_utc_for_api, ist_now
+from src.infrastructure.db.timezone_utils import (
+    db_timestamp_to_utc_for_api,
+    ist_now,
+    service_status_heartbeat_to_utc_for_api,
+)
 from src.infrastructure.logging.file_log_reader import FileLogReader
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
@@ -145,7 +149,7 @@ def get_service_status(
         # tagged as UTC without conversion — that shifts the UI by +5:30.
         api_now = ist_now()
         if status_obj.last_heartbeat:
-            status_obj.last_heartbeat = db_timestamp_to_utc_for_api(
+            status_obj.last_heartbeat = service_status_heartbeat_to_utc_for_api(
                 status_obj.last_heartbeat, reference=api_now
             )
         if status_obj.last_task_execution:

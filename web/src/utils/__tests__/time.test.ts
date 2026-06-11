@@ -1,4 +1,11 @@
-import { formatDuration, formatTimeAgo } from '../time';
+import { vi } from 'vitest';
+import {
+	formatApiDateTime,
+	formatApiTimestampDisplay,
+	formatDuration,
+	formatTimeAgo,
+	secondsAgoFromApiIso,
+} from '../time';
 
 describe('formatTimeAgo', () => {
 	it('formats seconds less than 60 as "X sec ago"', () => {
@@ -31,6 +38,32 @@ describe('formatTimeAgo', () => {
 		expect(formatTimeAgo(-120)).toBe('in 2 min');
 		expect(formatTimeAgo(-3600)).toBe('in 1 hr');
 		expect(formatTimeAgo(-86400)).toBe('in 1 day');
+	});
+});
+
+describe('formatApiDateTime', () => {
+	it('formats UTC ISO as IST wall-clock', () => {
+		// 18:13:49 UTC = 23:43:49 IST
+		expect(formatApiDateTime('2026-06-11T18:13:49.000Z')).toMatch(/11 Jun 2026/i);
+		expect(formatApiDateTime('2026-06-11T18:13:49.000Z')).toMatch(/11:43:49\s*pm/i);
+	});
+});
+
+describe('formatApiTimestampDisplay', () => {
+	it('combines IST time and relative age from one instant', () => {
+		const now = new Date('2026-06-11T18:14:19.000Z').getTime();
+		vi.spyOn(Date, 'now').mockReturnValue(now);
+		const iso = '2026-06-11T18:13:49.000Z';
+		const display = formatApiTimestampDisplay(iso);
+		expect(display).toContain('IST ·');
+		expect(display).toMatch(/11:43:49\s*pm/i);
+		expect(display).toContain('30 sec ago');
+		expect(secondsAgoFromApiIso(iso)).toBe(30);
+		vi.restoreAllMocks();
+	});
+
+	it('returns Never for null', () => {
+		expect(formatApiTimestampDisplay(null)).toBe('Never');
 	});
 });
 

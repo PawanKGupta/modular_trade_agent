@@ -7,7 +7,7 @@ import {
 	runTaskOnce,
 } from '@/api/service';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { formatTimeAgo, formatDuration } from '@/utils/time';
+import { formatApiTimestampDisplay, formatDuration } from '@/utils/time';
 
 interface IndividualServiceControlsProps {
 	service: IndividualServiceStatus;
@@ -37,17 +37,7 @@ export function IndividualServiceControls({
 	service,
 	unifiedServiceRunning,
 }: IndividualServiceControlsProps) {
-	const renderTimestamp = (timestamp: string) => {
-		const date = new Date(timestamp);
-		const secondsDiff = Math.floor((Date.now() - date.getTime()) / 1000);
-		const relative = formatTimeAgo(secondsDiff);
-		return (
-			<>
-				{date.toLocaleString()}
-				<span className="text-[var(--muted)] ml-2 text-xs">({relative})</span>
-			</>
-		);
-	};
+	const renderTimestamp = (timestamp: string) => formatApiTimestampDisplay(timestamp);
 	const qc = useQueryClient();
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 	const [conflictStickyWhileRunning, setConflictStickyWhileRunning] = useState(false);

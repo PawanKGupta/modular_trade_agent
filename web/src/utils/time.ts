@@ -1,3 +1,43 @@
+/** API timestamps are UTC ISO strings; display in IST for NSE trading context. */
+export const API_DISPLAY_TIME_ZONE = 'Asia/Kolkata';
+
+const apiDateTimeFormatter = new Intl.DateTimeFormat('en-IN', {
+	timeZone: API_DISPLAY_TIME_ZONE,
+	day: '2-digit',
+	month: 'short',
+	year: 'numeric',
+	hour: '2-digit',
+	minute: '2-digit',
+	second: '2-digit',
+	hour12: true,
+});
+
+/** Parse a UTC ISO timestamp from the API. */
+export function parseApiUtcIso(iso: string): Date {
+	return new Date(iso);
+}
+
+/** Format API UTC ISO as IST wall-clock for display. */
+export function formatApiDateTime(iso: string): string {
+	return apiDateTimeFormatter.format(parseApiUtcIso(iso));
+}
+
+/** Seconds elapsed since an API UTC ISO timestamp (negative if in the future). */
+export function secondsAgoFromApiIso(iso: string): number {
+	return Math.floor((Date.now() - parseApiUtcIso(iso).getTime()) / 1000);
+}
+
+/**
+ * Single-line API timestamp: IST clock + relative age from the same instant.
+ * Avoids showing two conflicting times via browser locale + manual age math.
+ */
+export function formatApiTimestampDisplay(iso: string | null | undefined): string {
+	if (!iso) {
+		return 'Never';
+	}
+	return `${formatApiDateTime(iso)} IST · ${formatTimeAgo(secondsAgoFromApiIso(iso))}`;
+}
+
 /**
  * Formats a duration in seconds to a human-readable "time ago" string.
  * Examples:

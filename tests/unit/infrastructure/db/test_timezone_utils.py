@@ -13,6 +13,7 @@ from src.infrastructure.db.timezone_utils import (
     ist_now_naive,
     ist_to_utc,
     service_status_heartbeat_age_seconds,
+    service_status_heartbeat_to_utc_for_api,
     utc_to_ist,
 )
 
@@ -130,4 +131,28 @@ def test_db_timestamp_to_utc_for_api_matches_ist_aware():
     from_api = db_timestamp_to_utc_for_api(naive, reference=reference)
     aware_ist = naive.replace(tzinfo=IST)
     assert from_api == ist_to_utc(aware_ist)
+
+
+def test_service_status_heartbeat_to_utc_matches_age_for_ist_naive():
+    reference = datetime(2026, 6, 11, 23, 43, 49, tzinfo=IST)
+    ist_naive = datetime(2026, 6, 11, 23, 43, 39)
+    utc_api = service_status_heartbeat_to_utc_for_api(ist_naive, reference=reference)
+    age = service_status_heartbeat_age_seconds(ist_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.hour == 18
+    assert utc_api.minute == 13
+    assert age is not None
+    assert 5 < age < 20
+
+
+def test_service_status_heartbeat_to_utc_matches_age_for_utc_naive_legacy():
+    reference = datetime(2026, 6, 11, 23, 0, 46, tzinfo=IST)
+    utc_naive = datetime(2026, 6, 11, 17, 30, 36, 700984)
+    utc_api = service_status_heartbeat_to_utc_for_api(utc_naive, reference=reference)
+    age = service_status_heartbeat_age_seconds(utc_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.hour == 17
+    assert utc_api.minute == 30
+    assert age is not None
+    assert 5 < age < 120
 

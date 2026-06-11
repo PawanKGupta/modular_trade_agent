@@ -85,7 +85,7 @@ The snapshot is stored on the persistent data volume at `data/service_restore_sn
 
 `GET /service/status` uses `last_heartbeat` to detect orphaned rows after API restarts. Naive DB timestamps may be **IST wall-clock** (`ist_now_naive()`) or **UTC wall-clock** (legacy writes). Age is computed via `service_status_heartbeat_age_seconds()` in `timezone_utils.py`, which considers both interpretations so a fresh heartbeat is not misread as ~5.5 hours old.
 
-The same coercion applies when serializing timestamps for the web UI: `db_timestamp_to_utc_for_api()` converts DB values to true UTC before JSON. Tagging IST-naive heartbeats as UTC (without conversion) shifts the Service Status page by +5:30 and shows relative times like `(in 5 hrs)`.
+The same coercion applies when serializing timestamps for the web UI: `service_status_heartbeat_to_utc_for_api()` (and `db_timestamp_to_utc_for_api()` for other fields) converts DB values to true UTC before JSON. The web UI uses `formatApiTimestampDisplay()` — one IST line with relative age — instead of mixing browser `toLocaleString()` with a separate age calculation (which showed two conflicting times).
 
 ### Rapid start/stop (lifecycle generation)
 

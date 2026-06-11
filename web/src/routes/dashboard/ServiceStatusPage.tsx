@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { getServiceStatus, getTaskHistory, getServiceLogs, startService, stopService, getIndividualServicesStatus, type ServiceStatus, type IndividualServicesStatus } from '@/api/service';
-import { formatTimeAgo } from '@/utils/time';
+import { formatApiTimestampDisplay } from '@/utils/time';
 import { formatErrorMessage } from '@/utils/formatError';
 import { ServiceControls } from './ServiceControls';
 import { ServiceTasksTable } from './ServiceTasksTable';
@@ -79,8 +79,6 @@ export function ServiceStatusPage() {
 	}
 
 	const isRunning = status?.service_running ?? false;
-	const lastHeartbeat = status?.last_heartbeat ? new Date(status.last_heartbeat) : null;
-	const lastTaskExecution = status?.last_task_execution ? new Date(status.last_task_execution) : null;
 
 	// Check if any individual service is running or any run-once is running
 	const services = individualStatus?.services || {};
@@ -115,31 +113,13 @@ export function ServiceStatusPage() {
 					<div>
 						<div className="text-sm text-[var(--muted)] mb-1">Last Heartbeat</div>
 						<div className="text-sm text-[var(--text)]">
-							{lastHeartbeat ? (
-								<>
-									{lastHeartbeat.toLocaleString()}
-									<span className="text-[var(--muted)] ml-2">
-										({formatTimeAgo(Math.floor((Date.now() - lastHeartbeat.getTime()) / 1000))})
-									</span>
-								</>
-							) : (
-								<span className="text-[var(--muted)]">Never</span>
-							)}
+							{formatApiTimestampDisplay(status?.last_heartbeat)}
 						</div>
 					</div>
 					<div>
 						<div className="text-sm text-[var(--muted)] mb-1">Last Task Execution</div>
 						<div className="text-sm text-[var(--text)]">
-							{lastTaskExecution ? (
-								<>
-									{lastTaskExecution.toLocaleString()}
-									<span className="text-[var(--muted)] ml-2">
-										({formatTimeAgo(Math.floor((Date.now() - lastTaskExecution.getTime()) / 1000))})
-									</span>
-								</>
-							) : (
-								<span className="text-[var(--muted)]">Never</span>
-							)}
+							{formatApiTimestampDisplay(status?.last_task_execution)}
 						</div>
 					</div>
 					<div>
