@@ -4,15 +4,56 @@ Integration tests for Phase 2 Logging System
 Tests the full logging flow from service operations to files.
 """
 
+import threading
 import time
+import types
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.application.services.multi_user_trading_service import MultiUserTradingService
+from src.application.services.service_lifecycle_generation import reset_service_generation
 from src.infrastructure.db.models import TradeMode, Users, UserSettings
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.logging import FileLogReader, get_user_logger
+
+
+def _clear_multi_user_shared_state() -> None:
+    """Reset module-level service state so start_service always hits the log path."""
+    from src.application.services import multi_user_trading_service as _mus
+
+    _mus._shared_services.clear()
+    _mus._shared_service_threads.clear()
+    _mus._shared_locks.clear()
+    _mus._shared_start_locks.clear()
+    _mus._shared_lock_keys.clear()
+    reset_service_generation()
+
+
+def _wait_for_file_logs(
+    reader: FileLogReader,
+    user_id: int,
+    *,
+    message_substring: str,
+    timeout_s: float = 8.0,
+    interval_s: float = 0.25,
+) -> list[dict]:
+    """Poll file logs until expected content appears (CI can be slower than local)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        logs = reader.read_logs(user_id=user_id, limit=20, days_back=1)
+        if logs and any(message_substring in log["message"] for log in logs):
+            return logs
+        time.sleep(interval_s)
+    return reader.read_logs(user_id=user_id, limit=20, days_back=1)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_multi_user_service_state():
+    _clear_multi_user_shared_state()
+    yield
+    _clear_multi_user_shared_state()
 
 
 @pytest.fixture
@@ -29,7 +70,7 @@ def sample_user_with_full_setup(db_session):
 
     settings = UserSettings(
         user_id=user.id,
-        trade_mode=TradeMode.BROKER,
+        trade_mode=TradeMode.PAPER,
     )
     db_session.add(settings)
     db_session.commit()
@@ -45,26 +86,57 @@ class TestLoggingIntegration:
     ):
         """Test that service start creates logs in files"""
         monkeypatch.chdir(tmp_path)
+        _clear_multi_user_shared_state()
+
+        class _NoOpThread:
+            def __init__(self, *args, **kwargs):
+                self._target = kwargs.get("target")
+                self._args = kwargs.get("args", ())
+
+            def start(self):
+                return None
+
+            def join(self, timeout=None):  # noqa: ARG002
+                return None
+
+            def is_alive(self):
+                return False
+
+        fake_threading = types.SimpleNamespace(
+            Thread=_NoOpThread,
+            Lock=threading.Lock,
+        )
+        monkeypatch.setattr(
+            "src.application.services.multi_user_trading_service.threading",
+            fake_threading,
+        )
 
         service = MultiUserTradingService(db=db_session)
+        user_id = sample_user_with_full_setup.id
 
-        # Start service
-        try:
-            service.start_service(sample_user_with_full_setup.id)
-        except Exception:
-            pass  # May fail at TradingService init, but logging should work
+        with patch(
+            "src.application.services.multi_user_trading_service.PaperTradingServiceAdapter"
+        ) as mock_paper_adapter:
+            mock_adapter = MagicMock()
+            mock_adapter.initialize.return_value = True
+            mock_paper_adapter.return_value = mock_adapter
 
-        # Wait a bit for logs to be written
-        time.sleep(0.5)
+            try:
+                service.start_service(user_id)
+            except Exception:
+                pass  # Logging must still occur before downstream failures
+            finally:
+                try:
+                    service.stop_service(user_id)
+                except Exception:
+                    pass
 
-        # Check file logs using FileLogReader
         reader = FileLogReader(base_dir="logs")
-        logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
-
-        # Retry if no logs found (timing issue)
-        if len(logs) == 0:
-            time.sleep(1.0)
-            logs = reader.read_logs(user_id=sample_user_with_full_setup.id, limit=10, days_back=1)
+        logs = _wait_for_file_logs(
+            reader,
+            user_id,
+            message_substring="Starting trading service",
+        )
 
         assert len(logs) > 0, "No logs found in files"
         assert any("Starting trading service" in log["message"] for log in logs)

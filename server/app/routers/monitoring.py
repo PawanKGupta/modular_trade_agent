@@ -23,7 +23,13 @@ from src.infrastructure.db.models import (
     ServiceStatus,
     Users,
 )
-from src.infrastructure.db.timezone_utils import IST, ist_now, utc_to_ist
+from src.infrastructure.db.timezone_utils import (
+    IST,
+    db_timestamp_to_utc_for_api,
+    ist_now,
+    service_status_heartbeat_age_seconds,
+    service_status_heartbeat_to_utc_for_api,
+)
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
@@ -112,46 +118,22 @@ def _get_services_health_impl(db: Session) -> ServicesHealthResponse:
         user_email_map = _get_user_email_map(db, user_ids)
 
         for status in all_statuses:
-            heartbeat_age = None
+            heartbeat_age = service_status_heartbeat_age_seconds(
+                status.last_heartbeat, reference=now
+            )
+
             if status.last_heartbeat:
-                # CRITICAL: PostgreSQL stores timestamps in UTC, but we need IST for comparison
-                # Convert last_heartbeat from UTC (database storage) to IST for age calc
-                last_heartbeat = status.last_heartbeat
-
-                # If naive, assume it's UTC (PostgreSQL default)
-                if last_heartbeat.tzinfo is None:
-                    last_heartbeat = last_heartbeat.replace(tzinfo=UTC)
-
-                # Convert UTC to IST for comparison with ist_now()
-                if last_heartbeat.tzinfo != IST:
-                    last_heartbeat = utc_to_ist(last_heartbeat)
-
-                age_delta = now - last_heartbeat
-                heartbeat_age = age_delta.total_seconds()
-
-            # CRITICAL: Ensure timestamps are timezone-aware (UTC) for proper frontend display
-            # PostgreSQL stores timestamps in UTC, but they may be returned as naive datetimes
-            # Making them timezone-aware ensures FastAPI serializes them correctly with 'Z' suffix
-            # If naive, assume they're UTC (PostgreSQL default) and mark them as such
-            # If timezone-aware but not UTC, convert to UTC
-            if status.last_heartbeat:
-                if status.last_heartbeat.tzinfo is None:
-                    status.last_heartbeat = status.last_heartbeat.replace(tzinfo=UTC)
-                elif status.last_heartbeat.tzinfo != UTC:
-                    # Convert to UTC if in different timezone
-                    status.last_heartbeat = status.last_heartbeat.astimezone(UTC)
+                status.last_heartbeat = service_status_heartbeat_to_utc_for_api(
+                    status.last_heartbeat, reference=now
+                )
             if status.last_task_execution:
-                if status.last_task_execution.tzinfo is None:
-                    status.last_task_execution = status.last_task_execution.replace(tzinfo=UTC)
-                elif status.last_task_execution.tzinfo != UTC:
-                    # Convert to UTC if in different timezone
-                    status.last_task_execution = status.last_task_execution.astimezone(UTC)
+                status.last_task_execution = db_timestamp_to_utc_for_api(
+                    status.last_task_execution, reference=now
+                )
             if status.updated_at:
-                if status.updated_at.tzinfo is None:
-                    status.updated_at = status.updated_at.replace(tzinfo=UTC)
-                elif status.updated_at.tzinfo != UTC:
-                    # Convert to UTC if in different timezone
-                    status.updated_at = status.updated_at.astimezone(UTC)
+                status.updated_at = db_timestamp_to_utc_for_api(
+                    status.updated_at, reference=now
+                )
 
             # Report stale services: if heartbeat is very old (>10 minutes) and
             # service shows as running, report it (monitoring should only observe, not fix)

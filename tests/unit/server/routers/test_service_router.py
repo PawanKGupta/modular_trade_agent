@@ -152,7 +152,8 @@ def test_get_service_status_falls_back_to_repo(monkeypatch, current_user):
     )
 
     assert response.service_running is False
-    assert response.last_heartbeat == status_obj.last_heartbeat
+    assert response.last_heartbeat is not None
+    assert response.last_heartbeat.tzinfo == UTC
     assert response.last_error == "oops"
 
 

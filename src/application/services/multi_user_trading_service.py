@@ -29,6 +29,11 @@ from src.application.services.broker_credentials import (
 from src.application.services.config_converter import user_config_to_strategy_config
 from src.application.services.paper_trading_service_adapter import PaperTradingServiceAdapter
 from src.application.services.schedule_manager import ScheduleManager
+from src.application.services.service_lifecycle_generation import (
+    bump_service_generation,
+    is_generation_current,
+    should_apply_thread_exit_status,
+)
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.logging import get_user_logger
 from src.infrastructure.persistence.notification_repository import NotificationRepository
@@ -297,7 +302,7 @@ class MultiUserTradingService:
         return self._schedule_manager(db_session)
 
     def _run_paper_trading_scheduler(  # noqa: PLR0912, PLR0915
-        self, service: PaperTradingServiceAdapter, user_id: int
+        self, service: PaperTradingServiceAdapter, user_id: int, service_generation: int
     ):
         """
         Run paper trading service scheduler in background thread.
@@ -308,6 +313,7 @@ class MultiUserTradingService:
         Args:
             service: PaperTradingServiceAdapter instance
             user_id: User ID for this service
+            service_generation: Lifecycle generation captured at thread start
         """
         # Create a new database session for this thread
         from src.infrastructure.db.connection_monitor import log_pool_status  # noqa: PLC0415
@@ -876,136 +882,147 @@ class MultiUserTradingService:
             service.running = False
             user_logger.info("Paper trading scheduler stopped", action="scheduler")
         finally:
-            # Update database status to False when thread exits (CRITICAL - must succeed)
-            # This ensures database reflects actual service state even if thread
-            # crashes/exits unexpectedly
-            # Use aggressive retry logic with emergency session fallback for reliability
-            max_exit_retries = 5
-            exit_retry_delays = [0.2, 0.5, 1.0, 2.0, 5.0]
-            exit_status_updated = False
-
-            from sqlalchemy.exc import OperationalError  # noqa: PLC0415
-
-            # Try with existing thread_db first (up to 5 retries)
-            for retry_attempt in range(max_exit_retries):
+            if not should_apply_thread_exit_status(user_id, service_generation):
                 try:
-                    thread_status_repo = ServiceStatusRepository(thread_db)
-                    thread_status_repo.update_running(user_id, running=False)
-                    thread_status_repo.update_heartbeat(user_id)
-                    thread_db.commit()
+                    user_logger.debug(
+                        "Skipping thread-exit status update (superseded by newer start/stop)",
+                        action="scheduler",
+                    )
+                except Exception:
+                    pass
+            else:
+                self._apply_paper_scheduler_thread_exit_status(
+                    user_id=user_id,
+                    thread_db=thread_db,
+                    user_logger=user_logger,
+                )
+
+            # Release lock BEFORE closing connection (CRITICAL for PostgreSQL advisory locks)
+            _release_paper_scheduler_lock(thread_db, lock_id)
+            self._lock_keys.pop(user_id, None)
+
+            try:
+                thread_db.rollback()
+            except Exception:  # noqa: S110
+                pass
+            try:
+                thread_db.close()
+            except Exception:  # noqa: S110
+                pass
+
+    def _apply_paper_scheduler_thread_exit_status(
+        self,
+        *,
+        user_id: int,
+        thread_db: Session,
+        user_logger: Any,
+    ) -> None:
+        """Persist stopped status when the paper scheduler thread exits."""
+        # Update database status to False when thread exits (CRITICAL - must succeed)
+        # This ensures database reflects actual service state even if thread
+        # crashes/exits unexpectedly
+        # Use aggressive retry logic with emergency session fallback for reliability
+        max_exit_retries = 5
+        exit_retry_delays = [0.2, 0.5, 1.0, 2.0, 5.0]
+        exit_status_updated = False
+
+        from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+        # Try with existing thread_db first (up to 5 retries)
+        for retry_attempt in range(max_exit_retries):
+            try:
+                thread_status_repo = ServiceStatusRepository(thread_db)
+                thread_status_repo.update_running(user_id, running=False)
+                thread_status_repo.update_heartbeat(user_id)
+                thread_db.commit()
+                exit_status_updated = True
+                try:
+                    user_logger.debug(
+                        "Updated database service status to stopped on thread exit",
+                        action="scheduler",
+                    )
+                except Exception:
+                    pass  # Logger might fail, but status is updated
+                break
+            except OperationalError as op_err:
+                thread_db.rollback()
+                thread_db.expire_all()
+                is_locked_error = "database is locked" in str(op_err).lower()
+
+                if retry_attempt < max_exit_retries - 1:
+                    time.sleep(exit_retry_delays[retry_attempt])
+                    continue
+            except Exception:
+                thread_db.rollback()
+                thread_db.expire_all()
+                break
+
+        if not exit_status_updated:
+            try:
+                from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
+                emergency_db = SessionLocal()
+                try:
+                    emergency_repo = ServiceStatusRepository(emergency_db)
+                    emergency_repo.update_running(user_id, running=False)
+                    emergency_repo.update_heartbeat(user_id)
+                    emergency_db.commit()
                     exit_status_updated = True
                     try:
-                        user_logger.debug(
-                            "Updated database service status to stopped on thread exit",
+                        user_logger.info(
+                            "Successfully updated service status using emergency session",
                             action="scheduler",
                         )
                     except Exception:
-                        pass  # Logger might fail, but status is updated
-                    break
-                except OperationalError as op_err:
-                    thread_db.rollback()
-                    thread_db.expire_all()
-                    is_locked_error = "database is locked" in str(op_err).lower()
+                        import logging  # noqa: PLC0415
 
-                    if retry_attempt < max_exit_retries - 1:
-                        # Retry with increasing delays
-                        time.sleep(exit_retry_delays[retry_attempt])
-                        continue
-                    else:
-                        # Final failure with thread_db - will try emergency session below
-                        pass
-                except Exception:
-                    thread_db.rollback()
-                    thread_db.expire_all()
-                    # Non-OperationalError - try emergency session immediately
-                    break
-
-            # If exit status update failed, try with a fresh session (emergency fallback)
-            if not exit_status_updated:
-                try:
-                    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
-
-                    emergency_db = SessionLocal()
-                    try:
-                        emergency_repo = ServiceStatusRepository(emergency_db)
-                        emergency_repo.update_running(user_id, running=False)
-                        emergency_repo.update_heartbeat(user_id)
-                        emergency_db.commit()
-                        exit_status_updated = True
-                        try:
-                            user_logger.info(
-                                "Successfully updated service status using emergency session",
-                                action="scheduler",
-                            )
-                        except Exception:
-                            import logging  # noqa: PLC0415
-
-                            logging.info(
-                                f"Updated service status for user {user_id} via emergency session"
-                            )
-                    except Exception as e2:
-                        emergency_db.rollback()
-                        try:
-                            user_logger.error(
-                                f"CRITICAL: Emergency service status update failed: {e2}",
-                                action="scheduler",
-                            )
-                        except Exception:
-                            import logging  # noqa: PLC0415
-
-                            logging.error(
-                                f"CRITICAL: Emergency service status update failed for user {user_id}: {e2}"
-                            )
-                    finally:
-                        try:
-                            emergency_db.close()
-                        except Exception:  # noqa: S110
-                            pass  # Ignore close errors
-                except Exception as e3:
+                        logging.info(
+                            f"Updated service status for user {user_id} via emergency session"
+                        )
+                except Exception as e2:
+                    emergency_db.rollback()
                     try:
                         user_logger.error(
-                            f"CRITICAL: Could not create emergency session: {e3}",
+                            f"CRITICAL: Emergency service status update failed: {e2}",
                             action="scheduler",
                         )
                     except Exception:
                         import logging  # noqa: PLC0415
 
                         logging.error(
-                            f"CRITICAL: Could not create emergency session for user {user_id}: {e3}"
+                            f"CRITICAL: Emergency service status update failed for user {user_id}: {e2}"
                         )
-
-            # If still not updated, log critical error (but don't fail - cleanup must continue)
-            if not exit_status_updated:
+                finally:
+                    try:
+                        emergency_db.close()
+                    except Exception:  # noqa: S110
+                        pass
+            except Exception as e3:
                 try:
                     user_logger.error(
-                        "CRITICAL: Service status could not be updated on exit. "
-                        "Database may show stale 'running' status!",
+                        f"CRITICAL: Could not create emergency session: {e3}",
                         action="scheduler",
                     )
                 except Exception:
                     import logging  # noqa: PLC0415
 
                     logging.error(
-                        f"CRITICAL: Service status could not be updated on exit for user {user_id}"
+                        f"CRITICAL: Could not create emergency session for user {user_id}: {e3}"
                     )
 
-            # Release lock BEFORE closing connection (CRITICAL for PostgreSQL advisory locks)
-            # Release table-based lock (works with any connection, no invalidation needed)
-            _release_paper_scheduler_lock(thread_db, lock_id)
-            # Clear lock_id from shared state after release
-            self._lock_keys.pop(user_id, None)
+        if not exit_status_updated:
+            try:
+                user_logger.error(
+                    "CRITICAL: Service status could not be updated on exit. "
+                    "Database may show stale 'running' status!",
+                    action="scheduler",
+                )
+            except Exception:
+                import logging  # noqa: PLC0415
 
-            # Clean up thread-local session
-            # Ensure any pending transactions are handled before closing
-            try:
-                # Rollback any pending transaction
-                thread_db.rollback()
-            except Exception:  # noqa: S110
-                pass  # Ignore rollback errors (session may already be closed/rolled back)
-            try:
-                thread_db.close()
-            except Exception:  # noqa: S110
-                pass  # Ignore close errors if session is in bad state
+                logging.error(
+                    f"CRITICAL: Service status could not be updated on exit for user {user_id}"
+                )
 
     def start_service(self, user_id: int) -> bool:  # noqa: PLR0915, PLR0912
         """
@@ -1162,6 +1179,8 @@ class MultiUserTradingService:
                 user_config = self._config_repo.get_or_create_default(user_id)
                 strategy_config = user_config_to_strategy_config(user_config, db_session=self.db)
 
+                service_generation = bump_service_generation(user_id)
+
                 # Create appropriate service based on mode
                 if settings.trade_mode.value == "paper":
                     # Paper trading mode - use PaperTradingServiceAdapter
@@ -1185,11 +1204,12 @@ class MultiUserTradingService:
 
                     # Store service instance
                     self._services[user_id] = service
+                    service._lifecycle_generation = service_generation
 
                     # Start scheduler in background thread
                     service_thread = threading.Thread(
                         target=self._run_paper_trading_scheduler,
-                        args=(service, user_id),
+                        args=(service, user_id, service_generation),
                         daemon=True,
                         name=f"PaperTradingScheduler-{user_id}",
                     )
@@ -1215,6 +1235,7 @@ class MultiUserTradingService:
 
                     # Store service instance
                     self._services[user_id] = service
+                    service._lifecycle_generation = service_generation
 
                     # Start real trading service in background thread
                     service_thread = threading.Thread(
@@ -1275,6 +1296,7 @@ class MultiUserTradingService:
         lock = self._locks.setdefault(user_id, threading.Lock())
 
         with lock:
+            bump_service_generation(user_id)
             service = self._services.pop(user_id, None)
             service_thread = self._service_threads.pop(user_id, None)
 
@@ -1413,21 +1435,25 @@ class MultiUserTradingService:
                 elif status.last_heartbeat:
                     from datetime import timedelta
 
-                    from src.infrastructure.db.timezone_utils import ist_now
+                    from src.infrastructure.db.timezone_utils import (
+                        ist_now,
+                        service_status_heartbeat_age_seconds,
+                    )
 
-                    now = ist_now()
-                    last_heartbeat = status.last_heartbeat
-                    if last_heartbeat.tzinfo is None:
-                        last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
-                    heartbeat_age = now - last_heartbeat
+                    heartbeat_age_seconds = service_status_heartbeat_age_seconds(
+                        status.last_heartbeat, reference=ist_now()
+                    )
 
                     # Only mark as stale if heartbeat is old (> 2 minutes)
                     # This prevents false positives when service just started
-                    if heartbeat_age > timedelta(minutes=2):
+                    if (
+                        heartbeat_age_seconds is not None
+                        and heartbeat_age_seconds > timedelta(minutes=2).total_seconds()
+                    ):
                         self._logger.warning(
                             f"Detected stale service for user {user_id}: "
                             "database shows running=True but thread reference not found "
-                            f"and heartbeat is old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
+                            f"and heartbeat is old ({heartbeat_age_seconds:.0f}s). Cleaning up.",
                             action="get_service_status",
                         )
                         # Clean up stale service
@@ -1442,7 +1468,7 @@ class MultiUserTradingService:
                         # Heartbeat is recent - service might be starting, don't mark as stale
                         self._logger.debug(
                             f"Service for user {user_id} has no thread reference but heartbeat is recent "
-                            f"({heartbeat_age.total_seconds():.0f}s). Not marking as stale - may be starting.",
+                            f"({heartbeat_age_seconds:.0f}s). Not marking as stale - may be starting.",
                             action="get_service_status",
                         )
                 else:
@@ -1459,21 +1485,25 @@ class MultiUserTradingService:
             elif status.last_heartbeat:
                 from datetime import timedelta
 
-                from src.infrastructure.db.timezone_utils import ist_now
+                from src.infrastructure.db.timezone_utils import (
+                    ist_now,
+                    service_status_heartbeat_age_seconds,
+                )
 
-                now = ist_now()
-                last_heartbeat = status.last_heartbeat
-                if last_heartbeat.tzinfo is None:
-                    last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
-                heartbeat_age = now - last_heartbeat
+                heartbeat_age_seconds = service_status_heartbeat_age_seconds(
+                    status.last_heartbeat, reference=ist_now()
+                )
 
                 # Only mark as stale if heartbeat is VERY old (>30 minutes) AND thread is dead
                 # This prevents false positives when service just started
-                if heartbeat_age > timedelta(minutes=30):
+                if (
+                    heartbeat_age_seconds is not None
+                    and heartbeat_age_seconds > timedelta(minutes=30).total_seconds()
+                ):
                     self._logger.warning(
                         f"Detected stale service for user {user_id}: "
                         f"database shows running=True, thread is dead, "
-                        f"and heartbeat is very old ({heartbeat_age.total_seconds():.0f}s). Cleaning up.",
+                        f"and heartbeat is very old ({heartbeat_age_seconds:.0f}s). Cleaning up.",
                         action="get_service_status",
                     )
                     # Clean up stale service
@@ -1488,7 +1518,7 @@ class MultiUserTradingService:
                     # Heartbeat is recent - thread might just be starting, don't mark as stale
                     self._logger.debug(
                         f"Service for user {user_id} shows dead thread but heartbeat is recent "
-                        f"({heartbeat_age.total_seconds():.0f}s). Not marking as stale - may be starting.",
+                        f"({heartbeat_age_seconds:.0f}s). Not marking as stale - may be starting.",
                         action="get_service_status",
                     )
             else:
@@ -1505,22 +1535,25 @@ class MultiUserTradingService:
         if status.service_running and status.last_heartbeat and not thread_is_alive:
             from datetime import timedelta
 
-            from src.infrastructure.db.timezone_utils import ist_now
+            from src.infrastructure.db.timezone_utils import (
+                ist_now,
+                service_status_heartbeat_age_seconds,
+            )
 
-            now = ist_now()
-            # Ensure last_heartbeat is timezone-aware for comparison
-            last_heartbeat = status.last_heartbeat
-            if last_heartbeat.tzinfo is None:
-                last_heartbeat = last_heartbeat.replace(tzinfo=now.tzinfo)
-            heartbeat_age = now - last_heartbeat
+            heartbeat_age_seconds = service_status_heartbeat_age_seconds(
+                status.last_heartbeat, reference=ist_now()
+            )
 
             # If heartbeat is older than 30 minutes and thread is not alive, mark as stale
             # Use 30 minutes to avoid false positives when service just restarted
             # Don't check lock - rely on thread object and heartbeat age only
-            if heartbeat_age > timedelta(minutes=30):
+            if (
+                heartbeat_age_seconds is not None
+                and heartbeat_age_seconds > timedelta(minutes=30).total_seconds()
+            ):
                 self._logger.warning(
                     f"Detected stale service for user {user_id}: "
-                    f"heartbeat age {heartbeat_age.total_seconds():.0f}s, thread not alive. Cleaning up.",
+                    f"heartbeat age {heartbeat_age_seconds:.0f}s, thread not alive. Cleaning up.",
                     action="get_service_status",
                 )
                 # Clean up stale service
@@ -1530,6 +1563,19 @@ class MultiUserTradingService:
                 self._service_status_repo.update_running(user_id, running=False)
                 self.db.commit()
                 # Refresh status from database
+                status = self._service_status_repo.get(user_id)
+
+        if not status.service_running and thread_is_alive:
+            active_service = self._services.get(user_id)
+            thread_gen = getattr(active_service, "_lifecycle_generation", None)
+            if thread_gen is not None and is_generation_current(user_id, thread_gen):
+                self._logger.info(
+                    f"Healing service status for user {user_id}: "
+                    "scheduler thread alive but database shows stopped",
+                    action="get_service_status",
+                )
+                self._service_status_repo.update_running(user_id, running=True)
+                self.db.commit()
                 status = self._service_status_repo.get(user_id)
 
         return status

@@ -89,6 +89,12 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
     _mus._shared_start_locks.clear()
     _mus._shared_lock_keys.clear()
 
+    from src.application.services.service_lifecycle_generation import (  # noqa: PLC0415
+        reset_service_generation,
+    )
+
+    reset_service_generation()
+
     yield
 
     # Best-effort cleanup (keep DB clean for other modules too)
@@ -105,6 +111,8 @@ def _isolate_multi_user_service_state(db_session, monkeypatch):
     _mus._shared_locks.clear()
     _mus._shared_start_locks.clear()
     _mus._shared_lock_keys.clear()
+
+    reset_service_generation()
 
 
 @pytest.fixture
@@ -590,6 +598,34 @@ class TestMultiUserTradingService:
 
         # Clean up to avoid leaking running state into subsequent tests
         service.stop_service(sample_user_with_settings.id)
+
+    def test_get_service_status_does_not_false_stale_with_utc_naive_heartbeat(
+        self, db_session, sample_user_with_settings
+    ):
+        """UTC-naive heartbeat must not flip service_running=False after redeploy."""
+        from datetime import timedelta
+        from unittest.mock import MagicMock
+
+        from src.application.services.multi_user_trading_service import _shared_service_threads
+        from src.infrastructure.db.timezone_utils import ist_now, ist_to_utc
+        from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
+
+        user_id = sample_user_with_settings.id
+        _shared_service_threads.pop(user_id, None)
+
+        service = MultiUserTradingService(db=db_session)
+        service._logger = MagicMock()
+
+        status_repo = ServiceStatusRepository(db_session)
+        status_repo.update_running(user_id, running=True)
+        status = status_repo.get(user_id)
+        assert status is not None
+        status.last_heartbeat = ist_to_utc(ist_now() - timedelta(seconds=30)).replace(tzinfo=None)
+        db_session.commit()
+
+        result = service.get_service_status(user_id)
+        assert result is not None
+        assert result.service_running is True
 
     def test_thread_safety(self, db_session, sample_user_with_settings):
         """Test thread-safe operations"""

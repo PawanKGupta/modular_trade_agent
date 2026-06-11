@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from src.infrastructure.db.timezone_utils import IST, ist_now, ist_to_utc, utc_to_ist
+from src.infrastructure.db.timezone_utils import (
+    IST,
+    db_timestamp_to_utc_for_api,
+    ist_now,
+    ist_now_naive,
+    ist_to_utc,
+    service_status_heartbeat_age_seconds,
+    service_status_heartbeat_to_utc_for_api,
+    utc_to_ist,
+)
 
 
 def test_ist_now():
@@ -71,4 +80,79 @@ def test_ist_to_utc_roundtrip():
     utc = ist_to_utc(original_ist)
     back_to_ist = utc_to_ist(utc)
     assert back_to_ist == original_ist
+
+
+def test_service_status_heartbeat_age_utc_naive_stored_value():
+    """Legacy psycopg2 storage: naive UTC must not appear ~5.5h stale vs IST now."""
+    reference = datetime(2026, 6, 11, 23, 0, 46, tzinfo=IST)
+    # 17:30:36 UTC naive == 23:00:36 IST (about 10s before reference)
+    utc_naive = datetime(2026, 6, 11, 17, 30, 36, 700984)
+    age = service_status_heartbeat_age_seconds(utc_naive, reference=reference)
+    assert age is not None
+    assert age < 120
+    assert age > 5
+
+
+def test_service_status_heartbeat_age_wrong_ist_naive_would_be_hours():
+    """Document false stale: treating UTC-naive as IST gives ~19800s for this row."""
+    reference = datetime(2026, 6, 11, 23, 0, 46, tzinfo=IST)
+    utc_naive = datetime(2026, 6, 11, 17, 30, 36, 700984)
+    wrong_age = (reference - utc_naive.replace(tzinfo=IST)).total_seconds()
+    correct_age = service_status_heartbeat_age_seconds(utc_naive, reference=reference)
+    assert wrong_age > 19000
+    assert correct_age is not None
+    assert correct_age < 120
+
+
+def test_service_status_heartbeat_age_ist_naive_stored_value():
+    """New writes via ist_now_naive(): naive IST wall-clock."""
+    reference = datetime(2026, 6, 11, 23, 0, 46, tzinfo=IST)
+    ist_naive = datetime(2026, 6, 11, 23, 0, 36)
+    age = service_status_heartbeat_age_seconds(ist_naive, reference=reference)
+    assert age is not None
+    assert 5 < age < 20
+
+
+def test_db_timestamp_to_utc_for_api_ist_naive_heartbeat():
+    """IST-naive heartbeat must serialize as true UTC, not UTC-labeled IST wall clock."""
+    reference = datetime(2026, 6, 11, 23, 43, 49, tzinfo=IST)
+    ist_naive = datetime(2026, 6, 11, 23, 43, 49)
+    utc_api = db_timestamp_to_utc_for_api(ist_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.tzinfo == UTC
+    assert utc_api.hour == 18
+    assert utc_api.minute == 13
+    assert utc_api.day == 11
+
+
+def test_db_timestamp_to_utc_for_api_matches_ist_aware():
+    reference = ist_now()
+    naive = ist_now_naive()
+    from_api = db_timestamp_to_utc_for_api(naive, reference=reference)
+    aware_ist = naive.replace(tzinfo=IST)
+    assert from_api == ist_to_utc(aware_ist)
+
+
+def test_service_status_heartbeat_to_utc_matches_age_for_ist_naive():
+    reference = datetime(2026, 6, 11, 23, 43, 49, tzinfo=IST)
+    ist_naive = datetime(2026, 6, 11, 23, 43, 39)
+    utc_api = service_status_heartbeat_to_utc_for_api(ist_naive, reference=reference)
+    age = service_status_heartbeat_age_seconds(ist_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.hour == 18
+    assert utc_api.minute == 13
+    assert age is not None
+    assert 5 < age < 20
+
+
+def test_service_status_heartbeat_to_utc_matches_age_for_utc_naive_legacy():
+    reference = datetime(2026, 6, 11, 23, 0, 46, tzinfo=IST)
+    utc_naive = datetime(2026, 6, 11, 17, 30, 36, 700984)
+    utc_api = service_status_heartbeat_to_utc_for_api(utc_naive, reference=reference)
+    age = service_status_heartbeat_age_seconds(utc_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.hour == 17
+    assert utc_api.minute == 30
+    assert age is not None
+    assert 5 < age < 120
 

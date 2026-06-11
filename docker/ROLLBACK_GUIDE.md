@@ -22,6 +22,9 @@ git tag -l
 ### Step 2: Backup Current State (Optional but Recommended)
 
 ```bash
+# Backup which users had unified / individual services running (auto-restore after redeploy)
+docker exec tradeagent-api python /app/tools/backup_service_status.py
+
 # Backup database before rollback
 docker exec tradeagent-api cp /app/data/app.db /app/data/app.db.backup.$(date +%Y%m%d_%H%M%S) || true
 
