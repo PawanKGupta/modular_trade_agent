@@ -102,11 +102,11 @@ export function ServiceSchedulePage() {
 
 	const TASK_DISPLAY_NAMES: Record<string, string> = {
 		premarket_retry: 'Pre-market Retry',
-		premarket_amo_adjustment: 'Pre-market Buy Adjustment (9:05)',
+		premarket_amo_adjustment: 'Pre-market Buy Adjustment',
 		sell_monitor: 'Sell Monitor',
 		analysis: 'Analysis',
 		buy_orders: 'Buy Orders',
-		buy_margin_preview: 'Buy Margin Preview (Evening)',
+		buy_margin_preview: 'Buy Margin Preview',
 		eod_cleanup: 'End-of-Day Cleanup',
 	};
 
