@@ -86,6 +86,7 @@ export function NotificationPreferencesPage() {
 			updates.notify_order_cancelled = true;
 			updates.notify_order_modified = true;
 			updates.notify_partial_fill = true;
+			updates.notify_balance_shortfall = true;
 		} else if (category === 'system') {
 			updates.notify_system_errors = true;
 			updates.notify_system_warnings = true;
@@ -118,6 +119,7 @@ export function NotificationPreferencesPage() {
 			updates.notify_order_cancelled = false;
 			updates.notify_order_modified = false;
 			updates.notify_partial_fill = false;
+			updates.notify_balance_shortfall = false;
 		} else if (category === 'system') {
 			updates.notify_system_errors = false;
 			updates.notify_system_warnings = false;
@@ -380,6 +382,18 @@ export function NotificationPreferencesPage() {
 							className="w-4 h-4"
 						/>
 						<span>Partial Fill</span>
+					</label>
+					<label className="flex items-center gap-3">
+						<input
+							type="checkbox"
+							checked={localPrefs.notify_balance_shortfall}
+							onChange={(e) => handleChange('notify_balance_shortfall', e.target.checked)}
+							className="w-4 h-4"
+						/>
+						<span>Insufficient buy margin / balance shortfall</span>
+						<span className="text-xs text-[var(--muted)]">
+							(evening preview and morning buy)
+						</span>
 					</label>
 				</div>
 			</section>

@@ -193,12 +193,14 @@ class ScheduleManager:
             elif schedule_time < time(9, 0) or schedule_time > time(18, 0):
                 return False, "Schedule time must be between 9:00 AM and 6:00 PM"
 
-        # Valid task names
+        # Valid task names (keep in sync with service_schedules / _ensure_default_schedules)
         valid_tasks = [
             "premarket_retry",
+            "premarket_amo_adjustment",
             "sell_monitor",
             "analysis",
             "buy_orders",
+            "buy_margin_preview",
             "eod_cleanup",
         ]
         if task_name not in valid_tasks:

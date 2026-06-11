@@ -21,7 +21,9 @@ class NotificationPreferencesResponse(BaseModel):
     in_app_enabled: bool = Field(default=True, description="Enable in-app notifications")
 
     # Legacy notification types (kept for backward compatibility)
-    notify_service_events: bool = Field(default=True, description="Notify on service events")
+    notify_service_events: bool = Field(
+        default=False, description="Notify on service events (legacy; opt-in)"
+    )
     notify_trading_events: bool = Field(default=True, description="Notify on trading events")
     notify_system_events: bool = Field(default=True, description="Notify on system events")
     notify_errors: bool = Field(default=True, description="Notify on errors")
@@ -48,6 +50,10 @@ class NotificationPreferencesResponse(BaseModel):
         default=True, description="Notify when order is retried"
     )
     notify_partial_fill: bool = Field(default=True, description="Notify on partial order fill")
+    notify_balance_shortfall: bool = Field(
+        default=True,
+        description="Notify when buy margin is insufficient (evening preview or morning buy)",
+    )
 
     # System event preferences
     notify_system_errors: bool = Field(default=True, description="Notify on system errors")
@@ -58,13 +64,13 @@ class NotificationPreferencesResponse(BaseModel):
 
     # Granular service event preferences
     notify_service_started: bool = Field(
-        default=True, description="Notify when a service is started"
+        default=False, description="Notify when a service is started (opt-in)"
     )
     notify_service_stopped: bool = Field(
-        default=True, description="Notify when a service is stopped"
+        default=False, description="Notify when a service is stopped (opt-in)"
     )
     notify_service_execution_completed: bool = Field(
-        default=True, description="Notify when a service execution completes"
+        default=False, description="Notify when a service execution completes (opt-in)"
     )
 
     notify_payment_failed: bool = Field(
@@ -152,6 +158,10 @@ class NotificationPreferencesUpdate(BaseModel):
     )
     notify_partial_fill: bool | None = Field(
         default=None, description="Notify on partial order fill"
+    )
+    notify_balance_shortfall: bool | None = Field(
+        default=None,
+        description="Notify when buy margin is insufficient (evening preview or morning buy)",
     )
 
     # System event preferences

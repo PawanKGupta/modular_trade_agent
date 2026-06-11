@@ -211,6 +211,7 @@ class TestNoRetryDuringPlacement:
 
         # Mock _add_failed_order
         auto_trade_engine._add_failed_order = Mock()
+        auto_trade_engine._notify_balance_shortfall = Mock()
 
         # Call place_new_entries
         summary = auto_trade_engine.place_new_entries([rec])
@@ -218,6 +219,7 @@ class TestNoRetryDuringPlacement:
         # Verify order was NOT placed
         assert summary["placed"] == 0
         assert summary["failed_balance"] == 1
+        auto_trade_engine._notify_balance_shortfall.assert_called_once()
 
         # Verify _add_failed_order was called to create RETRY_PENDING order
         auto_trade_engine._add_failed_order.assert_called_once()

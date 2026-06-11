@@ -113,6 +113,7 @@ def _preferences_to_response(prefs: UserNotificationPreferences) -> Notification
         notify_retry_queue_removed=prefs.notify_retry_queue_removed,
         notify_retry_queue_retried=prefs.notify_retry_queue_retried,
         notify_partial_fill=prefs.notify_partial_fill,
+        notify_balance_shortfall=_bool_notification_pref(prefs, "notify_balance_shortfall"),
         notify_system_errors=prefs.notify_system_errors,
         notify_system_warnings=prefs.notify_system_warnings,
         notify_system_info=prefs.notify_system_info,

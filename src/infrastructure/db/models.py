@@ -964,7 +964,7 @@ class UserNotificationPreferences(Base):
     email_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     in_app_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Notification types (legacy - kept for backward compatibility)
-    notify_service_events: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_service_events: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notify_trading_events: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_system_events: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_errors: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -979,15 +979,16 @@ class UserNotificationPreferences(Base):
     notify_retry_queue_removed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_retry_queue_retried: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_partial_fill: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_balance_shortfall: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Granular system event preferences (Phase 1: Notification Preferences)
     notify_system_errors: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_system_warnings: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notify_system_info: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Granular service event preferences (Service Notifications)
-    notify_service_started: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    notify_service_stopped: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_service_started: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notify_service_stopped: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notify_service_execution_completed: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
+        Boolean, default=False, nullable=False
     )
     # Billing (Razorpay payment failures, including performance-fee orders)
     notify_payment_failed: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

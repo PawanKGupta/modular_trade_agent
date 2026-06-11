@@ -72,6 +72,89 @@ def strip_markdown_for_plain(text: str) -> str:
     return plain
 
 
+def format_balance_shortfall_telegram(
+    *,
+    broker_symbol: str,
+    qty: int,
+    close: float,
+    required_cash: float,
+    avail_cash: float | None,
+    shortfall: float,
+    dry_run: bool,
+    entry_type: str = "entry",
+    affordable_qty: int | None = None,
+) -> str:
+    """Telegram body for insufficient buy margin (evening preview or morning buy)."""
+    is_reentry = entry_type == "reentry"
+    partial_reentry = (
+        is_reentry
+        and affordable_qty is not None
+        and affordable_qty > 0
+        and affordable_qty < qty
+    )
+    if dry_run:
+        if is_reentry:
+            header = "*Insufficient Margin (Evening Re-entry Preview)*"
+        else:
+            header = "*Insufficient Margin (Evening Preview)*"
+        if partial_reentry:
+            footer = (
+                f"No order placed. Full re-entry needs more funds; "
+                f"affordable size would be {affordable_qty} shares. "
+                "Fund account before morning buy run (9:01 AM IST)."
+            )
+        else:
+            footer = "No order placed. Fund account before morning buy run (9:01 AM IST)."
+    elif is_reentry:
+        header = "*Insufficient Balance - Re-entry BUY*"
+        if partial_reentry:
+            footer = (
+                f"Placing re-entry for {affordable_qty} shares (reduced from {qty}). "
+                "Add funds for the full planned re-entry size."
+            )
+        else:
+            footer = "Re-entry saved for retry at premarket_retry or manually."
+    else:
+        header = "*Insufficient Balance - BUY*"
+        footer = "Order saved for retry at premarket_retry or manually."
+    return (
+        f"{header}\n\n"
+        f"Symbol: `{broker_symbol}`\n"
+        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
+        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
+        f"Shortfall: Rs {shortfall:,.0f}\n\n"
+        f"{footer}"
+    )
+
+
+def format_balance_shortfall_plain(
+    *,
+    broker_symbol: str,
+    qty: int,
+    close: float,
+    required_cash: float,
+    avail_cash: float | None,
+    shortfall: float,
+    dry_run: bool,
+    entry_type: str = "entry",
+    affordable_qty: int | None = None,
+) -> str:
+    """Plain-text body for in-app and email balance shortfall alerts."""
+    return strip_markdown_for_plain(
+        format_balance_shortfall_telegram(
+            broker_symbol=broker_symbol,
+            qty=qty,
+            close=close,
+            required_cash=required_cash,
+            avail_cash=avail_cash,
+            shortfall=shortfall,
+            dry_run=dry_run,
+            entry_type=entry_type,
+            affordable_qty=affordable_qty,
+        )
+    )
+
+
 def format_premarket_task_in_app_summary(summary: dict[str, int]) -> str:
     """One-line in-app summary after premarket_amo_adjustment task completes."""
     adjusted = int(summary.get("adjusted") or 0)
