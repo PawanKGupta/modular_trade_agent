@@ -290,6 +290,27 @@ def reentries_today(self, base_symbol: str) -> int:
         return 0
 ```
 
+## 2.1 Same-Day Same-Level Guard (per RSI level)
+
+### Purpose
+
+Prevents a second **system** re-entry at the **same RSI level** (30, 20, or 10) on the **same IST calendar day**, even when cycle metadata increments after a reset. This is independent of cycle logic: level 30 filled in cycle 1 still blocks another level 30 placement later that day in cycle 2.
+
+Different levels on the same day remain allowed (for example level 30 in the morning and level 20 after RSI drops further).
+
+### How It Works
+
+**Location**: `modules/kotak_neo_auto_trader/reentry_day_guard.py`, `AutoTradeEngine.has_reentry_at_level_today()`, `place_reentry_orders()` (after cycle-scoped `has_reentry_at_level()`).
+
+Blocks when today (IST, using `placed_at` on re-entry records) there is already:
+
+- A filled re-entry at that level in `positions.reentries`, or
+- A pending/filled re-entry buy order at that level in `orders` (`entry_type=reentry`, `metadata.reentry_level`).
+
+Cancelled/failed orders do not block. AMO orders placed yesterday but executed today do not count for today (same `placed_at` rules as `reentries_today()`).
+
+Summary counter: `skipped_duplicate_level_today`.
+
 ## 3. Holdings Protection: Skip if Already in Holdings
 
 ### Purpose

@@ -2593,6 +2593,36 @@ class AutoTradeEngine:
             logger.error(f"Error checking reentry level for {base_symbol}: {e}")
             return False
 
+    def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
+        """
+        Return True when a system re-entry at ``level`` was already placed or filled today.
+
+        Independent of cycle metadata: blocks duplicate same-level re-entries on the same
+        IST calendar day even after a cycle reset.
+        """
+        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
+
+        try:
+            if not self.positions_repo or not self.user_id:
+                return False
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            orders: list[Any] = []
+            if self.orders_repo:
+                orders_list, _ = self.orders_repo.list(self.user_id)
+                orders = list(orders_list or [])
+
+            return has_reentry_at_level_today(
+                position=position,
+                orders=orders,
+                base_symbol=base_symbol,
+                level=level,
+                today=ist_now().date(),
+            )
+        except Exception as e:
+            logger.error(f"Error checking same-day reentry level for {base_symbol}: {e}")
+            return False
+
     def _resolve_broker_symbol(self, base_symbol: str) -> str:
         """
         Resolve base symbol to actual broker trading symbol using scrip master.
@@ -5674,7 +5704,8 @@ class AutoTradeEngine:
             "failed_balance": 0,
             "skipped_no_position": 0,
             "skipped_duplicates": 0,
-            "skipped_duplicate_level": 0,  # Re-entry at same level already placed today
+            "skipped_duplicate_level": 0,  # Re-entry at same level already exists in current cycle
+            "skipped_duplicate_level_today": 0,  # Same level already placed/filled today (IST)
             "skipped_invalid_rsi": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
@@ -5939,6 +5970,16 @@ class AutoTradeEngine:
                     )
                     summary["skipped_duplicate_level"] = (
                         summary.get("skipped_duplicate_level", 0) + 1
+                    )
+                    continue
+
+                if self.has_reentry_at_level_today(symbol, next_level):
+                    logger.info(
+                        f"Skipping {symbol}: Re-entry at level {next_level} already placed or "
+                        f"filled today (same-day level guard; cycle={current_cycle})"
+                    )
+                    summary["skipped_duplicate_level_today"] = (
+                        summary.get("skipped_duplicate_level_today", 0) + 1
                     )
                     continue
 
