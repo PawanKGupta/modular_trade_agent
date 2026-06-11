@@ -66,6 +66,20 @@ except ImportError:
     )
 
 
+def _balance_shortfall_digest_context(engine, *, dry_run: bool):
+    """Batch shortfall alerts for a full buy run (real ``AutoTradeEngine`` only)."""
+    from contextlib import nullcontext
+
+    # Import concrete class so unit tests can patch ``run_trading_service.AutoTradeEngine``.
+    from modules.kotak_neo_auto_trader.auto_trade_engine import (
+        AutoTradeEngine as _RealAutoTradeEngine,
+    )
+
+    if isinstance(engine, _RealAutoTradeEngine):
+        return engine.balance_shortfall_digest_batch(dry_run=dry_run)
+    return nullcontext()
+
+
 class TradingService:
     """
     Unified trading service that runs all tasks with single persistent session.
@@ -994,75 +1008,79 @@ class TradingService:
                 task_context["recommendations_count"] = 0
                 task_context["summary"] = summary
             else:
-                self.logger.info("Loading latest recommendations...", action="run_buy_orders")
-                recs = self.engine.load_latest_recommendations()
-                self.logger.info(
-                    f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
-                )
-                if recs:
+                with _balance_shortfall_digest_context(self.engine, dry_run=False):
+                    self.logger.info("Loading latest recommendations...", action="run_buy_orders")
+                    recs = self.engine.load_latest_recommendations()
                     self.logger.info(
-                        f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+                        f"Loaded {len(recs)} recommendations for buy orders",
+                        action="run_buy_orders",
                     )
-                    try:
-                        # Place fresh entry orders
-                        summary = self.engine.place_new_entries(recs)
-                        self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
-                        # Log detailed summary
+                    if recs:
                         self.logger.info(
-                            f"  - Attempted: {summary.get('attempted', 0)}, "
-                            f"Placed: {summary.get('placed', 0)}, "
-                            f"Retried: {summary.get('retried', 0)}, "
-                            f"Failed (balance): {summary.get('failed_balance', 0)}, "
-                            f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                            f"Processing {len(recs)} recommendations...",
                             action="run_buy_orders",
                         )
-                    except OrderPlacementError as exc:
-                        # OrderPlacementError should no longer be raised (changed to continue)
-                        # But keep this handler for backward compatibility
-                        error_msg = (
-                            f"Unexpected OrderPlacementError: {exc}. "
-                            "This should not occur with current implementation."
-                        )
-                        self.logger.error(error_msg, action="run_buy_orders")
+                        try:
+                            # Place fresh entry orders
+                            summary = self.engine.place_new_entries(recs)
+                            self.logger.info(
+                                f"Buy orders summary: {summary}", action="run_buy_orders"
+                            )
+                            # Log detailed summary
+                            self.logger.info(
+                                f"  - Attempted: {summary.get('attempted', 0)}, "
+                                f"Placed: {summary.get('placed', 0)}, "
+                                f"Retried: {summary.get('retried', 0)}, "
+                                f"Failed (balance): {summary.get('failed_balance', 0)}, "
+                                f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                                action="run_buy_orders",
+                            )
+                        except OrderPlacementError as exc:
+                            # OrderPlacementError should no longer be raised (changed to continue)
+                            # But keep this handler for backward compatibility
+                            error_msg = (
+                                f"Unexpected OrderPlacementError: {exc}. "
+                                "This should not occur with current implementation."
+                            )
+                            self.logger.error(error_msg, action="run_buy_orders")
+                            task_context["recommendations_count"] = len(recs)
+                            task_context["error"] = str(exc)
+                            if getattr(exc, "symbol", None):
+                                task_context["failed_symbol"] = exc.symbol
+                            # Don't raise - let the summary be returned
+                            summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+
                         task_context["recommendations_count"] = len(recs)
-                        task_context["error"] = str(exc)
-                        if getattr(exc, "symbol", None):
-                            task_context["failed_symbol"] = exc.symbol
-                        # Don't raise - let the summary be returned
-                        summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+                        task_context["summary"] = summary
+                    else:
+                        self.logger.warning(
+                            "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                            action="run_buy_orders",
+                        )
+                        self.logger.warning(
+                            "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                            action="run_buy_orders",
+                        )
+                        task_context["recommendations_count"] = 0
+                        task_context["summary"] = summary  # Return empty summary
 
-                    task_context["recommendations_count"] = len(recs)
-                    task_context["summary"] = summary
-                else:
-                    self.logger.warning(
-                        "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                    # Check and place re-entry orders (regardless of fresh entry recommendations)
+                    from modules.kotak_neo_auto_trader.reentry_logging import (
+                        format_reentry_run_buy_orders_detail,
+                    )
+
+                    self.logger.info(
+                        "Evaluating re-entry for open positions (see re-entry summary below)...",
                         action="run_buy_orders",
                     )
-                    self.logger.warning(
-                        "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                    reentry_summary = self.engine.place_reentry_orders()
+                    self.logger.info(
+                        f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
+                    )
+                    self.logger.info(
+                        f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
                         action="run_buy_orders",
                     )
-                    task_context["recommendations_count"] = 0
-                    task_context["summary"] = summary  # Return empty summary
-
-                # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
-                # Re-entry should be checked independently of fresh entry orders
-                from modules.kotak_neo_auto_trader.reentry_logging import (
-                    format_reentry_run_buy_orders_detail,
-                )
-
-                self.logger.info(
-                    "Evaluating re-entry for open positions (see re-entry summary below)...",
-                    action="run_buy_orders",
-                )
-                reentry_summary = self.engine.place_reentry_orders()
-                self.logger.info(
-                    f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
-                )
-                self.logger.info(
-                    f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
-                    action="run_buy_orders",
-                )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")

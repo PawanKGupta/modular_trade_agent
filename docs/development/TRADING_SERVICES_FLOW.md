@@ -44,7 +44,7 @@ Generates recommendations in `signals` for the next trading day.
 **Purpose**: Check Kotak `check-margin` for each buy recommendation **without placing orders**. Sends Telegram warnings when margin is insufficient so funds can be added before the open.
 
 **Key operations**:
-- `engine.preview_evening_buy_margins()` → `place_new_entries(..., dry_run=True)`
+- `engine.preview_evening_buy_margins()` → `place_new_entries(..., dry_run=True)` + `place_reentry_orders(dry_run=True)` inside one **balance shortfall digest** (single Telegram/in-app/email alert for all entry + re-entry shortfalls)
 - No broker placement; no failed-order rows for shortfall (preview only)
 
 ---
@@ -59,7 +59,7 @@ Generates recommendations in `signals` for the next trading day.
 **Flow**:
 1. Load buy recommendations from `signals`.
 2. Portfolio limits, margin check, `place_new_entries()`.
-3. `place_reentry_orders()` in the same task.
+3. `place_reentry_orders()` in the same task (entry + re-entry shortfalls batched into **one** digest notification per run).
 
 **Note**: Requires prior-day (or same-day) analysis signals. Full intent and 9:05/9:15 behavior: [Morning buy flow](#morning-buy-flow-901--905--915).
 

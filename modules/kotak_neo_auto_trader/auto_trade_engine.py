@@ -245,6 +245,10 @@ class AutoTradeEngine:
             enable_caching=True,
         )
 
+        # Batched balance-shortfall digest (one notification per buy/preview run)
+        self._shortfall_digest_items: list = []
+        self._shortfall_digest_defer = False
+
         # Initialize OrderValidationService (Phase 3.1: Order Validation & Verification)
         # Portfolio, orders, and orders_repo will be set after login
         from modules.kotak_neo_auto_trader.services import get_order_validation_service
@@ -329,63 +333,53 @@ class AutoTradeEngine:
             # Fallback to singleton pattern on error
             return get_telegram_notifier(db_session=self.db)
 
-    def _notify_balance_shortfall(
-        self,
-        *,
-        broker_symbol: str,
-        qty: int,
-        close: float,
-        required_cash: float,
-        avail_cash: float | None,
-        shortfall: float,
-        dry_run: bool,
-        entry_type: str = "entry",
-        affordable_qty: int | None = None,
+    def begin_balance_shortfall_digest(self) -> None:
+        """Start batching shortfall alerts for a single digest at flush."""
+        self._shortfall_digest_items = []
+        self._shortfall_digest_defer = True
+
+    def flush_balance_shortfall_digest(self, *, dry_run: bool) -> None:
+        """Send one multi-channel digest for all shortfalls recorded in this batch."""
+        self._shortfall_digest_defer = False
+        if not self._shortfall_digest_items:
+            return
+        items = list(self._shortfall_digest_items)
+        self._shortfall_digest_items = []
+        self._send_balance_shortfall_digest(items, dry_run=dry_run)
+
+    def balance_shortfall_digest_batch(self, *, dry_run: bool):
+        """Context manager: batch entry + re-entry shortfalls into one notification."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _batch():
+            self.begin_balance_shortfall_digest()
+            try:
+                yield
+            finally:
+                self.flush_balance_shortfall_digest(dry_run=dry_run)
+
+        return _batch()
+
+    def _send_balance_shortfall_digest(
+        self, items: list, *, dry_run: bool
     ) -> None:
-        """Send balance shortfall on all enabled channels (Telegram, in-app, email)."""
+        """Dispatch a balance shortfall digest on all enabled channels."""
         from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
             dispatch_trading_notification,
         )
-        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
-            format_balance_shortfall_plain,
-            format_balance_shortfall_telegram,
+        from modules.kotak_neo_auto_trader.utils.balance_shortfall_digest import (
+            format_balance_shortfall_digest_plain,
+            format_balance_shortfall_digest_telegram,
+            format_balance_shortfall_digest_title,
         )
+        from src.infrastructure.db.timezone_utils import ist_now
 
-        telegram_body = format_balance_shortfall_telegram(
-            broker_symbol=broker_symbol,
-            qty=qty,
-            close=close,
-            required_cash=required_cash,
-            avail_cash=avail_cash,
-            shortfall=shortfall,
-            dry_run=dry_run,
-            entry_type=entry_type,
-            affordable_qty=affordable_qty,
-        )
-        message_plain = format_balance_shortfall_plain(
-            broker_symbol=broker_symbol,
-            qty=qty,
-            close=close,
-            required_cash=required_cash,
-            avail_cash=avail_cash,
-            shortfall=shortfall,
-            dry_run=dry_run,
-            entry_type=entry_type,
-            affordable_qty=affordable_qty,
-        )
-        is_reentry = entry_type == "reentry"
-        if dry_run:
-            title = (
-                "Insufficient Margin (Evening Re-entry Preview)"
-                if is_reentry
-                else "Insufficient Margin (Evening Preview)"
-            )
-        else:
-            title = (
-                "Insufficient Balance - Re-entry BUY"
-                if is_reentry
-                else "Insufficient Balance - BUY"
-            )
+        telegram_body = format_balance_shortfall_digest_telegram(items, dry_run=dry_run)
+        message_plain = format_balance_shortfall_digest_plain(items, dry_run=dry_run)
+        title = format_balance_shortfall_digest_title(items, dry_run=dry_run)
+        digest_key = "preview" if dry_run else "live"
+        order_id = f"balance_shortfall_digest:{digest_key}:{ist_now().strftime('%Y-%m-%d')}"
 
         if self.user_id and self.db:
             try:
@@ -404,12 +398,12 @@ class AutoTradeEngine:
                     preference_service=NotificationPreferenceService(self.db),
                     telegram_notifier=self.telegram_notifier,
                     level="warning",
-                    order_id=f"balance_shortfall:{entry_type}:{broker_symbol}",
-                    dedupe=True,
+                    order_id=order_id,
+                    dedupe=False,
                 )
                 return
             except Exception as notify_err:
-                logger.warning(f"Failed to send balance shortfall notification: {notify_err}")
+                logger.warning(f"Failed to send balance shortfall digest: {notify_err}")
 
         if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
             try:
@@ -419,9 +413,42 @@ class AutoTradeEngine:
                     rate_limit_exempt=True,
                 )
             except Exception as notify_err:
-                logger.warning(f"Failed to send balance shortfall notification: {notify_err}")
+                logger.warning(f"Failed to send balance shortfall digest: {notify_err}")
         else:
             send_telegram(telegram_body)
+
+    def _notify_balance_shortfall(
+        self,
+        *,
+        broker_symbol: str,
+        qty: int,
+        close: float,
+        required_cash: float,
+        avail_cash: float | None,
+        shortfall: float,
+        dry_run: bool,
+        entry_type: str = "entry",
+        affordable_qty: int | None = None,
+    ) -> None:
+        """Record a shortfall; send immediately or include in an active digest batch."""
+        from modules.kotak_neo_auto_trader.utils.balance_shortfall_digest import (
+            BalanceShortfallItem,
+        )
+
+        item = BalanceShortfallItem(
+            broker_symbol=broker_symbol,
+            qty=qty,
+            close=close,
+            required_cash=required_cash,
+            avail_cash=avail_cash,
+            shortfall=shortfall,
+            entry_type="reentry" if entry_type == "reentry" else "entry",
+            affordable_qty=affordable_qty,
+        )
+        if self._shortfall_digest_defer:
+            self._shortfall_digest_items.append(item)
+            return
+        self._send_balance_shortfall_digest([item], dry_run=dry_run)
 
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
@@ -4670,22 +4697,23 @@ class AutoTradeEngine:
         Runs ``place_new_entries`` and ``place_reentry_orders`` with ``dry_run=True``,
         sending multi-channel notifications for insufficient margin on both paths.
         """
-        recs = self.load_latest_recommendations()
-        if recs:
-            entry_summary = self.place_new_entries(recs, dry_run=True)
-        else:
-            logger.info("No recommendations for evening margin preview (new entries)")
-            entry_summary = {
-                "attempted": 0,
-                "placed": 0,
-                "preview_sufficient": 0,
-                "failed_balance": 0,
-                "skipped": 0,
-                "dry_run": True,
-                "ticker_attempts": [],
-            }
+        with self.balance_shortfall_digest_batch(dry_run=True):
+            recs = self.load_latest_recommendations()
+            if recs:
+                entry_summary = self.place_new_entries(recs, dry_run=True)
+            else:
+                logger.info("No recommendations for evening margin preview (new entries)")
+                entry_summary = {
+                    "attempted": 0,
+                    "placed": 0,
+                    "preview_sufficient": 0,
+                    "failed_balance": 0,
+                    "skipped": 0,
+                    "dry_run": True,
+                    "ticker_attempts": [],
+                }
 
-        reentry_summary = self.place_reentry_orders(dry_run=True)
+            reentry_summary = self.place_reentry_orders(dry_run=True)
         merged = self._merge_evening_margin_preview_summaries(entry_summary, reentry_summary)
         logger.info(
             "Evening margin preview complete: "

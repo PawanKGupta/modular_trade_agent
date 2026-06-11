@@ -97,17 +97,22 @@ class TestBalanceShortfallNotifications:
     @patch(
         "modules.kotak_neo_auto_trader.trading_notification_dispatcher.dispatch_trading_notification"
     )
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
     def test_notify_balance_shortfall_uses_multi_channel_dispatcher(
-        self, mock_dispatch, auto_trade_engine
+        self, mock_ist_now, mock_dispatch, auto_trade_engine
     ):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        mock_ist_now.return_value = datetime(2026, 6, 10, 16, 5, tzinfo=ZoneInfo("Asia/Kolkata"))
         auto_trade_engine._notify_balance_shortfall(
-                broker_symbol="RELIANCE-EQ",
-                qty=12,
-                close=2450.0,
-                required_cash=29400.0,
-                avail_cash=10000.0,
-                shortfall=19400.0,
-                dry_run=True,
+            broker_symbol="RELIANCE-EQ",
+            qty=12,
+            close=2450.0,
+            required_cash=29400.0,
+            avail_cash=10000.0,
+            shortfall=19400.0,
+            dry_run=True,
         )
 
         mock_dispatch.assert_called_once()
@@ -115,7 +120,59 @@ class TestBalanceShortfallNotifications:
         assert call_kwargs["event_type"] == NotificationEventType.BALANCE_SHORTFALL
         assert call_kwargs["level"] == "warning"
         assert "RELIANCE-EQ" in call_kwargs["message_plain"]
-        assert call_kwargs["order_id"] == "balance_shortfall:entry:RELIANCE-EQ"
+        assert call_kwargs["order_id"] == "balance_shortfall_digest:preview:2026-06-10"
+
+    @patch(
+        "modules.kotak_neo_auto_trader.trading_notification_dispatcher.dispatch_trading_notification"
+    )
+    @patch("src.infrastructure.db.timezone_utils.ist_now")
+    def test_digest_batch_sends_one_notification_for_multiple_shortfalls(
+        self, mock_ist_now, mock_dispatch, auto_trade_engine
+    ):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        mock_ist_now.return_value = datetime(2026, 6, 10, 9, 1, tzinfo=ZoneInfo("Asia/Kolkata"))
+
+        with auto_trade_engine.balance_shortfall_digest_batch(dry_run=False):
+            auto_trade_engine._notify_balance_shortfall(
+                broker_symbol="AAA-EQ",
+                qty=10,
+                close=100.0,
+                required_cash=1000.0,
+                avail_cash=200.0,
+                shortfall=800.0,
+                dry_run=False,
+                entry_type="entry",
+            )
+            auto_trade_engine._notify_balance_shortfall(
+                broker_symbol="CCC-EQ",
+                qty=5,
+                close=200.0,
+                required_cash=1000.0,
+                avail_cash=150.0,
+                shortfall=850.0,
+                dry_run=False,
+                entry_type="entry",
+            )
+            auto_trade_engine._notify_balance_shortfall(
+                broker_symbol="BBB-EQ",
+                qty=20,
+                close=50.0,
+                required_cash=1000.0,
+                avail_cash=100.0,
+                shortfall=900.0,
+                dry_run=False,
+                entry_type="reentry",
+            )
+
+        mock_dispatch.assert_called_once()
+        call_kwargs = mock_dispatch.call_args.kwargs
+        assert "2 entries + 1 re-entry" in call_kwargs["title"]
+        assert "AAA-EQ" in call_kwargs["telegram_body"]
+        assert "CCC-EQ" in call_kwargs["telegram_body"]
+        assert "BBB-EQ" in call_kwargs["telegram_body"]
+        assert call_kwargs["order_id"] == "balance_shortfall_digest:live:2026-06-10"
 
     @patch(
         "modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._notify_balance_shortfall"
@@ -168,3 +225,30 @@ class TestBalanceShortfallNotifications:
         assert merged["failed_balance"] == 2
         assert merged["preview_sufficient"] == 1
         assert merged["reentry"] == reentry_summary
+
+    @patch(
+        "modules.kotak_neo_auto_trader.trading_notification_dispatcher.dispatch_trading_notification"
+    )
+    def test_empty_digest_batch_sends_no_notification(self, mock_dispatch, auto_trade_engine):
+        with auto_trade_engine.balance_shortfall_digest_batch(dry_run=True):
+            pass
+        mock_dispatch.assert_not_called()
+
+    @patch(
+        "modules.kotak_neo_auto_trader.trading_notification_dispatcher.dispatch_trading_notification"
+    )
+    def test_digest_batch_does_not_change_entry_shortfall_summary(
+        self, mock_dispatch, auto_trade_engine
+    ):
+        """Trading counters and failed-order path must be unchanged by digest deferral."""
+        rec = _mock_insufficient_balance_path(auto_trade_engine)
+        auto_trade_engine._add_failed_order = Mock()
+
+        with auto_trade_engine.balance_shortfall_digest_batch(dry_run=False):
+            summary = auto_trade_engine.place_new_entries([rec], dry_run=False)
+
+        assert summary["failed_balance"] == 1
+        assert summary["placed"] == 0
+        auto_trade_engine._add_failed_order.assert_called_once()
+        mock_dispatch.assert_called_once()
+        assert "RELIANCE-EQ" in mock_dispatch.call_args.kwargs["message_plain"]
