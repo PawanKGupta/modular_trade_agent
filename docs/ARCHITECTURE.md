@@ -353,6 +353,8 @@ Service lifecycle events are handled by `IndividualServiceManager` and `MultiUse
 - `_notify_service_stopped()` → `SERVICE_STOPPED` (Telegram, Email, In-App)
 - `_notify_service_execution_completed()` → `SERVICE_EXECUTION_COMPLETED` (Telegram, Email, In-App)
 
+Dispatch checks **granular** preference fields (`notify_service_started`, etc.), not the legacy `SERVICE_EVENT` type. The legacy `notify_service_events` column applies only when something dispatches `SERVICE_EVENT` explicitly — an edge case from early schema rows where the legacy flag is true but granular flags are false.
+
 **Event Types:**
 See [Notification Event Types](#notification-event-types) section below.
 
@@ -364,7 +366,7 @@ See [Notification Event Types](#notification-event-types) section below.
 - **Order Events:** `notify_order_placed`, `notify_order_rejected`, `notify_order_executed`, `notify_order_cancelled`, `notify_order_modified`, `notify_partial_fill`, `notify_balance_shortfall` (default on; evening margin preview and morning buy)
 - **Retry Queue Events:** `notify_retry_queue_added`, `notify_retry_queue_updated`, `notify_retry_queue_removed`, `notify_retry_queue_retried`
 - **System Events:** `notify_system_errors`, `notify_system_warnings`, `notify_system_info`
-- **Service Events:** `notify_service_started`, `notify_service_stopped`, `notify_service_execution_completed`
+- **Service Events:** `notify_service_started`, `notify_service_stopped`, `notify_service_execution_completed` (default **off** for new rows; migration `20260610_svc_off` on PostgreSQL; existing opted-in users unchanged)
 - **Quiet Hours:** `quiet_hours_start`, `quiet_hours_end`
 - **Legacy:** `notify_service_events`, `notify_trading_events`, `notify_system_events`, `notify_errors`
 

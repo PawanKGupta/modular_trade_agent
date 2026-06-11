@@ -1,5 +1,13 @@
 """Default service notification preferences to false for new rows.
 
+PostgreSQL production: ALTER COLUMN ... SET DEFAULT false on the four service
+notification columns. SQLite and other local dev DBs skip DDL here; new rows rely
+on SQLAlchemy defaults in ``src/infrastructure/db/models.py`` (``default=False``).
+
+Existing preference rows are intentionally unchanged — users who already opted in
+keep ``notify_service_started=True``, etc. A one-time mass opt-out would need a
+separate data migration.
+
 Revision ID: 20260610_svc_off
 Revises: 20260610_order_mod_on
 Create Date: 2026-06-10
@@ -25,7 +33,7 @@ _SERVICE_COLUMNS = (
 
 
 def upgrade() -> None:
-    """Change column defaults only; existing user rows are unchanged."""
+    """Set PostgreSQL column defaults only; existing user rows are unchanged."""
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     if "user_notification_preferences" not in inspector.get_table_names():
