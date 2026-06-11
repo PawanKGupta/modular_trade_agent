@@ -67,6 +67,7 @@ class TestNotificationPreferenceService:
             notify_retry_queue_removed=True,
             notify_retry_queue_retried=True,
             notify_partial_fill=True,
+            notify_balance_shortfall=True,
             notify_system_errors=True,
             notify_system_warnings=False,
             notify_system_info=False,
@@ -150,6 +151,7 @@ class TestNotificationPreferenceService:
         assert result.email_enabled is False
         assert result.notify_order_placed is True
         assert result.notify_order_modified is True
+        assert result.notify_balance_shortfall is True
         assert result.notify_system_warnings is False
         assert result.notify_service_events is False
         assert result.notify_service_started is False
@@ -438,12 +440,13 @@ class TestNotificationPreferenceService:
 
         # 11 order/retry (incl. ORDER_SKIPPED) + 3 system + 3 service + 1 billing +
         # 1 legacy SERVICE_EVENT
-        assert len(event_types) == 19
+        assert len(event_types) == 20
         assert NotificationEventType.ORDER_PLACED in event_types
         assert (
             NotificationEventType.ORDER_SKIPPED in event_types
         )  # Added for skipped order notifications
         assert NotificationEventType.SYSTEM_INFO in event_types
+        assert NotificationEventType.BALANCE_SHORTFALL in event_types
         assert NotificationEventType.SERVICE_STARTED in event_types
         assert NotificationEventType.SERVICE_STOPPED in event_types
         assert NotificationEventType.SERVICE_EXECUTION_COMPLETED in event_types
@@ -466,6 +469,7 @@ class TestNotificationPreferenceService:
             NotificationEventType.RETRY_QUEUE_REMOVED,
             NotificationEventType.RETRY_QUEUE_RETRIED,
             NotificationEventType.PARTIAL_FILL,
+            NotificationEventType.BALANCE_SHORTFALL,
             NotificationEventType.SYSTEM_ERROR,
             NotificationEventType.SYSTEM_WARNING,
             NotificationEventType.SYSTEM_INFO,

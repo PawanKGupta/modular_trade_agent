@@ -25,6 +25,7 @@ const mockPreferences = {
 	notify_retry_queue_removed: true,
 	notify_retry_queue_retried: true,
 	notify_partial_fill: true,
+	notify_balance_shortfall: true,
 	notify_system_errors: true,
 	notify_system_warnings: false,
 	notify_system_info: false,

@@ -29,7 +29,7 @@ const TASK_DESCRIPTIONS: Record<string, string> = {
 	analysis: 'Analyzes stocks and generates recommendations',
 	buy_orders: 'Places REGULAR buy orders at market open (default 9:01 AM IST)',
 	buy_margin_preview:
-		'Evening margin preview for next-morning buys — notify only, no placement (default 4:05 PM IST)',
+		'Evening margin preview for next-morning new entries and re-entries — notify only, no placement (default 4:05 PM IST)',
 	eod_cleanup: 'End-of-day cleanup and reset for the next day',
 };
 

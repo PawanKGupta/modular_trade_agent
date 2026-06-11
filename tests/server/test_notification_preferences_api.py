@@ -40,6 +40,7 @@ def test_get_notification_preferences_defaults(client, db_session):
     assert data["email_enabled"] is False
     assert data["notify_order_placed"] is True
     assert data["notify_order_modified"] is True  # 9:05 pre-market; not sell-monitor
+    assert data["notify_balance_shortfall"] is True
     assert data["notify_system_warnings"] is False  # Opt-in
     assert data["notify_system_info"] is False  # Opt-in
     assert data["notify_service_events"] is False

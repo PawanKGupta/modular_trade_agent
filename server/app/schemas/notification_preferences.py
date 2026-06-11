@@ -50,6 +50,10 @@ class NotificationPreferencesResponse(BaseModel):
         default=True, description="Notify when order is retried"
     )
     notify_partial_fill: bool = Field(default=True, description="Notify on partial order fill")
+    notify_balance_shortfall: bool = Field(
+        default=True,
+        description="Notify when buy margin is insufficient (evening preview or morning buy)",
+    )
 
     # System event preferences
     notify_system_errors: bool = Field(default=True, description="Notify on system errors")
@@ -154,6 +158,10 @@ class NotificationPreferencesUpdate(BaseModel):
     )
     notify_partial_fill: bool | None = Field(
         default=None, description="Notify on partial order fill"
+    )
+    notify_balance_shortfall: bool | None = Field(
+        default=None,
+        description="Notify when buy margin is insufficient (evening preview or morning buy)",
     )
 
     # System event preferences

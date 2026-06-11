@@ -329,6 +329,97 @@ class AutoTradeEngine:
             # Fallback to singleton pattern on error
             return get_telegram_notifier(db_session=self.db)
 
+    def _notify_balance_shortfall(
+        self,
+        *,
+        broker_symbol: str,
+        qty: int,
+        close: float,
+        required_cash: float,
+        avail_cash: float | None,
+        shortfall: float,
+        dry_run: bool,
+        entry_type: str = "entry",
+    ) -> None:
+        """Send balance shortfall on all enabled channels (Telegram, in-app, email)."""
+        from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
+            dispatch_trading_notification,
+        )
+        from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+            format_balance_shortfall_plain,
+            format_balance_shortfall_telegram,
+        )
+
+        telegram_body = format_balance_shortfall_telegram(
+            broker_symbol=broker_symbol,
+            qty=qty,
+            close=close,
+            required_cash=required_cash,
+            avail_cash=avail_cash,
+            shortfall=shortfall,
+            dry_run=dry_run,
+            entry_type=entry_type,
+        )
+        message_plain = format_balance_shortfall_plain(
+            broker_symbol=broker_symbol,
+            qty=qty,
+            close=close,
+            required_cash=required_cash,
+            avail_cash=avail_cash,
+            shortfall=shortfall,
+            dry_run=dry_run,
+            entry_type=entry_type,
+        )
+        is_reentry = entry_type == "reentry"
+        if dry_run:
+            title = (
+                "Insufficient Margin (Evening Re-entry Preview)"
+                if is_reentry
+                else "Insufficient Margin (Evening Preview)"
+            )
+        else:
+            title = (
+                "Insufficient Balance - Re-entry BUY"
+                if is_reentry
+                else "Insufficient Balance - BUY"
+            )
+
+        if self.user_id and self.db:
+            try:
+                from services.notification_preference_service import (
+                    NotificationEventType,
+                    NotificationPreferenceService,
+                )
+
+                dispatch_trading_notification(
+                    user_id=self.user_id,
+                    event_type=NotificationEventType.BALANCE_SHORTFALL,
+                    title=title,
+                    message_plain=message_plain,
+                    telegram_body=telegram_body,
+                    db_session=self.db,
+                    preference_service=NotificationPreferenceService(self.db),
+                    telegram_notifier=self.telegram_notifier,
+                    level="warning",
+                    order_id=f"balance_shortfall:{entry_type}:{broker_symbol}",
+                    dedupe=True,
+                )
+                return
+            except Exception as notify_err:
+                logger.warning(f"Failed to send balance shortfall notification: {notify_err}")
+
+        if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
+            try:
+                self.telegram_notifier.send_message(
+                    telegram_body,
+                    user_id=self.user_id,
+                    rate_limit_exempt=True,
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to send balance shortfall notification: {notify_err}")
+        else:
+            send_telegram(telegram_body)
+
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
         """
@@ -4550,17 +4641,38 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- New entries ----------------------
+    def _merge_evening_margin_preview_summaries(
+        self, entry_summary: dict, reentry_summary: dict
+    ) -> dict[str, int | list | dict]:
+        """Combine new-entry and re-entry evening margin preview results."""
+        return {
+            "attempted": int(entry_summary.get("attempted", 0))
+            + int(reentry_summary.get("attempted", 0)),
+            "placed": 0,
+            "preview_sufficient": int(entry_summary.get("preview_sufficient", 0))
+            + int(reentry_summary.get("preview_sufficient", 0)),
+            "failed_balance": int(entry_summary.get("failed_balance", 0))
+            + int(reentry_summary.get("failed_balance", 0)),
+            "skipped": int(entry_summary.get("skipped", 0)),
+            "dry_run": True,
+            "ticker_attempts": entry_summary.get("ticker_attempts", []),
+            "entry": entry_summary,
+            "reentry": reentry_summary,
+        }
+
     def preview_evening_buy_margins(self) -> dict[str, int | list]:
         """
         Evening margin preview (no broker placement).
 
-        Loads buy recommendations and runs the same checks as ``place_new_entries``
-        with ``dry_run=True``, sending notifications for insufficient margin.
+        Runs ``place_new_entries`` and ``place_reentry_orders`` with ``dry_run=True``,
+        sending multi-channel notifications for insufficient margin on both paths.
         """
         recs = self.load_latest_recommendations()
-        if not recs:
-            logger.info("No recommendations for evening margin preview")
-            return {
+        if recs:
+            entry_summary = self.place_new_entries(recs, dry_run=True)
+        else:
+            logger.info("No recommendations for evening margin preview (new entries)")
+            entry_summary = {
                 "attempted": 0,
                 "placed": 0,
                 "preview_sufficient": 0,
@@ -4569,7 +4681,17 @@ class AutoTradeEngine:
                 "dry_run": True,
                 "ticker_attempts": [],
             }
-        return self.place_new_entries(recs, dry_run=True)
+
+        reentry_summary = self.place_reentry_orders(dry_run=True)
+        merged = self._merge_evening_margin_preview_summaries(entry_summary, reentry_summary)
+        logger.info(
+            "Evening margin preview complete: "
+            f"entry_sufficient={entry_summary.get('preview_sufficient', 0)}, "
+            f"entry_shortfall={entry_summary.get('failed_balance', 0)}, "
+            f"reentry_sufficient={reentry_summary.get('preview_sufficient', 0)}, "
+            f"reentry_shortfall={reentry_summary.get('failed_balance', 0)}"
+        )
+        return merged
 
     def place_new_entries(
         self,
@@ -5514,43 +5636,15 @@ class AutoTradeEngine:
                 continue
 
             if not has_sufficient_balance:
-                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
-                if dry_run:
-                    telegram_msg = (
-                        f"💰 *Insufficient Margin (Evening Preview)*\n\n"
-                        f"Symbol: `{broker_symbol}`\n"
-                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                        f"No order placed. Fund account before morning buy run (9:01 AM IST).\n\n"
-                        f"_Time: {timestamp}_"
-                    )
-                else:
-                    telegram_msg = (
-                        f"💰 *Insufficient Balance - BUY*\n\n"
-                        f"Symbol: `{broker_symbol}`\n"
-                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                        f"Order saved for retry at premarket_retry or manually.\n\n"
-                        f"_Time: {timestamp}_"
-                    )
-                # Use TelegramNotifier to respect notification preferences
-                if self.telegram_notifier and self.telegram_notifier.enabled:
-                    try:
-                        self.telegram_notifier.notify_system_alert(
-                            alert_type="BALANCE_SHORTFALL",
-                            message_text=telegram_msg,
-                            severity="WARNING",
-                            user_id=self.user_id,
-                        )
-                    except Exception as notify_err:
-                        logger.warning(
-                            f"Failed to send balance shortfall notification: {notify_err}"
-                        )
-                else:
-                    # Fallback to old method if telegram_notifier not available (backward compatibility)
-                    send_telegram(telegram_msg)
+                self._notify_balance_shortfall(
+                    broker_symbol=broker_symbol,
+                    qty=qty,
+                    close=close,
+                    required_cash=required_cash,
+                    avail_cash=avail_cash,
+                    shortfall=shortfall,
+                    dry_run=dry_run,
+                )
 
                 # Logger message without emojis
                 log_suffix = (
@@ -5680,11 +5774,12 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- Re-entry and exit ----------------------
-    def place_reentry_orders(self) -> dict[str, int]:
+    def place_reentry_orders(self, *, dry_run: bool = False) -> dict[str, int]:
         """
         Check re-entry conditions and place buy orders for re-entries (LIMIT pre-open, same as fresh entry).
 
-        Called from ``run_buy_orders`` (default 9:01 IST morning placement).
+        Called from ``run_buy_orders`` (default 9:01 IST morning placement) and
+        ``preview_evening_buy_margins`` (``dry_run=True``).
 
         Re-entry logic based on entry RSI level:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
@@ -5701,7 +5796,9 @@ class AutoTradeEngine:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "preview_sufficient": 0,
             "failed_balance": 0,
+            "dry_run": dry_run,
             "skipped_no_position": 0,
             "skipped_duplicates": 0,
             "skipped_duplicate_level": 0,  # Re-entry at same level already exists in current cycle
@@ -5734,7 +5831,7 @@ class AutoTradeEngine:
 
         # Manual Trade Detection Timing Fix: Reconcile positions before placing reentry orders
         # This ensures we detect manual trades that happened during market hours
-        if hasattr(self, "sell_manager") and self.sell_manager:
+        if not dry_run and hasattr(self, "sell_manager") and self.sell_manager:
             try:
                 reconciliation_stats = self.sell_manager._reconcile_positions_with_broker_holdings()
                 if (
@@ -5900,7 +5997,7 @@ class AutoTradeEngine:
                 )
 
                 # Update position metadata if needed (cycle tracking, reset detection)
-                if any(v is not None for v in metadata_updates.values()):
+                if not dry_run and any(v is not None for v in metadata_updates.values()):
                     try:
                         # Get current cycle metadata
                         cycle_meta = self._get_position_cycle_metadata(position)
@@ -6030,37 +6127,63 @@ class AutoTradeEngine:
                     continue
 
                 # Check balance and adjust quantity if needed
+                requested_qty = qty
                 affordable_qty = self.get_affordable_qty(current_price)
-                if affordable_qty < qty:
+                avail_cash = None
+                try:
+                    avail_cash = self.get_available_cash()
+                except Exception:
+                    avail_cash = affordable_qty * current_price if current_price > 0 else 0.0
+
+                if affordable_qty < requested_qty:
+                    required_cash = requested_qty * current_price
+                    shortfall = max(0.0, required_cash - (affordable_qty * current_price))
                     logger.warning(
-                        f"Insufficient balance for {symbol}: "
-                        f"requested={qty}, affordable={affordable_qty}"
+                        f"Insufficient balance for {symbol} re-entry: "
+                        f"requested={requested_qty}, affordable={affordable_qty}, "
+                        f"shortfall=Rs {shortfall:,.0f}"
                     )
-                    qty = affordable_qty
-                    if qty <= 0:
-                        # Save as failed order for retry
-                        failed_order_info = {
-                            "symbol": broker_symbol,
-                            "ticker": ticker,
-                            "close": current_price,
-                            "qty": qty,
-                            "required_cash": execution_capital,
-                            "shortfall": execution_capital - (affordable_qty * current_price),
-                            "reason": "insufficient_balance",
-                            "rsi10": current_rsi,
-                            "ema9": ind.get("ema9"),
-                            "ema200": ind.get("ema200"),
-                            "execution_capital": execution_capital,
-                            "entry_type": "reentry",
-                            "entry_rsi": entry_rsi,
-                            "reentry_level": next_level,
-                        }
-                        try:
-                            self._add_failed_order(failed_order_info)
-                            summary["failed_balance"] += 1
-                        except Exception as e:
-                            logger.warning(f"Failed to save re-entry order to failed orders: {e}")
+                    if affordable_qty <= 0:
+                        self._notify_balance_shortfall(
+                            broker_symbol=broker_symbol,
+                            qty=requested_qty,
+                            close=current_price,
+                            required_cash=required_cash,
+                            avail_cash=avail_cash,
+                            shortfall=shortfall,
+                            dry_run=dry_run,
+                            entry_type="reentry",
+                        )
+                        summary["failed_balance"] += 1
+                        if not dry_run:
+                            failed_order_info = {
+                                "symbol": broker_symbol,
+                                "ticker": ticker,
+                                "close": current_price,
+                                "qty": requested_qty,
+                                "required_cash": required_cash,
+                                "shortfall": shortfall,
+                                "reason": "insufficient_balance",
+                                "rsi10": current_rsi,
+                                "ema9": ind.get("ema9"),
+                                "ema200": ind.get("ema200"),
+                                "execution_capital": execution_capital,
+                                "entry_type": "reentry",
+                                "entry_rsi": entry_rsi,
+                                "reentry_level": next_level,
+                            }
+                            try:
+                                self._add_failed_order(failed_order_info)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to save re-entry order to failed orders: {e}"
+                                )
                         continue
+                    qty = affordable_qty
+
+                if dry_run:
+                    summary["preview_sufficient"] += 1
+                    continue
 
                 # Place re-entry via _attempt_place_order (LIMIT pre-open, MARKET after 9:15)
                 # Enhanced Hybrid Approach: Include cycle number in order metadata

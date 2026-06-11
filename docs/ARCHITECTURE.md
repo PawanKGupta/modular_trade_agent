@@ -361,7 +361,7 @@ See [Notification Event Types](#notification-event-types) section below.
 
 **Columns:**
 - **Channels:** `telegram_enabled`, `telegram_chat_id`, `email_enabled`, `email_address`, `in_app_enabled`
-- **Order Events:** `notify_order_placed`, `notify_order_rejected`, `notify_order_executed`, `notify_order_cancelled`, `notify_order_modified`, `notify_partial_fill`
+- **Order Events:** `notify_order_placed`, `notify_order_rejected`, `notify_order_executed`, `notify_order_cancelled`, `notify_order_modified`, `notify_partial_fill`, `notify_balance_shortfall` (default on; evening margin preview and morning buy)
 - **Retry Queue Events:** `notify_retry_queue_added`, `notify_retry_queue_updated`, `notify_retry_queue_removed`, `notify_retry_queue_retried`
 - **System Events:** `notify_system_errors`, `notify_system_warnings`, `notify_system_info`
 - **Service Events:** `notify_service_started`, `notify_service_stopped`, `notify_service_execution_completed`

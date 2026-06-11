@@ -506,7 +506,9 @@ class TestPlaceReentryOrders:
         engine.has_active_buy_order = Mock(return_value=False)
         engine._calculate_execution_capital = Mock(return_value=10000.0)
         engine.get_affordable_qty = Mock(return_value=0)
+        engine.get_available_cash = Mock(return_value=50.0)
         engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
 
         # Mock parse_symbol_for_broker
         engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
@@ -527,6 +529,133 @@ class TestPlaceReentryOrders:
         # When affordable_qty < qty and affordable_qty <= 0, it saves as failed order
         # So should be in failed_balance, not skipped_invalid_qty
         assert summary["failed_balance"] == 1
+        engine._notify_balance_shortfall.assert_called_once()
+        notify_kwargs = engine._notify_balance_shortfall.call_args.kwargs
+        assert notify_kwargs["entry_type"] == "reentry"
+        assert notify_kwargs["dry_run"] is False
+        engine._add_failed_order.assert_called_once()
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_partial_balance_still_places_reduced_qty(
+        self, mock_login, mock_place_order, mock_auth
+    ):
+        """Partial funds should reduce qty and place — not treat as full shortfall."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
+        mock_place_order.return_value = (True, "ORDER456")
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentries = None
+        mock_position.avg_price = 100.0
+        mock_position.entry_price = 100.0
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.orders = Mock()
+        engine.portfolio = Mock()
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=50)
+        engine.get_available_cash = Mock(return_value=5000.0)
+        engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
+        engine.strategy_config = Mock()
+        engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
+
+        summary = engine.place_reentry_orders()
+
+        assert summary["failed_balance"] == 0
+        assert summary["placed"] == 1
+        engine._notify_balance_shortfall.assert_not_called()
+        engine._add_failed_order.assert_not_called()
+        place_args = mock_place_order.call_args[0]
+        assert place_args[2] == 50
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_dry_run_notifies_without_failed_order(self, mock_login, mock_auth):
+        """Evening preview re-entry shortfall notifies but does not persist failed orders."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentry_count = 0
+        mock_position.reentries = None
+        mock_position.avg_price = 100.0
+        mock_position.entry_price = 100.0
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.orders = Mock()
+        engine.portfolio = Mock()
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=0)
+        engine.get_available_cash = Mock(return_value=50.0)
+        engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
+        engine.strategy_config = Mock()
+        engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
+
+        summary = engine.place_reentry_orders(dry_run=True)
+
+        assert summary["failed_balance"] == 1
+        assert summary["dry_run"] is True
+        engine._notify_balance_shortfall.assert_called_once()
+        assert engine._notify_balance_shortfall.call_args.kwargs["dry_run"] is True
+        engine._add_failed_order.assert_not_called()
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")

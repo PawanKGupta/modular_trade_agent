@@ -35,6 +35,7 @@ class NotificationEventType:
     RETRY_QUEUE_REMOVED = "retry_queue_removed"
     RETRY_QUEUE_RETRIED = "retry_queue_retried"
     PARTIAL_FILL = "partial_fill"
+    BALANCE_SHORTFALL = "balance_shortfall"
 
     # System events
     SYSTEM_ERROR = "system_error"
@@ -70,6 +71,7 @@ class NotificationEventType:
             cls.RETRY_QUEUE_REMOVED,
             cls.RETRY_QUEUE_RETRIED,
             cls.PARTIAL_FILL,
+            cls.BALANCE_SHORTFALL,
             cls.SYSTEM_ERROR,
             cls.SYSTEM_WARNING,
             cls.SYSTEM_INFO,
@@ -180,6 +182,7 @@ class NotificationPreferenceService:
                 notify_retry_queue_removed=True,
                 notify_retry_queue_retried=True,
                 notify_partial_fill=True,
+                notify_balance_shortfall=True,
                 notify_system_errors=True,
                 notify_system_warnings=False,  # Reduce noise
                 notify_system_info=False,  # Reduce noise
@@ -326,6 +329,7 @@ class NotificationPreferenceService:
             NotificationEventType.RETRY_QUEUE_REMOVED: preferences.notify_retry_queue_removed,
             NotificationEventType.RETRY_QUEUE_RETRIED: preferences.notify_retry_queue_retried,
             NotificationEventType.PARTIAL_FILL: preferences.notify_partial_fill,
+            NotificationEventType.BALANCE_SHORTFALL: preferences.notify_balance_shortfall,
             NotificationEventType.SYSTEM_ERROR: preferences.notify_system_errors,
             NotificationEventType.SYSTEM_WARNING: preferences.notify_system_warnings,
             NotificationEventType.SYSTEM_INFO: preferences.notify_system_info,
