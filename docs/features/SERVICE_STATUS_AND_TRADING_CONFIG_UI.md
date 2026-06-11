@@ -81,9 +81,11 @@ docker exec tradeagent-api python /app/tools/backup_service_status.py
 
 The snapshot is stored on the persistent data volume at `data/service_restore_snapshot.json` (plus rolling history under `data/service_restore_snapshots/`). On API startup, auto-restore merges this file with DB running flags and restarts unified/individual services. A snapshot is also written on graceful API shutdown.
 
-### Status heartbeat timezone (stale detection)
+### Status heartbeat timezone (stale detection & API display)
 
 `GET /service/status` uses `last_heartbeat` to detect orphaned rows after API restarts. Naive DB timestamps may be **IST wall-clock** (`ist_now_naive()`) or **UTC wall-clock** (legacy writes). Age is computed via `service_status_heartbeat_age_seconds()` in `timezone_utils.py`, which considers both interpretations so a fresh heartbeat is not misread as ~5.5 hours old.
+
+The same coercion applies when serializing timestamps for the web UI: `db_timestamp_to_utc_for_api()` converts DB values to true UTC before JSON. Tagging IST-naive heartbeats as UTC (without conversion) shifts the Service Status page by +5:30 and shows relative times like `(in 5 hrs)`.
 
 ### Rapid start/stop (lifecycle generation)
 

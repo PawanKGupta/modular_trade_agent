@@ -8,7 +8,9 @@ import pytest
 
 from src.infrastructure.db.timezone_utils import (
     IST,
+    db_timestamp_to_utc_for_api,
     ist_now,
+    ist_now_naive,
     ist_to_utc,
     service_status_heartbeat_age_seconds,
     utc_to_ist,
@@ -108,4 +110,24 @@ def test_service_status_heartbeat_age_ist_naive_stored_value():
     age = service_status_heartbeat_age_seconds(ist_naive, reference=reference)
     assert age is not None
     assert 5 < age < 20
+
+
+def test_db_timestamp_to_utc_for_api_ist_naive_heartbeat():
+    """IST-naive heartbeat must serialize as true UTC, not UTC-labeled IST wall clock."""
+    reference = datetime(2026, 6, 11, 23, 43, 49, tzinfo=IST)
+    ist_naive = datetime(2026, 6, 11, 23, 43, 49)
+    utc_api = db_timestamp_to_utc_for_api(ist_naive, reference=reference)
+    assert utc_api is not None
+    assert utc_api.tzinfo == UTC
+    assert utc_api.hour == 18
+    assert utc_api.minute == 13
+    assert utc_api.day == 11
+
+
+def test_db_timestamp_to_utc_for_api_matches_ist_aware():
+    reference = ist_now()
+    naive = ist_now_naive()
+    from_api = db_timestamp_to_utc_for_api(naive, reference=reference)
+    aware_ist = naive.replace(tzinfo=IST)
+    assert from_api == ist_to_utc(aware_ist)
 

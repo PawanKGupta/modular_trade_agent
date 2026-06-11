@@ -110,6 +110,22 @@ def service_status_heartbeat_age_seconds(
     return min(candidates)
 
 
+def db_timestamp_to_utc_for_api(
+    dt: datetime | None,
+    *,
+    reference: datetime | None = None,
+) -> datetime | None:
+    """
+    Normalize a DB datetime to UTC for API JSON serialization.
+
+    Naive values are treated as IST wall-clock when plausible (``ist_now_naive()``),
+    with legacy UTC-naive fallback via ``coerce_db_timestamp_to_ist``.
+    """
+    if dt is None:
+        return None
+    return ist_to_utc(coerce_db_timestamp_to_ist(dt, reference=reference))
+
+
 def ist_to_utc(ist_dt: datetime) -> datetime:
     """
     Convert IST datetime to UTC
