@@ -35,7 +35,8 @@ The Kotak Neo Auto Trader (`modules/kotak_neo_auto_trader/`) implements an autom
 
 **Key Logic**:
 ```python
-# Check portfolio limit
+# Check portfolio limit (open system positions + in-flight system buy orders only;
+# manual broker demat holdings do not count)
 if current_count >= MAX_PORTFOLIO_SIZE:
     skip
 

@@ -240,6 +240,7 @@ class AutoTradeEngine:
             auth=self.auth,
             strategy_config=self.strategy_config,
             orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            positions_repo=self.positions_repo if hasattr(self, "positions_repo") else None,
             user_id=self.user_id,
             enable_caching=True,
         )

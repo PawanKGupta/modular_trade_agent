@@ -45,7 +45,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that PENDING orders past next trading day market close are excluded"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Create a stale PENDING order (placed Monday 2 PM, current time is Tuesday 4 PM)
@@ -82,7 +82,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that recent PENDING orders (before next trading day close) are included"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Create a recent PENDING order (placed Tuesday 2 PM, current time is Tuesday 3 PM)
@@ -118,7 +118,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that PENDING orders placed on Friday are correctly handled (skip weekend)"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Order placed Friday 4 PM, current time is Monday 4 PM
@@ -154,7 +154,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that PENDING orders are included if current time is exactly at next trading day close"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Order placed Monday 2 PM, current time is Tuesday 3:30 PM (exactly at market close)
@@ -190,7 +190,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that PENDING orders are excluded if current time is after next trading day close"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Order placed Monday 2 PM, current time is Tuesday 3:31 PM (1 minute after market close)
@@ -225,7 +225,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that mix of stale and recent PENDING orders are handled correctly"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Stale order (placed Monday 2 PM, current time is Tuesday 4 PM)
@@ -269,7 +269,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that ONGOING orders are always included, regardless of age"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Very old ONGOING order (should still be included)
@@ -304,7 +304,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that PENDING orders without placed_at are included (safe default)"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         mock_order_no_date = Mock()
@@ -334,7 +334,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that naive datetime placed_at is handled correctly (converted to IST)"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Naive datetime (no timezone)
@@ -369,7 +369,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that exceptions in stale check are handled gracefully (include order as safe default)"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         mock_order = Mock()
@@ -409,7 +409,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test fallback to 24-hour check when trading_day_utils is not available"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Order placed 25 hours ago (should be stale with 24-hour fallback)
@@ -454,7 +454,7 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that get_portfolio_count() excludes stale PENDING orders"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ", "quantity": 10}]}
         )
 
         # Stale PENDING order
@@ -495,7 +495,9 @@ class TestPortfolioServiceStalePendingOrderExclusion:
         """Test that check_portfolio_capacity() correctly excludes stale PENDING orders"""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": f"STOCK{i}"} for i in range(5)]}
+            return_value={
+                "data": [{"tradingSymbol": f"STOCK{i}", "quantity": 10} for i in range(5)]
+            }
         )
 
         # 1 stale PENDING order (should be excluded)
