@@ -296,7 +296,7 @@ class OhlcvCacheService:
             min_coverage_pct=OHLCV_CACHE_MIN_COVERAGE_PCT,
         )
         if interval == DEFAULT_INTERVAL and daily_ohlcv_uses_nse() and missing:
-            from src.application.services.nse_bhavcopy_ingest_service import (  # noqa: PLC0415
+            from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
                 filter_nse_intraday_gap_dates,
             )
 
@@ -433,11 +433,11 @@ class OhlcvCacheService:
 
     def _nse_eod_available(self) -> bool:
         """True when IST clock is at or after regular session close (NSE F bhavcopy)."""
-        from src.application.services.nse_bhavcopy_ingest_service import (  # noqa: PLC0415
-            nse_bhavcopy_eod_available,
+        from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+            nse_bhavcopy_ingest_allowed_for_today,
         )
 
-        return nse_bhavcopy_eod_available()
+        return nse_bhavcopy_ingest_allowed_for_today()
 
     def _refresh_today_bar_from_yahoo(
         self,

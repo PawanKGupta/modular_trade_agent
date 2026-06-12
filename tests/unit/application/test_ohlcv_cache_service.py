@@ -490,7 +490,7 @@ def test_get_ohlcv_skips_nse_gap_fill_for_today_during_market_hours(db_session, 
         lambda: False,
     )
     monkeypatch.setattr(
-        "src.application.services.nse_bhavcopy_ingest_service.nse_bhavcopy_eod_available",
+        "src.application.services.nse_bhavcopy_availability.nse_bhavcopy_ingest_allowed_for_today",
         lambda: False,
     )
     monkeypatch.setattr(

@@ -7,6 +7,11 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from config.settings import OHLCV_REJECT_INVALID_FETCH
+from src.application.services.nse_bhavcopy_availability import (
+    filter_nse_intraday_gap_dates,
+    nse_bhavcopy_ingest_allowed_for_date,
+    nse_bhavcopy_ingest_allowed_for_today,
+)
 from src.application.services.ohlcv_fetch_validation import validate_yahoo_ohlcv_frame
 from src.infrastructure.data_providers.nse_bhavcopy_fetcher import (
     NseBhavcopyFetcher,
@@ -27,34 +32,19 @@ from utils.logger import logger
 
 NSE_SOURCE = "nse"
 
+# Re-export for callers/tests that imported from this module.
+from src.application.services.nse_bhavcopy_availability import (  # noqa: E402
+    nse_bhavcopy_eod_available,
+)
 
-def nse_bhavcopy_eod_available() -> bool:
-    """True when IST is at or after regular session close (NSE EOD bhavcopy published)."""
-    from core.volume_analysis import is_market_hours  # noqa: PLC0415
-
-    return not is_market_hours()
-
-
-def filter_nse_intraday_gap_dates(trade_days: list[date]) -> list[date]:
-    """
-    Drop calendar today from NSE gap-fill while the session is still open.
-
-    Official bhavcopy for today is not available until after close; intraday
-    indicators use broker LTP / Yahoo today-refresh instead.
-    """
-    if not trade_days or nse_bhavcopy_eod_available():
-        return trade_days
-
-    from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
-
-    today_ist = ist_now().date()
-    filtered = [d for d in trade_days if d != today_ist]
-    if len(filtered) < len(trade_days):
-        logger.debug(
-            "NSE gap-fill: skipping calendar today %s (bhavcopy not available pre-EOD)",
-            today_ist,
-        )
-    return filtered
+__all__ = [
+    "NseBhavcopyIngestService",
+    "NSE_SOURCE",
+    "filter_nse_intraday_gap_dates",
+    "nse_bhavcopy_eod_available",
+    "nse_bhavcopy_ingest_allowed_for_date",
+    "nse_bhavcopy_ingest_allowed_for_today",
+]
 
 
 def _bar_to_upsert_row(cache_ticker: str, bar: NseEquityBar) -> dict:
@@ -200,6 +190,13 @@ class NseBhavcopyIngestService:
         """
         if symbols is None and not all_equity:
             raise ValueError("Provide symbols or set all_equity=True")
+
+        if not nse_bhavcopy_ingest_allowed_for_date(trade_date):
+            logger.debug(
+                "NSE ingest_trading_day: skipping %s (ingest not allowed yet for calendar today)",
+                trade_date,
+            )
+            return 0
 
         df = self.fetcher.download_bhavcopy(trade_date)
         if df is None or df.empty:

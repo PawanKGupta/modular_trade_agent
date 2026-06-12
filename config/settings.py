@@ -202,6 +202,10 @@ NSE_BHAVCOPY_USE_DISK_CACHE = os.getenv("NSE_BHAVCOPY_USE_DISK_CACHE", "true").l
 )
 NSE_BHAVCOPY_REQUEST_DELAY_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_DELAY_S", "0.15"))
 NSE_BHAVCOPY_REQUEST_TIMEOUT_S = float(os.getenv("NSE_BHAVCOPY_REQUEST_TIMEOUT_S", "30"))
+# Earliest IST clock time to attempt same-day UDiFF bhavcopy ingest (HH:MM). NSE final
+# files typically land ~18:00–19:00; this avoids 15:31–17:00 HTTP noise.
+NSE_BHAVCOPY_EARLIEST_IST = os.getenv("NSE_BHAVCOPY_EARLIEST_IST", "17:30").strip()
+NSE_BHAVCOPY_PUBLISH_PROBE_TTL_S = int(os.getenv("NSE_BHAVCOPY_PUBLISH_PROBE_TTL_S", "300"))
 # NSE ``SctySrs`` codes treated as tradeable equity EOD (not just ``EQ``).
 # Stocks move to ``BE``/``BL``/``BZ`` (T2T / B-group) while remaining the same ``TckrSymb``.
 NSE_BHAVCOPY_EQUITY_SERIES = frozenset(
