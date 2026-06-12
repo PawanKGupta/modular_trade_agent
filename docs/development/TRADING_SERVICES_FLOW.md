@@ -47,6 +47,20 @@ Generates recommendations in `signals` for the next trading day.
 - `engine.preview_evening_buy_margins()` → `place_new_entries(..., dry_run=True)` + `place_reentry_orders(dry_run=True)` inside one **balance shortfall digest** (single Telegram/in-app/email alert for all entry + re-entry shortfalls)
 - No broker placement; no failed-order rows for shortfall (preview only)
 
+#### NSE bhavcopy and evening re-entry RSI (`OHLCV_DAILY_SOURCE=nse`)
+
+When daily OHLCV comes from NSE UDiFF bhavcopy (not Yahoo), **same-day close is not used for indicators until the file is confirmed**:
+
+| Window (IST) | Gap-fill / ingest | Re-entry / `add_current_day` RSI |
+|--------------|-------------------|----------------------------------|
+| 09:00–15:30 (session) | Skips calendar today | Prior closed-day RSI |
+| 15:30–`NSE_BHAVCOPY_EARLIEST_IST` (default 17:30) | Skips today (no HTTP noise) | Prior closed-day RSI |
+| After earliest + bhavcopy on NSE or disk | Ingest allowed | Today-inclusive RSI when probe/cache confirms |
+
+**Early schedules are safe:** if analysis or margin preview runs at 16:00–18:00 before NSE publishes the final zip (~18:00–19:00), re-entry and preview use **yesterday’s RSI** — no crash, no false “today” bar. After a successful ingest, the publish probe is refreshed immediately (no need to wait for the 5-minute probe TTL).
+
+Config: `NSE_BHAVCOPY_EARLIEST_IST` (default `17:30`), `NSE_BHAVCOPY_PUBLISH_PROBE_TTL_S` (default `300`). Code: `src/application/services/nse_bhavcopy_availability.py` (`should_use_same_day_close_for_indicators`).
+
 ---
 
 ### Pre-market / open (9:00–9:15)

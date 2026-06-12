@@ -295,6 +295,12 @@ class OhlcvCacheService:
             tail_trading_days=self.tail_overlap_trading_days,
             min_coverage_pct=OHLCV_CACHE_MIN_COVERAGE_PCT,
         )
+        if interval == DEFAULT_INTERVAL and daily_ohlcv_uses_nse() and missing:
+            from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+                filter_nse_intraday_gap_dates,
+            )
+
+            missing = filter_nse_intraday_gap_dates(missing)
         coverage = self.repo.get_coverage_pct(symbol, start_d, end_d, interval=interval)
         if missing:
             if is_ohlcv_cache_read_only():
@@ -425,11 +431,13 @@ class OhlcvCacheService:
             df = df[df["date"].dt.date <= end_d]
         return df
 
-    def _nse_eod_available(self) -> bool:
-        """True when IST clock is at or after regular session close (NSE F bhavcopy)."""
-        from core.volume_analysis import is_market_hours  # noqa: PLC0415
+    def _nse_ingest_allowed_for_today(self) -> bool:
+        """True when same-day NSE bhavcopy ingest is allowed (post-close, ≥ earliest IST)."""
+        from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+            nse_bhavcopy_ingest_allowed_for_today,
+        )
 
-        return not is_market_hours()
+        return nse_bhavcopy_ingest_allowed_for_today()
 
     def _refresh_today_bar_from_yahoo(
         self,
@@ -446,7 +454,8 @@ class OhlcvCacheService:
         Avoids serving a stale same-day row written earlier (e.g. pre-open gap-fill).
         Skips when ``end_d`` is before IST calendar today (backtests / historical end_date).
         Caller must gate with ``live_current_day_scope_allowed`` first.
-        NSE path runs only after market close; pre-EOD skips (no synthetic today bar).
+        NSE path runs only after the ingest window (``NSE_BHAVCOPY_EARLIEST_IST``); earlier
+        post-close skips (no synthetic today bar).
         """
         if is_ohlcv_cache_read_only():
             return 0
@@ -456,7 +465,7 @@ class OhlcvCacheService:
         if end_d != today_ist:
             return 0
 
-        if daily_ohlcv_uses_nse() and self._nse_eod_available():
+        if daily_ohlcv_uses_nse() and self._nse_ingest_allowed_for_today():
             from src.application.services.nse_bhavcopy_ingest_service import (  # noqa: PLC0415
                 NseBhavcopyIngestService,
             )

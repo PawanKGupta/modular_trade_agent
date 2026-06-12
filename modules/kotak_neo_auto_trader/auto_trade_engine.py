@@ -5890,19 +5890,14 @@ class AutoTradeEngine:
             f"Evaluating re-entry for {len(open_positions)} open position(s) "
             f"(orders placed only when RSI level rules qualify)..."
         )
-        from datetime import time as dt_time
-
-        from core.volume_analysis import is_market_hours
-
         # Re-entry RSI source policy:
-        # - At/after market close on trading days, use current day close-inclusive RSI.
-        # - During next-day market hours, keep using previous closed-day RSI snapshot
-        #   until the next post-close evaluation window.
-        now_time = ist_now().time()
-        market_close = dt_time(15, 30)
-        use_latest_rsi_after_close = (
-            self.is_trading_weekday() and (not is_market_hours()) and now_time >= market_close
+        # - Post-close with confirmed same-day NSE bhavcopy: today-inclusive RSI.
+        # - Otherwise (intraday, pre-bhavcopy, or early schedule): prior closed-day RSI.
+        from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+            should_use_same_day_close_for_indicators,
         )
+
+        use_latest_rsi_after_close = should_use_same_day_close_for_indicators()
 
         # Get portfolio snapshot for capacity checks
         if self.portfolio_service:

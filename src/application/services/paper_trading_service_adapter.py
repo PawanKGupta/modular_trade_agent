@@ -2992,19 +2992,13 @@ class PaperTradingEngineAdapter:
             )
 
             # Re-entry RSI source policy (matches live AutoTradeEngine.place_reentry_orders):
-            # morning run uses previous closed-day RSI; post-close uses today-inclusive RSI.
-            from datetime import time as dt_time
-
-            from core.volume_analysis import is_market_hours
-            from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-
-            now_time = ist_now().time()
-            market_close = dt_time(15, 30)
-            use_latest_rsi_after_close = (
-                AutoTradeEngine.is_trading_weekday()
-                and (not is_market_hours())
-                and now_time >= market_close
+            # morning run uses previous closed-day RSI; post-close uses today-inclusive RSI
+            # only when same-day NSE bhavcopy is confirmed (safe if schedule runs early).
+            from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+                should_use_same_day_close_for_indicators,
             )
+
+            use_latest_rsi_after_close = should_use_same_day_close_for_indicators()
 
             # Active BUY orders only — re-entry adds to existing holdings (matches live engine).
             pending_orders = self.broker.get_all_orders()
