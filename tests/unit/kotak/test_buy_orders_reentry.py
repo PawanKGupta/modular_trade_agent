@@ -968,7 +968,7 @@ class TestPlaceReentryOrders:
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_place_reentry_uses_post_close_snapshot_until_next_eod_window(self, mock_auth):
-        """Use current-day RSI after close, and previous snapshot during next market hours."""
+        """Wire ``add_current_day`` from ``should_use_same_day_close_for_indicators`` (post-close vs session)."""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
@@ -995,31 +995,19 @@ class TestPlaceReentryOrders:
             "ema200": 95.0,
         }
 
-        # Run 1: post-close on trading day -> include current day in RSI snapshot
-        with (
-            patch(
-                "core.volume_analysis.is_market_hours",
-                return_value=False,
-            ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
+        # Run 1: post-close with same-day close allowed (bhavcopy confirmed or Yahoo legacy)
+        with patch(
+            "src.application.services.nse_bhavcopy_availability.should_use_same_day_close_for_indicators",
+            return_value=True,
         ):
-            mock_ist_now.return_value = datetime(
-                2026, 3, 2, 16, 5, 0, tzinfo=IST
-            )  # Monday 4:05 PM IST
             summary_after_close = engine.place_reentry_orders()
             assert summary_after_close["attempted"] == 1
 
-        # Run 2: next-day market hours -> keep using previous closed-day snapshot
-        with (
-            patch(
-                "core.volume_analysis.is_market_hours",
-                return_value=True,
-            ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
+        # Run 2: next session intraday -> prior closed-day RSI snapshot
+        with patch(
+            "src.application.services.nse_bhavcopy_availability.should_use_same_day_close_for_indicators",
+            return_value=False,
         ):
-            mock_ist_now.return_value = datetime(
-                2026, 3, 3, 10, 0, 0, tzinfo=IST
-            )  # Tuesday 10:00 AM IST
             summary_market_hours = engine.place_reentry_orders()
             assert summary_market_hours["attempted"] == 1
 
