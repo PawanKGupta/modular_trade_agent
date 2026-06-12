@@ -470,3 +470,66 @@ def test_get_ohlcv_blocks_short_daily_history_on_long_lookback(db_session, monke
     assert df_short is not None
     df_long = svc.get_ohlcv("SHORT.NS", days=400, end_date="2024-01-31", add_current_day=False)
     assert df_long is None
+
+
+def test_get_ohlcv_skips_nse_gap_fill_for_today_during_market_hours(db_session, monkeypatch):
+    """When only calendar today is missing, do not invoke NSE gap-fill pre-EOD."""
+    from zoneinfo import ZoneInfo
+
+    reset_ohlcv_cache_stats()
+    ist = ZoneInfo("Asia/Kolkata")
+    today = date(2026, 6, 12)
+    yesterday = date(2026, 6, 11)
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.nse_bhavcopy_eod_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.db.timezone_utils.ist_now",
+        lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
+    )
+
+    nse_called = {"n": 0}
+
+    class FakeIngest:
+        def __init__(self, _db):
+            pass
+
+        def fill_symbol_range(self, ticker, start, end):
+            nse_called["n"] += 1
+            return 0
+
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.NseBhavcopyIngestService",
+        FakeIngest,
+    )
+
+    repo = PriceCacheRepository(db_session)
+    start = yesterday - timedelta(days=65)
+    for td in iter_trading_days(start, yesterday):
+        repo.create_or_update(
+            "G.NS",
+            td,
+            close=10.0,
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            volume=100,
+            source="nse",
+        )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    df = svc.get_ohlcv("G.NS", days=60, end_date=today.isoformat(), add_current_day=False)
+    assert df is not None
+    assert nse_called["n"] == 0
+    assert yesterday in set(df["date"].dt.date)
+    assert today not in set(df["date"].dt.date)

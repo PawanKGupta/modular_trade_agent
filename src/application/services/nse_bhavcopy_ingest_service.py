@@ -28,6 +28,35 @@ from utils.logger import logger
 NSE_SOURCE = "nse"
 
 
+def nse_bhavcopy_eod_available() -> bool:
+    """True when IST is at or after regular session close (NSE EOD bhavcopy published)."""
+    from core.volume_analysis import is_market_hours  # noqa: PLC0415
+
+    return not is_market_hours()
+
+
+def filter_nse_intraday_gap_dates(trade_days: list[date]) -> list[date]:
+    """
+    Drop calendar today from NSE gap-fill while the session is still open.
+
+    Official bhavcopy for today is not available until after close; intraday
+    indicators use broker LTP / Yahoo today-refresh instead.
+    """
+    if not trade_days or nse_bhavcopy_eod_available():
+        return trade_days
+
+    from src.infrastructure.db.timezone_utils import ist_now  # noqa: PLC0415
+
+    today_ist = ist_now().date()
+    filtered = [d for d in trade_days if d != today_ist]
+    if len(filtered) < len(trade_days):
+        logger.debug(
+            "NSE gap-fill: skipping calendar today %s (bhavcopy not available pre-EOD)",
+            today_ist,
+        )
+    return filtered
+
+
 def _bar_to_upsert_row(cache_ticker: str, bar: NseEquityBar) -> dict:
     return {
         "symbol": cache_ticker,
@@ -71,8 +100,10 @@ class NseBhavcopyIngestService:
         total = 0
         missing_days = 0
 
-        days_to_fetch = self.repo.get_missing_trading_dates(
-            cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+        days_to_fetch = filter_nse_intraday_gap_dates(
+            self.repo.get_missing_trading_dates(
+                cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+            )
         )
         if not days_to_fetch:
             logger.info(
