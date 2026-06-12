@@ -10,6 +10,7 @@ import pytest
 
 from src.application.services.nse_bhavcopy_availability import (
     filter_nse_intraday_gap_dates,
+    mark_nse_bhavcopy_published_for_today,
     nse_bhavcopy_ingest_allowed_for_date,
     nse_bhavcopy_ingest_allowed_for_today,
     nse_today_bhavcopy_published,
@@ -81,6 +82,33 @@ def test_filter_drops_today_when_ingest_not_allowed(monkeypatch):
     )
     assert filter_nse_intraday_gap_dates([today]) == []
     assert filter_nse_intraday_gap_dates([yesterday, today]) == [yesterday]
+
+
+def test_mark_published_clears_stale_false_probe(monkeypatch):
+    """After ingest, re-entry should not wait for probe TTL."""
+    today = date(2026, 6, 12)
+    _patch_ist(monkeypatch, datetime(2026, 6, 12, 17, 35, tzinfo=IST))
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_availability.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_availability.nse_bhavcopy_ingest_allowed_for_today",
+        lambda: True,
+    )
+    fetcher = MagicMock()
+    fetcher.has_cached_bhavcopy.return_value = False
+    fetcher.is_bhavcopy_available_on_nse.return_value = False
+    monkeypatch.setattr(
+        "src.infrastructure.data_providers.nse_bhavcopy_fetcher.NseBhavcopyFetcher",
+        lambda: fetcher,
+    )
+    assert nse_today_bhavcopy_published() is False
+
+    mark_nse_bhavcopy_published_for_today()
+    fetcher.is_bhavcopy_available_on_nse.reset_mock()
+    assert nse_today_bhavcopy_published() is True
+    fetcher.is_bhavcopy_available_on_nse.assert_not_called()
 
 
 def test_publish_probe_skipped_before_ingest_window(monkeypatch):

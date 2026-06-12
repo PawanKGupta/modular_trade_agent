@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 from config.settings import OHLCV_REJECT_INVALID_FETCH
 from src.application.services.nse_bhavcopy_availability import (
     filter_nse_intraday_gap_dates,
+    mark_nse_bhavcopy_published_for_today,
     nse_bhavcopy_ingest_allowed_for_date,
-    nse_bhavcopy_ingest_allowed_for_today,
 )
+from src.infrastructure.db.timezone_utils import ist_now
 from src.application.services.ohlcv_fetch_validation import validate_yahoo_ohlcv_frame
 from src.infrastructure.data_providers.nse_bhavcopy_fetcher import (
     NseBhavcopyFetcher,
@@ -32,18 +33,11 @@ from utils.logger import logger
 
 NSE_SOURCE = "nse"
 
-# Re-export for callers/tests that imported from this module.
-from src.application.services.nse_bhavcopy_availability import (  # noqa: E402
-    nse_bhavcopy_eod_available,
-)
-
 __all__ = [
     "NseBhavcopyIngestService",
     "NSE_SOURCE",
     "filter_nse_intraday_gap_dates",
-    "nse_bhavcopy_eod_available",
     "nse_bhavcopy_ingest_allowed_for_date",
-    "nse_bhavcopy_ingest_allowed_for_today",
 ]
 
 
@@ -144,6 +138,8 @@ class NseBhavcopyIngestService:
                 )
                 continue
             total += self.repo.upsert_many([row])
+            if trade_day == ist_now().date():
+                mark_nse_bhavcopy_published_for_today()
 
         self.repo.refresh_symbol_meta(cache_ticker, interval=DEFAULT_INTERVAL)
         from src.application.services.ohlcv_fetch_validation import validate_cached_symbol
@@ -219,6 +215,8 @@ class NseBhavcopyIngestService:
         for t in tickers:
             self.repo.refresh_symbol_meta(t, interval=DEFAULT_INTERVAL)
         logger.info("NSE ingest_trading_day %s: upserted %s rows for %s symbols", trade_date, count, len(tickers))
+        if count and trade_date == ist_now().date():
+            mark_nse_bhavcopy_published_for_today()
         return count
 
 

@@ -431,8 +431,8 @@ class OhlcvCacheService:
             df = df[df["date"].dt.date <= end_d]
         return df
 
-    def _nse_eod_available(self) -> bool:
-        """True when IST clock is at or after regular session close (NSE F bhavcopy)."""
+    def _nse_ingest_allowed_for_today(self) -> bool:
+        """True when same-day NSE bhavcopy ingest is allowed (post-close, ≥ earliest IST)."""
         from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
             nse_bhavcopy_ingest_allowed_for_today,
         )
@@ -454,7 +454,8 @@ class OhlcvCacheService:
         Avoids serving a stale same-day row written earlier (e.g. pre-open gap-fill).
         Skips when ``end_d`` is before IST calendar today (backtests / historical end_date).
         Caller must gate with ``live_current_day_scope_allowed`` first.
-        NSE path runs only after market close; pre-EOD skips (no synthetic today bar).
+        NSE path runs only after the ingest window (``NSE_BHAVCOPY_EARLIEST_IST``); earlier
+        post-close skips (no synthetic today bar).
         """
         if is_ohlcv_cache_read_only():
             return 0
@@ -464,7 +465,7 @@ class OhlcvCacheService:
         if end_d != today_ist:
             return 0
 
-        if daily_ohlcv_uses_nse() and self._nse_eod_available():
+        if daily_ohlcv_uses_nse() and self._nse_ingest_allowed_for_today():
             from src.application.services.nse_bhavcopy_ingest_service import (  # noqa: PLC0415
                 NseBhavcopyIngestService,
             )

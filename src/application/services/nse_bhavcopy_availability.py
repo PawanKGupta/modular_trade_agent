@@ -41,6 +41,17 @@ def reset_nse_bhavcopy_publish_probe_cache() -> None:
     _publish_probe_cache.clear()
 
 
+def mark_nse_bhavcopy_published_for_today() -> None:
+    """
+    Record that today's bhavcopy is available (call after successful same-day ingest).
+
+    Clears a stale ``False`` publish probe so re-entry / indicators do not wait for
+    ``NSE_BHAVCOPY_PUBLISH_PROBE_TTL_S`` after ingest lands the file.
+    """
+    today_ist = ist_now().date()
+    _publish_probe_cache[today_ist.isoformat()] = (True, time.monotonic())
+
+
 def nse_bhavcopy_ingest_allowed_for_date(trade_date: date) -> bool:
     """
   Whether NSE gap-fill / ingest may attempt ``trade_date``.
@@ -75,7 +86,19 @@ def nse_bhavcopy_ingest_allowed_for_today() -> bool:
 
 
 def nse_bhavcopy_eod_available() -> bool:
-    """Backward-compatible alias: same as ``nse_bhavcopy_ingest_allowed_for_today()``."""
+    """
+    Deprecated — use ``nse_bhavcopy_ingest_allowed_for_today()`` instead.
+
+    Name implied "after 15:30"; behavior now follows ``NSE_BHAVCOPY_EARLIEST_IST``
+    (default 17:30 IST) plus trading-day / session checks.
+    """
+    import warnings
+
+    warnings.warn(
+        "nse_bhavcopy_eod_available() is deprecated; use nse_bhavcopy_ingest_allowed_for_today()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return nse_bhavcopy_ingest_allowed_for_today()
 
 
