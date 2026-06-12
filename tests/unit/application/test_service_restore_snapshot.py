@@ -11,10 +11,12 @@ from src.application.services.service_restore_snapshot import (
     build_snapshot,
     capture_live_unified_user_ids,
     cleanup_and_restore_services,
+    clear_scheduler_locks_for_users,
     load_snapshot,
     merge_restore_targets,
     save_snapshot,
 )
+from src.infrastructure.db.models import SchedulerLock
 from src.infrastructure.db.models import Users
 from src.infrastructure.db.timezone_utils import ist_now
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
@@ -92,6 +94,47 @@ class TestBuildSnapshot:
 
 
 class TestCleanupAndRestore:
+    def test_clears_scheduler_locks_before_unified_restore(
+        self, db_session, restore_test_user, tmp_path, monkeypatch
+    ):
+        user_id = restore_test_user.id
+        snap_path = tmp_path / "service_restore_snapshot.json"
+        monkeypatch.setenv("SERVICE_RESTORE_SNAPSHOT_PATH", str(snap_path))
+
+        db_session.add(
+            SchedulerLock(
+                user_id=user_id,
+                locked_at=ist_now(),
+                lock_id="pre-restore",
+                expires_at=ist_now(),
+            )
+        )
+        db_session.commit()
+
+        save_snapshot(
+            {
+                "version": 1,
+                "captured_at": "2026-06-11T09:00:00+05:30",
+                "source": "cli_backup",
+                "unified_user_ids": [user_id],
+                "individual_services": [],
+            },
+            path=snap_path,
+        )
+
+        with patch(
+            "src.application.services.multi_user_trading_service.MultiUserTradingService"
+        ) as mock_cls:
+            mock_svc = MagicMock()
+            mock_svc.start_service.return_value = True
+            mock_cls.return_value = mock_svc
+
+            cleanup_and_restore_services(db_session)
+
+        assert (
+            db_session.query(SchedulerLock).filter(SchedulerLock.user_id == user_id).count() == 0
+        )
+
     def test_restores_from_snapshot_when_db_says_stopped(
         self, db_session, restore_test_user, tmp_path, monkeypatch
     ):
