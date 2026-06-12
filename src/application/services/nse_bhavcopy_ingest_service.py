@@ -111,6 +111,8 @@ class NseBhavcopyIngestService:
             )
             return 0
 
+        today_ist = ist_now().date()
+        today_upserted = False
         for trade_day in days_to_fetch:
             df = self.fetcher.download_bhavcopy(trade_day)
             if df is None or df.empty:
@@ -138,8 +140,11 @@ class NseBhavcopyIngestService:
                 )
                 continue
             total += self.repo.upsert_many([row])
-            if trade_day == ist_now().date():
-                mark_nse_bhavcopy_published_for_today()
+            if trade_day == today_ist:
+                today_upserted = True
+
+        if today_upserted:
+            mark_nse_bhavcopy_published_for_today()
 
         self.repo.refresh_symbol_meta(cache_ticker, interval=DEFAULT_INTERVAL)
         from src.application.services.ohlcv_fetch_validation import validate_cached_symbol
