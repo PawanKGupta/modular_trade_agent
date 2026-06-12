@@ -139,6 +139,7 @@ The dashboard **portfolio** and **history** endpoints read from the **applicatio
 | `initial_capital` | `UserTradingConfig.paper_trading_initial_capital` |
 | `realized_pnl` / history `net_pnl` | Sum of closed paper positions (`trade_mode == PAPER` or user in paper mode with symbol-matched buy) |
 | Open holdings / `unrealized_pnl` | Open paper positions + live marks |
+| Holdings `target_price` (UI **Target** column) | Open paper sell limit (`orders.price`); matches Recent Orders **Price** for the pending sell; live EMA9 only before a sell is placed |
 | `available_cash` | **Derived** so `total_value = initial_capital + total_pnl` (display identity; may differ from the simulator wallet in `account.json`) |
 
 Per-user JSON under `paper_trading/user_{user_id}/` (`account.json`, `orders.json`, etc.) is still used by the **Python paper broker adapter** during execution and reporting. After trades are persisted to the DB, the web API is the source of truth for portfolio and history totals.
@@ -472,7 +473,7 @@ Paper trading and live Kotak use the same helper at **sell placement**:
 
 - **Module:** `modules/kotak_neo_auto_trader/services/sell_target_service.py`
 - **`compute_sell_target()`** — realtime daily EMA9 (`IndicatorService.calculate_ema9_realtime`) plus NSE/BSE tick rounding (`round_sell_price`)
-- **Paper:** `PaperTradingServiceAdapter._calculate_ema9()` and the paper portfolio API (`GET /paper-trading/portfolio`) call this helper with `live_price_manager=None` (Yahoo / cached OHLCV for LTP).
+- **Paper:** `PaperTradingServiceAdapter._calculate_ema9()` calls this helper at sell placement; the portfolio API uses it only as a **fallback** when no open paper sell exists (`live_price_manager=None`, Yahoo / cached OHLCV for LTP).
 - **Live:** `SellOrderManager` uses the same EMA9 formula and delegates tick rounding to `round_sell_price` (via `round_to_tick_size`).
 
 **What should match** when you compare targets at the moment a sell limit is placed:

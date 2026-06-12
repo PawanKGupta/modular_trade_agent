@@ -71,7 +71,7 @@ class PaperTradingHolding(BaseModel):
     market_value: float
     pnl: float
     pnl_percentage: float
-    target_price: float | None = None  # Frozen EMA9 target
+    target_price: float | None = None  # Open sell limit, or live EMA9 if no sell yet
     distance_to_target: float | None = None  # % to reach target
     reentry_count: int = 0  # Number of re-entries for this position
     reentries: list[dict[str, Any]] | None = None  # Re-entry details array
@@ -402,6 +402,7 @@ def _target_prices_from_active_paper_sells(orders: list) -> dict[str, float]:
     not a live EMA9 recalculation.
     """
     target_prices: dict[str, float] = {}
+    # Multiple pending sells for the same symbol are rare; first match in list order wins.
     for order in orders:
         if not _is_paper_order(order):
             continue
@@ -752,16 +753,14 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
 
-            # Get target price (frozen EMA9) from database sell order if available
-            # Try both full symbol and base symbol for target price lookup
+            # Target: pending paper sell limit when present; else live EMA9 (no sell placed yet).
             base_symbol_for_target = symbol.split("-")[0] if "-" in symbol else symbol
             target_price = target_prices.get(symbol)  # Try full symbol first
             if target_price is None:
                 target_price = target_prices.get(base_symbol_for_target)  # Try base symbol
 
-            # ONLY calculate EMA9 if NO sell order exists (don't recalculate if order exists)
             if target_price is None:
-                # Calculate on-the-fly only if no sell order placed yet
+                # Fallback: realtime EMA9 until the adapter places a sell limit.
                 target_price = calculate_ema9_target(base_symbol_for_target)
                 logger.debug(
                     "Calculated EMA9 target for %s (no sell order found): %s",
