@@ -29,6 +29,43 @@ export function getApiErrorMessage(error: unknown, fallback = 'Something went wr
 	return fallback;
 }
 
+/** True when an auth endpoint rejected the request due to rate limiting (HTTP 429). */
+export function isAuthRateLimitError(error: unknown): boolean {
+	return axios.isAxiosError(error) && error.response?.status === 429;
+}
+
+/** Seconds until the client may retry (from 429 JSON or Retry-After header). */
+export function getAuthRetryAfterSeconds(error: unknown): number | null {
+	if (!axios.isAxiosError(error)) {
+		return null;
+	}
+	const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+	if (typeof detail === 'object' && detail !== null && !Array.isArray(detail)) {
+		const raw = (detail as Record<string, unknown>).retry_after_seconds;
+		if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+			return Math.ceil(raw);
+		}
+	}
+	const retryAfter = error.response?.headers?.['retry-after'];
+	if (typeof retryAfter === 'string' && /^\d+$/.test(retryAfter.trim())) {
+		return Number.parseInt(retryAfter.trim(), 10);
+	}
+	return null;
+}
+
+/** Optional vague pre-lockout warning from a failed login (HTTP 401 with warning field). */
+export function getApiErrorWarning(error: unknown): string | null {
+	if (!axios.isAxiosError(error)) {
+		return null;
+	}
+	const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+	if (typeof detail !== 'object' || detail === null || Array.isArray(detail)) {
+		return null;
+	}
+	const warning = (detail as Record<string, unknown>).warning;
+	return typeof warning === 'string' && warning.trim() ? warning : null;
+}
+
 /** True when login failed because the account email is not verified yet (HTTP 403). */
 export function isUnverifiedEmailLoginError(error: unknown): boolean {
 	if (!axios.isAxiosError(error) || error.response?.status !== 403) {
@@ -46,6 +83,12 @@ function normalizeFastApiDetail(detail: unknown): string | null {
 	}
 	if (typeof detail === 'string') {
 		return detail;
+	}
+	if (typeof detail === 'object' && !Array.isArray(detail)) {
+		const record = detail as Record<string, unknown>;
+		if (typeof record.message === 'string' && record.message.trim()) {
+			return record.message;
+		}
 	}
 	if (Array.isArray(detail)) {
 		const parts = detail.map((item) => formatFastApiValidationItem(item));

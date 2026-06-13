@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections import defaultdict
@@ -34,6 +35,10 @@ def get_client_ip(request: Request) -> str:
 class RateLimitBackend(Protocol):
     def is_blocked(self, key: str, *, max_attempts: int, window_seconds: int) -> bool: ...
 
+    def failure_count(self, key: str, *, window_seconds: int) -> int: ...
+
+    def retry_after_seconds(self, key: str, *, max_attempts: int, window_seconds: int) -> int: ...
+
     def record_failure(self, key: str, *, window_seconds: int) -> None: ...
 
     def clear(self, key: str) -> None: ...
@@ -56,6 +61,19 @@ class InMemoryRateLimiter:
         with self._lock:
             entries = self._prune(key, window_seconds, time.monotonic())
             return len(entries) >= max_attempts
+
+    def failure_count(self, key: str, *, window_seconds: int) -> int:
+        with self._lock:
+            return len(self._prune(key, window_seconds, time.monotonic()))
+
+    def retry_after_seconds(self, key: str, *, max_attempts: int, window_seconds: int) -> int:
+        with self._lock:
+            now = time.monotonic()
+            entries = self._prune(key, window_seconds, now)
+            if len(entries) < max_attempts:
+                return 0
+            oldest = min(entries)
+            return max(0, int(math.ceil(oldest + window_seconds - now)))
 
     def record_failure(self, key: str, *, window_seconds: int) -> None:
         with self._lock:
@@ -81,6 +99,19 @@ class RedisRateLimiter:
     def is_blocked(self, key: str, *, max_attempts: int, window_seconds: int) -> bool:
         count = self._client.get(key)
         return count is not None and int(count) >= max_attempts
+
+    def failure_count(self, key: str, *, window_seconds: int) -> int:
+        count = self._client.get(key)
+        return int(count) if count else 0
+
+    def retry_after_seconds(self, key: str, *, max_attempts: int, window_seconds: int) -> int:
+        count = self._client.get(key)
+        if count is None or int(count) < max_attempts:
+            return 0
+        ttl = self._client.ttl(key)
+        if ttl is None or ttl < 0:
+            return window_seconds
+        return int(ttl)
 
     def record_failure(self, key: str, *, window_seconds: int) -> None:
         pipe = self._client.pipeline()
@@ -113,18 +144,81 @@ def reset_rate_limit_backend_for_tests() -> None:
     _backend = None
 
 
+def _rate_limit_key(request: Request, scope: str, identifier: str) -> str:
+    return f"rl:{scope}:{get_client_ip(request)}:{identifier}"
+
+
+def get_failure_count(request: Request, scope: str, identifier: str) -> int:
+    """Return recent failed-attempt count for the rate-limit key (0 when disabled)."""
+    if not settings.rate_limit_enabled:
+        return 0
+    key = _rate_limit_key(request, scope, identifier)
+    return get_rate_limit_backend().failure_count(
+        key, window_seconds=settings.rate_limit_window_seconds
+    )
+
+
+def prelock_warning_message(failure_count: int, *, max_attempts: int) -> str | None:
+    """Vague pre-lockout copy — no exact attempt counts (reduces brute-force signal)."""
+    if not settings.rate_limit_enabled:
+        return None
+    warn_after = max(2, max_attempts - 2)
+    if failure_count < warn_after:
+        return None
+    return (
+        "Multiple failed login attempts. Your account may be temporarily locked "
+        "if this continues."
+    )
+
+
+def login_failure_detail(request: Request, email: str, *, max_attempts: int | None = None) -> str | dict[str, str]:
+    """Record a failed login and build a 401 ``detail`` payload (optional vague warning)."""
+    email_lower = email.lower()
+    limit = max_attempts if max_attempts is not None else settings.rate_limit_login_max
+    record_rate_limit_failure(request, "login", email_lower)
+    warning = prelock_warning_message(
+        get_failure_count(request, "login", email_lower),
+        max_attempts=limit,
+    )
+    if warning:
+        return {"message": "Invalid credentials", "warning": warning}
+    return "Invalid credentials"
+
+
+def rate_limit_detail_message() -> str:
+    """Fallback user-facing copy when retry timing is unavailable."""
+    seconds = settings.rate_limit_window_seconds
+    if seconds < 60:
+        return "Too many attempts. Please try again shortly."
+    minutes = max(1, round(seconds / 60))
+    unit = "minute" if minutes == 1 else "minutes"
+    return f"Too many attempts. Please try again in about {minutes} {unit}."
+
+
+def rate_limit_blocked_detail(retry_after_seconds: int) -> dict[str, str | int]:
+    """Structured 429 payload with remaining lockout time for client countdown."""
+    return {
+        "message": "Too many login attempts. Please wait before trying again.",
+        "retry_after_seconds": max(0, int(retry_after_seconds)),
+    }
+
+
 def check_rate_limit(request: Request, scope: str, identifier: str, *, max_attempts: int) -> None:
     """Raise 429 if the key is over the failure threshold."""
     if not settings.rate_limit_enabled:
         return
-    ip = get_client_ip(request)
-    key = f"rl:{scope}:{ip}:{identifier}"
+    key = _rate_limit_key(request, scope, identifier)
     backend = get_rate_limit_backend()
-    if backend.is_blocked(key, max_attempts=max_attempts, window_seconds=settings.rate_limit_window_seconds):
+    window = settings.rate_limit_window_seconds
+    if backend.is_blocked(key, max_attempts=max_attempts, window_seconds=window):
+        retry_after = backend.retry_after_seconds(
+            key, max_attempts=max_attempts, window_seconds=window
+        )
         security_metric_increment(f"rate_limit_blocked:{scope}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many attempts. Please try again later.",
+            detail=rate_limit_blocked_detail(retry_after),
+            headers={"Retry-After": str(retry_after)},
         )
 
 
@@ -134,8 +228,7 @@ def record_rate_limit_failure(
     """Record a failed auth attempt for rate limiting."""
     if not settings.rate_limit_enabled:
         return
-    ip = get_client_ip(request)
-    key = f"rl:{scope}:{ip}:{identifier}"
+    key = _rate_limit_key(request, scope, identifier)
     get_rate_limit_backend().record_failure(
         key, window_seconds=settings.rate_limit_window_seconds
     )
@@ -146,6 +239,5 @@ def clear_rate_limit(request: Request, scope: str, identifier: str) -> None:
     """Clear rate limit counter after successful auth."""
     if not settings.rate_limit_enabled:
         return
-    ip = get_client_ip(request)
-    key = f"rl:{scope}:{ip}:{identifier}"
+    key = _rate_limit_key(request, scope, identifier)
     get_rate_limit_backend().clear(key)
