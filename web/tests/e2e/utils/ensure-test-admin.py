@@ -17,35 +17,54 @@ sys.path.insert(0, str(project_root))
 os.environ["DB_URL"] = os.environ.get("E2E_DB_URL", "sqlite:///./data/e2e.db")
 
 # Imports must come after path setup - noqa comments suppress lint warnings
+from src.infrastructure.db.base import Base  # noqa: E402
 from src.infrastructure.db.models import UserRole, Users  # noqa: E402
-from src.infrastructure.db.session import SessionLocal  # noqa: E402
+from src.infrastructure.db.session import SessionLocal, engine  # noqa: E402
 from src.infrastructure.persistence.settings_repository import SettingsRepository  # noqa: E402
 from src.infrastructure.persistence.user_repository import UserRepository  # noqa: E402
 
+# Columns added after early E2E DBs; missing any model column means schema is stale.
+_E2E_SCHEMA_PROBE_TABLE = Users.__table__
+
+
+def _e2e_sqlite_path(db_url: str) -> Path:
+    rel_path = db_url.replace("sqlite:///", "", 1)
+    return Path(rel_path) if Path(rel_path).is_absolute() else project_root / rel_path
+
+
+def _sqlite_schema_is_stale() -> bool:
+    from sqlalchemy import inspect  # noqa: PLC0415
+
+    inspector = inspect(engine)
+    if not inspector.has_table(_E2E_SCHEMA_PROBE_TABLE.name):
+        return False
+    db_columns = {col["name"] for col in inspector.get_columns(_E2E_SCHEMA_PROBE_TABLE.name)}
+    model_columns = {col.name for col in _E2E_SCHEMA_PROBE_TABLE.columns}
+    return not model_columns.issubset(db_columns)
+
 
 def migrate_e2e_schema() -> None:
-    """Apply Alembic migrations so e2e.db matches current models."""
+    """Ensure the E2E database schema matches current SQLAlchemy models."""
     e2e_db_url = os.environ["DB_URL"]
 
-    def _run_upgrade() -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603
-            [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=str(project_root),
-            env={**os.environ, "DB_URL": e2e_db_url},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    result = _run_upgrade()
-    if result.returncode != 0 and e2e_db_url.startswith("sqlite:///") and "e2e.db" in e2e_db_url:
-        rel_path = e2e_db_url.replace("sqlite:///", "", 1)
-        db_path = Path(rel_path) if Path(rel_path).is_absolute() else project_root / rel_path
-        if db_path.exists():
+    if e2e_db_url.startswith("sqlite:///"):
+        db_path = _e2e_sqlite_path(e2e_db_url)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        if db_path.exists() and _sqlite_schema_is_stale():
             print(f"[INFO] Rebuilding stale E2E database: {db_path}")
+            engine.dispose()
             db_path.unlink()
-            result = _run_upgrade()
+        Base.metadata.create_all(bind=engine)
+        return
 
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=str(project_root),
+        env={**os.environ, "DB_URL": e2e_db_url},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     if result.returncode != 0:
         print(result.stdout)
         print(result.stderr, file=sys.stderr)
