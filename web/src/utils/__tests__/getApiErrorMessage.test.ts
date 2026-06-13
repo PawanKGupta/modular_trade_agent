@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import axios, { AxiosError } from 'axios';
-import { getApiErrorMessage } from '../getApiErrorMessage';
+import { getApiErrorMessage, isAuthRateLimitError, getApiErrorWarning, getAuthRetryAfterSeconds } from '../getApiErrorMessage';
 
 function axiosErrorWithData(status: number, data: unknown): AxiosError {
 	const err = new AxiosError('request failed');
@@ -68,5 +68,37 @@ describe('getApiErrorMessage', () => {
 	it('stringifies non-string validation items', () => {
 		const err = axiosErrorWithData(422, { detail: [42] });
 		expect(getApiErrorMessage(err)).toBe('42');
+	});
+
+	it('detects auth rate limit errors', () => {
+		const err = axiosErrorWithData(429, {
+			detail: {
+				message: 'Too many login attempts. Please wait before trying again.',
+				retry_after_seconds: 120,
+			},
+		});
+		expect(isAuthRateLimitError(err)).toBe(true);
+		expect(getApiErrorMessage(err)).toBe('Too many login attempts. Please wait before trying again.');
+		expect(getAuthRetryAfterSeconds(err)).toBe(120);
+	});
+
+	it('does not treat other status codes as rate limit', () => {
+		expect(isAuthRateLimitError(axiosErrorWithData(401, { detail: 'Invalid credentials' }))).toBe(false);
+	});
+
+	it('extracts message and warning from structured login failure detail', () => {
+		const err = axiosErrorWithData(401, {
+			detail: {
+				message: 'Invalid credentials',
+				warning: 'Multiple failed login attempts. Your account may be temporarily locked if this continues.',
+			},
+		});
+		expect(getApiErrorMessage(err)).toBe('Invalid credentials');
+		expect(getApiErrorWarning(err)).toMatch(/temporarily locked/i);
+	});
+
+	it('returns null warning when detail is a plain string', () => {
+		const err = axiosErrorWithData(401, { detail: 'Invalid credentials' });
+		expect(getApiErrorWarning(err)).toBeNull();
 	});
 });

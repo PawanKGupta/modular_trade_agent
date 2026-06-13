@@ -46,6 +46,7 @@ from ..core.mfa import (
 from ..core.rate_limit import (
     check_rate_limit,
     clear_rate_limit,
+    login_failure_detail,
     record_rate_limit_failure,
 )
 from ..core.security import (
@@ -227,17 +228,16 @@ def login(
         user_repo = UserRepository(db)
         user = user_repo.get_by_email(payload.email)
         if not user or not user.is_active or user.deleted_at is not None:
-            record_rate_limit_failure(request, "login", payload.email.lower())
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=login_failure_detail(request, payload.email),
             )
         if not is_passlib_password_hash(user.password_hash or ""):
-            record_rate_limit_failure(request, "login", payload.email.lower())
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=login_failure_detail(request, payload.email),
             )
         if not verify_password(payload.password, user.password_hash):
-            record_rate_limit_failure(request, "login", payload.email.lower())
             record_audit(
                 db,
                 user_id=user.id,
@@ -247,7 +247,8 @@ def login(
                 changes={"success": False},
             )
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=login_failure_detail(request, payload.email),
             )
         _maybe_rehash_password(user_repo, user, payload.password)
         require_verified_email(user)
