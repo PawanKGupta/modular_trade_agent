@@ -5,12 +5,12 @@ test.describe('Trading Configuration Page', () => {
 		// Page is already authenticated via fixture and should be on dashboard
 		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
 		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 	});
 
 	test('navigates to trading configuration page', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 		// Use heading to avoid strict mode violation
 		await expect(authenticatedPage.getByRole('heading', { name: /Trading Configuration/i })).toBeVisible();
 	});
@@ -32,7 +32,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('modifies RSI period and shows unsaved changes', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Find and modify RSI period
 		const rsiPeriodInput = authenticatedPage.getByLabel(/RSI Period/i).first();
@@ -47,7 +47,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('saves configuration changes', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
@@ -76,7 +76,7 @@ test.describe('Trading Configuration Page', () => {
 		await saveButton.click();
 		await authenticatedPage.waitForSelector('text=Saving...', { timeout: 2000 }).catch(() => {});
 		await authenticatedPage.waitForSelector('text=Saving...', { state: 'hidden', timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 		await authenticatedPage.waitForTimeout(1000); // Give UI time to update
 
 		// Verify save completed - check that save button is no longer showing "Saving..."
@@ -97,7 +97,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('applies configuration preset', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Find and click a preset button
 		const presetButtons = authenticatedPage.getByRole('button', { name: /Apply Preset/i });
@@ -112,7 +112,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('toggles chart quality filter', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Wait for page to finish loading (check for loading text to disappear)
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
@@ -139,7 +139,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('toggles news sentiment enabled', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
@@ -169,7 +169,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('toggles ML enabled', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
@@ -198,7 +198,7 @@ test.describe('Trading Configuration Page', () => {
 
 	test('modifies multiple fields and saves', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
@@ -244,7 +244,7 @@ test.describe('Trading Configuration Page', () => {
 		await saveButton.click();
 		await authenticatedPage.waitForSelector('text=Saving...', { timeout: 2000 }).catch(() => {});
 		await authenticatedPage.waitForSelector('text=Saving...', { state: 'hidden', timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 		await authenticatedPage.waitForTimeout(1000); // Give UI time to update
 
 		// Verify save completed - check that save button is no longer showing "Saving..."

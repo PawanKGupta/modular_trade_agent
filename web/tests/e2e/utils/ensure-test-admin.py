@@ -5,6 +5,7 @@ This script checks if the test admin user exists, and creates it if it doesn't
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,17 +17,44 @@ sys.path.insert(0, str(project_root))
 os.environ["DB_URL"] = os.environ.get("E2E_DB_URL", "sqlite:///./data/e2e.db")
 
 # Imports must come after path setup - noqa comments suppress lint warnings
-from src.infrastructure.db.base import Base  # noqa: E402
 from src.infrastructure.db.models import UserRole, Users  # noqa: E402
-from src.infrastructure.db.session import SessionLocal, engine  # noqa: E402
+from src.infrastructure.db.session import SessionLocal  # noqa: E402
 from src.infrastructure.persistence.settings_repository import SettingsRepository  # noqa: E402
 from src.infrastructure.persistence.user_repository import UserRepository  # noqa: E402
 
 
+def migrate_e2e_schema() -> None:
+    """Apply Alembic migrations so e2e.db matches current models."""
+    e2e_db_url = os.environ["DB_URL"]
+
+    def _run_upgrade() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(project_root),
+            env={**os.environ, "DB_URL": e2e_db_url},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    result = _run_upgrade()
+    if result.returncode != 0 and e2e_db_url.startswith("sqlite:///") and "e2e.db" in e2e_db_url:
+        rel_path = e2e_db_url.replace("sqlite:///", "", 1)
+        db_path = Path(rel_path) if Path(rel_path).is_absolute() else project_root / rel_path
+        if db_path.exists():
+            print(f"[INFO] Rebuilding stale E2E database: {db_path}")
+            db_path.unlink()
+            result = _run_upgrade()
+
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr, file=sys.stderr)
+        raise RuntimeError("Alembic migration failed for E2E database")
+
+
 def ensure_test_admin():
     """Ensure test admin user exists"""
-    # Ensure schema exists
-    Base.metadata.create_all(bind=engine)
+    migrate_e2e_schema()
 
     db = SessionLocal()
     try:

@@ -209,6 +209,7 @@ def auth_request(monkeypatch):
     monkeypatch.setattr(auth, "check_rate_limit", lambda *a, **k: None)
     monkeypatch.setattr(auth, "record_rate_limit_failure", lambda *a, **k: None)
     monkeypatch.setattr(auth, "clear_rate_limit", lambda *a, **k: None)
+    monkeypatch.setattr(auth, "login_failure_detail", lambda *a, **k: "Invalid credentials")
     monkeypatch.setattr("server.app.core.auth_cookies.validate_csrf", lambda r: True)
     return req
 
@@ -430,9 +431,7 @@ def test_login_blocks_unverified_user(user_repo, mock_verify_password, mock_sett
     assert "verify your email" in exc.value.detail.lower()
 
 
-def test_login_success(
-    user_repo, mock_issue_tokens, mock_verify_password, mock_settings
-):
+def test_login_success(user_repo, mock_issue_tokens, mock_verify_password, mock_settings):
     user = verified_dummy(id=1, email="test@example.com", password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
 
@@ -454,9 +453,7 @@ def test_login_user_not_found(user_repo):
     assert "Invalid credentials" in exc.value.detail
 
 
-def test_login_invalid_password_bcrypt(
-    user_repo, mock_verify_password, mock_settings
-):
+def test_login_invalid_password_bcrypt(user_repo, mock_verify_password, mock_settings):
     user = DummyUser(password_hash="$2b$12$hashed.password")
     user_repo.by_email = user
     mock_verify_password.verified = False
@@ -544,9 +541,7 @@ def test_me_user_role():
 
 
 # Refresh token tests
-def test_refresh_success(
-    user_repo, mock_jwt_decode, mock_settings
-):
+def test_refresh_success(user_repo, mock_jwt_decode, mock_settings):
     user = verified_dummy(id=1, is_active=True)
     user_repo.by_id = user
     payload = auth.RefreshRequest(refresh_token="valid_refresh_token")
@@ -561,9 +556,7 @@ def test_refresh_missing_token(mock_settings):
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-def test_refresh_invalid_token(
-    user_repo, mock_jwt_decode, mock_settings, monkeypatch
-):
+def test_refresh_invalid_token(user_repo, mock_jwt_decode, mock_settings, monkeypatch):
     def decode_none(token):
         return None
 

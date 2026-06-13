@@ -37,6 +37,7 @@ function ensureTestAdmin(projectRoot: string): void {
 			DB_URL: process.env.E2E_DB_URL || process.env.DB_URL || 'sqlite:///./data/e2e.db',
 			TEST_ADMIN_EMAIL: process.env.TEST_ADMIN_EMAIL || TestConfig.users.admin.email,
 			TEST_ADMIN_PASSWORD: process.env.TEST_ADMIN_PASSWORD || TestConfig.users.admin.password,
+			RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || 'false',
 		},
 	});
 }

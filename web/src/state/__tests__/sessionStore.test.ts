@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from '@testing-library/react';
 import { useSessionStore } from '../sessionStore';
-import {
-	getAccessToken,
-	getRefreshToken,
-	requestTokenRefresh,
-	usesCookieOnlyAuthStorage,
-} from '@/api/client';
+import { getAccessToken, getRefreshToken, requestTokenRefresh } from '@/api/client';
 
 vi.mock('@/api/client', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('@/api/client')>();
@@ -15,7 +10,6 @@ vi.mock('@/api/client', async (importOriginal) => {
 		getAccessToken: vi.fn(),
 		getRefreshToken: vi.fn(),
 		requestTokenRefresh: vi.fn(),
-		usesCookieOnlyAuthStorage: vi.fn(),
 		clearAuthTokens: actual.clearAuthTokens,
 	};
 });
@@ -38,30 +32,28 @@ describe('sessionStore.initialize', () => {
 		vi.mocked(getAccessToken).mockReset();
 		vi.mocked(getRefreshToken).mockReset();
 		vi.mocked(requestTokenRefresh).mockReset();
-		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(false);
 		vi.clearAllMocks();
 	});
 
-	it('marks hydrated when no tokens are available', async () => {
+	it('marks hydrated when session restore fails with no tokens', async () => {
 		const authApi = await import('@/api/auth');
 		vi.mocked(getAccessToken).mockReturnValue(null);
 		vi.mocked(getRefreshToken).mockReturnValue(null);
-		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(false);
+		vi.mocked(authApi.me).mockRejectedValue(new Error('unauthorized'));
 
 		await act(async () => {
 			await useSessionStore.getState().initialize();
 		});
 
-		expect(authApi.me).not.toHaveBeenCalled();
+		expect(authApi.me).toHaveBeenCalled();
 		expect(useSessionStore.getState().hasHydrated).toBe(true);
 		expect(useSessionStore.getState().isAuthenticated).toBe(false);
 	});
 
-	it('restores session via httpOnly cookies when production storage is empty', async () => {
+	it('restores session via httpOnly cookies when JS storage is empty', async () => {
 		const authApi = await import('@/api/auth');
 		vi.mocked(getAccessToken).mockReturnValue(null);
 		vi.mocked(getRefreshToken).mockReturnValue(null);
-		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(true);
 		vi.mocked(authApi.me).mockResolvedValue({
 			id: 1,
 			email: 'a@x.com',
@@ -93,6 +85,26 @@ describe('sessionStore.initialize', () => {
 		expect(authApi.me).toHaveBeenCalled();
 	});
 
+	it('deduplicates concurrent initialize calls', async () => {
+		const authApi = await import('@/api/auth');
+		vi.mocked(getAccessToken).mockReturnValue('access-token');
+		vi.mocked(authApi.me).mockResolvedValue({
+			id: 1,
+			email: 'a@x.com',
+			roles: ['user'],
+			email_verified: true,
+		} as never);
+
+		await act(async () => {
+			await Promise.all([
+				useSessionStore.getState().initialize(),
+				useSessionStore.getState().initialize(),
+			]);
+		});
+
+		expect(authApi.me).toHaveBeenCalledTimes(1);
+	});
+
 	it('clears session when refresh fails', async () => {
 		const authApi = await import('@/api/auth');
 		vi.mocked(authApi.me).mockRejectedValue(new Error('unauthorized'));
@@ -105,7 +117,7 @@ describe('sessionStore.initialize', () => {
 		await expect(
 			act(async () => {
 				await useSessionStore.getState().refresh();
-			})
+			}),
 		).rejects.toThrow('unauthorized');
 		expect(useSessionStore.getState().isAuthenticated).toBe(false);
 		expect(useSessionStore.getState().user).toBeNull();
@@ -122,17 +134,18 @@ describe('sessionStore.initialize', () => {
 		expect(authApi.me).not.toHaveBeenCalled();
 	});
 
-	it('marks hydrated when token refresh returns null', async () => {
+	it('still attempts me when token refresh returns null', async () => {
 		const authApi = await import('@/api/auth');
 		vi.mocked(getAccessToken).mockReturnValue(null);
 		vi.mocked(getRefreshToken).mockReturnValue('refresh-token');
 		vi.mocked(requestTokenRefresh).mockResolvedValue(null);
+		vi.mocked(authApi.me).mockRejectedValue(new Error('unauthorized'));
 
 		await act(async () => {
 			await useSessionStore.getState().initialize();
 		});
 
-		expect(authApi.me).not.toHaveBeenCalled();
+		expect(authApi.me).toHaveBeenCalled();
 		expect(useSessionStore.getState().hasHydrated).toBe(true);
 		expect(useSessionStore.getState().isAuthenticated).toBe(false);
 	});

@@ -8,6 +8,19 @@ import { TestConfig } from '../config/test-config';
  */
 
 /**
+ * Wait for session restore after navigation or reload.
+ */
+export async function waitForSessionRestore(page: Page, timeout = TestConfig.timeouts.navigation): Promise<void> {
+	await page
+		.waitForResponse(
+			(response) => response.url().includes('/auth/me') && response.status() === 200,
+			{ timeout },
+		)
+		.catch(() => undefined);
+	await page.waitForURL(/\/dashboard/, { timeout });
+}
+
+/**
  * Login user and wait for dashboard
  */
 export async function loginUser(

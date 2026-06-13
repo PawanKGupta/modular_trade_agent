@@ -43,6 +43,7 @@ jobs:
           ADMIN_EMAIL: "testadmin@rebound.com"
           ADMIN_PASSWORD: "testadmin@123"
           ADMIN_NAME: "Test Admin"
+          RATE_LIMIT_ENABLED: "false"
         run: |
           # Start API server in background and capture output
           python -m uvicorn server.app.main:app --port 8000 --log-level info > api.log 2>&1 &

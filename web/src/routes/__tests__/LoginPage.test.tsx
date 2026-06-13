@@ -116,7 +116,7 @@ describe('LoginPage', () => {
 
 		await waitFor(() => {
 			expect(screen.getByRole('alert')).toHaveTextContent(/invalid credentials/i);
-			expect(screen.getByRole('status')).toHaveTextContent(/temporarily locked/i);
+			expect(screen.getByText(/temporarily locked/i)).toBeInTheDocument();
 		});
 	});
 

@@ -5,7 +5,6 @@ import {
 	getAccessToken,
 	getRefreshToken,
 	requestTokenRefresh,
-	usesCookieOnlyAuthStorage,
 } from '@/api/client';
 
 /** Treat missing email_verified as verified (legacy API / cached sessions). */
@@ -26,6 +25,8 @@ type SessionState = {
 	initialize: () => Promise<void>;
 	logout: () => void;
 };
+
+let initializePromise: Promise<void> | null = null;
 
 export const useSessionStore = create<SessionState>((set, get) => ({
 	isAuthenticated: false,
@@ -55,29 +56,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		}
 	},
 	initialize: async () => {
-		const { hasHydrated, refresh } = get();
-		if (hasHydrated) return;
-		const accessToken = getAccessToken();
-		const refreshToken = getRefreshToken();
-		const hasStoredTokens = !!(accessToken || refreshToken);
-		if (!hasStoredTokens && !usesCookieOnlyAuthStorage()) {
-			set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-			return;
+		if (get().hasHydrated) return;
+		if (initializePromise) {
+			return initializePromise;
 		}
-		try {
-			if (!accessToken && refreshToken) {
-				const refreshed = await requestTokenRefresh();
-				if (!refreshed) {
-					set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-					return;
+
+		initializePromise = (async () => {
+			const { refresh } = get();
+			try {
+				if (!getAccessToken() && getRefreshToken()) {
+					await requestTokenRefresh();
 				}
+				// Always call /auth/me so httpOnly cookie sessions restore after reload (incl. E2E).
+				await refresh();
+			} catch {
+				clearAuthTokens();
+				set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
+			} finally {
+				initializePromise = null;
 			}
-			// Production: access/refresh live in httpOnly cookies; me() + interceptor restore session.
-			await refresh();
-		} catch {
-			clearAuthTokens();
-			set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-		}
+		})();
+
+		return initializePromise;
 	},
 	logout: () => {
 		apiLogout();
