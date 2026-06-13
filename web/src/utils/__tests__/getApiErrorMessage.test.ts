@@ -69,4 +69,28 @@ describe('getApiErrorMessage', () => {
 		const err = axiosErrorWithData(422, { detail: [42] });
 		expect(getApiErrorMessage(err)).toBe('42');
 	});
+
+	it('uses axios error.message when response body has no detail', () => {
+		const err = axiosErrorWithData(400, {});
+		err.message = 'Connection reset';
+		expect(getApiErrorMessage(err)).toBe('Connection reset');
+	});
+
+	it('formats string items in validation detail arrays', () => {
+		const err = axiosErrorWithData(422, { detail: ['plain error'] });
+		expect(getApiErrorMessage(err)).toBe('plain error');
+	});
+
+	it('ignores object-shaped detail values', () => {
+		const err = axiosErrorWithData(400, { detail: { code: 'X' } });
+		err.message = 'from axios';
+		expect(getApiErrorMessage(err)).toBe('from axios');
+	});
+
+	it('labels generic pydantic field errors with friendly field names', () => {
+		const err = axiosErrorWithData(422, {
+			detail: [{ loc: ['body', 'password'], msg: 'field required' }],
+		});
+		expect(getApiErrorMessage(err)).toBe('Password: field required');
+	});
 });

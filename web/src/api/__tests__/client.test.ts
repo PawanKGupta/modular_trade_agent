@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
+	applyTokenResponse,
 	clearAuthTokens,
 	getAccessToken,
+	getCsrfToken,
 	getRefreshToken,
 	requestTokenRefresh,
 	setAccessToken,
+	setCsrfToken,
 	setRefreshToken,
+	usesCookieOnlyAuthStorage,
 } from '../client';
 
 vi.mock('axios', () => {
@@ -38,5 +42,20 @@ describe('api client auth helpers', () => {
 
 	it('returns null when refresh token is missing', async () => {
 		await expect(requestTokenRefresh()).resolves.toBeNull();
+	});
+
+	it('stores CSRF token via applyTokenResponse', () => {
+		applyTokenResponse({
+			access_token: 'access',
+			refresh_token: 'refresh',
+			csrf_token: 'csrf-abc',
+		});
+		expect(getCsrfToken()).toBe('csrf-abc');
+		setCsrfToken(null);
+		expect(getCsrfToken()).toBeNull();
+	});
+
+	it('reports cookie-only auth storage in production builds', () => {
+		expect(typeof usesCookieOnlyAuthStorage()).toBe('boolean');
 	});
 });
