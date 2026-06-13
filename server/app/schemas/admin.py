@@ -51,3 +51,14 @@ class AdminUserResponse(BaseModel):
     role: Literal["admin", "user"]
     is_active: bool
     mobile_number: str | None = None
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    user_id: int
+    action: str
+    resource_type: str
+    resource_id: int | None = None
+    changes: dict | None = None
+    ip_address: str | None = None
+    timestamp: str

@@ -35,6 +35,7 @@ from src.infrastructure.persistence.service_schedule_repository import (
 )
 
 from ..core.deps import get_db, require_admin
+from ..core.security_metrics import get_counts
 from ..schemas.monitoring import (
     ActiveSession,
     ActiveSessionsResponse,
@@ -1516,3 +1517,10 @@ def get_monitoring_dashboard(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching monitoring dashboard: {str(e)}",
         ) from e
+
+
+@router.get("/security-metrics")
+def get_security_metrics():
+    """Security-related event counters (failed logins, refresh reuse, etc.)."""
+    return {"events": get_counts()}
+

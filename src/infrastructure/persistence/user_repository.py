@@ -152,7 +152,27 @@ class UserRepository:
 
     def set_password(self, user: Users, new_password: str) -> None:
         user.password_hash = hash_password(new_password)
+        user.must_change_password = False
+        self.bump_token_version(user)
+
+    def bump_token_version(self, user: Users) -> None:
+        """Invalidate existing JWTs by incrementing token_version."""
+        user.token_version = (getattr(user, "token_version", 0) or 0) + 1
         self.db.commit()
+        self.db.refresh(user)
+
+    def set_must_change_password(self, user: Users, required: bool = True) -> None:
+        user.must_change_password = required
+        self.db.commit()
+        self.db.refresh(user)
+
+    def soft_delete_user(self, user: Users) -> None:
+        from src.infrastructure.db.timezone_utils import ist_now_naive
+
+        user.is_active = False
+        user.deleted_at = ist_now_naive()
+        user.email = f"deleted_{user.id}_{user.email}"
+        self.bump_token_version(user)
 
     def set_password_reset_token(self, user: Users, token_hash: str, expires_at) -> None:
         user.password_reset_token_hash = token_hash

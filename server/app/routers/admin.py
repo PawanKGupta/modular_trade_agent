@@ -1,19 +1,21 @@
 # ruff: noqa: B008
 from datetime import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from src.application.services.schedule_manager import ScheduleManager
 from src.infrastructure.db.models import UserRole, Users
+from src.infrastructure.persistence.audit_log_repository import AuditLogRepository
 from src.infrastructure.persistence.service_schedule_repository import (
     ServiceScheduleRepository,
 )
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 from src.infrastructure.persistence.user_repository import UserRepository
 
+from ..core.audit import record_audit_user
 from ..core.deps import get_current_user, get_db, require_admin
-from ..schemas.admin import AdminUserCreate, AdminUserResponse, AdminUserUpdate
+from ..schemas.admin import AdminUserCreate, AdminUserResponse, AdminUserUpdate, AuditLogResponse
 from ..schemas.service import (
     ServiceScheduleResponse,
     ServiceSchedulesResponse,
@@ -22,6 +24,35 @@ from ..schemas.service import (
 )
 
 router = APIRouter(dependencies=[Depends(require_admin)])
+
+
+@router.get("/audit-logs", response_model=list[AuditLogResponse])
+def list_audit_logs(
+    db: Session = Depends(get_db),
+    user_id: int | None = Query(None),
+    action: str | None = Query(None),
+    resource_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+):
+    rows = AuditLogRepository(db).list(
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        limit=limit,
+    )
+    return [
+        AuditLogResponse(
+            id=r.id,
+            user_id=r.user_id,
+            action=r.action,
+            resource_type=r.resource_type,
+            resource_id=r.resource_id,
+            changes=r.changes,
+            ip_address=r.ip_address,
+            timestamp=r.timestamp.isoformat() if r.timestamp else "",
+        )
+        for r in rows
+    ]
 
 
 @router.get("/users", response_model=list[AdminUserResponse])
@@ -49,7 +80,12 @@ def list_users(
 
 
 @router.post("/users", response_model=AdminUserResponse)
-def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
+def create_user(
+    payload: AdminUserCreate,
+    request: Request,
+    current: Users = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     repo = UserRepository(db)
     if repo.get_by_email(payload.email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -65,6 +101,15 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
 
     # Create default settings for new user (required for trading service)
     SettingsRepository(db).ensure_default(u.id)
+    record_audit_user(
+        db,
+        current,
+        action="create",
+        resource_type="user",
+        request=request,
+        resource_id=u.id,
+        changes={"email": u.email, "role": u.role.value},
+    )
 
     return AdminUserResponse(
         id=u.id,
@@ -77,13 +122,28 @@ def create_user(payload: AdminUserCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/users/{user_id}", response_model=AdminUserResponse)
-def update_user(user_id: int, payload: AdminUserUpdate, db: Session = Depends(get_db)):
+def update_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    request: Request,
+    current: Users = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     repo = UserRepository(db)
     user = repo.get_by_id(user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     role = UserRole(payload.role) if payload.role else None
     u = repo.update_user(user, name=payload.name, role=role, is_active=payload.is_active)
+    record_audit_user(
+        db,
+        current,
+        action="update",
+        resource_type="user",
+        request=request,
+        resource_id=u.id,
+        changes={"name": payload.name, "role": payload.role, "is_active": payload.is_active},
+    )
     return AdminUserResponse(
         id=u.id,
         email=u.email,
@@ -95,7 +155,12 @@ def update_user(user_id: int, payload: AdminUserUpdate, db: Session = Depends(ge
 
 
 @router.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
+def delete_user(
+    user_id: int,
+    request: Request,
+    current: Users = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     repo = UserRepository(db)
     user = repo.get_by_id(user_id)
     if not user:
@@ -115,6 +180,14 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete last admin"
             )
     repo.update_user(user, is_active=False)
+    record_audit_user(
+        db,
+        current,
+        action="delete",
+        resource_type="user",
+        request=request,
+        resource_id=user.id,
+    )
     return {"status": "ok"}
 
 

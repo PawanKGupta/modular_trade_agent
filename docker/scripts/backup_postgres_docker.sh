@@ -29,7 +29,16 @@ docker exec "${CONTAINER_NAME}" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES
 mv -f "${TMP}" "${OUT}"
 chmod 600 "${OUT}" 2>/dev/null || true
 
+# Optional GPG encryption (set BACKUP_GPG_RECIPIENT to key id or email)
+if [[ -n "${BACKUP_GPG_RECIPIENT:-}" ]] && command -v gpg >/dev/null 2>&1; then
+  gpg --encrypt --recipient "${BACKUP_GPG_RECIPIENT}" --output "${OUT}.gpg" "${OUT}"
+  rm -f "${OUT}"
+  OUT="${OUT}.gpg"
+  chmod 600 "${OUT}" 2>/dev/null || true
+  echo "$(date -Iseconds) Encrypted backup with GPG recipient ${BACKUP_GPG_RECIPIENT}"
+fi
+
 # Drop backups older than RETAIN_DAYS
-find "${BACKUP_DIR}" -type f -name 'tradeagent_*.sql.gz' -mtime +"${RETAIN_DAYS}" -print -delete 2>/dev/null || true
+find "${BACKUP_DIR}" -type f \( -name 'tradeagent_*.sql.gz' -o -name 'tradeagent_*.sql.gz.gpg' \) -mtime +"${RETAIN_DAYS}" -print -delete 2>/dev/null || true
 
 echo "$(date -Iseconds) OK ${OUT} $(du -h "${OUT}" | cut -f1)"

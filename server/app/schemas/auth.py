@@ -119,10 +119,38 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str | None = None
     token_type: str = "bearer"  # noqa: S105
+    csrf_token: str | None = None
+    mfa_required: bool = False
+    mfa_token: str | None = None
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    backup_codes: list[str]
+
+
+class MfaVerifyRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class MfaLoginRequest(BaseModel):
+    mfa_token: str
+    code: str = Field(min_length=6, max_length=16)
+
+
+class MfaDisableRequest(BaseModel):
+    current_password: str
+    code: str = Field(min_length=6, max_length=16)
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str
+    code: str | None = None
 
 
 class MeResponse(BaseModel):
@@ -132,6 +160,8 @@ class MeResponse(BaseModel):
     mobile_number: str | None = None
     roles: list[Literal["admin", "user"]]
     email_verified: bool = True
+    must_change_password: bool = False
+    mfa_enabled: bool = False
 
 
 class UpdateProfileRequest(BaseModel):
