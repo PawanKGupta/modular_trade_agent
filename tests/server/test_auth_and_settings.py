@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 
 from tests.support.auth_flow import signup_and_verify
 
+os.environ.setdefault("EMAIL_DOMAIN_ALLOWLIST_ENABLED", "false")
+os.environ.setdefault("AUTH_USE_COOKIES", "false")
+
 
 def make_client():
     # configure in-memory sqlite before importing app/session

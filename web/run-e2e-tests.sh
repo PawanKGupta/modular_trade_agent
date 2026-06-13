@@ -4,12 +4,47 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+resolve_python() {
+    if [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+        echo "$PROJECT_ROOT/.venv/bin/python"
+    elif [ -x "$PROJECT_ROOT/.venv/Scripts/python.exe" ]; then
+        echo "$PROJECT_ROOT/.venv/Scripts/python.exe"
+    else
+        echo "python"
+    fi
+}
+
+PYTHON="$(resolve_python)"
+ENSURE_ADMIN_SCRIPT="$SCRIPT_DIR/tests/e2e/utils/ensure-test-admin.py"
+
+# E2E environment (align with test-config.ts and security defaults)
+export E2E_DB_URL="${E2E_DB_URL:-sqlite:///./data/e2e.db}"
+export DB_URL="$E2E_DB_URL"
+export ADMIN_EMAIL="${TEST_ADMIN_EMAIL:-testadmin@rebound.com}"
+export ADMIN_PASSWORD="${TEST_ADMIN_PASSWORD:-testadmin@123}"
+export ADMIN_NAME="${TEST_ADMIN_NAME:-Test Admin}"
+export EMAIL_DOMAIN_ALLOWLIST_EXTRA="${EMAIL_DOMAIN_ALLOWLIST_EXTRA:-rebound.com}"
+export E2E_SEED_DATA="${E2E_SEED_DATA:-true}"
+export PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://localhost:5173}"
+export VITE_API_URL="${VITE_API_URL:-http://localhost:8000}"
+
+ensure_test_admin() {
+    echo "Ensuring E2E test admin user..."
+    "$PYTHON" "$ENSURE_ADMIN_SCRIPT"
+    echo "✓ E2E test admin ready"
+}
+
 echo "Starting E2E Test Environment..."
 
 # Check if API server is already running
 if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
     echo "✓ API server already running"
+    echo "  Tip: set E2E_DB_URL/DB_URL to match the running API database before ensure-test-admin."
     API_RUNNING=true
+    ensure_test_admin
 else
     echo "API server not running, will start it..."
     API_RUNNING=false
@@ -28,22 +63,17 @@ fi
 API_PID=""
 if [ "$API_RUNNING" = false ]; then
     echo "Starting API server..."
-    export DB_URL="sqlite:///./data/e2e.db"
-    # IMPORTANT: Use test admin credentials that match test-config.ts
-    export ADMIN_EMAIL="${TEST_ADMIN_EMAIL:-testadmin@rebound.com}"
-    export ADMIN_PASSWORD="${TEST_ADMIN_PASSWORD:-testadmin@123}"
-    export ADMIN_NAME="${TEST_ADMIN_NAME:-Test Admin}"
-
-    cd ..
-    python -m uvicorn server.app.main:app --port 8000 > /dev/null 2>&1 &
+    cd "$PROJECT_ROOT"
+    "$PYTHON" -m uvicorn server.app.main:app --port 8000 > /dev/null 2>&1 &
     API_PID=$!
-    cd web
+    cd "$SCRIPT_DIR"
 
     sleep 5
 
     # Verify API is running
     if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
         echo "✓ API server started successfully"
+        ensure_test_admin
     else
         echo "✗ Failed to start API server"
         if [ -n "$API_PID" ]; then
@@ -57,8 +87,8 @@ fi
 WEB_PID=""
 if [ "$WEB_RUNNING" = false ]; then
     echo "Starting web frontend..."
-    export VITE_API_URL="http://localhost:8000"
 
+    cd "$SCRIPT_DIR"
     npm run dev > /dev/null 2>&1 &
     WEB_PID=$!
 
@@ -81,6 +111,7 @@ fi
 
 # Install Playwright browsers if needed
 echo "Checking Playwright browsers..."
+cd "$SCRIPT_DIR"
 npx playwright install chromium --quiet
 
 # Run E2E tests
@@ -88,7 +119,6 @@ echo ""
 echo "Running E2E tests..."
 echo "========================================"
 
-export PLAYWRIGHT_BASE_URL="http://localhost:5173"
 npm run test:e2e
 TEST_EXIT_CODE=$?
 

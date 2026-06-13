@@ -26,6 +26,8 @@ type SessionState = {
 	logout: () => void;
 };
 
+let initializePromise: Promise<void> | null = null;
+
 export const useSessionStore = create<SessionState>((set, get) => ({
 	isAuthenticated: false,
 	user: null,
@@ -54,27 +56,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		}
 	},
 	initialize: async () => {
-		const { hasHydrated, refresh } = get();
-		if (hasHydrated) return;
-		const accessToken = getAccessToken();
-		const refreshToken = getRefreshToken();
-		if (!accessToken && !refreshToken) {
-			set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-			return;
+		if (get().hasHydrated) return;
+		if (initializePromise) {
+			return initializePromise;
 		}
-		try {
-			if (!accessToken && refreshToken) {
-				const refreshed = await requestTokenRefresh();
-				if (!refreshed) {
-					set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-					return;
+
+		initializePromise = (async () => {
+			const { refresh } = get();
+			try {
+				if (!getAccessToken() && getRefreshToken()) {
+					await requestTokenRefresh();
 				}
+				// Always call /auth/me so httpOnly cookie sessions restore after reload (incl. E2E).
+				await refresh();
+			} catch {
+				clearAuthTokens();
+				set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
+			} finally {
+				initializePromise = null;
 			}
-			await refresh();
-		} catch {
-			clearAuthTokens();
-			set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
-		}
+		})();
+
+		return initializePromise;
 	},
 	logout: () => {
 		apiLogout();

@@ -11,6 +11,7 @@ class DummySettings:
     jwt_secret = "unit-secret"
     jwt_algorithm = "HS256"
     jwt_access_minutes = 30
+    password_hash_rounds = 290000
 
 
 @pytest.fixture(autouse=True)

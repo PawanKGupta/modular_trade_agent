@@ -1,16 +1,14 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { reloadAndWaitForSession, waitForDashboardReady } from './utils/test-helpers';
 
 test.describe('Settings & Configuration', () => {
 	test.beforeEach(async ({ authenticatedPage }) => {
-		// Page is already authenticated via fixture and should be on dashboard
-		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
-		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await waitForDashboardReady(authenticatedPage);
 	});
 
 	test('Trading Config page loads with current settings', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify page loads - use heading to avoid strict mode violation
 		await expect(authenticatedPage.getByRole('heading', { name: /Trading Configuration/i })).toBeVisible();
@@ -24,7 +22,7 @@ test.describe('Settings & Configuration', () => {
 
 	test('can update trading configuration', async ({ authenticatedPage: page, testDataTracker }) => {
 		await page.goto('/dashboard/trading-config');
-		await page.waitForLoadState('networkidle');
+		await page.waitForLoadState('domcontentloaded');
 
 		// Track config modification BEFORE making changes (saves original)
 		await testDataTracker.trackConfig(page, 'trading-config');
@@ -46,8 +44,9 @@ test.describe('Settings & Configuration', () => {
 			await page.waitForTimeout(1000);
 
 			// Refresh page and verify value persisted
-			await page.reload();
-			await page.waitForLoadState('networkidle');
+			await reloadAndWaitForSession(page);
+			await page.goto('/dashboard/trading-config');
+			await page.waitForLoadState('domcontentloaded');
 
 			const savedValue = await page.getByLabel(/RSI Period/i).first().inputValue();
 			expect(savedValue).toBe(newValue);

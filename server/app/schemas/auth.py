@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from server.app.core.email_policy import validate_email_domain_allowed
+
 _PASSWORD_MIN_LENGTH = 8
 
 
@@ -43,6 +45,11 @@ class SignupRequest(BaseModel):
     password: PasswordStr
     name: str = Field(min_length=1, max_length=255)
     mobile_number: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def email_domain_allowed(cls, value: str) -> str:
+        return validate_email_domain_allowed(value)
 
     @field_validator("name")
     @classmethod
@@ -119,10 +126,38 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str | None = None
     token_type: str = "bearer"  # noqa: S105
+    csrf_token: str | None = None
+    mfa_required: bool = False
+    mfa_token: str | None = None
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
+
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+    backup_codes: list[str]
+
+
+class MfaVerifyRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class MfaLoginRequest(BaseModel):
+    mfa_token: str
+    code: str = Field(min_length=6, max_length=16)
+
+
+class MfaDisableRequest(BaseModel):
+    current_password: str
+    code: str = Field(min_length=6, max_length=16)
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str
+    code: str | None = None
 
 
 class MeResponse(BaseModel):
@@ -132,12 +167,21 @@ class MeResponse(BaseModel):
     mobile_number: str | None = None
     roles: list[Literal["admin", "user"]]
     email_verified: bool = True
+    must_change_password: bool = False
+    mfa_enabled: bool = False
 
 
 class UpdateProfileRequest(BaseModel):
     email: EmailStr | None = None
     mobile_number: str | None = None
     current_password: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def email_domain_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_email_domain_allowed(value)
 
     @field_validator("mobile_number", mode="before")
     @classmethod

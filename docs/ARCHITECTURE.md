@@ -627,6 +627,9 @@ See [Notification Event Types](#notification-event-types) section below.
    - Configurable allowed origins
    - Credentials handling
 
+6. **User data security (detailed)**
+   - See [docs/security/USER_DATA_SECURITY.md](security/USER_DATA_SECURITY.md) for MFA, audit logs, export/delete, and production checklist
+
 ## Development Workflow
 
 1. **Local Development**

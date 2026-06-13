@@ -5,6 +5,7 @@ This script checks if the test admin user exists, and creates it if it doesn't
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,11 +23,57 @@ from src.infrastructure.db.session import SessionLocal, engine  # noqa: E402
 from src.infrastructure.persistence.settings_repository import SettingsRepository  # noqa: E402
 from src.infrastructure.persistence.user_repository import UserRepository  # noqa: E402
 
+# Columns added after early E2E DBs; missing any model column means schema is stale.
+_E2E_SCHEMA_PROBE_TABLE = Users.__table__
+
+
+def _e2e_sqlite_path(db_url: str) -> Path:
+    rel_path = db_url.replace("sqlite:///", "", 1)
+    return Path(rel_path) if Path(rel_path).is_absolute() else project_root / rel_path
+
+
+def _sqlite_schema_is_stale() -> bool:
+    from sqlalchemy import inspect  # noqa: PLC0415
+
+    inspector = inspect(engine)
+    if not inspector.has_table(_E2E_SCHEMA_PROBE_TABLE.name):
+        return False
+    db_columns = {col["name"] for col in inspector.get_columns(_E2E_SCHEMA_PROBE_TABLE.name)}
+    model_columns = {col.name for col in _E2E_SCHEMA_PROBE_TABLE.columns}
+    return not model_columns.issubset(db_columns)
+
+
+def migrate_e2e_schema() -> None:
+    """Ensure the E2E database schema matches current SQLAlchemy models."""
+    e2e_db_url = os.environ["DB_URL"]
+
+    if e2e_db_url.startswith("sqlite:///"):
+        db_path = _e2e_sqlite_path(e2e_db_url)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        if db_path.exists() and _sqlite_schema_is_stale():
+            print(f"[INFO] Rebuilding stale E2E database: {db_path}")
+            engine.dispose()
+            db_path.unlink()
+        Base.metadata.create_all(bind=engine)
+        return
+
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=str(project_root),
+        env={**os.environ, "DB_URL": e2e_db_url},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr, file=sys.stderr)
+        raise RuntimeError("Alembic migration failed for E2E database")
+
 
 def ensure_test_admin():
     """Ensure test admin user exists"""
-    # Ensure schema exists
-    Base.metadata.create_all(bind=engine)
+    migrate_e2e_schema()
 
     db = SessionLocal()
     try:

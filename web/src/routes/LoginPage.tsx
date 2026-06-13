@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { login } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
@@ -7,7 +7,20 @@ import { EmailInput } from '@/components/EmailInput';
 import { FormLabel } from '@/components/FormLabel';
 import { useSessionStore } from '@/state/sessionStore';
 import { fieldErrorFor, validateLoginForm } from '@/utils/authValidation';
-import { getApiErrorMessage, isUnverifiedEmailLoginError } from '@/utils/getApiErrorMessage';
+import {
+	getApiErrorMessage,
+	getApiErrorWarning,
+	getAuthRetryAfterSeconds,
+	isAuthRateLimitError,
+	isUnverifiedEmailLoginError,
+} from '@/utils/getApiErrorMessage';
+import {
+	clearLoginLockout,
+	formatLockoutCountdown,
+	LOGIN_LOCKOUT_HEADLINE,
+	readLoginLockoutSeconds,
+	saveLoginLockout,
+} from '@/utils/loginLockout';
 
 export function LoginPage() {
 	const navigate = useNavigate();
@@ -16,12 +29,66 @@ export function LoginPage() {
 	const [password, setPassword] = useState('');
 	const [fieldErrors, setFieldErrors] = useState<ReturnType<typeof validateLoginForm>>([]);
 	const [error, setError] = useState<string | null>(null);
+	const [warning, setWarning] = useState<string | null>(null);
+	const [rateLimited, setRateLimited] = useState(false);
+	const [lockoutSecondsRemaining, setLockoutSecondsRemaining] = useState(0);
 	const [showResendVerification, setShowResendVerification] = useState(false);
 	const [loading, setLoading] = useState(false);
 
+	function applyLockout(seconds: number) {
+		if (seconds <= 0) {
+			setLockoutSecondsRemaining(0);
+			setRateLimited(false);
+			return;
+		}
+		setLockoutSecondsRemaining(seconds);
+		setRateLimited(true);
+		setError(LOGIN_LOCKOUT_HEADLINE);
+		setWarning(null);
+	}
+
+	function clearLockoutState() {
+		setLockoutSecondsRemaining(0);
+		setRateLimited(false);
+		clearLoginLockout();
+	}
+
+	useEffect(() => {
+		const remaining = readLoginLockoutSeconds(email);
+		if (remaining > 0) {
+			applyLockout(remaining);
+		} else if (rateLimited && lockoutSecondsRemaining <= 0) {
+			setRateLimited(false);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- sync when email changes only
+	}, [email]);
+
+	useEffect(() => {
+		if (lockoutSecondsRemaining <= 0) {
+			return;
+		}
+		const timer = window.setInterval(() => {
+			const remaining = readLoginLockoutSeconds(email);
+			if (remaining <= 0) {
+				setLockoutSecondsRemaining(0);
+				setRateLimited(false);
+				setError(null);
+				clearLoginLockout();
+				return;
+			}
+			setLockoutSecondsRemaining(remaining);
+		}, 1000);
+		return () => window.clearInterval(timer);
+	}, [email, lockoutSecondsRemaining]);
+
 	async function onSubmit(e: FormEvent) {
 		e.preventDefault();
+		if (lockoutSecondsRemaining > 0) {
+			return;
+		}
 		setError(null);
+		setWarning(null);
+		setRateLimited(false);
 		setShowResendVerification(false);
 		const validationErrors = validateLoginForm({ email, password });
 		setFieldErrors(validationErrors);
@@ -31,12 +98,26 @@ export function LoginPage() {
 		setLoading(true);
 		try {
 			await login(email.trim(), password);
+			clearLockoutState();
 			await useSessionStore.getState().refresh();
 			setSession(useSessionStore.getState().user);
 			navigate('/dashboard');
 		} catch (err: unknown) {
-			setError(getApiErrorMessage(err, 'Login failed'));
-			setShowResendVerification(isUnverifiedEmailLoginError(err));
+			if (isAuthRateLimitError(err)) {
+				const retryAfter = getAuthRetryAfterSeconds(err) ?? 0;
+				if (retryAfter > 0) {
+					saveLoginLockout(email, retryAfter);
+					applyLockout(retryAfter);
+				} else {
+					setError(getApiErrorMessage(err, LOGIN_LOCKOUT_HEADLINE));
+					setRateLimited(true);
+				}
+			} else {
+				setError(getApiErrorMessage(err, 'Login failed'));
+				setRateLimited(false);
+				setWarning(getApiErrorWarning(err));
+				setShowResendVerification(isUnverifiedEmailLoginError(err));
+			}
 		} finally {
 			setLoading(false);
 		}
@@ -44,6 +125,7 @@ export function LoginPage() {
 
 	const inputClass =
 		'w-full mb-1 px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0';
+	const loginDisabled = loading || lockoutSecondsRemaining > 0;
 
 	return (
 		<div className="min-h-screen flex items-center justify-center p-2 sm:p-4">
@@ -66,6 +148,11 @@ export function LoginPage() {
 					onChange={(e) => {
 						setEmail(e.target.value);
 						setShowResendVerification(false);
+						setWarning(null);
+						if (!readLoginLockoutSeconds(e.target.value)) {
+							clearLockoutState();
+							setError(null);
+						}
 					}}
 					autoComplete="email"
 					required
@@ -84,6 +171,10 @@ export function LoginPage() {
 					onChange={(e) => {
 						setPassword(e.target.value);
 						setShowResendVerification(false);
+						setWarning(null);
+						if (!rateLimited) {
+							setError(null);
+						}
 					}}
 					autoComplete="current-password"
 					required
@@ -96,12 +187,36 @@ export function LoginPage() {
 						Forgot password?
 					</Link>
 				</div>
-				{error && <div className="text-red-400 text-xs sm:text-sm mb-3">{error}</div>}
+				{error ? (
+					<div
+						role="alert"
+						className={
+							rateLimited
+								? 'text-amber-400 text-xs sm:text-sm mb-3 border border-amber-500/40 rounded px-3 py-2 bg-amber-500/10'
+								: 'text-red-400 text-xs sm:text-sm mb-3'
+						}
+					>
+						{error}
+						{rateLimited && lockoutSecondsRemaining > 0 ? (
+							<p className="mt-2 font-medium tabular-nums">
+								You can try again in {formatLockoutCountdown(lockoutSecondsRemaining)}
+							</p>
+						) : null}
+					</div>
+				) : null}
+				{warning && !rateLimited ? (
+					<div
+						role="status"
+						className="text-amber-400 text-xs sm:text-sm mb-3 border border-amber-500/40 rounded px-3 py-2 bg-amber-500/10"
+					>
+						{warning}
+					</div>
+				) : null}
 				<button
-					disabled={loading}
+					disabled={loginDisabled}
 					className="w-full bg-[var(--accent)] text-black py-3 sm:py-2 rounded disabled:opacity-60 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
 				>
-					{loading ? 'Signing in...' : 'Login'}
+					{loading ? 'Signing in...' : lockoutSecondsRemaining > 0 ? 'Login temporarily locked' : 'Login'}
 				</button>
 				<div className="mt-3 text-xs sm:text-sm text-[var(--muted)]">
 					No account? <Link to="/signup" className="text-[var(--accent)]">Sign up</Link>

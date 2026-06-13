@@ -5,7 +5,7 @@ test.describe('Service Status Page', () => {
 		// Page is already authenticated via fixture and should be on dashboard
 		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
 		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 	});
 
 	test('navigates to service status page', async ({ authenticatedPage }) => {
@@ -18,7 +18,7 @@ test.describe('Service Status Page', () => {
 
 		// Click Service Status link
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify page loads - use heading to avoid strict mode violation
 		const heading = authenticatedPage.getByRole('heading', { name: /Service Status|Unified Service Status/i });
@@ -39,7 +39,7 @@ test.describe('Service Status Page', () => {
 		await authenticatedPage.waitForTimeout(300);
 
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify service status sections are displayed
 		await expect(authenticatedPage.getByText(/Unified Service Status|Service Status|Individual Services/i).first()).toBeVisible();
@@ -54,7 +54,7 @@ test.describe('Service Status Page', () => {
 		await authenticatedPage.waitForTimeout(300);
 
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify task execution history section
 		await expect(authenticatedPage.getByText(/Task Execution History/i)).toBeVisible();
@@ -69,7 +69,7 @@ test.describe('Service Status Page', () => {
 		await authenticatedPage.waitForTimeout(300);
 
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify service logs section (might be named differently)
 		const logsSection = authenticatedPage.getByText(/Service Logs|Recent Service Logs|Logs/i);
@@ -85,7 +85,7 @@ test.describe('Service Status Page', () => {
 		await authenticatedPage.waitForTimeout(300);
 
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify service control buttons - check for either start or stop button
 		const startButton = authenticatedPage.getByRole('button', { name: /Start Service/i });
@@ -111,7 +111,7 @@ test.describe('Service Status Page', () => {
 		await authenticatedPage.waitForTimeout(300);
 
 		await sidebar.getByRole('link', { name: /Service Status/i }).click();
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		const checkbox = authenticatedPage.getByLabel(/Auto-refresh/i);
 		await expect(checkbox).toBeVisible({ timeout: 5000 });

@@ -1,4 +1,4 @@
-import { api, setAccessToken, setRefreshToken } from './client';
+import { api, applyTokenResponse, clearAuthTokens } from './client';
 
 export type MeResponse = {
 	id: number;
@@ -7,6 +7,8 @@ export type MeResponse = {
 	mobile_number?: string | null;
 	roles: ('admin' | 'user')[];
 	email_verified: boolean;
+	must_change_password?: boolean;
+	mfa_enabled?: boolean;
 };
 
 export type ProfileUpdateResponse = {
@@ -21,6 +23,9 @@ type TokenResponse = {
 	access_token: string;
 	refresh_token?: string | null;
 	token_type?: string;
+	csrf_token?: string | null;
+	mfa_required?: boolean;
+	mfa_token?: string | null;
 };
 
 type MessageResponse = {
@@ -31,13 +36,17 @@ export type SignupResponse = {
 	message: string;
 };
 
+export type MfaSetupResponse = {
+	secret: string;
+	provisioning_uri: string;
+	backup_codes: string[];
+};
+
 function persistTokens(tokens: TokenResponse) {
-	const access = tokens.access_token;
-	const refresh = tokens.refresh_token ?? null;
-	if (access) {
-		setAccessToken(access);
+	if (tokens.mfa_required) {
+		return;
 	}
-	setRefreshToken(refresh);
+	applyTokenResponse(tokens);
 }
 
 export async function signup(
@@ -59,6 +68,31 @@ export async function login(email: string, password: string) {
 	const res = await api.post<TokenResponse>('/auth/login', { email, password });
 	persistTokens(res.data);
 	return res.data;
+}
+
+export async function mfaLogin(mfaToken: string, code: string) {
+	const res = await api.post<TokenResponse>('/auth/mfa/login', {
+		mfa_token: mfaToken,
+		code,
+	});
+	persistTokens(res.data);
+	return res.data;
+}
+
+export async function mfaSetup(): Promise<MfaSetupResponse> {
+	const res = await api.post<MfaSetupResponse>('/auth/mfa/setup');
+	return res.data;
+}
+
+export async function mfaVerify(code: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/mfa/verify', { code });
+}
+
+export async function mfaDisable(currentPassword: string, code: string): Promise<void> {
+	await api.post<MessageResponse>('/auth/mfa/disable', {
+		current_password: currentPassword,
+		code,
+	});
 }
 
 export async function me(): Promise<MeResponse> {
@@ -114,7 +148,23 @@ export async function resendVerification(email: string): Promise<void> {
 	await api.post<MessageResponse>('/auth/resend-verification', { email });
 }
 
-export function logout() {
-	setAccessToken(null);
-	setRefreshToken(null);
+export async function logout() {
+	try {
+		await api.post('/auth/logout');
+	} catch {
+		// ignore — still clear local state
+	}
+	clearAuthTokens();
+}
+
+export async function exportAccountData(): Promise<Record<string, unknown>> {
+	const res = await api.get('/auth/export');
+	return res.data as Record<string, unknown>;
+}
+
+export async function deleteAccount(currentPassword: string, code?: string): Promise<void> {
+	await api.delete('/auth/account', {
+		data: { current_password: currentPassword, code: code ?? null },
+	});
+	clearAuthTokens();
 }

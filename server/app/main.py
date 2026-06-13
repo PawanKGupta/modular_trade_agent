@@ -225,6 +225,8 @@ from src.infrastructure.persistence.settings_repository import SettingsRepositor
 from src.infrastructure.persistence.user_repository import UserRepository
 
 from .core.config import settings
+from .core.log_retention import cleanup_user_log_files
+from .core.startup_security import validate_production_secrets
 from .routers import (
     admin,
     auth,
@@ -383,6 +385,7 @@ async def ensure_db_schema():
                         role=UserRole.ADMIN,
                     )
                     UserRepository(db).mark_email_verified(user)
+                    UserRepository(db).set_must_change_password(user, True)
                     # Create default settings for admin user (required for services to work)
                     print(f"[Startup] Creating default settings for admin user {user.id}")
                     SettingsRepository(db).ensure_default(user.id)
@@ -419,6 +422,12 @@ def persist_service_snapshot_on_shutdown():
             persist_service_restore_snapshot(db, source="shutdown")
     except Exception as exc:
         print(f"[Shutdown] Warning: Failed to save service restore snapshot: {exc}")
+
+
+@app.on_event("startup")
+async def enforce_production_security():
+    """Fail fast when production is misconfigured (JWT / Fernet secrets)."""
+    validate_production_secrets()
 
 
 @app.on_event("startup")
@@ -531,6 +540,7 @@ async def _log_retention_worker():
         try:
             with SessionLocal() as db:
                 LogRetentionService(db).purge_older_than(settings.log_retention_days)
+            cleanup_user_log_files()
         except Exception:
             logging.exception("Log retention cleanup failed")
         await asyncio.sleep(24 * 60 * 60)

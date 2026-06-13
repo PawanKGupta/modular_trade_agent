@@ -22,6 +22,9 @@ export const TestConfig = {
 		},
 	},
 
+	/** Domain for generated signup emails (must be on server email allowlist). */
+	signupEmailDomain: process.env.E2E_SIGNUP_EMAIL_DOMAIN || 'gmail.com',
+
 	// Timeouts (in milliseconds)
 	timeouts: {
 		navigation: 30000,

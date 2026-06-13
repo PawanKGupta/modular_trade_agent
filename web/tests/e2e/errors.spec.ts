@@ -5,7 +5,7 @@ test.describe('Error Handling & Edge Cases', () => {
 		// Page is already authenticated via fixture and should be on dashboard
 		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
 		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 	});
 
 	test('application handles API errors gracefully', async ({ authenticatedPage }) => {
@@ -58,7 +58,7 @@ test.describe('Error Handling & Edge Cases', () => {
 	test('application shows loading states', async ({ authenticatedPage }) => {
 		// Navigate to Buying Zone page first
 		await authenticatedPage.goto('/dashboard/buying-zone');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Set up route delay for filter change requests
 		await authenticatedPage.route('**/api/v1/buying-zone**', async (route) => {
@@ -96,14 +96,14 @@ test.describe('Error Handling & Edge Cases', () => {
 		} else {
 			// If filters not found, verify page has loading mechanism in code
 			// Check that page eventually loads correctly
-			await authenticatedPage.waitForLoadState('networkidle');
+			await authenticatedPage.waitForLoadState('domcontentloaded');
 			await expect(authenticatedPage.getByRole('heading', { name: /Buying Zone/i })).toBeVisible();
 		}
 	});
 
 	test('validates input and shows errors', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Find capital input field
 		const capitalInput = authenticatedPage.getByLabel(/Capital per Trade/i).first();
@@ -127,7 +127,7 @@ test.describe('Error Handling & Edge Cases', () => {
 
 		// Wait for save operation to complete (success or error)
 		await authenticatedPage.waitForTimeout(2000);
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Check for validation error - might be shown as API error or inline validation
 		// Also check for success message (if backend accepts it)
@@ -154,7 +154,7 @@ test.describe('Error Handling & Edge Cases', () => {
 	test('handles empty states correctly', async ({ authenticatedPage }) => {
 		// Navigate to pages that might be empty
 		await authenticatedPage.goto('/dashboard/orders');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Check if empty state is shown when no orders
 		const emptyState = authenticatedPage.getByText(/No orders|No data|empty/i);
@@ -175,7 +175,7 @@ test.describe('Error Handling & Edge Cases', () => {
 
 		// Wait a bit for the timeout to occur
 		await authenticatedPage.waitForTimeout(2000);
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify error handling - page should show error or empty state
 		// React Query will show error state after timeout

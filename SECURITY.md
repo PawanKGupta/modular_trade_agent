@@ -2,20 +2,35 @@
 
 ## Supported Versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version / branch | Supported |
+|------------------|-----------|
+| `main` (latest) | Yes |
+| Older release tags | Best effort only |
 
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Email the maintainers privately (do not open a public issue for undisclosed vulnerabilities).
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Include:
+
+- Description and impact
+- Steps to reproduce
+- Affected component (API, web, broker integration)
+- Suggested fix if known
+
+We aim to acknowledge reports within a few business days.
+
+## Scope
+
+In scope: authentication, user data isolation, broker credential handling, trading execution paths, deployment secrets.
+
+Out of scope: third-party broker APIs, user-managed infrastructure misconfiguration.
+
+## Safe harbor
+
+Good-faith security research on your own deployment is welcome. Do not access other users' data or production systems without permission.
+
+## Documentation
+
+- [docs/security/USER_DATA_SECURITY.md](docs/security/USER_DATA_SECURITY.md)
+- [docs/security/TOKEN_SECURITY.md](docs/security/TOKEN_SECURITY.md)

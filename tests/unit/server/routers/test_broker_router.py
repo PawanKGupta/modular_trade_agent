@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from server.app.routers import broker as broker_router
 from src.infrastructure.db.models import TradeMode
+from tests.support.mock_request import mock_request
 
 
 class FakeSettingsRepo:
@@ -54,6 +55,7 @@ def test_save_broker_creds_encrypts_payload(monkeypatch):
     repo = FakeSettingsRepo()
     monkeypatch.setattr(broker_router, "SettingsRepository", lambda db: repo)
     monkeypatch.setattr(broker_router, "encrypt_blob", lambda payload: b"encrypted")
+    monkeypatch.setattr(broker_router, "record_audit_user", lambda *args, **kwargs: None)
 
     payload = SimpleNamespace(
         api_key="key",
@@ -72,6 +74,7 @@ def test_save_broker_creds_encrypts_payload(monkeypatch):
 
     response = broker_router.save_broker_creds(
         payload=payload,
+        request=mock_request(path="/api/v1/broker/creds"),
         db=FakeDB(),
         current=SimpleNamespace(id=11),
     )

@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { reloadAndWaitForSession } from './utils/test-helpers';
 
 test.describe('Authentication', () => {
 
@@ -62,12 +63,10 @@ test.describe('Authentication', () => {
 		await expect(page).toHaveURL(/\/dashboard/);
 
 		// Refresh page
-		await page.reload();
-		await page.waitForLoadState('networkidle');
+		await reloadAndWaitForSession(page);
 
 		// Should still be logged in
 		await expect(page).toHaveURL(/\/dashboard/);
-		// Wait for dashboard to load - check for main content area
 		await expect(page.locator('main, [role="main"]')).toBeVisible();
 	});
 

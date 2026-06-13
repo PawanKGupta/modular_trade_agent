@@ -1,16 +1,14 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { waitForDashboardReady } from './utils/test-helpers';
 
 test.describe('Trading Features', () => {
 	test.beforeEach(async ({ authenticatedPage }) => {
-		// Page is already authenticated via fixture and should be on dashboard
-		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
-		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await waitForDashboardReady(authenticatedPage);
 	});
 
 	test('Buying Zone page loads and displays signals', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/buying-zone');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify page loads
 		await expect(authenticatedPage.getByRole('heading', { name: /Buying Zone/i })).toBeVisible();
@@ -31,9 +29,7 @@ test.describe('Trading Features', () => {
 
 	test('Buying Zone filters work correctly', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/buying-zone');
-
-		// Wait for page to load
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Test date filter if available
 		const dateFilter = authenticatedPage.getByLabel(/Date Filter/i);

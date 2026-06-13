@@ -494,7 +494,11 @@ def test_get_ohlcv_skips_nse_gap_fill_for_today_during_market_hours(db_session, 
         lambda: False,
     )
     monkeypatch.setattr(
-        "src.infrastructure.db.timezone_utils.ist_now",
+        "src.application.services.nse_bhavcopy_availability.ist_now",
+        lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
         lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
     )
 
