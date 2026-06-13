@@ -1,11 +1,9 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { waitForDashboardReady } from './utils/test-helpers';
 
 test.describe('Trading Configuration Page', () => {
 	test.beforeEach(async ({ authenticatedPage }) => {
-		// Page is already authenticated via fixture and should be on dashboard
-		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
-		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('domcontentloaded');
+		await waitForDashboardReady(authenticatedPage);
 	});
 
 	test('navigates to trading configuration page', async ({ authenticatedPage }) => {

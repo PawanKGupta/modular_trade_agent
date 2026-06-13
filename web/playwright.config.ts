@@ -22,5 +22,5 @@ export default defineConfig({
 			use: { ...devices['Desktop Chrome'] },
 		},
 	],
-	workers: process.env.CI ? 2 : undefined,
+	workers: process.env.CI ? 1 : undefined,
 });

@@ -1,16 +1,14 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { waitForDashboardReady } from './utils/test-helpers';
 
 test.describe('Log Viewer Page', () => {
 	test.beforeEach(async ({ authenticatedPage }) => {
-		// Page is already authenticated via fixture and should be on dashboard
-		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
-		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await waitForDashboardReady(authenticatedPage);
 	});
 
 	test('shows service and error logs', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/logs');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify page loads - check for heading or main content
 		const heading = authenticatedPage.getByRole('heading', { name: /Log Management/i });
@@ -35,7 +33,7 @@ test.describe('Log Viewer Page', () => {
 
 	test('admin can toggle scope and resolve errors', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/logs');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Toggle scope if available (admin only)
 		const scopeSelect = authenticatedPage.getByLabel(/Scope/i);

@@ -1,7 +1,7 @@
-import { test as base, Page, expect } from '@playwright/test';
+import { test as base, Page } from '@playwright/test';
 import { LoginPage, DashboardPage, SignupPage } from '../pages';
 import { TestDataTracker } from '../utils/test-cleanup';
-import { waitForSessionRestore } from '../utils/test-helpers';
+import { waitForDashboardReady } from '../utils/test-helpers';
 
 /**
  * Extended test fixtures
@@ -53,9 +53,7 @@ export const test = base.extend<TestFixtures>({
 	authenticatedPage: async ({ page }, use) => {
 		const loginPage = new LoginPage(page);
 		await loginPage.loginAsAdmin();
-		await waitForSessionRestore(page);
-		await page.waitForLoadState('domcontentloaded');
-		await expect(page.locator('main, [role="main"]')).toBeVisible({ timeout: 15000 });
+		await waitForDashboardReady(page);
 
 		await use(page);
 	},

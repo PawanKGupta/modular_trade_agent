@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 import { BasePage } from './BasePage';
 import { TestConfig } from '../config/test-config';
+import { waitForDashboardReady } from '../utils/test-helpers';
 
 /**
  * Login Page Object Model
@@ -80,7 +81,7 @@ export class LoginPage extends BasePage {
 		]);
 		// Wait for navigation to dashboard after login
 		await this.page.waitForURL(/\/dashboard/, { timeout: this.config.timeouts.navigation });
-		await this.page.waitForLoadState('domcontentloaded');
+		await waitForDashboardReady(this.page);
 	}
 
 	/**

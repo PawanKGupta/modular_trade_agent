@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures/test-fixtures';
-import { waitForSessionRestore } from './utils/test-helpers';
+import { reloadAndWaitForSession } from './utils/test-helpers';
 
 test.describe('Authentication', () => {
 
@@ -63,8 +63,7 @@ test.describe('Authentication', () => {
 		await expect(page).toHaveURL(/\/dashboard/);
 
 		// Refresh page
-		await page.reload({ waitUntil: 'domcontentloaded' });
-		await waitForSessionRestore(page);
+		await reloadAndWaitForSession(page);
 
 		// Should still be logged in
 		await expect(page).toHaveURL(/\/dashboard/);
