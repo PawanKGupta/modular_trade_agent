@@ -45,7 +45,7 @@ Signup and profile email changes accept only domains on a bundled **provider all
 
 ## Operator checklist
 
-- [ ] Run `tools/audit_password_hashes.py` after upgrades
+- [ ] Run `tools/audit_password_hashes.py` after upgrades (`.venv/bin/python` locally, or `docker exec tradeagent-api python /app/tools/audit_password_hashes.py` in Docker)
 - [ ] Confirm `GET /api/v1/admin/monitoring/security-metrics` for auth anomalies
 - [ ] Review `GET /api/v1/admin/audit-logs` after admin or broker credential changes
 - [ ] Encrypted DB backups stored with separate key from app encryption key

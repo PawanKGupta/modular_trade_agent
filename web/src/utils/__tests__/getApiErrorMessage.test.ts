@@ -20,12 +20,25 @@ describe('getApiErrorMessage', () => {
 		expect(getApiErrorMessage(err)).toBe('CSV not found');
 	});
 
-	it('joins validation detail array', () => {
+	it('joins validation detail array without body path prefix', () => {
 		const err = axiosErrorWithData(422, {
 			detail: [{ loc: ['body', 'x'], msg: 'field required' }],
 		});
-		expect(getApiErrorMessage(err)).toContain('field required');
-		expect(getApiErrorMessage(err)).toContain('body.x');
+		expect(getApiErrorMessage(err)).toBe('field required');
+	});
+
+	it('strips Value error prefix for custom email validator messages', () => {
+		const err = axiosErrorWithData(422, {
+			detail: [
+				{
+					loc: ['body', 'email'],
+					msg: 'Value error, Only email addresses from approved providers are allowed (e.g. Gmail, Outlook, Yahoo, iCloud, Rediffmail)',
+				},
+			],
+		});
+		expect(getApiErrorMessage(err)).toBe(
+			'Only email addresses from approved providers are allowed (e.g. Gmail, Outlook, Yahoo, iCloud, Rediffmail)',
+		);
 	});
 
 	it('falls back for non-Axios Error', () => {

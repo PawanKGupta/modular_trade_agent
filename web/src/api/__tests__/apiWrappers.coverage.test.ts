@@ -12,8 +12,8 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../client', () => ({
 	api: hoisted.api,
-	setAccessToken: vi.fn(),
-	setRefreshToken: vi.fn(),
+	applyTokenResponse: vi.fn(),
+	clearAuthTokens: vi.fn(),
 }));
 
 import * as admin from '../admin';

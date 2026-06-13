@@ -72,7 +72,11 @@ def test_fill_symbol_range_skips_today_during_market_hours(db_session, sample_df
         lambda: False,
     )
     monkeypatch.setattr(
-        "src.infrastructure.db.timezone_utils.ist_now",
+        "src.application.services.nse_bhavcopy_availability.ist_now",
+        lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
+    )
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.ist_now",
         lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
     )
 
@@ -97,7 +101,7 @@ def test_filter_nse_intraday_gap_dates_drops_today_when_session_open(monkeypatch
         lambda: False,
     )
     monkeypatch.setattr(
-        "src.infrastructure.db.timezone_utils.ist_now",
+        "src.application.services.nse_bhavcopy_availability.ist_now",
         lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
     )
 

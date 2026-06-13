@@ -17,6 +17,16 @@ from src.infrastructure.db.models import Users
 from src.infrastructure.persistence.refresh_token_repository import RefreshTokenRepository
 
 
+def _refresh_token_extra(user: Users) -> dict:
+    """Build refresh JWT claims; jti ensures each rotation gets a unique DB hash."""
+    return {
+        "uid": user.id,
+        "roles": [user.role.value],
+        "type": "refresh",
+        "jti": secrets.token_urlsafe(16),
+    }
+
+
 def issue_tokens(
     db: Session,
     user: Users,
@@ -32,7 +42,7 @@ def issue_tokens(
     )
     refresh_raw = create_jwt_token(
         str(user.id),
-        extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+        extra=_refresh_token_extra(user),
         expires_days=settings.jwt_refresh_days,
         token_version=tv,
     )
@@ -82,7 +92,7 @@ def rotate_refresh_token(
     )
     new_refresh = create_jwt_token(
         str(user.id),
-        extra={"uid": user.id, "roles": [user.role.value], "type": "refresh"},
+        extra=_refresh_token_extra(user),
         expires_days=settings.jwt_refresh_days,
         token_version=tv,
     )
