@@ -1,4 +1,4 @@
-import { test as base, Page } from '@playwright/test';
+import { test as base, Page, expect } from '@playwright/test';
 import { LoginPage, DashboardPage, SignupPage } from '../pages';
 import { TestDataTracker } from '../utils/test-cleanup';
 
@@ -52,25 +52,9 @@ export const test = base.extend<TestFixtures>({
 	authenticatedPage: async ({ page }, use) => {
 		const loginPage = new LoginPage(page);
 		await loginPage.loginAsAdmin();
-		// Verify we're on dashboard (authentication successful)
 		await page.waitForURL(/\/dashboard/, { timeout: 30000 });
-
-		// Wait for page to load - use domcontentloaded first for faster tests
 		await page.waitForLoadState('domcontentloaded');
-
-		// Then wait for network to be idle (with timeout to handle long-polling)
-		await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
-			// If networkidle times out, that's okay - page is still usable
-			// Some pages have websocket connections that never go idle
-		});
-
-		// Wait a bit more to ensure session is fully established and page is stable
-		await page.waitForTimeout(500);
-
-		// Verify main content is visible to ensure page is ready
-		await page.locator('main, [role="main"]').waitFor({ state: 'visible', timeout: 10000 }).catch(() => {
-			// If main content not visible, page might still be loading - continue anyway
-		});
+		await expect(page.locator('main, [role="main"]')).toBeVisible({ timeout: 15000 });
 
 		await use(page);
 	},

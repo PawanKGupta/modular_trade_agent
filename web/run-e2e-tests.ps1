@@ -84,9 +84,17 @@ if (-not $apiRunning) {
         }
     }
 
-    # Set environment variables for the API server
-    # IMPORTANT: Use test admin credentials that match test-config.ts
-    $env:DB_URL = "sqlite:///./data/e2e.db"
+    # Set environment variables for the API server and Playwright global setup
+    $env:E2E_DB_URL = "sqlite:///./data/e2e.db"
+    $env:DB_URL = $env:E2E_DB_URL
+    $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA = $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA
+    if (-not $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA) {
+        $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA = "rebound.com"
+    }
+    $env:E2E_SEED_DATA = $env:E2E_SEED_DATA
+    if (-not $env:E2E_SEED_DATA) {
+        $env:E2E_SEED_DATA = "true"
+    }
     $env:ADMIN_EMAIL = $env:TEST_ADMIN_EMAIL
     if (-not $env:ADMIN_EMAIL) {
         $env:ADMIN_EMAIL = "testadmin@rebound.com"
@@ -216,6 +224,13 @@ Write-Host "========================================" -ForegroundColor Cyan
 
 Push-Location $PSScriptRoot
 $env:PLAYWRIGHT_BASE_URL = "http://localhost:5173"
+$env:VITE_API_URL = "http://localhost:8000"
+if (-not $env:E2E_SEED_DATA) {
+    $env:E2E_SEED_DATA = "true"
+}
+if (-not $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA) {
+    $env:EMAIL_DOMAIN_ALLOWLIST_EXTRA = "rebound.com"
+}
 npm run test:e2e
 $testExitCode = $LASTEXITCODE
 Pop-Location

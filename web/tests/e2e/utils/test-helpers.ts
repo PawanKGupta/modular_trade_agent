@@ -27,7 +27,7 @@ export async function loginUser(
  */
 export function generateTestEmail(prefix: string = 'test'): string {
 	const timestamp = Date.now();
-	return `${prefix}${timestamp}@rebound.com`;
+	return `${prefix}${timestamp}@${TestConfig.signupEmailDomain}`;
 }
 
 /**

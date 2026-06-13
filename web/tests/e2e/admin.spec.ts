@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures/test-fixtures';
+import { generateTestEmail } from './utils/test-helpers';
 
 test.describe('Admin Features', () => {
 	test.beforeEach(async ({ authenticatedPage }) => {
@@ -53,7 +54,7 @@ test.describe('Admin Features', () => {
 
 		// Fill user details
 		const timestamp = Date.now();
-		const email = `newuser${timestamp}@rebound.com`;
+		const email = generateTestEmail('newuser');
 		const password = 'TestPassword123!';
 		const name = `New User ${timestamp}`;
 

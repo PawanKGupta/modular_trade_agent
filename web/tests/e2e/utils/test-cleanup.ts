@@ -16,10 +16,14 @@ export function isTestEmail(email: string): boolean {
 	const testPatterns = [
 		/^test.*@rebound\.com$/i,
 		/^signup\d+@rebound\.com$/i,
+		/^signup\d+@gmail\.com$/i,
+		/^test\d+@gmail\.com$/i,
 		/^newuser\d+@rebound\.com$/i, // Admin-created users
+		/^newuser\d+@gmail\.com$/i,
 		/^testuser\d+@rebound\.com$/i,
 		/^test.*@example\.com$/i,
 		/^\d+@rebound\.com$/, // Timestamp-based emails
+		/^(signup|test)\d+@gmail\.com$/i,
 	];
 
 	// Never clean up admin or system users
