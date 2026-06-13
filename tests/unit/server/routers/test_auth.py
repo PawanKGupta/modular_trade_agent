@@ -844,6 +844,20 @@ def test_signup_rejects_weak_password():
         SignupRequest(email="new@example.com", password="secret123!", name="User")
 
 
+def test_signup_rejects_disposable_email():
+    with pytest.raises(ValidationError) as exc:
+        SignupRequest(email="user@mailinator.com", password="Password123!", name="User")
+    assert "Disposable email addresses are not allowed" in str(exc.value)
+
+
+def test_update_profile_rejects_disposable_email():
+    from server.app.schemas.auth import UpdateProfileRequest
+
+    with pytest.raises(ValidationError) as exc:
+        UpdateProfileRequest(email="user@mailinator.com", current_password="Password123!")
+    assert "Disposable email addresses are not allowed" in str(exc.value)
+
+
 def test_signup_rejects_empty_name():
     with pytest.raises(ValidationError):
         SignupRequest(email="new@example.com", password="Password123!", name="   ")

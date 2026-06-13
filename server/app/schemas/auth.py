@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from server.app.core.email_policy import validate_email_not_disposable
+
 _PASSWORD_MIN_LENGTH = 8
 
 
@@ -43,6 +45,11 @@ class SignupRequest(BaseModel):
     password: PasswordStr
     name: str = Field(min_length=1, max_length=255)
     mobile_number: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def email_not_disposable(cls, value: str) -> str:
+        return validate_email_not_disposable(value)
 
     @field_validator("name")
     @classmethod
@@ -168,6 +175,13 @@ class UpdateProfileRequest(BaseModel):
     email: EmailStr | None = None
     mobile_number: str | None = None
     current_password: str | None = None
+
+    @field_validator("email")
+    @classmethod
+    def email_not_disposable(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_email_not_disposable(value)
 
     @field_validator("mobile_number", mode="before")
     @classmethod

@@ -36,6 +36,13 @@ Set before `ENV=production` or `APP_ENV=production`:
 - **Export:** `GET /api/v1/auth/export` — profile, orders, PnL (broker creds redacted)
 - **Delete:** `DELETE /api/v1/auth/account` — soft-delete user, wipe broker creds, revoke tokens
 
+## Registration
+
+Signup and profile email changes reject addresses whose domain appears on a bundled disposable-domain blocklist (`server/app/resources/disposable_email_blocklist.conf`, sourced from [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains)). Control via:
+
+- `BLOCK_DISPOSABLE_EMAILS` (default `true`)
+- `DISPOSABLE_EMAIL_ALLOWLIST` — comma-separated domains to exempt (e.g. internal test domains)
+
 ## Operator checklist
 
 - [ ] Run `tools/audit_password_hashes.py` after upgrades
