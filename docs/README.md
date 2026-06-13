@@ -13,6 +13,7 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[API Documentation](API.md)** - Complete REST API reference
 - **[Deployment Guide](deployment/DEPLOYMENT.md)** - Production deployment instructions
 - **[Engineering Standards](engineering-standards-and-ci.md)** - Development standards and CI
+- **[Architecture Review & Improvement Plan](development/ARCHITECTURE_REVIEW_IMPROVEMENT_PLAN.md)** - Code-validated review, risks, and phased roadmap
 
 ### Advanced Documentation
 
@@ -42,6 +43,7 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[Individual Service Management](features/INDIVIDUAL_SERVICE_MANAGEMENT_USER_GUIDE.md)** - Running individual trading tasks
 - **[Chart Quality Guide](features/CHART_QUALITY_USAGE_GUIDE.md)** - Chart quality filtering and capital adjustment
 - **[Verdict and Scoring Reference](features/VERDICT_AND_SCORING.md)** - `VerdictService` and `ScoringService` behavior (verdict rules, strength/priority/combined scores)
+- **[Release 26.2.2 Plan](development/RELEASE_PLAN_V26.2.2.md)** - Deploy checklist and upgrade notes for `releases/rebound_2622`
 - **[Release 26.2.1 Plan](development/RELEASE_PLAN_V26.2.1.md)** - Deploy checklist and upgrade notes for `releases/rebound_2621`
 - **[Screener tradability design](development/SCREENER_TRADABILITY_DESIGN.md)** - ChartInk allow/deny rules, commodity ETF filtering, EQ-first resolver (design)
 - **[Backtesting Guide](backtest/README.md)** - Backtesting framework documentation
