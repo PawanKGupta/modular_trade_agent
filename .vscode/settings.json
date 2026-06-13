@@ -12,5 +12,22 @@
   },
   "[markdown]": {
     "files.trimTrailingWhitespace": false
+  },
+  "remote.autoForwardPorts": false,
+  "remote.portsAttributes": {
+    "5173": {
+      "label": "prod web (Oracle/DuckDNS) — do not forward to localhost",
+      "onAutoForward": "ignore"
+    },
+    "8000": {
+      "label": "prod API (Oracle/DuckDNS) — do not forward to localhost",
+      "onAutoForward": "ignore"
+    },
+    "80": {
+      "onAutoForward": "ignore"
+    },
+    "443": {
+      "onAutoForward": "ignore"
+    }
   }
 }

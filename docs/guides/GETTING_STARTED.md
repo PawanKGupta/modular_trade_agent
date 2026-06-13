@@ -198,6 +198,34 @@ See [Bulk analysis reliability](BULK_ANALYSIS_RELIABILITY.md) for engine labels 
 
 ## Common Issues
 
+### Cursor / VS Code forwarding production to localhost
+
+If **Docker is stopped** but `http://localhost:5173` still loads the app (often with `Server: nginx` in DevTools), **Cursor is port-forwarding** your live Oracle/DuckDNS stack (`5173` web, `8000` API) to your PC. That does **not** change production; it only hijacks local URLs.
+
+**One-time cleanup (local only, production unaffected):**
+
+1. In Cursor: **Ports** panel → stop forwarding **5173** and **8000** (or disconnect Remote SSH to the VM).
+2. Reload the Cursor window so workspace settings apply (this repo disables auto-forward for those ports).
+
+**Local dev on safe ports (recommended when forwards are active):**
+
+```powershell
+# Windows — starts API :8001 + Vite :5174
+.\scripts\dev-local.ps1
+
+# Or manually:
+.\.venv\Scripts\python.exe -m uvicorn server.app.main:app --reload --port 8001
+cd web
+npm run dev:local
+```
+
+Open **http://localhost:5174** (not 5173). Check DevTools → Network: API calls should go to `http://localhost:8001/api/v1/...`.
+
+```bash
+# Linux/macOS
+./scripts/dev-local.sh
+```
+
 ### Port Already in Use
 
 If port 8000 or 5173 is already in use:
@@ -208,6 +236,8 @@ uvicorn server.app.main:app --reload --port 8001
 
 # Frontend - edit web/vite.config.ts or use environment variable
 VITE_API_URL=http://localhost:8001 npm run dev
+# Or use the dedicated local script (web on 5174):
+npm run dev:local
 ```
 
 ### Database Errors
