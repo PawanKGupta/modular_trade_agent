@@ -164,3 +164,58 @@ describe('sessionStore.initialize', () => {
 		expect(useSessionStore.getState().user).toBeNull();
 	});
 });
+
+describe('sessionStore setSession and logout', () => {
+	beforeEach(() => {
+		useSessionStore.setState({
+			isAuthenticated: false,
+			user: null,
+			isAdmin: false,
+			hasHydrated: false,
+		});
+		localStorage.clear();
+		vi.clearAllMocks();
+	});
+
+	it('normalizes user profile and admin flag on setSession', () => {
+		useSessionStore.getState().setSession({
+			id: 1,
+			email: 'admin@example.com',
+			roles: ['admin'],
+		} as never);
+
+		expect(useSessionStore.getState().isAuthenticated).toBe(true);
+		expect(useSessionStore.getState().isAdmin).toBe(true);
+		expect(useSessionStore.getState().user?.email_verified).toBe(true);
+	});
+
+	it('clears user when setSession receives null', () => {
+		useSessionStore.getState().setSession({
+			id: 1,
+			email: 'user@example.com',
+			roles: ['user'],
+		} as never);
+		useSessionStore.getState().setSession(null);
+
+		expect(useSessionStore.getState().isAuthenticated).toBe(false);
+		expect(useSessionStore.getState().user).toBeNull();
+		expect(useSessionStore.getState().isAdmin).toBe(false);
+	});
+
+	it('clears session on logout', async () => {
+		const authApi = await import('@/api/auth');
+		useSessionStore.getState().setSession({
+			id: 1,
+			email: 'user@example.com',
+			roles: ['user'],
+			email_verified: true,
+		} as never);
+
+		useSessionStore.getState().logout();
+
+		expect(authApi.logout).toHaveBeenCalled();
+		expect(useSessionStore.getState().isAuthenticated).toBe(false);
+		expect(useSessionStore.getState().user).toBeNull();
+		expect(useSessionStore.getState().hasHydrated).toBe(true);
+	});
+});

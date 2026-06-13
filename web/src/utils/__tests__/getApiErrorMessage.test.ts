@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import axios, { AxiosError } from 'axios';
-import { getApiErrorMessage, isAuthRateLimitError, getApiErrorWarning, getAuthRetryAfterSeconds } from '../getApiErrorMessage';
+import { getApiErrorMessage, isAuthRateLimitError, getApiErrorWarning, getAuthRetryAfterSeconds, isUnverifiedEmailLoginError } from '../getApiErrorMessage';
 
 function axiosErrorWithData(status: number, data: unknown): AxiosError {
 	const err = new AxiosError('request failed');
@@ -82,8 +82,20 @@ describe('getApiErrorMessage', () => {
 		expect(getAuthRetryAfterSeconds(err)).toBe(120);
 	});
 
+	it('reads retry-after header when JSON detail omits seconds', () => {
+		const err = axiosErrorWithData(429, {
+			detail: { message: 'Too many login attempts. Please wait before trying again.' },
+		});
+		err.response!.headers = { 'retry-after': '90' };
+		expect(getAuthRetryAfterSeconds(err)).toBe(90);
+	});
+
 	it('does not treat other status codes as rate limit', () => {
 		expect(isAuthRateLimitError(axiosErrorWithData(401, { detail: 'Invalid credentials' }))).toBe(false);
+	});
+
+	it('returns null retry seconds for non-axios errors', () => {
+		expect(getAuthRetryAfterSeconds(new Error('nope'))).toBeNull();
 	});
 
 	it('extracts message and warning from structured login failure detail', () => {
@@ -100,6 +112,10 @@ describe('getApiErrorMessage', () => {
 	it('returns null warning when detail is a plain string', () => {
 		const err = axiosErrorWithData(401, { detail: 'Invalid credentials' });
 		expect(getApiErrorWarning(err)).toBeNull();
+	});
+
+	it('returns null warning for non-axios errors', () => {
+		expect(getApiErrorWarning(new Error('nope'))).toBeNull();
 	});
 
 	it('uses axios error.message when response body has no detail', () => {
@@ -124,5 +140,26 @@ describe('getApiErrorMessage', () => {
 			detail: [{ loc: ['body', 'password'], msg: 'field required' }],
 		});
 		expect(getApiErrorMessage(err)).toBe('Password: field required');
+	});
+
+	it('detects unverified email login errors', () => {
+		const err = axiosErrorWithData(403, {
+			detail: 'Please verify your email before logging in.',
+		});
+		expect(isUnverifiedEmailLoginError(err)).toBe(true);
+	});
+
+	it('does not treat other statuses as unverified email login', () => {
+		expect(
+			isUnverifiedEmailLoginError(
+				axiosErrorWithData(401, { detail: 'Please verify your email before logging in.' }),
+			),
+		).toBe(false);
+	});
+
+	it('uses axios message when detail is an unsupported primitive', () => {
+		const err = axiosErrorWithData(400, { detail: 12345 });
+		err.message = 'from axios';
+		expect(getApiErrorMessage(err)).toBe('from axios');
 	});
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
 	applyTokenResponse,
+	api,
 	clearAuthTokens,
 	getAccessToken,
 	getCsrfToken,
@@ -22,6 +23,18 @@ vi.mock('axios', () => {
 		create,
 	};
 });
+
+type RequestInterceptor = (config: {
+	method?: string;
+	headers?: Record<string, string>;
+}) => {
+	method?: string;
+	headers?: Record<string, string>;
+};
+
+const requestInterceptor = vi.mocked(api.interceptors.request.use).mock.calls[0]?.[0] as
+	| RequestInterceptor
+	| undefined;
 
 describe('api client auth helpers', () => {
 	beforeEach(() => {
@@ -57,5 +70,12 @@ describe('api client auth helpers', () => {
 
 	it('reports cookie-only auth storage in production builds', () => {
 		expect(typeof usesCookieOnlyAuthStorage()).toBe('boolean');
+	});
+
+	it('adds CSRF header on mutating requests when token is set', () => {
+		expect(requestInterceptor).toBeTypeOf('function');
+		setCsrfToken('csrf-token');
+		const config = requestInterceptor!({ method: 'post' });
+		expect(config.headers?.['X-CSRF-Token']).toBe('csrf-token');
 	});
 });

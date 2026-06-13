@@ -1,10 +1,12 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { afterEach, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { LoginPage } from '../LoginPage';
 import { server } from '@/mocks/server';
 import { http, HttpResponse } from 'msw';
 import { withProviders } from '@/test/utils';
 import { APP_VERSION } from '@/appVersion';
+import { saveLoginLockout } from '@/utils/loginLockout';
 
 function renderWithRouter(ui: React.ReactElement) {
 	return render(
@@ -21,6 +23,11 @@ function renderWithRouter(ui: React.ReactElement) {
 }
 
 describe('LoginPage', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		sessionStorage.clear();
+	});
+
 	it('shows product branding and version', () => {
 		renderWithRouter(<LoginPage />);
 		expect(screen.getByText('Rebound')).toBeInTheDocument();
@@ -150,6 +157,66 @@ describe('LoginPage', () => {
 		});
 		expect(screen.getByRole('button', { name: /login temporarily locked/i })).toBeDisabled();
 		expect(screen.queryByRole('link', { name: /resend verification email/i })).not.toBeInTheDocument();
+	});
+
+	it('restores lockout from session storage when email matches', async () => {
+		saveLoginLockout('held@example.com', 90);
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+		fireEvent.change(email, { target: { value: 'held@example.com' } });
+
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /login temporarily locked/i })).toBeDisabled();
+			expect(screen.getByRole('alert')).toHaveTextContent(/please wait before trying again/i);
+		});
+	});
+
+	it('shows rate limit error without countdown when retry_after is missing', async () => {
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						detail: {
+							message: 'Too many login attempts. Please wait before trying again.',
+						},
+					}),
+					{
+						status: 429,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+		);
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
+		fireEvent.change(email, { target: { value: 'limited@example.com' } });
+		fireEvent.change(password, { target: { value: 'Secret123!' } });
+		fireEvent.click(screen.getByRole('button', { name: /login/i }));
+
+		await waitFor(() => {
+			expect(screen.getByRole('alert')).toHaveTextContent(/please wait before trying again/i);
+		});
+		expect(screen.getByRole('button', { name: /^login$/i })).toBeEnabled();
+	});
+
+	it('clears lockout countdown when stored lockout expires', async () => {
+		vi.useFakeTimers();
+		saveLoginLockout('held@example.com', 2);
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+
+		await act(async () => {
+			fireEvent.change(email, { target: { value: 'held@example.com' } });
+		});
+
+		expect(screen.getByRole('button', { name: /login temporarily locked/i })).toBeDisabled();
+
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2500);
+		});
+
+		expect(screen.getByRole('button', { name: /^login$/i })).toBeEnabled();
 	});
 
 	it('shows resend verification link after unverified email login error', async () => {
