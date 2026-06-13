@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     mfa_required_for_broker_mode: bool = False
     mfa_required_for_admin: bool = False
 
-    # Registration: reject known disposable / temporary email domains
-    block_disposable_emails: bool = True
-    disposable_email_allowlist: list[str] = []
+    # Registration: only allow email domains on the bundled provider allowlist
+    email_domain_allowlist_enabled: bool = True
+    email_domain_allowlist_extra: list[str] = []
 
 
 settings = Settings()

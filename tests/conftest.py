@@ -41,6 +41,8 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
 os.environ["OHLCV_DAILY_SOURCE"] = "yahoo"
 os.environ["NSE_BHAVCOPY_REQUEST_DELAY_S"] = "0"
 os.environ["NSE_BHAVCOPY_REQUEST_TIMEOUT_S"] = "1"
+# Signup tests use example.com; production enforces provider allowlist only.
+os.environ.setdefault("EMAIL_DOMAIN_ALLOWLIST_ENABLED", "false")
 
 
 def pytest_load_initial_conftests(early_config, parser, args):

@@ -1,4 +1,4 @@
-"""Reject disposable / temporary email domains at registration and profile email change."""
+"""Restrict signup and profile email changes to approved provider domains."""
 
 from __future__ import annotations
 
@@ -8,25 +8,28 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_BLOCKLIST_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "resources"
-    / "disposable_email_blocklist.conf"
+_ALLOWLIST_PATH = (
+    Path(__file__).resolve().parent.parent / "resources" / "email_domain_allowlist.conf"
+)
+
+_DISALLOWED_MESSAGE = (
+    "Only email addresses from approved providers are allowed "
+    "(e.g. Gmail, Outlook, Yahoo, iCloud, Rediffmail)"
 )
 
 
 @lru_cache(maxsize=1)
-def _load_blocklist() -> frozenset[str]:
-    """Load the bundled disposable-domain blocklist (one domain per line)."""
-    if not _BLOCKLIST_PATH.is_file():
-        logger.warning("Disposable email blocklist missing at %s", _BLOCKLIST_PATH)
+def _load_bundled_allowlist() -> frozenset[str]:
+    """Load the bundled provider allowlist (one domain per line)."""
+    if not _ALLOWLIST_PATH.is_file():
+        logger.warning("Email domain allowlist missing at %s", _ALLOWLIST_PATH)
         return frozenset()
     domains: set[str] = set()
-    for line in _BLOCKLIST_PATH.read_text(encoding="utf-8").splitlines():
+    for line in _ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines():
         domain = line.strip().lower()
         if domain and not domain.startswith("#"):
             domains.add(domain)
-    logger.debug("Loaded %d disposable email domains", len(domains))
+    logger.debug("Loaded %d approved email domains", len(domains))
     return frozenset(domains)
 
 
@@ -35,21 +38,31 @@ def email_domain(email: str) -> str:
     return email.rsplit("@", 1)[-1].strip().lower()
 
 
-def is_disposable_email(email: str, *, blocklist: frozenset[str] | None = None) -> bool:
-    """Return True when the email domain is on the disposable blocklist."""
+def get_allowed_email_domains(*, bundled: frozenset[str] | None = None) -> frozenset[str]:
+    """Return bundled plus operator-configured approved domains."""
     from server.app.core.config import settings
 
-    if not settings.block_disposable_emails:
-        return False
+    base = bundled if bundled is not None else _load_bundled_allowlist()
+    extra = {d.strip().lower() for d in settings.email_domain_allowlist_extra if d.strip()}
+    return base | extra
+
+
+def is_allowed_email_domain(
+    email: str,
+    *,
+    bundled: frozenset[str] | None = None,
+) -> bool:
+    """Return True when the email domain is on the approved provider allowlist."""
+    from server.app.core.config import settings
+
+    if not settings.email_domain_allowlist_enabled:
+        return True
     domain = email_domain(email)
-    if domain in {d.lower() for d in settings.disposable_email_allowlist}:
-        return False
-    bl = blocklist if blocklist is not None else _load_blocklist()
-    return domain in bl
+    return domain in get_allowed_email_domains(bundled=bundled)
 
 
-def validate_email_not_disposable(email: str) -> str:
-    """Pydantic-friendly validator: raise when the address uses a disposable domain."""
-    if is_disposable_email(email):
-        raise ValueError("Disposable email addresses are not allowed")
+def validate_email_domain_allowed(email: str) -> str:
+    """Pydantic-friendly validator: raise when the domain is not approved."""
+    if not is_allowed_email_domain(email):
+        raise ValueError(_DISALLOWED_MESSAGE)
     return email

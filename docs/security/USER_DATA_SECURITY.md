@@ -38,10 +38,10 @@ Set before `ENV=production` or `APP_ENV=production`:
 
 ## Registration
 
-Signup and profile email changes reject addresses whose domain appears on a bundled disposable-domain blocklist (`server/app/resources/disposable_email_blocklist.conf`, sourced from [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains)). Control via:
+Signup and profile email changes accept only domains on a bundled **provider allowlist** (`server/app/resources/email_domain_allowlist.conf`) — major consumer mail (Gmail, Outlook, Yahoo, iCloud, Rediffmail, Zoho, Proton, etc.). Unknown or temporary-mail domains (e.g. `aratrin.com`) are rejected.
 
-- `BLOCK_DISPOSABLE_EMAILS` (default `true`)
-- `DISPOSABLE_EMAIL_ALLOWLIST` — comma-separated domains to exempt (e.g. internal test domains)
+- `EMAIL_DOMAIN_ALLOWLIST_ENABLED` (default `true`)
+- `EMAIL_DOMAIN_ALLOWLIST_EXTRA` — additional approved domains (e.g. corporate mail for pilot users)
 
 ## Operator checklist
 

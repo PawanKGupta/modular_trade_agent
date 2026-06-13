@@ -844,18 +844,31 @@ def test_signup_rejects_weak_password():
         SignupRequest(email="new@example.com", password="secret123!", name="User")
 
 
-def test_signup_rejects_disposable_email():
+def test_signup_rejects_unapproved_email_domain(monkeypatch):
+    from server.app.core.config import settings
+
+    monkeypatch.setattr(settings, "email_domain_allowlist_enabled", True)
     with pytest.raises(ValidationError) as exc:
-        SignupRequest(email="user@mailinator.com", password="Password123!", name="User")
-    assert "Disposable email addresses are not allowed" in str(exc.value)
+        SignupRequest(email="yayic93006@aratrin.com", password="Password123!", name="User")
+    assert "Only email addresses from approved providers" in str(exc.value)
 
 
-def test_update_profile_rejects_disposable_email():
+def test_signup_allows_gmail(monkeypatch):
+    from server.app.core.config import settings
+
+    monkeypatch.setattr(settings, "email_domain_allowlist_enabled", True)
+    payload = SignupRequest(email="user@gmail.com", password="Password123!", name="User")
+    assert payload.email == "user@gmail.com"
+
+
+def test_update_profile_rejects_unapproved_email_domain(monkeypatch):
+    from server.app.core.config import settings
     from server.app.schemas.auth import UpdateProfileRequest
 
+    monkeypatch.setattr(settings, "email_domain_allowlist_enabled", True)
     with pytest.raises(ValidationError) as exc:
         UpdateProfileRequest(email="user@mailinator.com", current_password="Password123!")
-    assert "Disposable email addresses are not allowed" in str(exc.value)
+    assert "Only email addresses from approved providers" in str(exc.value)
 
 
 def test_signup_rejects_empty_name():
