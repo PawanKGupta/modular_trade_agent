@@ -5,6 +5,7 @@ import {
 	getAccessToken,
 	getRefreshToken,
 	requestTokenRefresh,
+	usesCookieOnlyAuthStorage,
 } from '@/api/client';
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -14,6 +15,7 @@ vi.mock('@/api/client', async (importOriginal) => {
 		getAccessToken: vi.fn(),
 		getRefreshToken: vi.fn(),
 		requestTokenRefresh: vi.fn(),
+		usesCookieOnlyAuthStorage: vi.fn(),
 		clearAuthTokens: actual.clearAuthTokens,
 	};
 });
@@ -36,6 +38,7 @@ describe('sessionStore.initialize', () => {
 		vi.mocked(getAccessToken).mockReset();
 		vi.mocked(getRefreshToken).mockReset();
 		vi.mocked(requestTokenRefresh).mockReset();
+		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(false);
 		vi.clearAllMocks();
 	});
 
@@ -43,6 +46,7 @@ describe('sessionStore.initialize', () => {
 		const authApi = await import('@/api/auth');
 		vi.mocked(getAccessToken).mockReturnValue(null);
 		vi.mocked(getRefreshToken).mockReturnValue(null);
+		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(false);
 
 		await act(async () => {
 			await useSessionStore.getState().initialize();
@@ -51,6 +55,27 @@ describe('sessionStore.initialize', () => {
 		expect(authApi.me).not.toHaveBeenCalled();
 		expect(useSessionStore.getState().hasHydrated).toBe(true);
 		expect(useSessionStore.getState().isAuthenticated).toBe(false);
+	});
+
+	it('restores session via httpOnly cookies when production storage is empty', async () => {
+		const authApi = await import('@/api/auth');
+		vi.mocked(getAccessToken).mockReturnValue(null);
+		vi.mocked(getRefreshToken).mockReturnValue(null);
+		vi.mocked(usesCookieOnlyAuthStorage).mockReturnValue(true);
+		vi.mocked(authApi.me).mockResolvedValue({
+			id: 1,
+			email: 'a@x.com',
+			roles: ['user'],
+			email_verified: true,
+		} as never);
+
+		await act(async () => {
+			await useSessionStore.getState().initialize();
+		});
+
+		expect(requestTokenRefresh).not.toHaveBeenCalled();
+		expect(authApi.me).toHaveBeenCalled();
+		expect(useSessionStore.getState().isAuthenticated).toBe(true);
 	});
 
 	it('uses refresh token when access token missing', async () => {

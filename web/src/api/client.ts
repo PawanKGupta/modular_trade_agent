@@ -72,6 +72,11 @@ export function getRefreshToken(): string | null {
 	return null;
 }
 
+/** Production uses httpOnly cookies; dev uses localStorage for token restore on reload. */
+export function usesCookieOnlyAuthStorage(): boolean {
+	return import.meta.env.PROD;
+}
+
 export function getCsrfToken(): string | null {
 	return sessionStorage.getItem(CSRF_TOKEN_KEY);
 }

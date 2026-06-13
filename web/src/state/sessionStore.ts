@@ -5,6 +5,7 @@ import {
 	getAccessToken,
 	getRefreshToken,
 	requestTokenRefresh,
+	usesCookieOnlyAuthStorage,
 } from '@/api/client';
 
 /** Treat missing email_verified as verified (legacy API / cached sessions). */
@@ -58,7 +59,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		if (hasHydrated) return;
 		const accessToken = getAccessToken();
 		const refreshToken = getRefreshToken();
-		if (!accessToken && !refreshToken) {
+		const hasStoredTokens = !!(accessToken || refreshToken);
+		if (!hasStoredTokens && !usesCookieOnlyAuthStorage()) {
 			set({ hasHydrated: true, user: null, isAuthenticated: false, isAdmin: false });
 			return;
 		}
@@ -70,6 +72,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 					return;
 				}
 			}
+			// Production: access/refresh live in httpOnly cookies; me() + interceptor restore session.
 			await refresh();
 		} catch {
 			clearAuthTokens();
