@@ -58,7 +58,7 @@ test.describe('Settings & Configuration', () => {
 		await authenticatedPage.waitForLoadState('networkidle');
 
 		await expect(authenticatedPage.getByRole('heading', { name: /Account settings/i })).toBeVisible();
-		await expect(authenticatedPage.getByRole('heading', { name: /Account profile/i })).toBeVisible();
+		await expect(authenticatedPage.getByRole('button', { name: /Account profile/i })).toBeVisible();
 
 		// Verify credential form or fields are displayed - check for various possible field names
 		const apiKeyField = authenticatedPage.getByLabel(/API Key|Api Key|Access Token|Secret Key|Broker/i).first();
