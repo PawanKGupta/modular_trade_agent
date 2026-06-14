@@ -249,4 +249,123 @@ describe('LoginPage', () => {
 			'/resend-verification?email=pending%40example.com',
 		);
 	});
+
+	it('handles MFA challenge requirement during login and logs in successfully', async () => {
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						mfa_required: true,
+						mfa_token: 'mfa-test-token',
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+			http.post('http://localhost:8000/api/v1/auth/mfa/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						access_token: 'test-mfa-access-token',
+						refresh_token: 'test-mfa-refresh-token',
+						token_type: 'bearer',
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+		);
+
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
+		fireEvent.change(email, { target: { value: 'mfa@example.com' } });
+		fireEvent.change(password, { target: { value: 'Secret123!' } });
+		fireEvent.click(screen.getByRole('button', { name: /login/i }));
+
+		// It should switch to MFA screen
+		await screen.findByText('Two-factor authentication');
+		expect(screen.getByLabelText(/Authenticator code/i)).toBeInTheDocument();
+
+		const codeInput = screen.getByPlaceholderText('000000') as HTMLInputElement;
+		fireEvent.change(codeInput, { target: { value: '123456' } });
+		fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+
+		await screen.findByText('Dashboard');
+	});
+
+	it('shows error on invalid MFA code during verification', async () => {
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						mfa_required: true,
+						mfa_token: 'mfa-test-token',
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+			http.post('http://localhost:8000/api/v1/auth/mfa/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						detail: 'Invalid MFA code',
+					}),
+					{
+						status: 400,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+		);
+
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
+		fireEvent.change(email, { target: { value: 'mfa-fail@example.com' } });
+		fireEvent.change(password, { target: { value: 'Secret123!' } });
+		fireEvent.click(screen.getByRole('button', { name: /login/i }));
+
+		await screen.findByText('Two-factor authentication');
+		const codeInput = screen.getByPlaceholderText('000000') as HTMLInputElement;
+		fireEvent.change(codeInput, { target: { value: '111111' } });
+		fireEvent.click(screen.getByRole('button', { name: /verify/i }));
+
+		await screen.findByText(/invalid mfa code/i);
+	});
+
+	it('allows going back to login screen from MFA prompt', async () => {
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/login', async () =>
+				new HttpResponse(
+					JSON.stringify({
+						mfa_required: true,
+						mfa_token: 'mfa-test-token',
+					}),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' },
+					},
+				),
+			),
+		);
+
+		renderWithRouter(<LoginPage />);
+		const email = document.querySelector('input[type="email"]') as HTMLInputElement;
+		const password = document.querySelector('input[type="password"]') as HTMLInputElement;
+		fireEvent.change(email, { target: { value: 'mfa-back@example.com' } });
+		fireEvent.change(password, { target: { value: 'Secret123!' } });
+		fireEvent.click(screen.getByRole('button', { name: /login/i }));
+
+		await screen.findByText('Two-factor authentication');
+		fireEvent.click(screen.getByRole('button', { name: /back to login/i }));
+
+		// Should be back to login screen
+		expect(screen.getByRole('button', { name: /^login$/i })).toBeInTheDocument();
+	});
 });
