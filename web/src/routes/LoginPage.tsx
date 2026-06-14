@@ -226,9 +226,6 @@ export function LoginPage() {
 					<BrandMark />
 				</header>
 				<h1 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Login</h1>
-				<p className="text-xs text-[var(--muted)] mb-3">
-					<span className="text-red-400">*</span> Required fields
-				</p>
 				<FormLabel htmlFor="email" required>
 					Email
 				</FormLabel>
