@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo, type BrokerTestRequest } from '@/api/user';
 import { changePassword, updateProfile, mfaSetup, mfaVerify, mfaDisable } from '@/api/auth';
 import { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { useNavigate, Link } from 'react-router-dom';
 import { fieldErrorFor, validateChangePasswordForm, validateProfileForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
@@ -55,6 +56,7 @@ export function SettingsPage() {
 		provisioning_uri: string;
 		backup_codes: string[];
 	} | null>(null);
+	const [mfaQrDataUrl, setMfaQrDataUrl] = useState<string | null>(null);
 	const [mfaCode, setMfaCode] = useState('');
 	const [mfaMsg, setMfaMsg] = useState<string | null>(null);
 	const [mfaLoading, setMfaLoading] = useState(false);
@@ -251,6 +253,12 @@ export function SettingsPage() {
 							try {
 								const data = await mfaSetup();
 								setMfaSetupData(data);
+								const dataUrl = await QRCode.toDataURL(data.provisioning_uri, {
+									width: 200,
+									margin: 2,
+									color: { dark: '#000000', light: '#ffffff' },
+								});
+								setMfaQrDataUrl(dataUrl);
 							} catch (e) {
 								setMfaMsg(getApiErrorMessage(e, 'MFA setup failed'));
 							} finally {
@@ -262,24 +270,56 @@ export function SettingsPage() {
 					</button>
 				)}
 				{mfaSetupData && !user?.mfa_enabled && (
-					<div className="space-y-2 text-xs sm:text-sm">
-						<p>Scan this URI in your authenticator app, then enter the 6-digit code.</p>
-						<p className="break-all text-[var(--muted)]">{mfaSetupData.provisioning_uri}</p>
-						<p>Backup codes (save securely): {mfaSetupData.backup_codes.join(', ')}</p>
-						<input
-							className="w-full px-3 py-2 rounded bg-[#0f1720] border border-[#1e293b]"
-							placeholder="6-digit code"
-							value={mfaCode}
-							onChange={(e) => setMfaCode(e.target.value)}
-						/>
+					<div className="space-y-3 text-xs sm:text-sm">
+						<p className="font-medium">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
+						{mfaQrDataUrl ? (
+							<div className="flex justify-center">
+								<img
+									src={mfaQrDataUrl}
+									alt="MFA QR code — scan with your authenticator app"
+									width={200}
+									height={200}
+									className="rounded border border-[#1e293b] bg-white p-2"
+								/>
+							</div>
+						) : (
+							<p className="text-[var(--muted)]">Generating QR code...</p>
+						)}
+						<details className="text-[var(--muted)]">
+							<summary className="cursor-pointer select-none hover:text-[var(--fg)] transition-colors">
+								Can't scan? Enter secret manually
+							</summary>
+							<p className="mt-1 font-mono break-all bg-[#0f1720] rounded px-2 py-1 text-xs select-all">
+								{mfaSetupData.secret}
+							</p>
+						</details>
+						<div className="bg-[#0f1720] rounded px-3 py-2 border border-[#1e293b]">
+							<p className="font-medium mb-1 text-amber-400">⚠ Save your backup codes</p>
+							<p className="text-[var(--muted)] mb-1">Store these somewhere safe — each can be used once if you lose your authenticator:</p>
+							<p className="font-mono text-xs break-all select-all">{mfaSetupData.backup_codes.join('  ')}</p>
+						</div>
+						<div>
+							<label className="block mb-1" htmlFor="mfaConfirmCode">Enter the 6-digit code from your app to confirm</label>
+							<input
+								id="mfaConfirmCode"
+								className="w-full px-3 py-2 rounded bg-[#0f1720] border border-[#1e293b] font-mono tracking-widest"
+								placeholder="000000"
+								maxLength={6}
+								inputMode="numeric"
+								value={mfaCode}
+								onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+							/>
+						</div>
 						<button
 							type="button"
-							className="px-4 py-2 rounded bg-blue-600 text-sm"
+							className="px-4 py-2 rounded bg-blue-600 text-sm disabled:opacity-60"
+							disabled={mfaCode.length !== 6}
 							onClick={async () => {
 								try {
 									await mfaVerify(mfaCode);
-									setMfaMsg('MFA enabled');
+									setMfaMsg('MFA enabled successfully.');
 									setMfaSetupData(null);
+									setMfaQrDataUrl(null);
 									setMfaCode('');
 									await refresh();
 								} catch (e) {
@@ -287,7 +327,7 @@ export function SettingsPage() {
 								}
 							}}
 						>
-							Confirm MFA
+							Confirm & Enable MFA
 						</button>
 					</div>
 				)}

@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '@/api/auth';
+import { login, mfaLogin } from '@/api/auth';
 import { BrandMark } from '@/components/BrandMark';
 import { PasswordInput } from '@/components/PasswordInput';
 import { EmailInput } from '@/components/EmailInput';
@@ -34,6 +34,12 @@ export function LoginPage() {
 	const [lockoutSecondsRemaining, setLockoutSecondsRemaining] = useState(0);
 	const [showResendVerification, setShowResendVerification] = useState(false);
 	const [loading, setLoading] = useState(false);
+	// MFA challenge state
+	const [mfaRequired, setMfaRequired] = useState(false);
+	const [mfaToken, setMfaToken] = useState<string | null>(null);
+	const [mfaCode, setMfaCode] = useState('');
+	const [mfaError, setMfaError] = useState<string | null>(null);
+	const [mfaLoading, setMfaLoading] = useState(false);
 
 	function applyLockout(seconds: number) {
 		if (seconds <= 0) {
@@ -60,7 +66,7 @@ export function LoginPage() {
 		} else if (rateLimited && lockoutSecondsRemaining <= 0) {
 			setRateLimited(false);
 		}
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- sync when email changes only
+
 	}, [email]);
 
 	useEffect(() => {
@@ -97,7 +103,13 @@ export function LoginPage() {
 		}
 		setLoading(true);
 		try {
-			await login(email.trim(), password);
+			const res = await login(email.trim(), password);
+			if (res.mfa_required && res.mfa_token) {
+				// Password OK — need MFA code to complete login
+				setMfaToken(res.mfa_token);
+				setMfaRequired(true);
+				return;
+			}
 			clearLockoutState();
 			await useSessionStore.getState().refresh();
 			setSession(useSessionStore.getState().user);
@@ -123,9 +135,89 @@ export function LoginPage() {
 		}
 	}
 
+	async function onMfaSubmit(e: FormEvent) {
+		e.preventDefault();
+		if (!mfaToken) return;
+		setMfaError(null);
+		setMfaLoading(true);
+		try {
+			await mfaLogin(mfaToken, mfaCode);
+			clearLockoutState();
+			await useSessionStore.getState().refresh();
+			setSession(useSessionStore.getState().user);
+			navigate('/dashboard');
+		} catch (err: unknown) {
+			setMfaError(getApiErrorMessage(err, 'Invalid MFA code'));
+		} finally {
+			setMfaLoading(false);
+		}
+	}
+
 	const inputClass =
 		'w-full mb-1 px-3 py-2.5 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0';
 	const loginDisabled = loading || lockoutSecondsRemaining > 0;
+
+	// ── MFA challenge screen ──────────────────────────────────────────────────
+	if (mfaRequired) {
+		return (
+			<div className="min-h-screen flex items-center justify-center p-2 sm:p-4">
+				<form
+					onSubmit={onMfaSubmit}
+					className="w-full max-w-sm bg-[var(--panel)] p-4 sm:p-6 rounded-md shadow space-y-4"
+				>
+					<header className="pb-4 border-b border-[#1e293b]/50">
+						<BrandMark />
+					</header>
+					<h1 className="text-lg sm:text-xl font-semibold">Two-factor authentication</h1>
+					<p className="text-xs sm:text-sm text-[var(--muted)]">
+						Open your authenticator app and enter the 6-digit code for Rebound.
+					</p>
+					<div>
+						<label className="block text-xs sm:text-sm mb-1" htmlFor="mfaLoginCode">
+							Authenticator code
+						</label>
+						<input
+							id="mfaLoginCode"
+							type="text"
+							inputMode="numeric"
+							autoComplete="one-time-code"
+							maxLength={16}
+							className={`${inputClass} font-mono tracking-widest`}
+							placeholder="000000"
+							value={mfaCode}
+							onChange={(e) => setMfaCode(e.target.value.trim())}
+							autoFocus
+							required
+						/>
+					</div>
+					{mfaError && (
+						<div role="alert" className="text-red-400 text-xs sm:text-sm">
+							{mfaError}
+						</div>
+					)}
+					<button
+						type="submit"
+						disabled={mfaLoading || mfaCode.length < 6}
+						className="w-full bg-[var(--accent)] text-black py-3 sm:py-2 rounded disabled:opacity-60 min-h-[44px] sm:min-h-0 text-sm sm:text-base"
+					>
+						{mfaLoading ? 'Verifying...' : 'Verify'}
+					</button>
+					<button
+						type="button"
+						className="w-full text-xs sm:text-sm text-[var(--muted)] hover:text-[var(--fg)] transition-colors"
+						onClick={() => {
+							setMfaRequired(false);
+							setMfaToken(null);
+							setMfaCode('');
+							setMfaError(null);
+						}}
+					>
+						← Back to login
+					</button>
+				</form>
+			</div>
+		);
+	}
 
 	return (
 		<div className="min-h-screen flex items-center justify-center p-2 sm:p-4">
