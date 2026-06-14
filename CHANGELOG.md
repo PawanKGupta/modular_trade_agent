@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.2.1] - 2026-06-14
+
+Hotfix release from branch `hotfix/rebound_26221`. See [docs/development/RELEASE_PLAN_V26.2.2.1.md](docs/development/RELEASE_PLAN_V26.2.2.1.md) for deploy checklist.
+
+### Fixed
+
+- **MFA QR code display:** Added client-side QR code generation using `qrcode` library to display a scannable QR code on setup.
+- **MFA Login Challenge:** Capture and process `mfa_required` responses on login form submission, switching inline to verify the 6-digit authenticator code.
+- **Settings Page Accordion:** Grouped User Profile and Trading Account configuration settings into collapsible panels, collapsed by default, to clean up scattered elements.
+- **Login Form Polish:** Removed redundant static "Required fields" notice.
+- **Unit Test Coverage:** Added unit tests for new MFA views/workflows to satisfy and exceed the 90% test coverage gate.
+
 ## [26.2.2] - 2026-06-14
 
 Release from branch `releases/rebound_2622`. See [docs/development/RELEASE_PLAN_V26.2.2.md](docs/development/RELEASE_PLAN_V26.2.2.md) for deploy checklist.
@@ -377,5 +389,6 @@ result = analyze_ticker("RELIANCE.NS")  # Still works, delegates to service laye
 
 ---
 
+[26.2.2.1]: https://github.com/yourusername/modular_trade_agent/compare/v26.2.2...v26.2.2.1
 [25.4.1]: https://github.com/yourusername/modular_trade_agent/compare/v25.4.0...v25.4.1
 [25.4.0]: https://github.com/yourusername/modular_trade_agent/releases/tag/v25.4.0

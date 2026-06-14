@@ -95,6 +95,16 @@ Full checklist: [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md
 
 **Breaking notes:** Activity Log UI removed (use Log Viewer); market analysis run-once is **admin-only**; in-app subscription catalog removed in favor of performance-fee billing.
 
+## Upgrading to 26.2.2.1
+
+From **`v26.2.2`**, **`releases/rebound_2622`**, or earlier 26.2.x deployments:
+
+1. Pull branch `hotfix/rebound_26221` or tag **`v26.2.2.1`**.
+2. Rebuild and restart Web UI containers (or package/deploy the updated frontend files).
+3. Post-deploy smoke: verify MFA setup renders QR code, verify MFA login challenge is prompted inline at login.
+
+Full checklist: [RELEASE_PLAN_V26.2.2.1.md](../development/RELEASE_PLAN_V26.2.2.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
+
 ## Upgrading to 26.2.2
 
 From **`v26.2.1`**, **`releases/rebound_2621`**, or earlier 26.2.x deployments:
