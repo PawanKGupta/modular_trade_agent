@@ -27,6 +27,7 @@ Major themes on this hotfix branch (since `v26.2.2`):
 | Web Vitest + coverage | **90.85%** lines (exceeds 90% threshold) |
 | SettingsPage unit tests | Mocked setup & disable paths verified |
 | LoginPage unit tests | Mocked inline login challenge & back options verified |
+| Settings E2E Playwright tests | **7 passed** (including Account Settings page loads) |
 
 ---
 
