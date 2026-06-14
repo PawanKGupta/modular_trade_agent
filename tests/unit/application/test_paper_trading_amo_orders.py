@@ -71,13 +71,15 @@ def mock_paper_broker():
 class TestAMOOrderPlacement:
     """Test AMO order placement (4:05 PM) - No immediate execution"""
 
+    @patch("src.application.services.paper_trading_service_adapter.get_user_logger")
     def test_amo_order_placed_as_pending_not_executed(
-        self, db_session, test_user, mock_paper_broker
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
         """Test that AMO orders are placed but not executed immediately"""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(
@@ -101,6 +103,7 @@ class TestAMOOrderPlacement:
                 adapter.engine, "load_latest_recommendations", return_value=recommendations
             ),
             patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
         ):
             adapter.run_buy_orders()
 
@@ -110,7 +113,7 @@ class TestAMOOrderPlacement:
         # Get the order that was placed
         placed_order = mock_paper_broker.place_order.call_args[0][0]
 
-        # Verify it's a MARKET AMO order
+        # Off-hours: MARKET AMO
         assert placed_order.order_type == OrderType.MARKET
         assert placed_order.variety == OrderVariety.AMO
         assert placed_order.price is None  # MARKET orders don't have price
@@ -123,7 +126,7 @@ class TestAMOOrderPlacement:
         )
 
     def test_amo_order_is_market_type(self, db_session, test_user, mock_paper_broker):
-        """Test that AMO orders are placed as MARKET type (not LIMIT)"""
+        """Off-hours fresh entries are MARKET AMO (not LIMIT)."""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
 
@@ -139,7 +142,10 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        with patch("core.volume_analysis.is_market_hours", return_value=False):
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
             adapter.place_new_entries(recommendations)
 
         # Verify order was placed
@@ -152,6 +158,44 @@ class TestAMOOrderPlacement:
         assert order.order_type == OrderType.MARKET
         assert order.variety == OrderVariety.AMO
         assert order.price is None  # MARKET orders don't have price parameter
+
+    def test_pre_open_fresh_entry_is_limit(self, db_session, test_user, mock_paper_broker):
+        """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 200000.0
+
+        recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
+
+        mock_indicators = {
+            "close": 100.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 102.0,
+        }
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=True),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
+        ):
+            adapter.place_new_entries(recommendations)
+
+        order = mock_paper_broker.place_order.call_args[0][0]
+        assert order.order_type == OrderType.LIMIT
+        assert order.variety == OrderVariety.REGULAR
+        assert float(order.price.amount) == 100.0
 
     def test_amo_order_saved_as_pending(self, db_session, test_user, mock_paper_broker):
         """Test that AMO orders are saved with OPEN/PENDING status"""
@@ -170,22 +214,28 @@ class TestAMOOrderPlacement:
 
         recommendations = [Recommendation(ticker="RELIANCE.NS", verdict="buy", last_close=100.0)]
 
-        adapter.place_new_entries(recommendations)
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
+            adapter.place_new_entries(recommendations)
 
         # Verify _save_order was called (order saved)
         # The order should be in OPEN status (not executed)
         assert mock_paper_broker.place_order.called
 
 
+@patch("src.application.services.paper_trading_service_adapter.get_user_logger")
 class TestPreMarketQuantityAdjustment:
     """Test pre-market quantity adjustment (9:05 AM)"""
 
     def test_adjust_amo_quantities_premarket_updates_quantity(
-        self, db_session, test_user, mock_paper_broker
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
         """Test that pre-market adjustment updates quantity to keep capital constant"""
         from config.strategy_config import StrategyConfig
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(
@@ -236,12 +286,13 @@ class TestPreMarketQuantityAdjustment:
         assert new_order.order_type == OrderType.MARKET  # Still MARKET
         assert new_order.price is None  # Price not set for MARKET orders
 
-    def test_adjust_amo_quantities_premarket_no_adjustment_when_price_same(
-        self, db_session, test_user, mock_paper_broker
+    def test_adjust_amo_quantities_premarket_no_adjustment_when_market_qty_same(
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
-        """Test that no adjustment happens when pre-market price equals closing price"""
+        """MARKET pending buy with unchanged qty needs no 9:05 finalize."""
         from config.strategy_config import StrategyConfig
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(
@@ -251,10 +302,9 @@ class TestPreMarketQuantityAdjustment:
         )
         adapter.broker = mock_paper_broker
 
-        # Create pending order
         pending_order = Order(
             symbol="RELIANCE",
-            quantity=2000,  # 2000 × 100 = 200,000
+            quantity=2000,
             order_type=OrderType.MARKET,
             transaction_type=TransactionType.BUY,
             variety=OrderVariety.AMO,
@@ -264,26 +314,71 @@ class TestPreMarketQuantityAdjustment:
         pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
 
         mock_paper_broker.get_pending_orders.return_value = [pending_order]
-
-        # Pre-market price same as closing (100.0)
         mock_paper_broker.price_provider.get_price.return_value = 100.0
 
-        summary = adapter.adjust_amo_quantities_premarket()
+        with patch.object(
+            adapter, "_resolve_premarket_target_capital", return_value=200_000.0
+        ):
+            summary = adapter.adjust_amo_quantities_premarket()
 
-        # Should not adjust (quantity would be same)
         assert summary["no_adjustment_needed"] == 1
         assert summary["adjusted"] == 0
-
-        # Should not cancel or place new order
         assert not mock_paper_broker.cancel_order.called
         assert not mock_paper_broker.place_order.called
 
+    def test_adjust_amo_quantities_premarket_limit_finalized_when_qty_unchanged(
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
+    ):
+        """Pre-open LIMIT @ close is finalized as MARKET even when qty is unchanged."""
+        from config.strategy_config import StrategyConfig
+
+        mock_get_user_logger.return_value = MagicMock()
+        strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingServiceAdapter(
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+        )
+        adapter.broker = mock_paper_broker
+
+        pending_order = Order(
+            symbol="RELIANCE",
+            quantity=2000,
+            order_type=OrderType.LIMIT,
+            transaction_type=TransactionType.BUY,
+            price=Money(100.0),
+            variety=OrderVariety.REGULAR,
+            order_id="ORDER_LIMIT",
+            status=OrderStatus.OPEN,
+        )
+        pending_order._metadata = {"original_ticker": "RELIANCE.NS"}
+
+        mock_paper_broker.get_pending_orders.return_value = [pending_order]
+        mock_paper_broker.price_provider.get_price.return_value = 100.0
+        mock_paper_broker.cancel_order.return_value = True
+        mock_paper_broker.place_order.return_value = "ORDER_MKT"
+
+        with (
+            patch.object(adapter, "_resolve_premarket_target_capital", return_value=200_000.0),
+            patch.object(adapter, "_calculate_ema9", return_value=110.0),
+        ):
+            summary = adapter.adjust_amo_quantities_premarket()
+
+        assert summary["adjusted"] == 1
+        assert summary["no_adjustment_needed"] == 0
+        assert mock_paper_broker.place_order.called
+        new_order = mock_paper_broker.place_order.call_args[0][0]
+        assert new_order.order_type == OrderType.MARKET
+        assert new_order.quantity == 2000
+
     def test_adjust_amo_quantities_premarket_handles_price_unavailable(
-        self, db_session, test_user, mock_paper_broker
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
         """Test that adjustment skips orders when pre-market price is unavailable"""
         from config.strategy_config import StrategyConfig
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(
@@ -316,11 +411,12 @@ class TestPreMarketQuantityAdjustment:
         assert summary["adjusted"] == 0
 
     def test_adjust_amo_quantities_premarket_logs_price_change(
-        self, db_session, test_user, mock_paper_broker
+        self, mock_get_user_logger, db_session, test_user, mock_paper_broker
     ):
         """Test that price change is logged even though price parameter is not used"""
         from config.strategy_config import StrategyConfig
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=200000.0, max_portfolio_size=6)
 
         adapter = PaperTradingServiceAdapter(

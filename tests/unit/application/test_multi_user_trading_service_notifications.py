@@ -211,7 +211,7 @@ class TestMultiUserTradingServiceNotifications:
         # Verify email notification was sent
         mock_email_notifier.send_service_notification.assert_called_once()
         call_args = mock_email_notifier.send_service_notification.call_args
-        assert call_args[1]["email"] == "test@example.com"
+        assert call_args[1]["to_email"] == "test@example.com"
         assert "Unified Trading Service Started" in call_args[1]["title"]
         assert call_args[1]["level"] == "info"
 
@@ -328,7 +328,7 @@ class TestMultiUserTradingServiceNotifications:
         # Verify email notification was sent
         mock_email_notifier.send_service_notification.assert_called_once()
         call_args = mock_email_notifier.send_service_notification.call_args
-        assert call_args[1]["email"] == "test@example.com"
+        assert call_args[1]["to_email"] == "test@example.com"
         assert "Unified Trading Service Stopped" in call_args[1]["title"]
         assert call_args[1]["level"] == "info"
 

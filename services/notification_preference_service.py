@@ -35,6 +35,7 @@ class NotificationEventType:
     RETRY_QUEUE_REMOVED = "retry_queue_removed"
     RETRY_QUEUE_RETRIED = "retry_queue_retried"
     PARTIAL_FILL = "partial_fill"
+    BALANCE_SHORTFALL = "balance_shortfall"
 
     # System events
     SYSTEM_ERROR = "system_error"
@@ -70,6 +71,7 @@ class NotificationEventType:
             cls.RETRY_QUEUE_REMOVED,
             cls.RETRY_QUEUE_RETRIED,
             cls.PARTIAL_FILL,
+            cls.BALANCE_SHORTFALL,
             cls.SYSTEM_ERROR,
             cls.SYSTEM_WARNING,
             cls.SYSTEM_INFO,
@@ -79,6 +81,17 @@ class NotificationEventType:
             cls.PAYMENT_FAILED,
             cls.SERVICE_EVENT,  # Legacy
         ]
+
+
+# Service lifecycle notifications are opt-in (disabled when no preference row exists).
+_SERVICE_EVENT_TYPES = frozenset(
+    {
+        NotificationEventType.SERVICE_STARTED,
+        NotificationEventType.SERVICE_STOPPED,
+        NotificationEventType.SERVICE_EXECUTION_COMPLETED,
+        NotificationEventType.SERVICE_EVENT,
+    }
+)
 
 
 class NotificationPreferenceService:
@@ -153,8 +166,8 @@ class NotificationPreferenceService:
                 telegram_enabled=False,
                 email_enabled=False,
                 in_app_enabled=True,  # In-app enabled by default
-                # Legacy types default to True (backward compatibility)
-                notify_service_events=True,
+                # Legacy types: service events opt-in; trading/system stay on
+                notify_service_events=False,
                 notify_trading_events=True,
                 notify_system_events=True,
                 notify_errors=True,
@@ -163,19 +176,20 @@ class NotificationPreferenceService:
                 notify_order_rejected=True,
                 notify_order_executed=True,
                 notify_order_cancelled=True,
-                notify_order_modified=False,  # New event, opt-in
+                notify_order_modified=True,  # 9:05 pre-market adjusts; not sell-monitor edits
                 notify_retry_queue_added=True,
                 notify_retry_queue_updated=True,
                 notify_retry_queue_removed=True,
                 notify_retry_queue_retried=True,
                 notify_partial_fill=True,
+                notify_balance_shortfall=True,
                 notify_system_errors=True,
                 notify_system_warnings=False,  # Reduce noise
                 notify_system_info=False,  # Reduce noise
-                # Granular service event preferences
-                notify_service_started=True,
-                notify_service_stopped=True,
-                notify_service_execution_completed=True,
+                # Granular service event preferences (opt-in)
+                notify_service_started=False,
+                notify_service_stopped=False,
+                notify_service_execution_completed=False,
                 notify_payment_failed=True,
             )
             self.db.add(preferences)
@@ -257,9 +271,18 @@ class NotificationPreferenceService:
         """
         preferences = self.get_preferences(user_id)
 
-        # If no preferences exist, use defaults (all enabled for backward compatibility)
+        # If no preferences exist, use defaults (service events off; others on)
         if preferences is None:
-            logger.debug(f"No preferences found for user {user_id}, using defaults (all enabled)")
+            if event_type in _SERVICE_EVENT_TYPES:
+                logger.debug(
+                    f"No preferences found for user {user_id}, "
+                    f"service event {event_type} default disabled"
+                )
+                return False
+            logger.debug(
+                f"No preferences found for user {user_id}, "
+                f"non-service event {event_type} default enabled"
+            )
             return True
 
         # Check channel is enabled
@@ -306,6 +329,7 @@ class NotificationPreferenceService:
             NotificationEventType.RETRY_QUEUE_REMOVED: preferences.notify_retry_queue_removed,
             NotificationEventType.RETRY_QUEUE_RETRIED: preferences.notify_retry_queue_retried,
             NotificationEventType.PARTIAL_FILL: preferences.notify_partial_fill,
+            NotificationEventType.BALANCE_SHORTFALL: preferences.notify_balance_shortfall,
             NotificationEventType.SYSTEM_ERROR: preferences.notify_system_errors,
             NotificationEventType.SYSTEM_WARNING: preferences.notify_system_warnings,
             NotificationEventType.SYSTEM_INFO: preferences.notify_system_info,

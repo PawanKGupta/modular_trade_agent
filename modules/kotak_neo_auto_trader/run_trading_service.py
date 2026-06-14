@@ -66,6 +66,20 @@ except ImportError:
     )
 
 
+def _balance_shortfall_digest_context(engine, *, dry_run: bool):
+    """Batch shortfall alerts for a full buy run (real ``AutoTradeEngine`` only)."""
+    from contextlib import nullcontext
+
+    # Import concrete class so unit tests can patch ``run_trading_service.AutoTradeEngine``.
+    from modules.kotak_neo_auto_trader.auto_trade_engine import (
+        AutoTradeEngine as _RealAutoTradeEngine,
+    )
+
+    if isinstance(engine, _RealAutoTradeEngine):
+        return engine.balance_shortfall_digest_batch(dry_run=dry_run)
+    return nullcontext()
+
+
 class TradingService:
     """
     Unified trading service that runs all tasks with single persistent session.
@@ -160,7 +174,6 @@ class TradingService:
             "premarket_amo_adjustment": False,
             "sell_monitor_started": False,
         }
-
         # User-scoped logger
         from src.infrastructure.logging import get_user_logger
 
@@ -994,75 +1007,79 @@ class TradingService:
                 task_context["recommendations_count"] = 0
                 task_context["summary"] = summary
             else:
-                self.logger.info("Loading latest recommendations...", action="run_buy_orders")
-                recs = self.engine.load_latest_recommendations()
-                self.logger.info(
-                    f"Loaded {len(recs)} recommendations for buy orders", action="run_buy_orders"
-                )
-                if recs:
+                with _balance_shortfall_digest_context(self.engine, dry_run=False):
+                    self.logger.info("Loading latest recommendations...", action="run_buy_orders")
+                    recs = self.engine.load_latest_recommendations()
                     self.logger.info(
-                        f"Processing {len(recs)} recommendations...", action="run_buy_orders"
+                        f"Loaded {len(recs)} recommendations for buy orders",
+                        action="run_buy_orders",
                     )
-                    try:
-                        # Place fresh entry orders
-                        summary = self.engine.place_new_entries(recs)
-                        self.logger.info(f"Buy orders summary: {summary}", action="run_buy_orders")
-                        # Log detailed summary
+                    if recs:
                         self.logger.info(
-                            f"  - Attempted: {summary.get('attempted', 0)}, "
-                            f"Placed: {summary.get('placed', 0)}, "
-                            f"Retried: {summary.get('retried', 0)}, "
-                            f"Failed (balance): {summary.get('failed_balance', 0)}, "
-                            f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                            f"Processing {len(recs)} recommendations...",
                             action="run_buy_orders",
                         )
-                    except OrderPlacementError as exc:
-                        # OrderPlacementError should no longer be raised (changed to continue)
-                        # But keep this handler for backward compatibility
-                        error_msg = (
-                            f"Unexpected OrderPlacementError: {exc}. "
-                            "This should not occur with current implementation."
-                        )
-                        self.logger.error(error_msg, action="run_buy_orders")
+                        try:
+                            # Place fresh entry orders
+                            summary = self.engine.place_new_entries(recs)
+                            self.logger.info(
+                                f"Buy orders summary: {summary}", action="run_buy_orders"
+                            )
+                            # Log detailed summary
+                            self.logger.info(
+                                f"  - Attempted: {summary.get('attempted', 0)}, "
+                                f"Placed: {summary.get('placed', 0)}, "
+                                f"Retried: {summary.get('retried', 0)}, "
+                                f"Failed (balance): {summary.get('failed_balance', 0)}, "
+                                f"Skipped: {summary.get('skipped_duplicates', 0) + summary.get('skipped_portfolio_limit', 0) + summary.get('skipped_missing_data', 0) + summary.get('skipped_invalid_qty', 0)}",
+                                action="run_buy_orders",
+                            )
+                        except OrderPlacementError as exc:
+                            # OrderPlacementError should no longer be raised (changed to continue)
+                            # But keep this handler for backward compatibility
+                            error_msg = (
+                                f"Unexpected OrderPlacementError: {exc}. "
+                                "This should not occur with current implementation."
+                            )
+                            self.logger.error(error_msg, action="run_buy_orders")
+                            task_context["recommendations_count"] = len(recs)
+                            task_context["error"] = str(exc)
+                            if getattr(exc, "symbol", None):
+                                task_context["failed_symbol"] = exc.symbol
+                            # Don't raise - let the summary be returned
+                            summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+
                         task_context["recommendations_count"] = len(recs)
-                        task_context["error"] = str(exc)
-                        if getattr(exc, "symbol", None):
-                            task_context["failed_symbol"] = exc.symbol
-                        # Don't raise - let the summary be returned
-                        summary = {"attempted": 0, "placed": 0, "ticker_attempts": []}
+                        task_context["summary"] = summary
+                    else:
+                        self.logger.warning(
+                            "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                            action="run_buy_orders",
+                        )
+                        self.logger.warning(
+                            "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                            action="run_buy_orders",
+                        )
+                        task_context["recommendations_count"] = 0
+                        task_context["summary"] = summary  # Return empty summary
 
-                    task_context["recommendations_count"] = len(recs)
-                    task_context["summary"] = summary
-                else:
-                    self.logger.warning(
-                        "No buy recommendations to place - check if analysis has run and signals exist in database/CSV",
+                    # Check and place re-entry orders (regardless of fresh entry recommendations)
+                    from modules.kotak_neo_auto_trader.reentry_logging import (
+                        format_reentry_run_buy_orders_detail,
+                    )
+
+                    self.logger.info(
+                        "Evaluating re-entry for open positions (see re-entry summary below)...",
                         action="run_buy_orders",
                     )
-                    self.logger.warning(
-                        "This could mean: (1) No analysis results available, (2) No buy/strong_buy signals, (3) Signals table is empty",
+                    reentry_summary = self.engine.place_reentry_orders()
+                    self.logger.info(
+                        f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
+                    )
+                    self.logger.info(
+                        f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
                         action="run_buy_orders",
                     )
-                    task_context["recommendations_count"] = 0
-                    task_context["summary"] = summary  # Return empty summary
-
-                # Check and place re-entry orders (regardless of whether there are fresh entry recommendations)
-                # Re-entry should be checked independently of fresh entry orders
-                from modules.kotak_neo_auto_trader.reentry_logging import (
-                    format_reentry_run_buy_orders_detail,
-                )
-
-                self.logger.info(
-                    "Evaluating re-entry for open positions (see re-entry summary below)...",
-                    action="run_buy_orders",
-                )
-                reentry_summary = self.engine.place_reentry_orders()
-                self.logger.info(
-                    f"Re-entry orders summary: {reentry_summary}", action="run_buy_orders"
-                )
-                self.logger.info(
-                    f"  - {format_reentry_run_buy_orders_detail(reentry_summary)}",
-                    action="run_buy_orders",
-                )
 
             self.tasks_completed["buy_orders"] = True
             self.logger.info("Buy orders placement completed", action="run_buy_orders")
@@ -1128,6 +1145,18 @@ class TradingService:
                     task_context["synced_signals"] = synced_count
             except Exception as e:
                 logger.warning(f"EOD sync failed (user {self.user_id}): {e}")
+
+            try:
+                if self.engine and hasattr(self.engine, "cancel_unexecuted_day_buy_orders_at_eod"):
+                    buy_cancel_summary = self.engine.cancel_unexecuted_day_buy_orders_at_eod()
+                    task_context["day_buy_orders_cancelled"] = buy_cancel_summary.get(
+                        "cancelled", 0
+                    )
+                    task_context["day_buy_orders_db_cancelled"] = buy_cancel_summary.get(
+                        "db_only_cancelled", 0
+                    )
+            except Exception as e:
+                logger.warning(f"EOD day-buy cancellation failed: {e}", exc_info=True)
 
             # Run EOD cleanup if available
             if hasattr(self.engine, "eod_cleanup") and self.engine.eod_cleanup:
@@ -1910,165 +1939,156 @@ class TradingService:
                 self.logger.info("Entering shutdown sequence...", action="run")
                 self.shutdown()
         finally:
-            # Update database status to False when thread exits (CRITICAL - must succeed)
-            # This ensures database reflects actual service state even if thread
-            # crashes/exits unexpectedly
-            # Use aggressive retry logic with emergency session fallback for reliability
-            self.logger.info(
-                "Updating service status to stopped in finally block",
-                action="run",
+            from src.application.services.service_lifecycle_generation import (  # noqa: PLC0415
+                should_apply_thread_exit_status,
             )
 
-            max_exit_retries = 5
-            exit_retry_delays = [0.2, 0.5, 1.0, 2.0, 5.0]
-            exit_status_updated = False
+            thread_generation = getattr(self, "_lifecycle_generation", None)
+            if thread_generation is not None and not should_apply_thread_exit_status(
+                self.user_id, thread_generation
+            ):
+                self.logger.info(
+                    "Skipping thread-exit status update (superseded by newer start/stop)",
+                    action="run",
+                )
+            else:
+                self._apply_thread_exit_service_status(thread_db)
 
-            from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+            self.logger.debug("Cleaning up thread-local session", action="run")
+            try:
+                thread_db.rollback()
+                self.logger.debug("Thread-local session rolled back", action="run")
+            except Exception:
+                pass
+            try:
+                thread_db.close()
+                self.logger.debug("Thread-local session closed", action="run")
+            except Exception:
+                pass
 
-            # Try with existing thread_db first (up to 5 retries)
-            self.logger.debug(
-                f"Attempting service status update with thread_db (user {self.user_id})",
+    def _apply_thread_exit_service_status(self, thread_db) -> None:
+        """Persist stopped status when the broker scheduler thread exits."""
+        self.logger.info(
+            "Updating service status to stopped in finally block",
+            action="run",
+        )
+
+        max_exit_retries = 5
+        exit_retry_delays = [0.2, 0.5, 1.0, 2.0, 5.0]
+        exit_status_updated = False
+
+        from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+
+        self.logger.debug(
+            f"Attempting service status update with thread_db (user {self.user_id})",
+            action="run",
+        )
+        for retry_attempt in range(max_exit_retries):
+            try:
+                from src.infrastructure.persistence.service_status_repository import (
+                    ServiceStatusRepository,
+                )
+
+                status_repo = ServiceStatusRepository(thread_db)
+                status_repo.update_running(self.user_id, running=False)
+                status_repo.update_heartbeat(self.user_id)
+                thread_db.commit()
+                exit_status_updated = True
+                self.logger.info(
+                    f"Successfully updated service status to stopped on thread exit "
+                    f"(attempt {retry_attempt + 1})",
+                    action="run",
+                )
+                break
+            except OperationalError as op_err:
+                thread_db.rollback()
+                thread_db.expire_all()
+                is_locked_error = "database is locked" in str(op_err).lower()
+
+                self.logger.debug(
+                    f"Service status update attempt {retry_attempt + 1}/{max_exit_retries} failed: "
+                    f"{op_err} (is_locked: {is_locked_error})",
+                    action="run",
+                )
+
+                if retry_attempt < max_exit_retries - 1:
+                    delay = exit_retry_delays[retry_attempt]
+                    self.logger.debug(
+                        f"Retrying service status update after {delay}s delay",
+                        action="run",
+                    )
+                    time.sleep(delay)
+                    continue
+                self.logger.warning(
+                    f"Service status update with thread_db failed after {max_exit_retries} attempts",
+                    action="run",
+                )
+            except Exception as e:
+                thread_db.rollback()
+                thread_db.expire_all()
+                self.logger.warning(
+                    f"Service status update failed with non-OperationalError: {e}. "
+                    "Trying emergency session...",
+                    action="run",
+                )
+                break
+
+        if not exit_status_updated:
+            self.logger.warning(
+                "Thread_db status update failed - attempting emergency session",
                 action="run",
             )
-            for retry_attempt in range(max_exit_retries):
+            try:
+                from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
+
+                emergency_db = SessionLocal()
+                self.logger.debug(
+                    "Created emergency session for service status update",
+                    action="run",
+                )
                 try:
                     from src.infrastructure.persistence.service_status_repository import (
                         ServiceStatusRepository,
                     )
 
-                    status_repo = ServiceStatusRepository(thread_db)
-                    status_repo.update_running(self.user_id, running=False)
-                    status_repo.update_heartbeat(self.user_id)
-                    thread_db.commit()
+                    emergency_repo = ServiceStatusRepository(emergency_db)
+                    emergency_repo.update_running(self.user_id, running=False)
+                    emergency_repo.update_heartbeat(self.user_id)
+                    emergency_db.commit()
                     exit_status_updated = True
                     self.logger.info(
-                        f"Successfully updated service status to stopped on thread exit "
-                        f"(attempt {retry_attempt + 1})",
+                        "Successfully updated service status using emergency session",
                         action="run",
                     )
-                    break
-                except OperationalError as op_err:
-                    thread_db.rollback()
-                    thread_db.expire_all()
-                    is_locked_error = "database is locked" in str(op_err).lower()
-
-                    self.logger.debug(
-                        f"Service status update attempt {retry_attempt + 1}/{max_exit_retries} failed: "
-                        f"{op_err} (is_locked: {is_locked_error})",
-                        action="run",
-                    )
-
-                    if retry_attempt < max_exit_retries - 1:
-                        # Retry with increasing delays
-                        delay = exit_retry_delays[retry_attempt]
-                        self.logger.debug(
-                            f"Retrying service status update after {delay}s delay",
-                            action="run",
-                        )
-                        time.sleep(delay)
-                        continue
-                    else:
-                        # Final failure with thread_db - will try emergency session below
-                        self.logger.warning(
-                            f"Service status update with thread_db failed after {max_exit_retries} attempts",
-                            action="run",
-                        )
-                except Exception as e:
-                    thread_db.rollback()
-                    thread_db.expire_all()
-                    # Non-OperationalError - try emergency session immediately
-                    self.logger.warning(
-                        f"Service status update failed with non-OperationalError: {e}. "
-                        "Trying emergency session...",
-                        action="run",
-                    )
-                    break
-
-            # If exit status update failed, try with a fresh session (emergency fallback)
-            if not exit_status_updated:
-                self.logger.warning(
-                    "Thread_db status update failed - attempting emergency session",
-                    action="run",
-                )
-                try:
-                    from src.infrastructure.db.session import SessionLocal  # noqa: PLC0415
-
-                    emergency_db = SessionLocal()
-                    self.logger.debug(
-                        "Created emergency session for service status update",
-                        action="run",
-                    )
-                    try:
-                        from src.infrastructure.persistence.service_status_repository import (
-                            ServiceStatusRepository,
-                        )
-
-                        emergency_repo = ServiceStatusRepository(emergency_db)
-                        emergency_repo.update_running(self.user_id, running=False)
-                        emergency_repo.update_heartbeat(self.user_id)
-                        emergency_db.commit()
-                        exit_status_updated = True
-                        self.logger.info(
-                            "Successfully updated service status using emergency session",
-                            action="run",
-                        )
-                    except Exception as e2:
-                        emergency_db.rollback()
-                        self.logger.error(
-                            f"CRITICAL: Emergency service status update failed: {e2}",
-                            action="run",
-                        )
-                    finally:
-                        try:
-                            emergency_db.close()
-                            self.logger.debug("Emergency session closed", action="run")
-                        except Exception:  # noqa: S110
-                            pass  # Ignore close errors
-                except Exception as e3:
+                except Exception as e2:
+                    emergency_db.rollback()
                     self.logger.error(
-                        f"CRITICAL: Could not create emergency session: {e3}",
+                        f"CRITICAL: Emergency service status update failed: {e2}",
                         action="run",
                     )
-
-            # If still not updated, log critical error (but don't fail - cleanup must continue)
-            if not exit_status_updated:
+                finally:
+                    try:
+                        emergency_db.close()
+                        self.logger.debug("Emergency session closed", action="run")
+                    except Exception:  # noqa: S110
+                        pass
+            except Exception as e3:
                 self.logger.error(
-                    "CRITICAL: Service status could not be updated on exit. "
-                    "Database may show stale 'running' status!",
-                    action="run",
-                )
-            else:
-                self.logger.debug(
-                    "Service status update completed successfully in finally block",
+                    f"CRITICAL: Could not create emergency session: {e3}",
                     action="run",
                 )
 
-            # PERFORMANCE FIX: Clean up thread-local session to prevent "idle in transaction" leaks
-            # This matches the pattern in get_session() to ensure proper transaction lifecycle:
-            # - Rollback any pending transaction (safe even if already committed)
-            # - Always close the session to return connection to pool
-            # This prevents connection leaks when exceptions occur during service execution
-            self.logger.debug("Cleaning up thread-local session", action="run")
-
-            # Rollback any pending transaction (safe even if already committed/closed)
-            # This prevents "idle in transaction" state if an exception occurred
-            try:
-                thread_db.rollback()
-                self.logger.debug("Thread-local session rolled back", action="run")
-            except Exception:
-                # Ignore rollback errors (session may already be closed/rolled back)
-                # This is safe - rollback is idempotent and won't cause harm
-                pass
-
-            # Always close the session to return connection to pool
-            # This ensures connections are never left open, preventing connection exhaustion
-            try:
-                thread_db.close()
-                self.logger.debug("Thread-local session closed", action="run")
-            except Exception:
-                # Ignore close errors if session is in bad state
-                # This is safe - if close fails, the connection will be recycled by the pool
-                pass
+        if not exit_status_updated:
+            self.logger.error(
+                "CRITICAL: Service status could not be updated on exit. "
+                "Database may show stale 'running' status!",
+                action="run",
+            )
+        else:
+            self.logger.debug(
+                "Service status update completed successfully in finally block",
+                action="run",
+            )
 
 
 def main():

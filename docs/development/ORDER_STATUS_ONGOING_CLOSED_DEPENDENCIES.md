@@ -81,7 +81,7 @@ Here "close position" means updating **Positions** (e.g. `mark_closed`, `closed_
 - **sell_engine**: Uses `positions_repo.mark_closed()` when sell executes; elsewhere checks `position.closed_at is None` for open.
 - **auto_trade_engine**: Open positions filtered by `p.closed_at is None`; calls `positions_repo.mark_closed()`; re-entry cancellation checks `position.closed_at is not None`.
 - **unified_order_monitor**: Checks `existing_pos.closed_at`, `current_position.closed_at`; creates/updates positions; does not use order status for “position closed”.
-- **portfolio_service.get_current_positions()**: Merges broker holdings with DB; “position open” is from holdings/positions, not from order status alone.
+- **portfolio_service.get_current_positions()**: Counts open **system** positions (`Positions` table) plus in-flight system buy orders; manual broker demat holdings do not count toward `max_portfolio_size`.
 - **paper_trading_adapter**: Uses `position.closed_at` and `positions_repo.mark_closed()`; open positions filtered by `closed_at is None`.
 
 **Summary:** Order status **CLOSED**/ONGOING means “order filled”. Whether a **position** is open or closed is determined only by the **Positions** table (`closed_at`). Modules that need “closed position” or “open position” use the Positions table (and `mark_closed()` for closing), not order status.

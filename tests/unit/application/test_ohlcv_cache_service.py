@@ -343,6 +343,41 @@ def test_gap_fill_weekly_still_yahoo(db_session, monkeypatch):
     assert yahoo_calls["n"] >= 1
 
 
+def _weekly_yahoo_with_incomplete_tail(*_args, **_kwargs):
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-05-18", "2026-05-25", "2026-06-08"]),
+            "open": [1100.0, 1125.0, 987.9],
+            "high": [1150.0, 1149.8, 1006.7],
+            "low": [1050.0, 1091.0, 975.6],
+            "close": [1120.0, 1100.1, float("nan")],
+            "volume": [1000000, 1500000, 185871],
+        }
+    )
+
+
+def test_gap_fill_weekly_drops_incomplete_open_week_bar(db_session, monkeypatch):
+    """Weekly gap_fill validates after tail drop; incomplete open week is not cached."""
+    reset_ohlcv_cache_stats()
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_weekly_yahoo_with_incomplete_tail)
+    start = date(2026, 5, 1)
+    end = date(2026, 6, 8)
+    n = svc.gap_fill("G.NS", start, end, interval="1wk", yf_end_date="2026-06-08")
+
+    assert n == 2
+    cached = svc.repo.get_range("G.NS", start, end, interval="1wk")
+    assert len(cached) == 2
+    assert all(b.close is not None for b in cached)
+    meta = svc.repo.get_symbol_meta("G.NS", interval="1wk")
+    assert meta is not None
+    assert meta.fetch_status in ("ok", "partial")
+
+
 def test_filter_daily_bars_nse_only_excludes_yfinance(db_session, monkeypatch):
     from src.application.services.ohlcv_cache_service import _filter_daily_bars_for_source_policy
 
@@ -435,3 +470,70 @@ def test_get_ohlcv_blocks_short_daily_history_on_long_lookback(db_session, monke
     assert df_short is not None
     df_long = svc.get_ohlcv("SHORT.NS", days=400, end_date="2024-01-31", add_current_day=False)
     assert df_long is None
+
+
+def test_get_ohlcv_skips_nse_gap_fill_for_today_during_market_hours(db_session, monkeypatch):
+    """When only calendar today is missing, do not invoke NSE gap-fill pre-EOD."""
+    from zoneinfo import ZoneInfo
+
+    reset_ohlcv_cache_stats()
+    ist = ZoneInfo("Asia/Kolkata")
+    today = date(2026, 6, 12)
+    yesterday = date(2026, 6, 11)
+
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_uses_nse",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.daily_ohlcv_yahoo_fallback",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_availability.nse_bhavcopy_ingest_allowed_for_today",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_availability.ist_now",
+        lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
+    )
+    monkeypatch.setattr(
+        "src.application.services.ohlcv_cache_service.ist_now",
+        lambda: datetime(2026, 6, 12, 10, 0, tzinfo=ist),
+    )
+
+    nse_called = {"n": 0}
+
+    class FakeIngest:
+        def __init__(self, _db):
+            pass
+
+        def fill_symbol_range(self, ticker, start, end):
+            nse_called["n"] += 1
+            return 0
+
+    monkeypatch.setattr(
+        "src.application.services.nse_bhavcopy_ingest_service.NseBhavcopyIngestService",
+        FakeIngest,
+    )
+
+    repo = PriceCacheRepository(db_session)
+    start = yesterday - timedelta(days=65)
+    for td in iter_trading_days(start, yesterday):
+        repo.create_or_update(
+            "G.NS",
+            td,
+            close=10.0,
+            open=10.0,
+            high=11.0,
+            low=9.0,
+            volume=100,
+            source="nse",
+        )
+
+    svc = OhlcvCacheService(db_session, fetch_func=_fake_yahoo)
+    df = svc.get_ohlcv("G.NS", days=60, end_date=today.isoformat(), add_current_day=False)
+    assert df is not None
+    assert nse_called["n"] == 0
+    assert yesterday in set(df["date"].dt.date)
+    assert today not in set(df["date"].dt.date)

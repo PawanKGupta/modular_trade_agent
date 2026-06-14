@@ -53,7 +53,7 @@ class TestSchedulerThreadSafety:
                     # Start scheduler in a thread
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
-                        args=(mock_service, 1),
+                        args=(mock_service, 1, 1),
                         daemon=True,
                     )
                     thread.start()
@@ -103,7 +103,7 @@ class TestSchedulerThreadSafety:
                         # Run scheduler for a short time
                         thread = threading.Thread(
                             target=self.service._run_paper_trading_scheduler,
-                            args=(mock_service, 1),
+                            args=(mock_service, 1, 1),
                             daemon=True,
                         )
                         thread.start()
@@ -146,7 +146,7 @@ class TestSchedulerThreadSafety:
                     # This should not raise InvalidRequestError or session conflicts
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
-                        args=(mock_service, 1),
+                        args=(mock_service, 1, 1),
                         daemon=True,
                     )
                     thread.start()
@@ -177,12 +177,12 @@ class TestSchedulerThreadSafety:
                 # Start two scheduler threads
                 thread1 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service1, 1),
+                    args=(mock_service1, 1, 1),
                     daemon=True,
                 )
                 thread2 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service2, 2),
+                    args=(mock_service2, 2, 1),
                     daemon=True,
                 )
 

@@ -236,5 +236,9 @@ class UpdateServiceScheduleResponse(BaseModel):
     message: str
     schedule: ServiceScheduleResponse
     requires_restart: bool = Field(
-        default=True, description="Whether unified service needs to restart to apply changes"
+        default=True,
+        description=(
+            "Hint for operators: redeploy the app or restart running unified "
+            "services so schedulers pick up the new times."
+        ),
     )

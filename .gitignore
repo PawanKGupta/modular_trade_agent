@@ -3,7 +3,6 @@ __pycache__/
 .env
 *.env
 .venv/
-.cursor/
 .venv-graphify/
 graphify-out/
 *.sqlite3
@@ -74,9 +73,13 @@ coverage.json
 htmlcov/
 .pytest_cache/
 
-# IDE directories — ignore Cursor project folder except shared MCP config
+# IDE directories — ignore Cursor project folder except shared team config
 .cursor/*
 !.cursor/mcp.json
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/commands/
+!.cursor/commands/**
 
 # Web artifacts
 web/node_modules/

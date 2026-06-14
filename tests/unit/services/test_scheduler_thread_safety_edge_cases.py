@@ -37,7 +37,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 # Should not crash, should handle exception
                 thread = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service, 1),
+                    args=(mock_service, 1, 1),
                     daemon=True,
                 )
                 thread.start()
@@ -80,7 +80,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                         ):
                             thread = threading.Thread(
                                 target=self.service._run_paper_trading_scheduler,
-                                args=(mock_service, 1),
+                                args=(mock_service, 1, 1),
                                 daemon=True,
                             )
                             thread.start()
@@ -115,17 +115,17 @@ class TestSchedulerThreadSafetyEdgeCases:
                 # Start three scheduler threads for different users
                 thread1 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service1, 1),
+                    args=(mock_service1, 1, 1),
                     daemon=True,
                 )
                 thread2 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service2, 2),
+                    args=(mock_service2, 2, 1),
                     daemon=True,
                 )
                 thread3 = threading.Thread(
                     target=self.service._run_paper_trading_scheduler,
-                    args=(mock_service3, 3),
+                    args=(mock_service3, 3, 1),
                     daemon=True,
                 )
 
@@ -178,7 +178,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 ):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
-                        args=(mock_service, 1),
+                        args=(mock_service, 1, 1),
                         daemon=True,
                     )
                     thread.start()
@@ -218,7 +218,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 with patch("src.application.services.multi_user_trading_service.get_user_logger"):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
-                        args=(mock_service, 1),
+                        args=(mock_service, 1, 1),
                         daemon=True,
                     )
                     thread.start()
@@ -272,7 +272,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                         # Run scheduler briefly
                         thread = threading.Thread(
                             target=self.service._run_paper_trading_scheduler,
-                            args=(mock_service, 1),
+                            args=(mock_service, 1, 1),
                             daemon=True,
                         )
                         thread.start()
@@ -323,7 +323,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                         ):
                             thread = threading.Thread(
                                 target=self.service._run_paper_trading_scheduler,
-                                args=(mock_service, 1),
+                                args=(mock_service, 1, 1),
                                 daemon=True,
                             )
                             thread.start()
@@ -361,7 +361,7 @@ class TestSchedulerThreadSafetyEdgeCases:
                 for i, service in enumerate(services):
                     thread = threading.Thread(
                         target=self.service._run_paper_trading_scheduler,
-                        args=(service, i + 1),
+                        args=(service, i + 1, 1),
                         daemon=True,
                     )
                     threads.append(thread)

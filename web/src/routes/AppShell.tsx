@@ -131,6 +131,7 @@ export function AppShell() {
 				{ path: '/dashboard/trading-config', label: 'Trading Config', icon: '⚙️' },
 				{ path: '/dashboard/billing', label: 'Billing', icon: '💳' },
 				{ path: '/dashboard/notification-preferences', label: 'Notification Settings', icon: '🔕' },
+				{ path: '/help', label: 'Help & setup', icon: '📖' },
 			],
 		},
 		{

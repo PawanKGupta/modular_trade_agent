@@ -211,6 +211,43 @@ class NseBhavcopyFetcher:
     def _cache_path(self, trade_date: date) -> Path:
         return self.cache_dir / f"bhav_{trade_date.strftime('%Y%m%d')}.csv"
 
+    def has_cached_bhavcopy(self, trade_date: date) -> bool:
+        """True when a prior download left a CSV on disk for ``trade_date``."""
+        return self._cache_path(trade_date).exists()
+
+    def is_bhavcopy_available_on_nse(self, trade_date: date) -> bool:
+        """
+        Lightweight check whether the UDiFF zip exists on NSE archives (no CSV parse).
+
+        Uses disk cache when present; otherwise HEAD with GET fallback on the zip URL.
+        """
+        if self.has_cached_bhavcopy(trade_date):
+            return True
+        url = bhavcopy_url(trade_date)
+        if self._http_head_available(url):
+            return True
+        raw = self._http_get(url)
+        return raw is not None and len(raw) > 0
+
+    def _http_head_available(self, url: str, *, retry_on_403: bool = True) -> bool:
+        """Return True when NSE archive responds OK for ``url`` without reading the body."""
+        self._enforce_delay()
+        req = urllib.request.Request(url, method="HEAD", headers=NSE_HEADERS)
+        try:
+            with urllib.request.urlopen(req, timeout=self.request_timeout_s) as resp:
+                return 200 <= getattr(resp, "status", 200) < 300
+        except urllib.error.HTTPError as exc:
+            if exc.code in (404, 400):
+                return False
+            if exc.code == 403 and retry_on_403:
+                time.sleep(1.0)
+                return self._http_head_available(url, retry_on_403=False)
+            logger.debug("NSE bhavcopy HEAD failed for %s: HTTP %s", url, exc.code)
+            return False
+        except urllib.error.URLError as exc:
+            logger.debug("NSE bhavcopy HEAD network error for %s: %s", url, exc)
+            return False
+
     def _enforce_delay(self) -> None:
         if self.request_delay_s <= 0:
             return

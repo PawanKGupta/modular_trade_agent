@@ -299,7 +299,10 @@ class TestPaperTradingPlaceReentryOrders:
             "avg_volume": 5000000,
         }
 
-        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+        with (
+            patch.object(engine, "_get_daily_indicators", return_value=mock_indicators),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+        ):
             summary = engine.place_reentry_orders()
 
         assert (
@@ -327,6 +330,34 @@ class TestPaperTradingPlaceReentryOrders:
         assert call_args.order_type.value == "LIMIT"
         assert call_args._metadata["entry_type"] == "reentry"
         assert call_args._metadata["reentry_level"] == 20
+
+    def test_place_reentry_orders_uses_configured_off_hours_variety(
+        self, paper_engine_with_positions, db_session
+    ):
+        """Off-hours re-entry variety follows strategy_config.default_variety (live parity)."""
+        from modules.kotak_neo_auto_trader.domain import OrderVariety
+
+        engine = paper_engine_with_positions
+        engine.broker.place_order.return_value = "REENTRY_ORDER_123"
+        engine.strategy_config.default_variety = "AMO"
+
+        mock_indicators = {
+            "close": 2450.0,
+            "rsi10": 18.0,
+            "ema9": 2500.0,
+            "avg_volume": 5000000,
+        }
+
+        with (
+            patch.object(engine, "_get_daily_indicators", return_value=mock_indicators),
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
+            engine.place_reentry_orders()
+
+        placed = engine.broker.place_order.call_args[0][0]
+        assert placed.variety == OrderVariety.AMO
+        assert placed.order_type.value == "MARKET"
 
     def test_place_reentry_orders_insufficient_balance(
         self, paper_engine_with_positions, db_session
@@ -528,10 +559,14 @@ class TestPaperTradingPlaceReentryOrders:
 class TestPaperTradingRunBuyOrdersWithReentry:
     """Test that run_buy_orders calls place_reentry_orders"""
 
-    def test_run_buy_orders_calls_place_reentry_orders(self, db_session, test_user):
+    @patch("src.application.services.paper_trading_service_adapter.get_user_logger")
+    def test_run_buy_orders_calls_place_reentry_orders(
+        self, mock_get_user_logger, db_session, test_user
+    ):
         """Test that run_buy_orders calls place_reentry_orders after fresh entries"""
         from config.strategy_config import StrategyConfig
 
+        mock_get_user_logger.return_value = MagicMock()
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
 
         # Create mock broker
@@ -589,13 +624,8 @@ class TestPaperTradingRunBuyOrdersWithReentry:
             "Re-entry orders summary" in str(call) for call in adapter.logger.info.call_args_list
         )
 
-    def test_place_reentry_orders_premarket_adjustment_eligibility(self, db_session, test_user):
-        """Test that re-entry orders are eligible for pre-market adjustment (paper trading)
-
-        This test verifies that re-entry orders placed at 4:05 PM are eligible
-        for pre-market adjustment (9:05 AM) with recalculated quantity and price.
-        The actual adjustment is tested in test_premarket_amo_adjustment.py.
-        """
+    def test_place_reentry_orders_places_limit_buy(self, db_session, test_user):
+        """Re-entry orders use LIMIT at reference close (live staging flow)."""
         from unittest.mock import MagicMock, patch
 
         from config.strategy_config import StrategyConfig
@@ -643,7 +673,10 @@ class TestPaperTradingRunBuyOrdersWithReentry:
             "ema9": 2450.0,
             "avg_volume": 1000000,
         }
-        with patch.object(engine, "_get_daily_indicators", return_value=mock_indicators):
+        with (
+            patch.object(engine, "_get_daily_indicators", return_value=mock_indicators),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+        ):
             summary = engine.place_reentry_orders()
 
         assert summary["placed"] == 1, f"Expected 1 placed order, got {summary}"
@@ -654,3 +687,31 @@ class TestPaperTradingRunBuyOrdersWithReentry:
         assert placed.order_type.value == "LIMIT"
         assert placed.price is not None
         assert placed.quantity > 0
+
+
+class TestPaperTradingReentryExecutionCapital:
+    """LiquidityCapitalService parity for paper re-entry sizing."""
+
+    def test_calculate_execution_capital_matches_live_service(self, db_session, test_user):
+        """Execution capital uses LiquidityCapitalService (same as live)."""
+        from config.strategy_config import StrategyConfig
+
+        mock_broker = MagicMock()
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        engine = PaperTradingEngineAdapter(
+            broker=mock_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+
+        # High liquidity: full user capital
+        assert engine._calculate_execution_capital(1000.0, 200000) == 100000.0
+
+        # Medium liquidity: capped by max_capital (10% of avg_volume * price)
+        assert engine._calculate_execution_capital(50.0, 10000) == 50000.0
+
+        # Below minimum volume threshold: fallback to user_capital (live behavior)
+        assert engine._calculate_execution_capital(1000.0, 1000) == 100000.0

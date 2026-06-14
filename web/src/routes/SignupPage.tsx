@@ -168,6 +168,11 @@ export function SignupPage() {
 				<div className="mt-3 text-xs sm:text-sm text-[var(--muted)]">
 					Have an account? <Link to="/login" className="text-[var(--accent)]">Login</Link>
 				</div>
+				<div className="mt-2 text-xs sm:text-sm text-[var(--muted)]">
+					<Link to="/help" className="text-[var(--accent)]">
+						Help &amp; setup guide
+					</Link>
+				</div>
 			</form>
 		</div>
 	);

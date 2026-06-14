@@ -18,6 +18,20 @@ from src.infrastructure.db.models import OrderStatus
 from tests.ist_clock import IST, ist_now, ist_now_naive
 
 
+def _mock_open_position(symbol: str, quantity: int = 10):
+    position = Mock()
+    position.symbol = symbol
+    position.quantity = quantity
+    position.closed_at = None
+    return position
+
+
+def _mock_positions_repo(positions):
+    repo = Mock()
+    repo.list = Mock(return_value=positions)
+    return repo
+
+
 class TestPortfolioCache:
     """Test PortfolioCache functionality"""
 
@@ -188,91 +202,81 @@ class TestPortfolioServiceHasPosition:
 class TestPortfolioServiceGetCurrentPositions:
     """Test get_current_positions() method"""
 
-    def test_get_current_positions_from_holdings(self):
-        """Test get_current_positions() returns symbols from holdings"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={
-                "data": [
-                    {"tradingSymbol": "RELIANCE-EQ"},
-                    {"tradingSymbol": "TCS"},
+    def test_get_current_positions_from_system_holdings(self):
+        """Test get_current_positions() returns open system positions"""
+        service = PortfolioService(
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("RELIANCE-EQ"),
+                    _mock_open_position("TCS-EQ"),
                 ]
-            }
+            ),
+            user_id=1,
+            enable_caching=False,
         )
-
-        service = PortfolioService(portfolio=mock_portfolio, enable_caching=False)
         positions = service.get_current_positions(include_pending=False)
-        assert "RELIANCE-EQ" in positions
+        assert "RELIANCE" in positions
         assert "TCS" in positions
-        assert positions == sorted(positions)  # Should be sorted
+        assert positions == sorted(positions)
 
     def test_get_current_positions_with_pending(self):
-        """Test get_current_positions() includes pending orders"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
+        """Test get_current_positions() includes database pending buy orders"""
+        mock_db_order = Mock()
+        mock_db_order.side = "buy"
+        mock_db_order.status = OrderStatus.PENDING
+        mock_db_order.symbol = "TCS-EQ"
+        mock_db_order.placed_at = ist_now_naive()
 
-        mock_orders = Mock()
-        mock_orders.get_pending_orders = Mock(
-            return_value=[
-                {"transactionType": "BUY", "tradingSymbol": "TCS"},
-                {"transactionType": "SELL", "tradingSymbol": "INFY"},  # Should be excluded
-            ]
-        )
+        mock_orders_repo = Mock()
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio, orders=mock_orders, enable_caching=False
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            orders_repo=mock_orders_repo,
+            user_id=1,
+            enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions
+        assert "RELIANCE" in positions
         assert "TCS" in positions
-        assert "INFY" not in positions  # SELL orders excluded
 
     def test_get_current_positions_without_pending(self):
         """Test get_current_positions() excludes pending when requested"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
+        mock_db_order = Mock()
+        mock_db_order.side = "buy"
+        mock_db_order.status = OrderStatus.PENDING
+        mock_db_order.symbol = "TCS-EQ"
+        mock_db_order.placed_at = ist_now_naive()
 
-        mock_orders = Mock()
-        mock_orders.get_pending_orders = Mock(
-            return_value=[{"transactionType": "BUY", "tradingSymbol": "TCS"}]
-        )
+        mock_orders_repo = Mock()
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio, orders=mock_orders, enable_caching=False
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            orders_repo=mock_orders_repo,
+            user_id=1,
+            enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=False)
-        assert "RELIANCE-EQ" in positions
-        assert "TCS" not in positions  # Pending excluded
+        assert "RELIANCE" in positions
+        assert "TCS" not in positions
 
     def test_get_current_positions_handles_orders_error(self):
         """Test get_current_positions() handles orders API error gracefully"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
-        mock_orders = Mock()
-        mock_orders.get_pending_orders = Mock(side_effect=Exception("API Error"))
+        mock_orders_repo = Mock()
+        mock_orders_repo.list = Mock(side_effect=Exception("Database Error"))
 
         service = PortfolioService(
-            portfolio=mock_portfolio, orders=mock_orders, enable_caching=False
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            orders_repo=mock_orders_repo,
+            user_id=1,
+            enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions  # Should still return holdings
+        assert "RELIANCE" in positions
 
     def test_get_current_positions_includes_database_ongoing_orders(self):
         """Test get_current_positions() includes database ONGOING orders"""
-
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
-        # Mock database order with ONGOING status
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.ONGOING
@@ -282,46 +286,37 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
             orders_repo=mock_orders_repo,
             user_id=1,
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions  # From holdings
-        assert "TCS" in positions  # From database ONGOING order (normalized)
+        assert "RELIANCE" in positions
+        assert "TCS" in positions
 
     def test_get_current_positions_includes_database_pending_orders(self):
         """Test get_current_positions() includes database PENDING orders"""
-
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(return_value={"data": []})
-
-        # Mock database order with PENDING status
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.PENDING
         mock_db_order.symbol = "INFY-EQ"
+        mock_db_order.placed_at = ist_now_naive()
 
         mock_orders_repo = Mock()
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo([]),
             orders_repo=mock_orders_repo,
             user_id=1,
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "INFY" in positions  # From database PENDING order (normalized)
+        assert "INFY" in positions
 
     def test_get_current_positions_excludes_database_closed_filled_orders(self):
         """Test get_current_positions() excludes database CLOSED (filled) buy orders."""
-
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(return_value={"data": []})
-
-        # Mock database order with CLOSED status (filled; should be excluded)
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.CLOSED
@@ -332,28 +327,16 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo([]),
             orders_repo=mock_orders_repo,
             user_id=1,
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "WIPRO" not in positions  # CLOSED buys should not reserve portfolio capacity
+        assert "WIPRO" not in positions
 
     def test_get_current_positions_combines_all_sources(self):
-        """Test get_current_positions() combines holdings, broker pending, and database orders"""
-
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
-        mock_orders = Mock()
-        mock_orders.get_pending_orders = Mock(
-            return_value=[{"transactionType": "BUY", "tradingSymbol": "TCS"}]
-        )
-
-        # Mock database ONGOING order
+        """Test get_current_positions() combines system positions and database orders"""
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.ONGOING
@@ -363,49 +346,76 @@ class TestPortfolioServiceGetCurrentPositions:
         mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
-            orders=mock_orders,
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("RELIANCE-EQ"),
+                    _mock_open_position("TCS-EQ"),
+                ]
+            ),
             orders_repo=mock_orders_repo,
             user_id=1,
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions  # From holdings
-        assert "TCS" in positions  # From broker pending orders
-        assert "INFY" in positions  # From database ONGOING order
+        assert "RELIANCE" in positions
+        assert "TCS" in positions
+        assert "INFY" in positions
         assert len(positions) == 3
 
     def test_get_current_positions_handles_database_error_gracefully(self):
         """Test get_current_positions() handles database errors gracefully"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
         mock_orders_repo = Mock()
         mock_orders_repo.list = Mock(side_effect=Exception("Database Error"))
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
             orders_repo=mock_orders_repo,
             user_id=1,
             enable_caching=False,
         )
         positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions  # Should still return holdings despite DB error
+        assert "RELIANCE" in positions
 
     def test_get_current_positions_without_orders_repo(self):
         """Test get_current_positions() works without orders_repo (backward compatibility)"""
+        service = PortfolioService(
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            user_id=1,
+            enable_caching=False,
+        )
+        positions = service.get_current_positions(include_pending=True)
+        assert "RELIANCE" in positions
+
+    def test_manual_broker_holdings_do_not_count_toward_limit(self):
+        """Manual demat holdings must not fill max_portfolio_size when absent from Positions."""
         mock_portfolio = Mock()
         mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+            return_value={
+                "data": [
+                    {"tradingSymbol": "AVANTIFEED-EQ", "quantity": 18},
+                    {"tradingSymbol": "GALLANTT-EQ", "quantity": 31},
+                    {"tradingSymbol": "STAR-EQ", "quantity": 9},
+                    {"tradingSymbol": "DREAMFOLKS-EQ", "quantity": 2129},
+                    {"tradingSymbol": "IOC-EQ", "quantity": 135},
+                    {"tradingSymbol": "ORIENTCEM-EQ", "quantity": 1096},
+                ]
+            }
         )
 
         service = PortfolioService(
-            portfolio=mock_portfolio, orders_repo=None, user_id=None, enable_caching=False
+            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("AVANTIFEED-EQ", 18),
+                    _mock_open_position("GALLANTT-EQ", 31),
+                    _mock_open_position("STAR-EQ", 9),
+                ]
+            ),
+            user_id=2,
+            enable_caching=False,
         )
-        positions = service.get_current_positions(include_pending=True)
-        assert "RELIANCE-EQ" in positions  # Should work without database
+        count = service.get_portfolio_count(include_pending=False)
+        assert count == 3
 
 
 class TestPortfolioServicePortfolioCount:
@@ -413,37 +423,38 @@ class TestPortfolioServicePortfolioCount:
 
     def test_get_portfolio_count(self):
         """Test get_portfolio_count() returns correct count"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={
-                "data": [
-                    {"tradingSymbol": "RELIANCE-EQ"},
-                    {"tradingSymbol": "TCS"},
+        service = PortfolioService(
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("RELIANCE-EQ"),
+                    _mock_open_position("TCS-EQ"),
                 ]
-            }
+            ),
+            user_id=1,
+            enable_caching=False,
         )
-
-        service = PortfolioService(portfolio=mock_portfolio, enable_caching=False)
         count = service.get_portfolio_count(include_pending=False)
         assert count == 2
 
     def test_get_portfolio_count_with_pending(self):
         """Test get_portfolio_count() includes pending orders"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
+        mock_db_order = Mock()
+        mock_db_order.side = "buy"
+        mock_db_order.status = OrderStatus.PENDING
+        mock_db_order.symbol = "TCS-EQ"
+        mock_db_order.placed_at = ist_now_naive()
 
-        mock_orders = Mock()
-        mock_orders.get_pending_orders = Mock(
-            return_value=[{"transactionType": "BUY", "tradingSymbol": "TCS"}]
-        )
+        mock_orders_repo = Mock()
+        mock_orders_repo.list = Mock(return_value=([mock_db_order], 1))
 
         service = PortfolioService(
-            portfolio=mock_portfolio, orders=mock_orders, enable_caching=False
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            orders_repo=mock_orders_repo,
+            user_id=1,
+            enable_caching=False,
         )
         count = service.get_portfolio_count(include_pending=True)
-        assert count == 2  # 1 holding + 1 pending
+        assert count == 2
 
 
 class TestPortfolioServiceCheckCapacity:
@@ -451,16 +462,14 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_with_capacity(self):
         """Test check_portfolio_capacity() when capacity available"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
         mock_config = Mock()
         mock_config.max_portfolio_size = 10
 
         service = PortfolioService(
-            portfolio=mock_portfolio, strategy_config=mock_config, enable_caching=False
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            user_id=1,
+            strategy_config=mock_config,
+            enable_caching=False,
         )
         has_capacity, current, max_size = service.check_portfolio_capacity()
         assert has_capacity is True
@@ -469,16 +478,16 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_at_limit(self):
         """Test check_portfolio_capacity() when at limit"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": f"STOCK{i}"} for i in range(10)]}
-        )
-
         mock_config = Mock()
         mock_config.max_portfolio_size = 10
 
         service = PortfolioService(
-            portfolio=mock_portfolio, strategy_config=mock_config, enable_caching=False
+            positions_repo=_mock_positions_repo(
+                [_mock_open_position(f"STOCK{i}-EQ") for i in range(10)]
+            ),
+            user_id=1,
+            strategy_config=mock_config,
+            enable_caching=False,
         )
         has_capacity, current, max_size = service.check_portfolio_capacity()
         assert has_capacity is False
@@ -487,12 +496,11 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_with_custom_max(self):
         """Test check_portfolio_capacity() with custom max_size"""
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
+        service = PortfolioService(
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
+            user_id=1,
+            enable_caching=False,
         )
-
-        service = PortfolioService(portfolio=mock_portfolio, enable_caching=False)
         has_capacity, current, max_size = service.check_portfolio_capacity(max_size=5)
         assert has_capacity is True
         assert current == 1
@@ -500,13 +508,6 @@ class TestPortfolioServiceCheckCapacity:
 
     def test_check_portfolio_capacity_includes_database_orders(self):
         """Test check_portfolio_capacity() includes database ONGOING orders in count"""
-
-        mock_portfolio = Mock()
-        mock_portfolio.get_holdings = Mock(
-            return_value={"data": [{"tradingSymbol": "RELIANCE-EQ"}]}
-        )
-
-        # Mock database ONGOING order
         mock_db_order = Mock()
         mock_db_order.side = "buy"
         mock_db_order.status = OrderStatus.ONGOING
@@ -519,7 +520,7 @@ class TestPortfolioServiceCheckCapacity:
         mock_config.max_portfolio_size = 6
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo([_mock_open_position("RELIANCE-EQ")]),
             orders_repo=mock_orders_repo,
             user_id=1,
             strategy_config=mock_config,
@@ -527,25 +528,11 @@ class TestPortfolioServiceCheckCapacity:
         )
         has_capacity, current, max_size = service.check_portfolio_capacity()
         assert has_capacity is True
-        assert current == 2  # 1 holding + 1 database ONGOING order
+        assert current == 2
         assert max_size == 6
 
     def test_check_portfolio_capacity_respects_limit_with_database_orders(self):
         """check_portfolio_capacity() respects max_portfolio_size when DB orders exceed limit."""
-
-        mock_portfolio = Mock()
-        # 3 holdings from broker
-        mock_portfolio.get_holdings = Mock(
-            return_value={
-                "data": [
-                    {"tradingSymbol": "RELIANCE-EQ"},
-                    {"tradingSymbol": "TCS"},
-                    {"tradingSymbol": "INFY"},
-                ]
-            }
-        )
-
-        # 3 database ONGOING orders (total = 6, which is the limit)
         mock_db_orders = []
         for symbol in ["WIPRO-EQ", "HDFC-EQ", "ICICIBANK-EQ"]:
             mock_order = Mock()
@@ -561,33 +548,25 @@ class TestPortfolioServiceCheckCapacity:
         mock_config.max_portfolio_size = 6
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("RELIANCE-EQ"),
+                    _mock_open_position("TCS-EQ"),
+                    _mock_open_position("INFY-EQ"),
+                ]
+            ),
             orders_repo=mock_orders_repo,
             user_id=1,
             strategy_config=mock_config,
             enable_caching=False,
         )
         has_capacity, current, max_size = service.check_portfolio_capacity()
-        assert has_capacity is False  # At limit (6/6)
-        assert current == 6  # 3 holdings + 3 database orders
+        assert has_capacity is False
+        assert current == 6
         assert max_size == 6
 
     def test_check_portfolio_capacity_exceeds_limit_with_database_orders(self):
         """Test check_portfolio_capacity() correctly identifies when database orders exceed limit"""
-
-        mock_portfolio = Mock()
-        # 3 holdings from broker
-        mock_portfolio.get_holdings = Mock(
-            return_value={
-                "data": [
-                    {"tradingSymbol": "RELIANCE-EQ"},
-                    {"tradingSymbol": "TCS"},
-                    {"tradingSymbol": "INFY"},
-                ]
-            }
-        )
-
-        # 4 database ONGOING orders (total = 7, exceeds limit of 6)
         mock_db_orders = []
         for symbol in ["WIPRO-EQ", "HDFC-EQ", "ICICIBANK-EQ", "SBIN-EQ"]:
             mock_order = Mock()
@@ -603,15 +582,21 @@ class TestPortfolioServiceCheckCapacity:
         mock_config.max_portfolio_size = 6
 
         service = PortfolioService(
-            portfolio=mock_portfolio,
+            positions_repo=_mock_positions_repo(
+                [
+                    _mock_open_position("RELIANCE-EQ"),
+                    _mock_open_position("TCS-EQ"),
+                    _mock_open_position("INFY-EQ"),
+                ]
+            ),
             orders_repo=mock_orders_repo,
             user_id=1,
             strategy_config=mock_config,
             enable_caching=False,
         )
         has_capacity, current, max_size = service.check_portfolio_capacity()
-        assert has_capacity is False  # Over limit (7/6)
-        assert current == 7  # 3 holdings + 4 database orders
+        assert has_capacity is False
+        assert current == 7
         assert max_size == 6
 
 

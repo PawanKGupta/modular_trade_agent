@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 
 from server.app.routers import admin
 from src.infrastructure.db.models import UserRole
+from tests.support.mock_request import mock_request
 
 
 class DummyUser(SimpleNamespace):
@@ -74,6 +75,21 @@ class DummyUserRepo:
 
 
 @pytest.fixture
+def admin_request():
+    return mock_request(path="/api/v1/admin/users")
+
+
+@pytest.fixture
+def admin_actor():
+    return DummyUser(id=99, role=UserRole.ADMIN, email="admin@x.com")
+
+
+@pytest.fixture(autouse=True)
+def _noop_audit(monkeypatch):
+    monkeypatch.setattr(admin, "record_audit_user", lambda *args, **kwargs: None)
+
+
+@pytest.fixture
 def user_repo(monkeypatch):
     repo = DummyUserRepo(db=None)
     monkeypatch.setattr(admin, "UserRepository", lambda db: repo)
@@ -124,15 +140,15 @@ def test_list_users_with_search_uses_repo(user_repo):
     assert result[0].email == "find@x.com"
 
 
-def test_create_user_conflict(user_repo):
+def test_create_user_conflict(user_repo, admin_request, admin_actor):
     user_repo.by_email = DummyUser()
     payload = admin.AdminUserCreate(email="dup@x.com", password="Password123!", name="Dup", role="admin")
     with pytest.raises(HTTPException) as exc:
-        admin.create_user(payload, db=None)
+        admin.create_user(payload, admin_request, current=admin_actor, db=None)
     assert exc.value.status_code == status.HTTP_409_CONFLICT
 
 
-def test_create_user_success(user_repo, settings_repo):
+def test_create_user_success(user_repo, settings_repo, admin_request, admin_actor):
     user_repo.by_email = None
     payload = admin.AdminUserCreate(
         email="new@x.com",
@@ -141,50 +157,50 @@ def test_create_user_success(user_repo, settings_repo):
         role="user",
         mobile_number="9876543210",
     )
-    resp = admin.create_user(payload, db=None)
+    resp = admin.create_user(payload, admin_request, current=admin_actor, db=None)
     assert resp.email == "new@x.com"
     assert resp.mobile_number == "9876543210"
     assert settings_repo.ids == [resp.id]
 
 
-def test_update_user_not_found(user_repo):
+def test_update_user_not_found(user_repo, admin_request, admin_actor):
     user_repo.by_id = None
     payload = admin.AdminUserUpdate(name=None, role=None, is_active=None)
     with pytest.raises(HTTPException) as exc:
-        admin.update_user(1, payload, db=None)
+        admin.update_user(1, payload, admin_request, current=admin_actor, db=None)
     assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
 
-def test_update_user_success(user_repo):
+def test_update_user_success(user_repo, admin_request, admin_actor):
     user_repo.by_id = DummyUser(name="Old")
     payload = admin.AdminUserUpdate(name="New", role="admin", is_active=False)
-    resp = admin.update_user(1, payload, db=None)
+    resp = admin.update_user(1, payload, admin_request, current=admin_actor, db=None)
     assert resp.name == "New"
     assert resp.role == "admin"
     assert user_repo.updated[1]["is_active"] is False
 
 
-def test_delete_user_not_found(user_repo):
+def test_delete_user_not_found(user_repo, admin_request, admin_actor):
     user_repo.by_id = None
     with pytest.raises(HTTPException) as exc:
-        admin.delete_user(1, db=None)
+        admin.delete_user(1, admin_request, current=admin_actor, db=None)
     assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
 
-def test_delete_last_admin_fails(user_repo):
+def test_delete_last_admin_fails(user_repo, admin_request, admin_actor):
     admin_user = DummyUser(role=UserRole.ADMIN)
     user_repo.by_id = admin_user
     user_repo._users = [admin_user]
     with pytest.raises(HTTPException) as exc:
-        admin.delete_user(1, db=None)
+        admin.delete_user(1, admin_request, current=admin_actor, db=None)
     assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
 
 
-def test_delete_user_success(user_repo):
+def test_delete_user_success(user_repo, admin_request, admin_actor):
     target = DummyUser(role=UserRole.USER)
     user_repo.by_id = target
     user_repo._users = [DummyUser(role=UserRole.ADMIN, is_active=True), target]
-    resp = admin.delete_user(1, db=None)
+    resp = admin.delete_user(1, admin_request, current=admin_actor, db=None)
     assert resp == {"status": "ok"}
     assert user_repo.updated[1]["is_active"] is False
 
@@ -282,7 +298,7 @@ def _schedule_item(task="task1", enabled=True):
     )
 
 
-def test_delete_user_handles_role_exception(user_repo):
+def test_delete_user_handles_role_exception(user_repo, admin_request, admin_actor):
     class WeirdRole:
         def __getattr__(self, item):
             raise AttributeError("boom")
@@ -293,7 +309,7 @@ def test_delete_user_handles_role_exception(user_repo):
     target = DummyUser(role=WeirdRole())
     user_repo.by_id = target
     user_repo._users = [target, DummyUser(role=UserRole.ADMIN)]
-    resp = admin.delete_user(1, db=None)
+    resp = admin.delete_user(1, admin_request, current=admin_actor, db=None)
     assert resp == {"status": "ok"}
 
 

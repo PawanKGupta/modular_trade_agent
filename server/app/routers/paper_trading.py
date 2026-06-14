@@ -71,7 +71,7 @@ class PaperTradingHolding(BaseModel):
     market_value: float
     pnl: float
     pnl_percentage: float
-    target_price: float | None = None  # Frozen EMA9 target
+    target_price: float | None = None  # Open sell limit, or live EMA9 if no sell yet
     distance_to_target: float | None = None  # % to reach target
     reentry_count: int = 0  # Number of re-entries for this position
     reentries: list[dict[str, Any]] | None = None  # Re-entry details array
@@ -383,6 +383,45 @@ def _paper_orders(all_orders: list) -> list:
     return [o for o in all_orders if _is_paper_order(o)]
 
 
+_ACTIVE_SELL_STATUSES = frozenset({OrderStatus.PENDING, OrderStatus.ONGOING})
+
+
+def _order_status_value(order) -> str:
+    """Normalize order status to lowercase string."""
+    status = order.status
+    if hasattr(status, "value"):
+        return str(status.value).lower()
+    return str(status).lower()
+
+
+def _target_prices_from_active_paper_sells(orders: list) -> dict[str, float]:
+    """
+    Map symbol and base symbol to limit price for open paper sell orders.
+
+    Holdings ``target_price`` should match the pending sell limit in Recent Orders,
+    not a live EMA9 recalculation.
+    """
+    target_prices: dict[str, float] = {}
+    # Multiple pending sells for the same symbol are rare; first match in list order wins.
+    for order in orders:
+        if not _is_paper_order(order):
+            continue
+        if not order.side or str(order.side).lower() != "sell":
+            continue
+        if _order_status_value(order) not in {s.value for s in _ACTIVE_SELL_STATUSES}:
+            continue
+        if not order.price or order.price <= 0:
+            continue
+        symbol = order.symbol
+        base_symbol = extract_base_symbol(symbol).upper()
+        price = float(order.price)
+        if symbol not in target_prices:
+            target_prices[symbol] = price
+        if base_symbol not in target_prices:
+            target_prices[base_symbol] = price
+    return target_prices
+
+
 def _list_closed_positions(db: Session, user_id: int) -> list[PositionsModel]:
     """All closed position rows for a user."""
     return (
@@ -622,29 +661,10 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                     current_price = position.avg_price or 0.0
                 portfolio_value += qty * current_price
 
-        # Load target prices from DATABASE sell orders ONLY (single source of truth)
-        # No file fallback - database is the only source for target prices
-        target_prices = {}
-        try:
-            active_sell_orders, _ = orders_repo.list(
-                current.id,
-                side="sell",
-                status=[OrderStatus.PENDING, OrderStatus.ONGOING],
-            )
-            for order in active_sell_orders:
-                if order.price and order.price > 0:
-                    symbol = order.symbol
-                    base_symbol = extract_base_symbol(symbol).upper()
-                    if symbol not in target_prices:
-                        target_prices[symbol] = float(order.price)
-                    if base_symbol not in target_prices:
-                        target_prices[base_symbol] = float(order.price)
-                    logger.debug(
-                        f"Loaded target from DB sell order: {symbol} "
-                        f"(base: {base_symbol}) = {order.price}"
-                    )
-        except Exception as e:
-            logger.debug(f"Could not load target prices from database: {e}")
+        # Frozen sell limits from open paper sell orders (same source as Recent Orders price).
+        target_prices = _target_prices_from_active_paper_sells(all_orders)
+        for symbol, price in target_prices.items():
+            logger.debug("Loaded target from DB sell order: %s = %s", symbol, price)
 
         # Helper function to get live price
         def get_live_price(symbol: str) -> float | None:
@@ -733,16 +753,14 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
             # Accumulate unrealized P&L
             unrealized_pnl_total += pnl
 
-            # Get target price (frozen EMA9) from database sell order if available
-            # Try both full symbol and base symbol for target price lookup
+            # Target: pending paper sell limit when present; else live EMA9 (no sell placed yet).
             base_symbol_for_target = symbol.split("-")[0] if "-" in symbol else symbol
             target_price = target_prices.get(symbol)  # Try full symbol first
             if target_price is None:
                 target_price = target_prices.get(base_symbol_for_target)  # Try base symbol
 
-            # ONLY calculate EMA9 if NO sell order exists (don't recalculate if order exists)
             if target_price is None:
-                # Calculate on-the-fly only if no sell order placed yet
+                # Fallback: realtime EMA9 until the adapter places a sell limit.
                 target_price = calculate_ema9_target(base_symbol_for_target)
                 logger.debug(
                     "Calculated EMA9 target for %s (no sell order found): %s",
@@ -867,8 +885,13 @@ def get_paper_trading_portfolio(  # noqa: PLR0915, PLR0912, B008
                         execution_price=execution_price,
                         created_at=db_order.placed_at.isoformat() if db_order.placed_at else "",
                         executed_at=db_order.filled_at.isoformat() if db_order.filled_at else None,
-                        metadata=getattr(db_order, "order_metadata", None)
-                        or getattr(db_order, "metadata", None),  # Include order metadata
+                        metadata=(
+                            order_meta
+                            if isinstance(
+                                (order_meta := getattr(db_order, "order_metadata", None)), dict
+                            )
+                            else None
+                        ),
                     )
                 )
             except Exception as e:

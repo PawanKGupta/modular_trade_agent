@@ -87,6 +87,26 @@ def sell_manager(mock_auth, positions_repo, user_id):
 class TestHasCompletedSellOrderReturnsFilledQuantity:
     """Test that has_completed_sell_order() returns filled_qty and order_qty"""
 
+    def test_has_completed_sell_order_ignores_executed_buy_from_verifier(self, sell_manager):
+        """Executed buy orders in OrderStatusVerifier must not block sell placement."""
+        mock_verifier = Mock()
+        mock_verifier.get_verification_results_for_symbol.return_value = [
+            {
+                "status": "EXECUTED",
+                "order_id": "260608000004632",
+                "broker_order": {
+                    "trnsTp": "B",
+                    "trdSym": "AVANTIFEED-EQ",
+                    "fldQty": 9,
+                    "qty": 9,
+                    "avgPrc": "1105.0",
+                },
+            }
+        ]
+        sell_manager.order_verifier = mock_verifier
+
+        assert sell_manager.has_completed_sell_order("AVANTIFEED-EQ") is None
+
     def test_has_completed_sell_order_returns_filled_qty_from_order_status_verifier(
         self, sell_manager
     ):
@@ -99,6 +119,7 @@ class TestHasCompletedSellOrderReturnsFilledQuantity:
                 "status": "EXECUTED",
                 "order_id": "ORDER123",
                 "broker_order": {
+                    "trnsTp": "S",
                     "fldQty": 20,  # Filled quantity
                     "qty": 35,  # Order quantity
                     "avgPrc": "2550.0",

@@ -3,7 +3,7 @@ import { test, expect } from './fixtures/test-fixtures';
 test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPage }) => {
   // Page is already authenticated via fixture
   await authenticatedPage.goto('/dashboard');
-  await authenticatedPage.waitForLoadState('networkidle');
+  await authenticatedPage.waitForLoadState('domcontentloaded');
 
   // Should land on dashboard - verify main content
   await expect(authenticatedPage.locator('main, [role="main"]')).toBeVisible();
@@ -20,7 +20,7 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
     const usersLink = sidebar.getByRole('link', { name: /Users/i });
     if (await usersLink.isVisible().catch(() => false)) {
       await usersLink.click();
-      await authenticatedPage.waitForLoadState('networkidle');
+      await authenticatedPage.waitForLoadState('domcontentloaded');
       const usersHeading = authenticatedPage.getByRole('heading', { name: /Users/i });
       const hasUsersHeading = await usersHeading.isVisible().catch(() => false);
       if (hasUsersHeading) {
@@ -37,7 +37,7 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
   }
 
   await sidebar.getByRole('link', { name: /Orders/i }).click();
-  await authenticatedPage.waitForLoadState('networkidle');
+  await authenticatedPage.waitForLoadState('domcontentloaded');
 
   // Verify orders page loaded
   const ordersHeading = authenticatedPage.getByRole('heading', { name: /Orders/i });
@@ -71,7 +71,7 @@ test('auth -> dashboard -> admin users -> orders tabs', async ({ authenticatedPa
 
 test('auth -> dashboard -> pnl page basics', async ({ authenticatedPage }) => {
   await authenticatedPage.goto('/dashboard');
-  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+  await authenticatedPage.waitForLoadState('domcontentloaded').catch(() => {});
 
   // Scope queries to sidebar navigation
   const sidebar = authenticatedPage.locator('aside nav, aside');
@@ -91,7 +91,7 @@ test('auth -> dashboard -> pnl page basics', async ({ authenticatedPage }) => {
     // Fallback: dashboard quick action link
     await authenticatedPage.getByRole('link', { name: /View P&L/i }).click();
   }
-  await authenticatedPage.waitForLoadState('networkidle').catch(() => {});
+  await authenticatedPage.waitForLoadState('domcontentloaded').catch(() => {});
 
   await expect(authenticatedPage.getByRole('heading', { name: /Profit & Loss/i })).toBeVisible();
   await expect(authenticatedPage.getByText('Summary', { exact: true }).first()).toBeVisible();

@@ -478,6 +478,29 @@ def fetch_ohlcv_yf_raw(ticker, days=365, interval="1d", end_date=None, add_curre
                 logger.warning(error_msg)
                 raise ValueError(error_msg)
 
+        if interval == "1wk":
+            from src.application.services.ohlcv_fetch_validation import (  # noqa: PLC0415
+                drop_incomplete_weekly_tail_bar,
+            )
+
+            before = len(df)
+            dropped_tail_date = df.iloc[-1].get("date") if not df.empty else None
+            df = drop_incomplete_weekly_tail_bar(df)
+            if len(df) < before:
+                tail_label = (
+                    pd.Timestamp(dropped_tail_date).strftime("%Y-%m-%d")
+                    if dropped_tail_date is not None
+                    else "unknown"
+                )
+                logger.info(
+                    "OHLCV weekly: dropped incomplete tail bar for %s "
+                    "(date=%s, rows %s -> %s; open week not cached until close is available)",
+                    ticker,
+                    tail_label,
+                    before,
+                    len(df),
+                )
+
         logger.debug(f"Successfully processed data for {ticker} [{interval}]: {len(df)} rows")
         return df
 

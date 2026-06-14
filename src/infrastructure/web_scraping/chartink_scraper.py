@@ -6,7 +6,9 @@ Wraps existing scrapping.py functionality for fetching stock lists.
 
 # Import existing implementation
 from core.scrapping import get_stock_list
-from src.infrastructure.web_scraping.screener_symbol_filters import parse_and_filter_screener_csv
+from src.infrastructure.web_scraping.screener_symbol_filters import (
+    parse_and_filter_tradable_screener_csv,
+)
 from utils.logger import logger
 
 
@@ -35,7 +37,7 @@ class ChartInkScraper:
                 logger.error("Stock scraping failed, no stocks returned")
                 return []
 
-            stocks = parse_and_filter_screener_csv(stocks_str)
+            stocks = parse_and_filter_tradable_screener_csv(stocks_str)
             logger.info(f"Scraped {len(stocks)} stocks from ChartInk")
             return stocks
 

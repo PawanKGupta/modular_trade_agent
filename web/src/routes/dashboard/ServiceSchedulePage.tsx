@@ -102,9 +102,11 @@ export function ServiceSchedulePage() {
 
 	const TASK_DISPLAY_NAMES: Record<string, string> = {
 		premarket_retry: 'Pre-market Retry',
+		premarket_amo_adjustment: 'Pre-market Buy Adjustment',
 		sell_monitor: 'Sell Monitor',
 		analysis: 'Analysis',
 		buy_orders: 'Buy Orders',
+		buy_margin_preview: 'Buy Margin Preview',
 		eod_cleanup: 'End-of-Day Cleanup',
 	};
 
@@ -132,7 +134,8 @@ export function ServiceSchedulePage() {
 				<div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 sm:p-4">
 					<div className="flex items-start sm:items-center justify-between gap-2">
 						<div className="text-xs sm:text-sm text-yellow-400">
-							[WARN]? Schedule changes require unified service restart to take effect.
+							Schedule saved globally. Redeploy the app or restart running unified services
+							so new times take effect.
 						</div>
 						<button
 							onClick={() => setShowRestartBanner(false)}

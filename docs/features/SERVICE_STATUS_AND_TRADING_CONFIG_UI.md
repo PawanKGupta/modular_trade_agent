@@ -1,7 +1,7 @@
 # Service Status & Trading Configuration UI Guide
 
 **Version**: 2.0
-**Last Updated**: 2025-11-18
+**Last Updated**: 2026-06-10
 **Status**: ✅ Phase 3 UI shipped (Service Mgmt + Trading Config + ML Training + Log Viewer + Individual Service Management)
 
 ---
@@ -69,7 +69,35 @@ This document explains how to access the pages, what each widget does, the suppo
 | `/api/v1/admin/schedules/{task_name}/enable` | `POST` | Enables a service schedule (admin-only). |
 | `/api/v1/admin/schedules/{task_name}/disable` | `POST` | Disables a service schedule (admin-only). |
 
-All endpoints live in `server/app/routers/service.py` with schemas defined under `server/app/schemas/service.py`.
+Admin schedule routes live in `server/app/routers/admin.py`. User service routes and schemas are in `server/app/routers/service.py` and `server/app/schemas/service.py`.
+
+### Admin schedule changes (redeploy required)
+
+Schedule rows are global (one row per task in `service_schedules`). Saving, enabling, or disabling a task via `/dashboard/admin/schedules` persists immediately, but **running** unified trading services keep their in-memory cron until restart. Admin PUT/enable/disable responses set `requires_restart: true`; the UI prompts operators to **redeploy the API** (or restart per-user unified services) so new times take effect. Restoring from a service snapshot on startup also restarts services that were running before redeploy — see below.
+
+### Redeploy: service restore snapshot
+
+Before restarting or redeploying the API container, run:
+
+```bash
+docker exec tradeagent-api python /app/tools/backup_service_status.py
+```
+
+The snapshot is stored on the persistent data volume at `data/service_restore_snapshot.json` (plus rolling history under `data/service_restore_snapshots/`). On API startup, auto-restore merges this file with DB running flags and restarts unified/individual services. Before paper unified services are auto-restored, startup clears stale `scheduler_lock` rows for those users (see `clear_scheduler_locks_for_users` in `service_restore_snapshot.py`). A snapshot is also written on graceful API shutdown.
+
+### Status heartbeat timezone (stale detection & API display)
+
+`GET /service/status` uses `last_heartbeat` to detect orphaned rows after API restarts. Naive DB timestamps may be **IST wall-clock** (`ist_now_naive()`) or **UTC wall-clock** (legacy writes). Age is computed via `service_status_heartbeat_age_seconds()` in `timezone_utils.py`, which considers both interpretations so a fresh heartbeat is not misread as ~5.5 hours old.
+
+The same coercion applies when serializing timestamps for the web UI: `service_status_heartbeat_to_utc_for_api()` (and `db_timestamp_to_utc_for_api()` for other fields) converts DB values to true UTC before JSON. The web UI uses `formatApiTimestampDisplay()` — one IST line with relative age — instead of mixing browser `toLocaleString()` with a separate age calculation (which showed two conflicting times).
+
+**Maintenance note:** Heartbeat disambiguation is pragmatic but sensitive to mixed write conventions. Longer term, standardizing all `last_heartbeat` writes on `ist_now_naive()` would simplify age and API coercion.
+
+### Rapid start/stop (lifecycle generation)
+
+Each unified **start** and **stop** bumps a per-user **lifecycle generation** (`service_lifecycle_generation.py`). Scheduler threads capture their generation at start; on thread exit they update `service_running=False` only when that generation is still current. This prevents a slow-exiting old thread from marking the service **Stopped** in the DB after a newer **Start** has already set it **Running** (a race seen when clicking Start/Stop quickly from the UI).
+
+`get_service_status()` also **heals** the inverse case: when the DB shows stopped but the current-generation scheduler thread is alive, it sets `service_running=True` again.
 
 ### Usage Flow
 
@@ -311,3 +339,5 @@ npm run dev:mock
 | Date | Change | Author |
 | --- | --- | --- |
 | 2025-11-17 | Initial guide covering Service Status + Trading Config UI, plus demo instructions and mock screenshots. | GPT-5.1 Codex |
+| 2026-06-10 | Admin schedule redeploy note, heartbeat maintenance note, redeploy/snapshot cross-reference. | — |
+| 2026-06-12 | Note: startup clears `scheduler_lock` before paper auto-restore. | — |

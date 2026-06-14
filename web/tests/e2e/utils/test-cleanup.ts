@@ -1,5 +1,6 @@
 import { Page } from '@playwright/test';
 import { TestConfig } from '../config/test-config';
+import { getApiAuthHeaders } from './api-auth';
 
 /**
  * Test Cleanup Utilities
@@ -16,10 +17,14 @@ export function isTestEmail(email: string): boolean {
 	const testPatterns = [
 		/^test.*@rebound\.com$/i,
 		/^signup\d+@rebound\.com$/i,
+		/^signup\d+@gmail\.com$/i,
+		/^test\d+@gmail\.com$/i,
 		/^newuser\d+@rebound\.com$/i, // Admin-created users
+		/^newuser\d+@gmail\.com$/i,
 		/^testuser\d+@rebound\.com$/i,
 		/^test.*@example\.com$/i,
 		/^\d+@rebound\.com$/, // Timestamp-based emails
+		/^(signup|test)\d+@gmail\.com$/i,
 	];
 
 	// Never clean up admin or system users
@@ -50,8 +55,11 @@ export async function cleanupTestUser(page: Page, email: string): Promise<void> 
 	}
 
 	try {
+		const authHeaders = await getApiAuthHeaders(page);
 		// First, get the user by email to find user_id
-		const listResponse = await page.request.get(`${TestConfig.apiURL}/api/v1/admin/users`);
+		const listResponse = await page.request.get(`${TestConfig.apiURL}/api/v1/admin/users`, {
+			headers: authHeaders,
+		});
 
 		if (!listResponse.ok()) {
 			// If unauthorized (401), skip cleanup silently (page not authenticated, e.g., in signup tests)
@@ -73,7 +81,9 @@ export async function cleanupTestUser(page: Page, email: string): Promise<void> 
 		}
 
 		// Delete user by user_id
-		const deleteResponse = await page.request.delete(`${TestConfig.apiURL}/api/v1/admin/users/${user.id}`);
+		const deleteResponse = await page.request.delete(`${TestConfig.apiURL}/api/v1/admin/users/${user.id}`, {
+			headers: authHeaders,
+		});
 
 		if (!deleteResponse.ok() && deleteResponse.status() !== 404) {
 			// If unauthorized, skip silently (same reason as above)
@@ -113,7 +123,10 @@ const originalConfigs = new Map<string, unknown>();
  */
 export async function saveOriginalTradingConfig(page: Page): Promise<void> {
 	try {
-		const response = await page.request.get(`${TestConfig.apiURL}/api/v1/user/trading-config`);
+		const authHeaders = await getApiAuthHeaders(page);
+		const response = await page.request.get(`${TestConfig.apiURL}/api/v1/user/trading-config`, {
+			headers: authHeaders,
+		});
 		if (response.ok()) {
 			const config = await response.json();
 			originalConfigs.set('trading-config', config);
@@ -140,10 +153,12 @@ export async function resetTradingConfig(page: Page): Promise<void> {
 	}
 
 	try {
+		const authHeaders = await getApiAuthHeaders(page);
 		const response = await page.request.put(`${TestConfig.apiURL}/api/v1/user/trading-config`, {
 			data: originalConfig,
 			headers: {
 				'Content-Type': 'application/json',
+				...authHeaders,
 			},
 		});
 
@@ -182,13 +197,15 @@ export async function cleanupTestNotifications(page: Page): Promise<void> {
 	try {
 		// Mark tracked notifications as read
 		for (const notificationId of testNotificationIds) {
+			const authHeaders = await getApiAuthHeaders(page);
 			const response = await page.request.post(
 				`${TestConfig.apiURL}/api/v1/user/notifications/${notificationId}/read`,
 				{
 					headers: {
 						'Content-Type': 'application/json',
+						...authHeaders,
 					},
-				}
+				},
 			);
 
 			if (!response.ok() && response.status() !== 404) {
@@ -209,7 +226,10 @@ export async function cleanupTestNotifications(page: Page): Promise<void> {
  */
 export async function saveOriginalNotificationPreferences(page: Page): Promise<void> {
 	try {
-		const response = await page.request.get(`${TestConfig.apiURL}/api/v1/user/notification-preferences`);
+		const authHeaders = await getApiAuthHeaders(page);
+		const response = await page.request.get(`${TestConfig.apiURL}/api/v1/user/notification-preferences`, {
+			headers: authHeaders,
+		});
 		if (response.ok()) {
 			const prefs = await response.json();
 			originalConfigs.set('notification-preferences', prefs);
@@ -236,10 +256,12 @@ export async function resetNotificationPreferences(page: Page): Promise<void> {
 	}
 
 	try {
+		const authHeaders = await getApiAuthHeaders(page);
 		const response = await page.request.put(`${TestConfig.apiURL}/api/v1/user/notification-preferences`, {
 			data: originalPrefs,
 			headers: {
 				'Content-Type': 'application/json',
+				...authHeaders,
 			},
 		});
 

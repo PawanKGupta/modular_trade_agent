@@ -676,6 +676,10 @@ class TestPaperTradingPremarketAdjustment:
         """Create paper trading service adapter"""
         with (
             patch(
+                "src.application.services.paper_trading_service_adapter.get_user_logger",
+                return_value=Mock(),
+            ),
+            patch(
                 "src.application.services.paper_trading_service_adapter.PaperTradingBrokerAdapter"
             ) as mock_broker_class,
             patch(
@@ -731,26 +735,25 @@ class TestPaperTradingPremarketAdjustment:
         # Mock broker to return re-entry order
         paper_adapter.broker.get_pending_orders = Mock(return_value=[reentry_order])
         paper_adapter.broker.price_provider = Mock()
-        paper_adapter.broker.price_provider.get_price = Mock(return_value=2600.0)
+        paper_adapter.broker.price_provider.get_price = Mock(return_value=2400.0)
         paper_adapter.broker.cancel_order = Mock(return_value=True)
         paper_adapter.broker.place_order = Mock(return_value="NEW_ORDER_123")
 
-        # Mock _calculate_ema9 to return None to skip EMA9 cancellation check
-        paper_adapter._calculate_ema9 = Mock(return_value=None)
+        paper_adapter._calculate_ema9 = Mock(return_value=2500.0)
+        paper_adapter._resolve_premarket_target_capital = Mock(return_value=100_000.0)
 
         summary = paper_adapter.adjust_amo_quantities_premarket()
 
-        # Verify order was adjusted
         assert summary["total_orders"] == 1
         assert summary["adjusted"] == 1
 
-        # Verify cancel and place were called
         assert paper_adapter.broker.cancel_order.called
         assert paper_adapter.broker.place_order.called
 
-        # Verify new order has adjusted quantity
         new_order = paper_adapter.broker.place_order.call_args[0][0]
-        assert new_order.quantity == 38  # 100000 / 2600 = 38.46 -> 38
+        assert new_order.quantity == 41  # 100000 / 2400 = 41.66 -> 41
+        assert new_order.order_type == OrderType.MARKET
+        assert new_order.price is None
 
     def test_paper_trading_reentry_order_cancelled_if_position_closed(
         self, db_session, test_user, paper_adapter

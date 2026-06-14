@@ -89,3 +89,52 @@ def test_orders_and_pnl_are_isolated_by_user_id():
     assert r_pnl_b.status_code == 200
     assert isinstance(r_pnl_b.json(), list)
     assert len(r_pnl_b.json()) == 0
+
+
+@pytest.mark.unit
+def test_notifications_are_isolated_by_user_id():
+    client = _make_client()
+    headers_a, user_a = _signup(client, "iso_notif_a@example.com")
+    headers_b, _user_b = _signup(client, "iso_notif_b@example.com")
+
+    from src.infrastructure.db.models import Notification
+    from src.infrastructure.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        db.add(
+            Notification(
+                user_id=user_a,
+                title="User A only",
+                message="private",
+                type="system",
+                level="info",
+            )
+        )
+        db.commit()
+
+    r_b = client.get("/api/v1/user/notifications", headers=headers_b)
+    assert r_b.status_code == 200
+    items = r_b.json().get("items", r_b.json()) if isinstance(r_b.json(), dict) else r_b.json()
+    if isinstance(items, list):
+        assert all(n.get("title") != "User A only" for n in items)
+
+
+@pytest.mark.unit
+def test_trading_config_isolated_by_user():
+    client = _make_client()
+    headers_a, _user_a = _signup(client, "iso_cfg_a@example.com")
+    headers_b, _user_b = _signup(client, "iso_cfg_b@example.com")
+
+    set_a = client.put(
+        "/api/v1/user/trading-config",
+        headers=headers_a,
+        json={"max_positions": 3},
+    )
+    assert set_a.status_code in (200, 201, 422)
+
+    get_b = client.get("/api/v1/user/trading-config", headers=headers_b)
+    assert get_b.status_code == 200
+    if set_a.status_code in (200, 201):
+        cfg_b = get_b.json()
+        assert cfg_b.get("max_positions") != 3 or cfg_b.get("max_positions") is None
+

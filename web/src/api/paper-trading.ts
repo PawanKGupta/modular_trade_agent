@@ -29,7 +29,7 @@ export interface PaperTradingHolding {
 	market_value: number;
 	pnl: number;
 	pnl_percentage: number;
-	target_price: number | null;  // Frozen EMA9 target
+	target_price: number | null;  // Open sell limit, or live EMA9 if no sell yet
 	distance_to_target: number | null;  // % to reach target
 	reentry_count?: number;  // Number of re-entries
 	reentries?: ReentryDetail[] | null;  // Re-entry details array

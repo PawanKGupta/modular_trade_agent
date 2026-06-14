@@ -815,7 +815,12 @@ class IndividualServiceManager:
 
                 # Send notification for successful execution
                 self._notify_service_execution_completed(
-                    user_id, task_name, "success", duration, db_override=task_db
+                    user_id,
+                    task_name,
+                    "success",
+                    duration,
+                    task_details=result,
+                    db_override=task_db,
                 )
             else:
                 # TIMEOUT: Task exceeded maximum execution time
@@ -842,7 +847,13 @@ class IndividualServiceManager:
 
                 # Send notification for timeout
                 self._notify_service_execution_completed(
-                    user_id, task_name, "failed", duration, timeout_msg, db_override=task_db
+                    user_id,
+                    task_name,
+                    "failed",
+                    duration,
+                    timeout_msg,
+                    task_details=result,
+                    db_override=task_db,
                 )
 
                 raise TimeoutError(timeout_msg)
@@ -877,7 +888,13 @@ class IndividualServiceManager:
 
             # Send notification for failed execution
             self._notify_service_execution_completed(
-                user_id, task_name, "failed", duration, str(e), db_override=task_db
+                user_id,
+                task_name,
+                "failed",
+                duration,
+                str(e),
+                task_details=None,
+                db_override=task_db,
             )
 
         finally:
@@ -1286,71 +1303,32 @@ class IndividualServiceManager:
             )
             return []
 
-    def _is_t2t_segment(self, ticker: str) -> bool:
+    def _is_non_tradable_equity(self, ticker: str) -> bool:
         """
-        Check if a ticker/symbol belongs to a T2T (Trade-to-Trade) segment.
+        Thin re-check at persist: deny non-company-equity listings.
 
-        T2T segments (-BE, -BL, -BZ) have same-day selling restrictions and should
-        be excluded from trading for mean reversion strategies.
-
-        Uses scrip master's resolution logic to properly resolve the symbol before checking.
-
-        Args:
-            ticker: Stock ticker (e.g., "RELIANCE.NS") or symbol (e.g., "RELIANCE")
-
-        Returns:
-            True if symbol is T2T segment, False otherwise
+        Uses EQ-first scrip resolution and ``pISIN`` (``INF`` = ETF/MF unit).
+        When scrip cache is missing, allows through (pre-filter may have run degraded).
         """
-        # Extract base symbol (remove .NS/.BO suffix)
-        base_symbol = ticker.replace(".NS", "").replace(".BO", "").strip().upper()
-
-        # Try to resolve symbol using scrip master if available
         try:
-            from modules.kotak_neo_auto_trader import config as kotak_config
-            from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
-            from utils.logger import logger as utils_logger
-
-            # Try to load scrip master from cache
-            default_exchange = getattr(kotak_config, "DEFAULT_EXCHANGE", "NSE")
-            scrip_master = KotakNeoScripMaster(
-                cache_dir="data/scrip_master", exchanges=[default_exchange]
+            from src.infrastructure.brokers.tradable_equity_resolver import (
+                DeniedEquity,
+                load_cached_scrip_master,
+                resolve_tradable_equity,
             )
 
-            # Try to load from cache (doesn't require auth)
-            instruments = scrip_master._load_from_cache(default_exchange)
-
-            if instruments:
-                # Build symbol map using scrip master's built-in logic
-                # This properly maps base symbols to their trading symbols
-                scrip_master.scrip_data[default_exchange] = instruments
-                scrip_master._build_symbol_map(default_exchange, instruments)
-
-                # Use scrip master's resolution logic to get the correct trading symbol
-                # This handles edge cases where a stock might only exist in one segment
-                instrument = scrip_master.get_instrument(base_symbol, exchange=default_exchange)
-
-                if instrument and instrument.get("symbol"):
-                    # Got the resolved trading symbol (e.g., "SALSTEEL-BE", "RELIANCE-EQ")
-                    resolved_symbol = instrument["symbol"].upper()
-
-                    # Check if resolved symbol is T2T segment
-                    is_t2t = any(resolved_symbol.endswith(suf) for suf in ["-BE", "-BL", "-BZ"])
-                    return is_t2t
-
-                # If symbol not found in scrip master, can't determine - allow through
+            scrip_master = load_cached_scrip_master()
+            if scrip_master is None:
                 return False
-            else:
-                # Scrip master cache not available - can't determine, allow through
-                return False
+            result = resolve_tradable_equity(ticker, scrip_master)
+            return isinstance(result, DeniedEquity)
         except Exception as e:
-            # If scrip master check fails, allow through (to avoid breaking system)
-            # Log debug message (not warning, as this is expected if scrip master not available)
             try:
                 from utils.logger import logger as utils_logger
 
-                utils_logger.debug(f"Could not check T2T segment for {ticker}: {e}")
+                utils_logger.debug(f"Could not check tradability for {ticker}: {e}")
             except ImportError:
-                pass  # Logger not available, silently continue
+                pass
             return False
 
     def _persist_analysis_results(
@@ -1364,7 +1342,7 @@ class IndividualServiceManager:
         )
 
         processed_rows = []
-        t2t_filtered_count = 0
+        tradability_filtered_count = 0
         for row in results:
             if not isinstance(row, dict) or row.get("status") not in {"success", None}:
                 continue
@@ -1373,12 +1351,12 @@ class IndividualServiceManager:
             if verdict not in {"buy", "strong_buy"}:
                 continue
 
-            # Filter out T2T segment stocks (hard filter)
+            # Thin re-check: non-tradable equity (ETF/MF, T2T-only, no EQ)
             ticker = row.get("ticker") or row.get("symbol")
-            if ticker and self._is_t2t_segment(ticker):
-                t2t_filtered_count += 1
+            if ticker and self._is_non_tradable_equity(ticker):
+                tradability_filtered_count += 1
                 logger.debug(
-                    f"Skipping T2T segment stock: {ticker} (same-day selling not allowed)",
+                    f"Skipping non-tradable equity at persist: {ticker}",
                     action="run_analysis",
                     task_name="analysis",
                 )
@@ -1394,12 +1372,13 @@ class IndividualServiceManager:
             "updated": 0,
             "skipped": len(results) - len(processed_rows),
             "expired": 0,
-            "t2t_filtered": t2t_filtered_count,
+            "tradability_filtered": tradability_filtered_count,
         }
 
-        if t2t_filtered_count > 0:
+        if tradability_filtered_count > 0:
             logger.info(
-                f"Filtered {t2t_filtered_count} T2T segment stocks (same-day selling not allowed)",
+                f"Filtered {tradability_filtered_count} non-tradable symbols at persist "
+                f"(ETF/MF, missing ISIN, T2T-only, or no -EQ listing)",
                 action="run_analysis",
                 task_name="analysis",
             )
@@ -2351,6 +2330,7 @@ class IndividualServiceManager:
         status: str,
         duration: float,
         error: str | None = None,
+        task_details: dict | None = None,
         db_override: Session | None = None,
     ) -> None:
         """Send notification when a service execution completes (success or failure).
@@ -2372,11 +2352,25 @@ class IndividualServiceManager:
         pref_service = NotificationPreferenceService(db)
         preferences = pref_service.get_preferences(user_id)
 
+        premarket_summary = None
+        if task_name == "premarket_amo_adjustment" and status == "success":
+            raw_summary = (task_details or {}).get("summary")
+            if isinstance(raw_summary, dict):
+                premarket_summary = raw_summary
+
         if status == "success":
-            title = "Service Execution Completed"
-            message_text = (
-                f"Service: {task_display_name}\nStatus: Success\nDuration: {duration_str}"
-            )
+            if premarket_summary is not None:
+                from modules.kotak_neo_auto_trader.utils.trading_notification_messages import (
+                    format_premarket_task_in_app_summary,
+                )
+
+                title = "9:05 Pre-market"
+                message_text = format_premarket_task_in_app_summary(premarket_summary)
+            else:
+                title = "Service Execution Completed"
+                message_text = (
+                    f"Service: {task_display_name}\nStatus: Success\nDuration: {duration_str}"
+                )
             level = "info"
             severity = "SUCCESS"
         else:
@@ -2389,9 +2383,13 @@ class IndividualServiceManager:
             level = "error"
             severity = "ERROR"
 
-        # Send Telegram notification if enabled and preference allows
-        if pref_service.should_notify(
-            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
+        # 9:05 task: per-order Telegram already sent; only in-app one-liner here.
+        skip_service_broadcast = premarket_summary is not None and status == "success"
+        if (
+            not skip_service_broadcast
+            and pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
+            )
         ):
             notifier = self._get_telegram_notifier(user_id)
             if notifier and notifier.enabled:
@@ -2433,8 +2431,11 @@ class IndividualServiceManager:
 
         # Send Email notification if enabled and preference allows
         email_sent = False
-        if pref_service.should_notify(
-            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
+        if (
+            not skip_service_broadcast
+            and pref_service.should_notify(
+                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
+            )
         ):
             preferences = pref_service.get_preferences(user_id)
             if preferences and preferences.email_address:

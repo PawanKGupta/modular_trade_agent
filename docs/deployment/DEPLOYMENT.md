@@ -95,6 +95,21 @@ Full checklist: [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md
 
 **Breaking notes:** Activity Log UI removed (use Log Viewer); market analysis run-once is **admin-only**; in-app subscription catalog removed in favor of performance-fee billing.
 
+## Upgrading to 26.2.2
+
+From **`v26.2.1`**, **`releases/rebound_2621`**, or earlier 26.2.x deployments:
+
+1. **Backup** the database ([Postgres backup guide](POSTGRES_DOCKER_BACKUP_CRON.md)).
+2. Pull branch `releases/rebound_2622` or tag **`v26.2.2`**.
+3. Merge new variables from [`.env.example`](../../.env.example) — especially **`EMAIL_DOMAIN_ALLOWLIST_*`**, auth cookie/rate-limit settings, and notification prefs. Complete the [user data security pre-deploy checklist](../security/USER_DATA_SECURITY.md).
+4. Rebuild and restart containers (see [Docker README](../../docker/README.md)).
+5. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`). Four Alembic revisions since 26.2.1.
+6. Post-deploy smoke: login + page refresh, signup allowlist, Service Status, `/help`, trading path in your environment.
+
+Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
+
+**Notable changes:** User-data-security schema and session model; service status notifications default off; paper/live trading parity fixes; email domain allowlist for new signups.
+
 ## 🔗 Related Documentation
 
 - [Docker README](../../docker/README.md) - Docker-specific documentation

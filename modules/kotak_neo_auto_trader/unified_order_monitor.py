@@ -192,6 +192,46 @@ class UnifiedOrderMonitor:
             normalized_qty = 0
         return f"{order_identity}:{normalized_qty}"
 
+    @staticmethod
+    def _reentries_array_length(reentries: Any) -> int:
+        """Count reentry records (handles dict wrapper with _cycle_metadata)."""
+        if not reentries:
+            return 0
+        if isinstance(reentries, dict):
+            inner = reentries.get("reentries")
+            return len(inner) if isinstance(inner, list) else 0
+        if isinstance(reentries, list):
+            return len(reentries)
+        return 0
+
+    def _execution_reflected_in_open_position(self, order_obj: Any) -> bool:
+        """False when position_sync is set but open position qty lags closed system buys."""
+        if not self.positions_repo or not self.user_id or not self.sell_manager:
+            return True
+        symbol = str(getattr(order_obj, "symbol", "") or "").upper()
+        if not symbol:
+            return True
+        pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
+        if not pos or pos.closed_at is not None:
+            return False
+        totals = self.sell_manager._closed_system_buy_totals(
+            symbol,
+            opened_at=getattr(pos, "opened_at", None),
+            require_broker_trade_mode=True,
+        )
+        if totals is None:
+            return True
+        expected_qty, _ = totals
+        return float(pos.quantity) >= expected_qty - 0.01
+
+    def _position_qty_matches_expected(self, symbol: str, expected_qty: float) -> bool:
+        if not self.positions_repo or not self.user_id:
+            return True
+        pos = self.positions_repo.get_by_symbol(self.user_id, str(symbol or "").upper())
+        if not pos or pos.closed_at is not None:
+            return False
+        return abs(float(pos.quantity) - float(expected_qty)) <= 0.01
+
     def _is_execution_position_sync_applied(
         self, order_obj: Any, execution_qty: float | int | None
     ) -> bool:
@@ -209,7 +249,9 @@ class UnifiedOrderMonitor:
         expected_key = self._build_execution_sync_key(order_obj, execution_qty)
         synced_key = str(sync_meta.get("execution_key") or "").strip()
         # Backward compatibility: treat as applied when legacy marker exists without key.
-        return synced_key == expected_key or synced_key == ""
+        if synced_key != expected_key and synced_key != "":
+            return False
+        return self._execution_reflected_in_open_position(order_obj)
 
     def _mark_execution_position_sync_applied(
         self,
@@ -1450,10 +1492,10 @@ class UnifiedOrderMonitor:
                 last_reentry_price = existing_pos.last_reentry_price
                 reentry_data = None  # Initialize to None, will be set if is_reentry is True
 
-                # Check if this is a reentry: existing position OR order marked as reentry
-                if db_order and db_order.entry_type == "reentry":
-                    is_reentry = True
-                elif existing_pos:  # Position already exists, so this is likely a reentry
+                # Only explicit re-entry orders update reentry tracking (not pre-market adjustments)
+                from modules.kotak_neo_auto_trader.reentry_logging import is_reentry_db_order
+
+                if is_reentry_db_order(db_order):
                     is_reentry = True
 
                 if is_reentry:
@@ -1717,18 +1759,34 @@ class UnifiedOrderMonitor:
                                     # Flaw #9 Fix: Try broker API call BEFORE updating database
                                     # If it fails, we'll still update position (primary operation)
                                     # but log warning for retry later (Flaw #7 fix handles this)
-                                    sell_order_update_success = self.sell_manager.update_sell_order(
-                                        order_id=str(existing_order_id),
-                                        symbol=full_symbol,
-                                        qty=int(new_qty),
-                                        new_price=existing_order_price,
-                                    )
+                                    modify_price = None
+                                    if self.sell_manager:
+                                        modify_price = self.sell_manager.resolve_sell_modify_price(
+                                            symbol=full_symbol,
+                                            order_id=str(existing_order_id)
+                                            if existing_order_id
+                                            else None,
+                                            reported_price=float(existing_order_price or 0),
+                                        )
+                                    if modify_price is None or modify_price <= 0:
+                                        logger.warning(
+                                            f"Cannot modify sell order for {full_symbol}: "
+                                            f"no valid limit price (reported Rs {existing_order_price:.2f})"
+                                        )
+                                        sell_order_update_success = False
+                                    else:
+                                        sell_order_update_success = self.sell_manager.update_sell_order(
+                                            order_id=str(existing_order_id),
+                                            symbol=full_symbol,
+                                            qty=int(new_qty),
+                                            new_price=modify_price,
+                                        )
 
                                     if sell_order_update_success:
                                         logger.info(
                                             f"Successfully updated sell order for {full_symbol}: "
                                             f"{existing_order_qty} -> {new_qty} shares "
-                                            f"@ Rs {existing_order_price:.2f}"
+                                            f"@ Rs {modify_price:.2f}"
                                         )
                                     else:
                                         logger.warning(
@@ -1788,7 +1846,7 @@ class UnifiedOrderMonitor:
                             self.user_id, full_symbol
                         )
                         if updated_position:
-                            actual_count = len(updated_position.reentries or [])
+                            actual_count = self._reentries_array_length(updated_position.reentries)
                             if updated_position.reentry_count != actual_count:
                                 logger.warning(
                                     f"Reentry count mismatch for {full_symbol}: "
@@ -1820,9 +1878,15 @@ class UnifiedOrderMonitor:
                     + (f", reentry_count: {reentry_count}" if is_reentry else "")
                 )
                 if db_order:
-                    self._mark_execution_position_sync_applied(
-                        db_order, execution_qty, symbol=full_symbol
-                    )
+                    if self._position_qty_matches_expected(full_symbol, new_qty):
+                        self._mark_execution_position_sync_applied(
+                            db_order, execution_qty, symbol=full_symbol
+                        )
+                    else:
+                        logger.warning(
+                            f"Position qty for {full_symbol} does not match expected {new_qty} "
+                            f"after update; leaving position_sync unmarked for retry"
+                        )
             else:
                 # Create new position (wrapped in transaction for consistency)
                 # If already in a transaction, SQLAlchemy will use savepoints automatically
@@ -1841,9 +1905,15 @@ class UnifiedOrderMonitor:
                     f"price=Rs {execution_price:.2f}, entry_rsi={entry_rsi:.2f}"
                 )
                 if db_order:
-                    self._mark_execution_position_sync_applied(
-                        db_order, execution_qty, symbol=full_symbol
-                    )
+                    if self._position_qty_matches_expected(full_symbol, execution_qty):
+                        self._mark_execution_position_sync_applied(
+                            db_order, execution_qty, symbol=full_symbol
+                        )
+                    else:
+                        logger.warning(
+                            f"Position qty for {full_symbol} does not match expected "
+                            f"{execution_qty} after create; leaving position_sync unmarked for retry"
+                        )
 
             # Note: Order status is already correct (ONGOING legacy or CLOSED = executed order)
             # According to design: PENDING → CLOSED (when executed); position ongoing is in Positions.

@@ -12,7 +12,9 @@ from core.telegram import send_telegram  # TODO Phase 4: Migrate to infrastructu
 # Phase 4: Use services instead of core modules
 from services import BacktestService, ScoringService, compute_strength_score
 from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
-from src.infrastructure.web_scraping.screener_symbol_filters import parse_and_filter_screener_csv
+from src.infrastructure.web_scraping.screener_symbol_filters import (
+    parse_and_filter_tradable_screener_csv,
+)
 from utils.logger import logger
 
 # ML verdict service (optional, for testing only)
@@ -42,7 +44,7 @@ def get_stocks():
         logger.error("Stock scraping failed, no stocks to analyze")
         return []
 
-    equity = parse_and_filter_screener_csv(stocks)
+    equity = parse_and_filter_tradable_screener_csv(stocks)
     return [f"{sym}.NS" for sym in equity]
 
 

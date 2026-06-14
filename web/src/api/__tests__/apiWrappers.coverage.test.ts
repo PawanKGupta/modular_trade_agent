@@ -12,8 +12,8 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../client', () => ({
 	api: hoisted.api,
-	setAccessToken: vi.fn(),
-	setRefreshToken: vi.fn(),
+	applyTokenResponse: vi.fn(),
+	clearAuthTokens: vi.fn(),
 }));
 
 import * as admin from '../admin';
@@ -61,14 +61,39 @@ describe('api wrappers (mocked client)', () => {
 			data: { access_token: 'access', refresh_token: 'refresh', token_type: 'bearer' },
 		});
 		await auth.login('user@example.com', 'Secret123!');
+		hoisted.api.post.mockResolvedValueOnce({
+			data: { mfa_required: true, mfa_token: 'mfa-tok' },
+		});
+		const mfaChallenge = await auth.login('mfa@example.com', 'Secret123!');
+		expect(mfaChallenge.mfa_required).toBe(true);
 		hoisted.api.post.mockResolvedValueOnce({ data: { refresh_token: 'refresh-only' } });
 		await auth.login('other@example.com', 'Secret123!');
+		hoisted.api.post.mockResolvedValueOnce({
+			data: { access_token: 'mfa-access', refresh_token: 'mfa-refresh', token_type: 'bearer' },
+		});
+		await auth.mfaLogin('mfa-tok', '123456');
+		hoisted.api.post.mockResolvedValueOnce({
+			data: { secret: 'sec', provisioning_uri: 'otpauth://', backup_codes: ['abc'] },
+		});
+		await auth.mfaSetup();
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.mfaVerify('123456');
+		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
+		await auth.mfaDisable('Secret123!', '123456');
 		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'Account created.' } });
 		await auth.signup('new@example.com', 'Secret123!', 'New User');
 		hoisted.api.get.mockResolvedValueOnce({
 			data: { id: 1, email: 'user@example.com', roles: ['user'], email_verified: true },
 		});
 		await auth.me();
+		hoisted.api.get.mockResolvedValueOnce({ data: { profile: { email: 'user@example.com' } } });
+		await auth.exportAccountData();
+		hoisted.api.delete.mockResolvedValueOnce({ data: { message: 'deleted' } });
+		await auth.deleteAccount('Secret123!', '123456');
+		hoisted.api.delete.mockResolvedValueOnce({ data: { message: 'deleted' } });
+		await auth.deleteAccount('Secret123!');
+		hoisted.api.post.mockRejectedValueOnce(new Error('network'));
+		await auth.logout();
 		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });
 		await auth.forgotPassword('user@example.com');
 		hoisted.api.post.mockResolvedValueOnce({ data: { message: 'ok' } });

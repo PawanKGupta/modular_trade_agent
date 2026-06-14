@@ -8,6 +8,50 @@ import { TestConfig } from '../config/test-config';
  */
 
 /**
+ * Wait until dashboard shell is visible (authenticated app loaded).
+ */
+export async function waitForDashboardReady(
+	page: Page,
+	timeout = TestConfig.timeouts.navigation,
+): Promise<void> {
+	await page.waitForURL(/\/dashboard/, { timeout });
+	await page
+		.getByText('Restoring session...')
+		.waitFor({ state: 'hidden', timeout })
+		.catch(() => undefined);
+	await page.locator('main, [role="main"]').waitFor({ state: 'visible', timeout });
+}
+
+/**
+ * Wait for session restore after navigation or reload.
+ */
+export async function waitForSessionRestore(page: Page, timeout = TestConfig.timeouts.navigation): Promise<void> {
+	await page
+		.waitForResponse(
+			(response) => response.url().includes('/auth/me') && response.status() === 200,
+			{ timeout: Math.min(timeout, 15000) },
+		)
+		.catch(() => undefined);
+	await waitForDashboardReady(page, timeout);
+}
+
+/**
+ * Reload the page and wait for cookie/localStorage session to restore.
+ */
+export async function reloadAndWaitForSession(
+	page: Page,
+	timeout = TestConfig.timeouts.navigation,
+): Promise<void> {
+	const mePromise = page.waitForResponse(
+		(response) => response.url().includes('/auth/me') && response.status() === 200,
+		{ timeout },
+	);
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await mePromise.catch(() => undefined);
+	await waitForDashboardReady(page, timeout);
+}
+
+/**
  * Login user and wait for dashboard
  */
 export async function loginUser(
@@ -27,7 +71,7 @@ export async function loginUser(
  */
 export function generateTestEmail(prefix: string = 'test'): string {
 	const timestamp = Date.now();
-	return `${prefix}${timestamp}@rebound.com`;
+	return `${prefix}${timestamp}@${TestConfig.signupEmailDomain}`;
 }
 
 /**

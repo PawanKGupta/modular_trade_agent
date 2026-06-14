@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSettings, updateSettings, type Settings, saveBrokerCreds, testBrokerConnection, getBrokerStatus, getBrokerCredsInfo, type BrokerTestRequest } from '@/api/user';
-import { changePassword, updateProfile } from '@/api/auth';
+import { changePassword, updateProfile, mfaSetup, mfaVerify, mfaDisable } from '@/api/auth';
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { fieldErrorFor, validateChangePasswordForm, validateProfileForm } from '@/utils/authValidation';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 import { PasswordConfirmHint, PasswordRequirementsChecklist } from '@/components/PasswordRequirementsChecklist';
@@ -50,6 +50,14 @@ export function SettingsPage() {
 	const [profileFieldErrors, setProfileFieldErrors] = useState<ReturnType<typeof validateProfileForm>>([]);
 	const [profileMsg, setProfileMsg] = useState<string | null>(null);
 	const [profileSaving, setProfileSaving] = useState(false);
+	const [mfaSetupData, setMfaSetupData] = useState<{
+		secret: string;
+		provisioning_uri: string;
+		backup_codes: string[];
+	} | null>(null);
+	const [mfaCode, setMfaCode] = useState('');
+	const [mfaMsg, setMfaMsg] = useState<string | null>(null);
+	const [mfaLoading, setMfaLoading] = useState(false);
 
 	useEffect(() => {
 		if (user) {
@@ -225,6 +233,99 @@ export function SettingsPage() {
 					</div>
 				)}
 			</div>
+			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Two-factor authentication</h2>
+			<div className="space-y-3 mb-6 pb-6 border-b border-[#1e293b]/50">
+				<p className="text-xs sm:text-sm text-[var(--muted)]">
+					{user?.mfa_enabled
+						? 'MFA is enabled on your account.'
+						: 'Add an authenticator app for stronger account protection.'}
+				</p>
+				{!user?.mfa_enabled && !mfaSetupData && (
+					<button
+						type="button"
+						className="px-4 py-2 rounded bg-[#1e293b] text-sm"
+						disabled={mfaLoading}
+						onClick={async () => {
+							setMfaLoading(true);
+							setMfaMsg(null);
+							try {
+								const data = await mfaSetup();
+								setMfaSetupData(data);
+							} catch (e) {
+								setMfaMsg(getApiErrorMessage(e, 'MFA setup failed'));
+							} finally {
+								setMfaLoading(false);
+							}
+						}}
+					>
+						{mfaLoading ? 'Starting...' : 'Set up MFA'}
+					</button>
+				)}
+				{mfaSetupData && !user?.mfa_enabled && (
+					<div className="space-y-2 text-xs sm:text-sm">
+						<p>Scan this URI in your authenticator app, then enter the 6-digit code.</p>
+						<p className="break-all text-[var(--muted)]">{mfaSetupData.provisioning_uri}</p>
+						<p>Backup codes (save securely): {mfaSetupData.backup_codes.join(', ')}</p>
+						<input
+							className="w-full px-3 py-2 rounded bg-[#0f1720] border border-[#1e293b]"
+							placeholder="6-digit code"
+							value={mfaCode}
+							onChange={(e) => setMfaCode(e.target.value)}
+						/>
+						<button
+							type="button"
+							className="px-4 py-2 rounded bg-blue-600 text-sm"
+							onClick={async () => {
+								try {
+									await mfaVerify(mfaCode);
+									setMfaMsg('MFA enabled');
+									setMfaSetupData(null);
+									setMfaCode('');
+									await refresh();
+								} catch (e) {
+									setMfaMsg(getApiErrorMessage(e, 'Invalid code'));
+								}
+							}}
+						>
+							Confirm MFA
+						</button>
+					</div>
+				)}
+				{user?.mfa_enabled && (
+					<div className="space-y-2">
+						<input
+							className="w-full px-3 py-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+							type="password"
+							placeholder="Current password"
+							value={currentPassword}
+							onChange={(e) => setCurrentPassword(e.target.value)}
+						/>
+						<input
+							className="w-full px-3 py-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm"
+							placeholder="MFA or backup code"
+							value={mfaCode}
+							onChange={(e) => setMfaCode(e.target.value)}
+						/>
+						<button
+							type="button"
+							className="px-4 py-2 rounded bg-red-900/50 text-sm"
+							onClick={async () => {
+								try {
+									await mfaDisable(currentPassword, mfaCode);
+									setMfaMsg('MFA disabled');
+									setMfaCode('');
+									await refresh();
+								} catch (e) {
+									setMfaMsg(getApiErrorMessage(e, 'Could not disable MFA'));
+								}
+							}}
+						>
+							Disable MFA
+						</button>
+					</div>
+				)}
+				{mfaMsg && <div className="text-xs sm:text-sm text-green-400">{mfaMsg}</div>}
+			</div>
 			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Account password</h2>
 			<div className="space-y-3 mb-6 pb-6 border-b border-[#1e293b]/50">
 				<div>
@@ -314,6 +415,13 @@ export function SettingsPage() {
 				)}
 			</div>
 			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Trading mode</h2>
+			<p className="text-xs sm:text-sm text-[var(--muted)] mb-3">
+				Setting up Kotak for live trading? See the{' '}
+				<Link to="/help/connect-broker" className="text-[var(--accent)] hover:underline">
+					Help — Connect your broker
+				</Link>{' '}
+				guide.
+			</p>
 			<div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
 				<label className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
 					<input type="radio" checked={form.trade_mode === 'paper'} onChange={() => setForm({ ...form, trade_mode: 'paper' })} className="w-4 h-4" />

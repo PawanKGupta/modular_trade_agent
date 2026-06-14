@@ -44,10 +44,13 @@ def is_market_hours() -> bool:
 
 def is_pre_open_session() -> bool:
     """
-    NSE pre-open window (9:00–9:15 IST) before regular session LTP is reliable for MARKET orders.
+    NSE pre-open window (9:00–9:25 IST in code) before regular-session MARKET LTP is reliable.
 
-    Morning buy_orders (9:01) and premarket_retry (9:03) use REGULAR LIMIT here.
-    9:05 premarket_amo_adjustment recalculates qty from pre-market price (MKT modify).
+    Morning buy_orders (9:01) and premarket_retry (9:03) use REGULAR LIMIT at signal close
+    (close is a proxy — pre-market LTP is not used yet). See
+    ``docs/development/TRADING_SERVICES_FLOW.md`` (Morning buy flow).
+
+    9:05 premarket_amo_adjustment recalculates qty from pre-market LTP; MARKET when qty changes.
     """
     current_time = get_current_market_time()
     return 9.0 <= current_time < 9.25

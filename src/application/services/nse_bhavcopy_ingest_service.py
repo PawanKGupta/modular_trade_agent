@@ -7,6 +7,12 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from config.settings import OHLCV_REJECT_INVALID_FETCH
+from src.application.services.nse_bhavcopy_availability import (
+    filter_nse_intraday_gap_dates,
+    mark_nse_bhavcopy_published_for_today,
+    nse_bhavcopy_ingest_allowed_for_date,
+)
+from src.infrastructure.db.timezone_utils import ist_now
 from src.application.services.ohlcv_fetch_validation import validate_yahoo_ohlcv_frame
 from src.infrastructure.data_providers.nse_bhavcopy_fetcher import (
     NseBhavcopyFetcher,
@@ -26,6 +32,13 @@ from src.infrastructure.persistence.price_cache_repository import (
 from utils.logger import logger
 
 NSE_SOURCE = "nse"
+
+__all__ = [
+    "NseBhavcopyIngestService",
+    "NSE_SOURCE",
+    "filter_nse_intraday_gap_dates",
+    "nse_bhavcopy_ingest_allowed_for_date",
+]
 
 
 def _bar_to_upsert_row(cache_ticker: str, bar: NseEquityBar) -> dict:
@@ -71,8 +84,10 @@ class NseBhavcopyIngestService:
         total = 0
         missing_days = 0
 
-        days_to_fetch = self.repo.get_missing_trading_dates(
-            cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+        days_to_fetch = filter_nse_intraday_gap_dates(
+            self.repo.get_missing_trading_dates(
+                cache_ticker, start_date, end_date, interval=DEFAULT_INTERVAL
+            )
         )
         if not days_to_fetch:
             logger.info(
@@ -96,6 +111,8 @@ class NseBhavcopyIngestService:
             )
             return 0
 
+        today_ist = ist_now().date()
+        today_upserted = False
         for trade_day in days_to_fetch:
             df = self.fetcher.download_bhavcopy(trade_day)
             if df is None or df.empty:
@@ -123,6 +140,11 @@ class NseBhavcopyIngestService:
                 )
                 continue
             total += self.repo.upsert_many([row])
+            if trade_day == today_ist:
+                today_upserted = True
+
+        if today_upserted:
+            mark_nse_bhavcopy_published_for_today()
 
         self.repo.refresh_symbol_meta(cache_ticker, interval=DEFAULT_INTERVAL)
         from src.application.services.ohlcv_fetch_validation import validate_cached_symbol
@@ -170,6 +192,13 @@ class NseBhavcopyIngestService:
         if symbols is None and not all_equity:
             raise ValueError("Provide symbols or set all_equity=True")
 
+        if not nse_bhavcopy_ingest_allowed_for_date(trade_date):
+            logger.debug(
+                "NSE ingest_trading_day: skipping %s (ingest not allowed yet for calendar today)",
+                trade_date,
+            )
+            return 0
+
         df = self.fetcher.download_bhavcopy(trade_date)
         if df is None or df.empty:
             logger.warning("NSE ingest_trading_day: no bhavcopy for %s", trade_date)
@@ -191,6 +220,8 @@ class NseBhavcopyIngestService:
         for t in tickers:
             self.repo.refresh_symbol_meta(t, interval=DEFAULT_INTERVAL)
         logger.info("NSE ingest_trading_day %s: upserted %s rows for %s symbols", trade_date, count, len(tickers))
+        if count and trade_date == ist_now().date():
+            mark_nse_bhavcopy_published_for_today()
         return count
 
 

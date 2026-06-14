@@ -144,6 +144,16 @@ docker-compose -f docker-compose.yml exec api-server python -m alembic upgrade h
 
 See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-to-2621) and [RELEASE_PLAN_V26.2.1.md](../docs/development/RELEASE_PLAN_V26.2.1.md).
 
+### Upgrading to 26.2.2
+
+1. Backup Postgres (`docker/scripts/backup_postgres_docker.sh` or your operator backup).
+2. Pull latest code / image for `releases/rebound_2622` or tag `v26.2.2`.
+3. Update `.env` from repo `.env.example` (auth allowlist, cookie/rate-limit, notifications).
+4. `docker-compose build` and `docker-compose up -d` (or your deploy script).
+5. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
+
+See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-to-2622) and [RELEASE_PLAN_V26.2.2.md](../docs/development/RELEASE_PLAN_V26.2.2.md).
+
 ### Check Status
 ```bash
 docker-compose -f docker-compose.yml ps

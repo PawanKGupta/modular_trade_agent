@@ -31,5 +31,29 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 
+    # Auth rate limiting
+    rate_limit_enabled: bool = True
+    rate_limit_login_max: int = 5
+    rate_limit_refresh_max: int = 20
+    rate_limit_window_seconds: int = 900
+    rate_limit_backend: str = "memory"  # memory | redis
+    redis_url: str | None = None
+
+    # Password hashing (PBKDF2 rounds; re-hash on login when lower)
+    password_hash_rounds: int = 290000
+
+    # Cookie-based auth (httpOnly); Bearer still supported for transition
+    auth_use_cookies: bool = True
+    auth_cookie_secure: bool = False  # set True in production behind HTTPS
+    auth_cookie_samesite: str = "lax"  # lax for dev; strict in prod HTTPS
+
+    # MFA
+    mfa_required_for_broker_mode: bool = False
+    mfa_required_for_admin: bool = False
+
+    # Registration: only allow email domains on the bundled provider allowlist
+    email_domain_allowlist_enabled: bool = True
+    email_domain_allowlist_extra: list[str] = []
+
 
 settings = Settings()

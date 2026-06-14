@@ -384,7 +384,11 @@ class TestPlaceReentryOrders:
         engine._calculate_execution_capital = Mock(return_value=10000.0)
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
@@ -455,11 +459,13 @@ class TestPlaceReentryOrders:
         assert summary["skipped_duplicates"] == 1
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
-    def test_place_reentry_orders_insufficient_balance(self, mock_auth):
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_insufficient_balance(self, mock_login, mock_auth):
         """Test that insufficient balance is handled"""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
 
         engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
 
@@ -468,32 +474,53 @@ class TestPlaceReentryOrders:
         mock_position.symbol = "RELIANCE-EQ"  # Full symbol after migration
         mock_position.entry_rsi = 25.0
         mock_position.closed_at = None
+        mock_position.reentry_count = 0
+        mock_position.reentries = None
 
         # Mock positions repository
         mock_positions_repo = Mock()
         mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
         engine.positions_repo = mock_positions_repo
         engine.user_id = 1
 
         # Mock indicators
         engine.get_daily_indicators = Mock(
-            return_value={"rsi10": 18.0, "close": 100.0, "avg_volume": 1000000}
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
         )
 
         # Mock order validation service
         engine.order_validation_service = Mock()
         engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
 
-        # Mock portfolio: insufficient balance
+        # Skip login() re-init (would reload scrip master from disk/API on CI)
+        engine.orders = Mock()
         engine.portfolio = Mock()
         engine.portfolio.get_available_cash = Mock(return_value=50.0)  # Very low balance
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=0)
+        engine.get_available_cash = Mock(return_value=50.0)
+        engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
 
         # Mock parse_symbol_for_broker
-        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE-EQ")
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
 
         # Mock strategy config
         engine.strategy_config = Mock()
         engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
 
         summary = engine.place_reentry_orders()
 
@@ -502,6 +529,138 @@ class TestPlaceReentryOrders:
         # When affordable_qty < qty and affordable_qty <= 0, it saves as failed order
         # So should be in failed_balance, not skipped_invalid_qty
         assert summary["failed_balance"] == 1
+        engine._notify_balance_shortfall.assert_called_once()
+        notify_kwargs = engine._notify_balance_shortfall.call_args.kwargs
+        assert notify_kwargs["entry_type"] == "reentry"
+        assert notify_kwargs["dry_run"] is False
+        engine._add_failed_order.assert_called_once()
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_partial_balance_still_places_reduced_qty(
+        self, mock_login, mock_place_order, mock_auth
+    ):
+        """Partial funds should notify full-qty shortfall, reduce qty, and still place."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
+        mock_place_order.return_value = (True, "ORDER456")
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentries = None
+        mock_position.avg_price = 100.0
+        mock_position.entry_price = 100.0
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.orders = Mock()
+        engine.portfolio = Mock()
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=50)
+        engine.get_available_cash = Mock(return_value=5000.0)
+        engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
+        engine.strategy_config = Mock()
+        engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
+
+        summary = engine.place_reentry_orders()
+
+        assert summary["failed_balance"] == 0
+        assert summary["placed"] == 1
+        engine._notify_balance_shortfall.assert_called_once()
+        notify_kwargs = engine._notify_balance_shortfall.call_args.kwargs
+        assert notify_kwargs["qty"] == 100
+        assert notify_kwargs["shortfall"] == 5000.0
+        assert notify_kwargs["affordable_qty"] == 50
+        assert notify_kwargs["entry_type"] == "reentry"
+        engine._add_failed_order.assert_not_called()
+        place_args = mock_place_order.call_args[0]
+        assert place_args[2] == 50
+
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
+    @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine.login")
+    def test_place_reentry_orders_dry_run_notifies_without_failed_order(self, mock_login, mock_auth):
+        """Evening preview re-entry shortfall notifies but does not persist failed orders."""
+        mock_auth_instance = Mock()
+        mock_auth_instance.is_authenticated.return_value = True
+        mock_auth.return_value = mock_auth_instance
+        mock_login.return_value = True
+
+        engine = AutoTradeEngine(auth=mock_auth_instance, user_id=1)
+        mock_position = Mock()
+        mock_position.symbol = "RELIANCE-EQ"
+        mock_position.entry_rsi = 25.0
+        mock_position.closed_at = None
+        mock_position.reentry_count = 0
+        mock_position.reentries = None
+        mock_position.avg_price = 100.0
+        mock_position.entry_price = 100.0
+
+        mock_positions_repo = Mock()
+        mock_positions_repo.list.return_value = [mock_position]
+        mock_positions_repo.get_by_symbol.return_value = mock_position
+        engine.positions_repo = mock_positions_repo
+        engine.user_id = 1
+        engine.get_daily_indicators = Mock(
+            return_value={
+                "rsi10": 18.0,
+                "close": 100.0,
+                "avg_volume": 1000000,
+                "ema9": 105.0,
+                "ema200": 95.0,
+            }
+        )
+        engine.order_validation_service = Mock()
+        engine.order_validation_service.check_duplicate_order = Mock(return_value=(False, None))
+        engine.orders = Mock()
+        engine.portfolio = Mock()
+        engine.has_active_buy_order = Mock(return_value=False)
+        engine._calculate_execution_capital = Mock(return_value=10000.0)
+        engine.get_affordable_qty = Mock(return_value=0)
+        engine.get_available_cash = Mock(return_value=50.0)
+        engine._add_failed_order = Mock()
+        engine._notify_balance_shortfall = Mock()
+        engine.parse_symbol_for_broker = Mock(return_value="RELIANCE")
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE")
+        engine.strategy_config = Mock()
+        engine.strategy_config.user_capital = 10000.0
+        engine.strategy_config.default_exchange = "NSE"
+
+        summary = engine.place_reentry_orders(dry_run=True)
+
+        assert summary["failed_balance"] == 1
+        assert summary["dry_run"] is True
+        engine._notify_balance_shortfall.assert_called_once()
+        assert engine._notify_balance_shortfall.call_args.kwargs["dry_run"] is True
+        engine._add_failed_order.assert_not_called()
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.AutoTradeEngine._attempt_place_order")
@@ -588,14 +747,18 @@ class TestPlaceReentryOrders:
         # Mock parse_symbol_for_broker
         def parse_symbol_side_effect(ticker):
             if "RELIANCE" in ticker:
-                return "RELIANCE-EQ"
+                return "RELIANCE"
             elif "TCS" in ticker:
-                return "TCS-EQ"
+                return "TCS"
             elif "INFY" in ticker:
-                return "INFY-EQ"
+                return "INFY"
             return None
 
         engine.parse_symbol_for_broker = Mock(side_effect=parse_symbol_side_effect)
+
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
+
+        assign_tradable_scrip_master(engine, "RELIANCE", "TCS", "INFY")
 
         # Mock strategy config
         engine.strategy_config = Mock()
@@ -805,7 +968,7 @@ class TestPlaceReentryOrders:
 
     @patch("modules.kotak_neo_auto_trader.auto_trade_engine.KotakNeoAuth")
     def test_place_reentry_uses_post_close_snapshot_until_next_eod_window(self, mock_auth):
-        """Use current-day RSI after close, and previous snapshot during next market hours."""
+        """Wire ``add_current_day`` from ``should_use_same_day_close_for_indicators`` (post-close vs session)."""
         mock_auth_instance = Mock()
         mock_auth_instance.is_authenticated.return_value = True
         mock_auth.return_value = mock_auth_instance
@@ -832,31 +995,19 @@ class TestPlaceReentryOrders:
             "ema200": 95.0,
         }
 
-        # Run 1: post-close on trading day -> include current day in RSI snapshot
-        with (
-            patch(
-                "core.volume_analysis.is_market_hours",
-                return_value=False,
-            ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
+        # Run 1: post-close with same-day close allowed (bhavcopy confirmed or Yahoo legacy)
+        with patch(
+            "src.application.services.nse_bhavcopy_availability.should_use_same_day_close_for_indicators",
+            return_value=True,
         ):
-            mock_ist_now.return_value = datetime(
-                2026, 3, 2, 16, 5, 0, tzinfo=IST
-            )  # Monday 4:05 PM IST
             summary_after_close = engine.place_reentry_orders()
             assert summary_after_close["attempted"] == 1
 
-        # Run 2: next-day market hours -> keep using previous closed-day snapshot
-        with (
-            patch(
-                "core.volume_analysis.is_market_hours",
-                return_value=True,
-            ),
-            patch("modules.kotak_neo_auto_trader.auto_trade_engine.ist_now") as mock_ist_now,
+        # Run 2: next session intraday -> prior closed-day RSI snapshot
+        with patch(
+            "src.application.services.nse_bhavcopy_availability.should_use_same_day_close_for_indicators",
+            return_value=False,
         ):
-            mock_ist_now.return_value = datetime(
-                2026, 3, 3, 10, 0, 0, tzinfo=IST
-            )  # Tuesday 10:00 AM IST
             summary_market_hours = engine.place_reentry_orders()
             assert summary_market_hours["attempted"] == 1
 

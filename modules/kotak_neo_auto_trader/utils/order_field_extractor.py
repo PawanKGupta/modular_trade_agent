@@ -6,6 +6,10 @@ Centralized order field extraction with fallback logic for broker API inconsiste
 
 from typing import Any
 
+EOD_DAY_BUY_CANCEL_REASON = (
+    "Unexecuted DAY/REGULAR buy cancelled at session close (EOD cleanup)"
+)
+
 
 class OrderFieldExtractor:
     """
@@ -136,6 +140,37 @@ class OrderFieldExtractor:
         )
 
     @staticmethod
+    def get_limit_price(order: dict[str, Any]) -> float:
+        """
+        Extract pending limit price (prefer order price over average fill price).
+
+        Args:
+            order: Order dict from broker API
+
+        Returns:
+            Limit price as float, 0.0 if not found
+        """
+        return float(
+            order.get("prc")
+            or order.get("price")
+            or order.get("orderPrice")
+            or order.get("avgPrc")
+            or 0.0
+        )
+
+    @staticmethod
+    def get_price_type(order: dict[str, Any]) -> str:
+        """Return broker price type code (e.g. ``L``, ``MKT``)."""
+        return str(
+            order.get("prcTp") or order.get("pt") or order.get("orderType") or "MKT"
+        ).upper()
+
+    @staticmethod
+    def is_limit_broker_order(order: dict[str, Any]) -> bool:
+        """Return True when broker order dict represents a LIMIT order."""
+        return OrderFieldExtractor.get_price_type(order) in ("L", "LIMIT")
+
+    @staticmethod
     def get_rejection_reason(order: dict[str, Any]) -> str:
         """
         Extract rejection reason with fallbacks.
@@ -224,3 +259,61 @@ class OrderFieldExtractor:
             return False
 
         return True
+
+    @staticmethod
+    def is_amo_broker_order(order: dict[str, Any]) -> bool:
+        """
+        Return True when a broker order dict represents an AMO (after-market) order.
+
+        AMO pending buys are intentionally carried overnight for 9:05 adjustment.
+        """
+        amo_val = str(
+            order.get("am") or order.get("amo") or order.get("AM") or ""
+        ).upper()
+        if amo_val in ("YES", "Y", "TRUE", "1"):
+            return True
+        variety = str(
+            order.get("variety")
+            or order.get("ordVariety")
+            or order.get("ordSrc")
+            or order.get("orderSource")
+            or ""
+        ).upper()
+        return variety in ("AMO", "AFTER_MARKET", "AFTER MARKET")
+
+    @staticmethod
+    def is_eod_cancellable_day_buy_broker_order(order: dict[str, Any]) -> bool:
+        """
+        Return True for open/pending REGULAR/DAY buys that must not carry overnight.
+
+        Excludes AMO (carried for pre-market adjustment) and IOC intraday orders.
+        """
+        if not OrderFieldExtractor.is_pending_open_buy_order(order):
+            return False
+        return not OrderFieldExtractor.is_amo_broker_order(order)
+
+    @staticmethod
+    def is_amo_db_order(db_order: Any) -> bool:
+        """Return True when a persisted order row represents an AMO buy."""
+        if db_order is None:
+            return False
+        reason = getattr(db_order, "reason", None) or ""
+        if "AMO" in str(reason).upper():
+            return True
+        metadata = getattr(db_order, "order_metadata", None)
+        if isinstance(metadata, dict):
+            variety = str(metadata.get("variety") or metadata.get("order_variety") or "").upper()
+            if variety == "AMO":
+                return True
+        return False
+
+    @staticmethod
+    def is_eod_cancellable_day_buy_db_order(db_order: Any) -> bool:
+        """Return True for PENDING non-AMO buy rows that should be cleared at EOD."""
+        if db_order is None or getattr(db_order, "side", None) != "buy":
+            return False
+        status = getattr(db_order, "status", None)
+        status_val = getattr(status, "value", status)
+        if str(status_val).upper() != "PENDING":
+            return False
+        return not OrderFieldExtractor.is_amo_db_order(db_order)

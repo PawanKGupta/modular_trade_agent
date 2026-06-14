@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from src.infrastructure.db.models import ServiceStatus
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 
 
 class ServiceStatusRepository:
@@ -44,7 +44,7 @@ class ServiceStatusRepository:
     def update_heartbeat(self, user_id: int) -> ServiceStatus:
         """Update last heartbeat timestamp"""
         status = self.get_or_create(user_id)
-        status.last_heartbeat = ist_now()
+        status.last_heartbeat = ist_now_naive()
         status.updated_at = ist_now()
         self.db.flush()  # Flush changes without committing (let caller manage transaction)
         self.db.refresh(status)

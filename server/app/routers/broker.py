@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from src.application.services.broker_credentials import (
@@ -18,6 +18,8 @@ from src.application.services.broker_credentials import (
 from src.infrastructure.db.models import Orders, TradeMode, Users
 from src.infrastructure.persistence.settings_repository import SettingsRepository
 
+from ..core.audit import record_audit_user
+from ..core.config import settings as app_settings
 from ..core.crypto import (
     MissingDedicatedEncryptionKeyError,
     assert_db_secret_encryption_allowed,
@@ -375,9 +377,15 @@ def _extract_error_message(error: dict | list | str) -> str:
 @router.post("/creds", response_model=dict)
 def save_broker_creds(
     payload: BrokerCredsRequest,
+    request: Request,
     db: Session = Depends(get_db),  # noqa: B008
     current: Users = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, str]:
+    if app_settings.mfa_required_for_broker_mode and not current.mfa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Enable MFA before saving broker credentials",
+        )
     repo = SettingsRepository(db)
     settings = repo.ensure_default(current.id)
 
@@ -485,6 +493,15 @@ def save_broker_creds(
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("Failed to restart trading service for user_id=%s: %s", current.id, e)
+
+    record_audit_user(
+        db,
+        current,
+        action="config_change",
+        resource_type="broker_creds",
+        request=request,
+        changes={"broker": payload.broker, "trade_mode": "broker"},
+    )
 
     return {"status": "ok"}
 

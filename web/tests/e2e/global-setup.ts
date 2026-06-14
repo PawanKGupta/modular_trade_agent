@@ -1,7 +1,46 @@
 import { execFileSync } from 'child_process';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { FullConfig } from '@playwright/test';
 import { TestConfig } from './config/test-config';
+
+function getProjectRoot(): string {
+	const cwd = process.cwd();
+	if (cwd.endsWith('/web') || cwd.endsWith('\\web')) {
+		return join(cwd, '..');
+	}
+	return cwd;
+}
+
+function resolveProjectPython(projectRoot: string): string {
+	const venvPython = join(projectRoot, '.venv', 'bin', 'python');
+	if (existsSync(venvPython)) {
+		return venvPython;
+	}
+	const winVenvPython = join(projectRoot, '.venv', 'Scripts', 'python.exe');
+	if (existsSync(winVenvPython)) {
+		return winVenvPython;
+	}
+	return 'python';
+}
+
+function ensureTestAdmin(projectRoot: string): void {
+	const python = resolveProjectPython(projectRoot);
+	const scriptPath = join(projectRoot, 'web', 'tests', 'e2e', 'utils', 'ensure-test-admin.py');
+	execFileSync(python, [scriptPath], {
+		cwd: projectRoot,
+		stdio: 'inherit',
+		encoding: 'utf-8',
+		env: {
+			...process.env,
+			E2E_DB_URL: process.env.E2E_DB_URL || 'sqlite:///./data/e2e.db',
+			DB_URL: process.env.E2E_DB_URL || process.env.DB_URL || 'sqlite:///./data/e2e.db',
+			TEST_ADMIN_EMAIL: process.env.TEST_ADMIN_EMAIL || TestConfig.users.admin.email,
+			TEST_ADMIN_PASSWORD: process.env.TEST_ADMIN_PASSWORD || TestConfig.users.admin.password,
+			RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || 'false',
+		},
+	});
+}
 
 /**
  * Global Setup
@@ -49,13 +88,22 @@ async function globalSetup(_config: FullConfig) {
 		throw error;
 	}
 
+	// Ensure test admin exists in e2e.db (matches test-config.ts credentials)
+	const projectRoot = getProjectRoot();
+	try {
+		console.log('\nEnsuring E2E test admin user...');
+		ensureTestAdmin(projectRoot);
+		console.log('✓ E2E test admin ready');
+	} catch (error) {
+		console.error('✗ Failed to ensure E2E test admin:', error);
+		throw error;
+	}
+
 	// Seed test data if enabled
 	if (process.env.E2E_SEED_DATA === 'true' || process.env.E2E_SEED_DATA === '1') {
 		console.log('\nSeeding test data...');
 		try {
-			// Resolve script path relative to project root
-			// From web/tests/e2e/global-setup.ts to web/tests/e2e/utils/seed-db.py
-			const projectRoot = process.cwd();
+			const python = resolveProjectPython(projectRoot);
 			const scriptPath = join(projectRoot, 'web', 'tests', 'e2e', 'utils', 'seed-db.py');
 
 			const parseSeedCount = (raw: string | undefined, fallback: string): string => {
@@ -92,7 +140,7 @@ async function globalSetup(_config: FullConfig) {
 			];
 
 			// argv array + no shell avoids command-injection findings on env-derived strings
-			execFileSync('python', args, {
+			execFileSync(python, args, {
 				cwd: projectRoot,
 				stdio: 'inherit',
 				encoding: 'utf-8',

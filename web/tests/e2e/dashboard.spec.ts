@@ -5,13 +5,13 @@ test.describe('Dashboard & Navigation', () => {
 		// Page is already authenticated via fixture and should be on dashboard
 		// Just ensure we're on dashboard, don't navigate again as it might cause redirect
 		await authenticatedPage.waitForURL(/\/dashboard/, { timeout: 10000 });
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 	});
 
 	test('dashboard overview loads correctly', async ({ authenticatedPage }) => {
 		// Navigate to dashboard (should already be there from beforeEach)
 		await authenticatedPage.goto('/dashboard');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify navigation menu is visible - check for Overview category button
 		const overviewButton = authenticatedPage.getByRole('button', { name: /Overview/i });
@@ -25,7 +25,7 @@ test.describe('Dashboard & Navigation', () => {
 	test('all menu items navigate correctly', async ({ authenticatedPage }) => {
 		// Ensure we start from dashboard
 		await authenticatedPage.goto('/dashboard');
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Scope queries to sidebar navigation to avoid matching dashboard quick action links
 		// Use aside first, then nav inside it to avoid strict mode violation
@@ -137,7 +137,7 @@ test.describe('Dashboard & Navigation', () => {
 		const buyingZoneLink = sidebar.getByRole('link', { name: /Buying Zone/i });
 		await buyingZoneLink.click();
 		await expect(authenticatedPage).toHaveURL(/\/dashboard\/buying-zone/);
-		await authenticatedPage.waitForLoadState('networkidle');
+		await authenticatedPage.waitForLoadState('domcontentloaded');
 
 		// Verify active state (check for active class or highlighted style)
 		const activeLink = sidebar.getByRole('link', { name: /Buying Zone/i });

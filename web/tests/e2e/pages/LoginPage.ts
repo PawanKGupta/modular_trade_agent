@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 import { BasePage } from './BasePage';
 import { TestConfig } from '../config/test-config';
+import { waitForDashboardReady } from '../utils/test-helpers';
 
 /**
  * Login Page Object Model
@@ -70,11 +71,17 @@ export class LoginPage extends BasePage {
 		await this.goto();
 		await this.fillEmail(email);
 		await this.fillPassword(password);
-		await this.clickLogin();
+		await Promise.all([
+			this.page.waitForResponse(
+				(response) =>
+					response.url().includes('/auth/login') &&
+					(response.status() === 200 || response.status() === 403),
+			),
+			this.clickLogin(),
+		]);
 		// Wait for navigation to dashboard after login
 		await this.page.waitForURL(/\/dashboard/, { timeout: this.config.timeouts.navigation });
-		// Wait for page to be fully loaded
-		await this.page.waitForLoadState('networkidle');
+		await waitForDashboardReady(this.page);
 	}
 
 	/**

@@ -62,6 +62,22 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values("date").reset_index(drop=True)
 
 
+def drop_incomplete_weekly_tail_bar(frame: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove Yahoo's in-progress week bar when ``close`` is missing.
+
+    yfinance returns a partial current-week row (often dated the latest session)
+    when the requested ``end`` includes the open week. That row fails structural
+    validation and must not be cached.
+    """
+    if frame.empty or len(frame) < 2:
+        return frame
+    last = frame.iloc[-1]
+    if _is_missing_price(last["close"]):
+        return frame.iloc[:-1].reset_index(drop=True)
+    return frame
+
+
 def meets_indicator_history_requirement(
     *,
     interval: str,
@@ -146,6 +162,14 @@ def validate_yahoo_ohlcv_frame(
     except ValueError as exc:
         return FetchValidationResult(status="failed", message=str(exc))
 
+    if interval == WEEKLY_INTERVAL:
+        frame = drop_incomplete_weekly_tail_bar(frame)
+        if frame.empty:
+            return FetchValidationResult(
+                status="failed",
+                message=f"{symbol} [{interval}]: only incomplete tail bar in Yahoo response",
+            )
+
     dupes = int(frame["date"].duplicated().sum())
     if dupes:
         return FetchValidationResult(
@@ -170,7 +194,7 @@ def validate_yahoo_ohlcv_frame(
         for fld in ("open", "high", "low", "close"):
             val = row[fld]
             if _is_missing_price(val):
-                if is_last and interval == DEFAULT_INTERVAL:
+                if is_last and interval in (DEFAULT_INTERVAL, WEEKLY_INTERVAL):
                     continue
                 invalid += 1
                 break

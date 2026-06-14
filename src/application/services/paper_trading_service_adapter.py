@@ -501,10 +501,10 @@ class PaperTradingServiceAdapter:
 
     def adjust_amo_quantities_premarket(self) -> dict[str, int]:
         """
-        9:05 AM - Pre-market AMO quantity adjustment (paper trading)
+        9:05 AM - Pre-market pending buy adjustment (paper trading)
 
-        Adjusts AMO order quantities based on pre-market prices to keep capital constant.
-        This matches the real broker behavior where quantities are adjusted before market open.
+        Adjusts pending buy orders (AMO or REGULAR LIMIT, including re-entries) using
+        pre-market prices — mirrors live ``adjust_amo_quantities_premarket``.
 
         Returns:
             Summary dict with adjustment statistics
@@ -542,39 +542,36 @@ class PaperTradingServiceAdapter:
                 )
                 return summary
 
-            # Get all pending AMO buy orders
             pending_orders = self.broker.get_pending_orders()
-            amo_buy_orders = [
+            adjustable_buy_orders = [
                 order
                 for order in pending_orders
-                if order.is_amo_order() and order.is_buy_order() and order.is_active()
+                if order.is_pending_open_buy_for_premarket_adjustment()
             ]
 
-            if not amo_buy_orders:
+            if not adjustable_buy_orders:
                 self.logger.info(
-                    "No pending AMO buy orders found", action="adjust_amo_quantities_premarket"
+                    "No pending buy orders found for pre-market adjustment",
+                    action="adjust_amo_quantities_premarket",
                 )
                 task_context["total_orders"] = 0
                 return summary
 
-            summary["total_orders"] = len(amo_buy_orders)
-            task_context["total_orders"] = len(amo_buy_orders)
+            summary["total_orders"] = len(adjustable_buy_orders)
+            task_context["total_orders"] = len(adjustable_buy_orders)
             self.logger.info(
-                f"Found {len(amo_buy_orders)} pending AMO buy orders",
+                f"Found {len(adjustable_buy_orders)} pending buy orders for adjustment",
                 action="adjust_amo_quantities_premarket",
             )
 
-            # Get target capital from strategy config
-            target_capital = (
-                self.strategy_config.user_capital
-                if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-                else 200000.0
+            from modules.kotak_neo_auto_trader.utils.premarket_adjustment import (
+                PREMARKET_LIMIT_PROXY_LOG,
+                compute_premarket_qty,
+                needs_premarket_market_finalize,
             )
 
-            from math import floor
-
-            # Process each AMO order
-            for order in amo_buy_orders:
+            # Process each pending buy (qty from execution_capital; always MARKET for LIMIT)
+            for order in adjustable_buy_orders:
                 try:
                     # Get original ticker from metadata for price fetching
                     price_symbol = order.symbol
@@ -667,6 +664,36 @@ class PaperTradingServiceAdapter:
                                             action="adjust_amo_quantities_premarket",
                                         )
 
+                                entry_type = None
+                                if self.db:
+                                    try:
+                                        from src.infrastructure.persistence.orders_repository import (
+                                            OrdersRepository,
+                                        )
+
+                                        db_o = OrdersRepository(self.db).get_by_broker_order_id(
+                                            self.user_id, order.order_id
+                                        )
+                                        if db_o:
+                                            entry_type = db_o.entry_type
+                                    except Exception:
+                                        pass
+                                from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                                    notify_premarket_ema9_cancelled,
+                                )
+
+                                notify_premarket_ema9_cancelled(
+                                    engine_or_adapter=self,
+                                    user_id=self.user_id,
+                                    db_session=self.db,
+                                    symbol=order.symbol,
+                                    order_id=order.order_id,
+                                    entry_type=entry_type,
+                                    premarket_ltp=premarket_price,
+                                    ema9=ema9,
+                                    ema9_threshold=ema9_threshold,
+                                )
+
                                 continue  # Skip quantity adjustment for cancelled order
                             except Exception as cancel_err:
                                 self.logger.error(
@@ -681,84 +708,132 @@ class PaperTradingServiceAdapter:
                             action="adjust_amo_quantities_premarket",
                         )
 
-                    # Recalculate quantity to keep capital constant
-                    new_qty = max(1, floor(target_capital / premarket_price))
+                    execution_capital = self._resolve_premarket_target_capital(
+                        price_symbol, premarket_price
+                    )
+                    new_qty = compute_premarket_qty(execution_capital, premarket_price)
 
-                    # Check if adjustment is needed
-                    if new_qty == original_qty:
+                    if not needs_premarket_market_finalize(
+                        is_limit=order.is_limit_order(),
+                        new_qty=new_qty,
+                        original_qty=original_qty,
+                    ):
                         self.logger.info(
-                            f"{order.symbol}: No adjustment needed (qty={original_qty})",
+                            f"{order.symbol}: No adjustment needed (MARKET, qty={original_qty})",
                             action="adjust_amo_quantities_premarket",
                         )
                         summary["no_adjustment_needed"] += 1
                         continue
 
-                    # Calculate gap percentage
                     original_price = float(order.price.amount) if order.price else premarket_price
-                    gap_pct = ((premarket_price - original_price) / original_price) * 100
+                    gap_pct = (
+                        ((premarket_price - original_price) / original_price) * 100
+                        if original_price > 0
+                        else 0.0
+                    )
+                    qty_changed = new_qty != original_qty
+                    if order.is_limit_order():
+                        self.logger.info(
+                            f"{order.symbol}: {PREMARKET_LIMIT_PROXY_LOG}",
+                            action="adjust_amo_quantities_premarket",
+                        )
 
                     self.logger.info(
-                        f"{order.symbol}: Adjusting AMO order: "
-                        f"qty {original_qty} → {new_qty}, "
-                        f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
-                        f"(gap: {gap_pct:+.2f}%, capital: Rs {target_capital:,.0f})",
+                        f"{order.symbol}: Finalizing pending buy as MARKET: "
+                        f"qty {original_qty} → {new_qty}"
+                        f"{'' if qty_changed else ' (unchanged)'}, "
+                        f"close proxy Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f} "
+                        f"(gap: {gap_pct:+.2f}%, execution_capital: Rs {execution_capital:,.0f})",
                         action="adjust_amo_quantities_premarket",
                     )
 
-                    # Update order quantity (cancel old and place new)
-                    # For MARKET orders, only quantity needs to be updated
-                    # Price is logged for tracking but not used (MARKET orders execute at market price)
+                    # Cancel and replace (live modify uses order_type=MKT when qty changes)
                     try:
-                        # Cancel old order
+                        cancelled_db_order = None
+                        if self.db and order.order_id:
+                            try:
+                                from src.infrastructure.persistence.orders_repository import (
+                                    OrdersRepository,
+                                )
+
+                                cancelled_db_order = OrdersRepository(self.db).get_by_broker_order_id(
+                                    self.user_id, order.order_id
+                                )
+                            except Exception as db_lookup_err:
+                                self.logger.warning(
+                                    f"{order.symbol}: Could not load DB order before adjustment: "
+                                    f"{db_lookup_err}",
+                                    action="adjust_amo_quantities_premarket",
+                                )
+
                         self.broker.cancel_order(order.order_id)
 
-                        # Create new order with adjusted quantity
-                        # For MARKET orders, price parameter is not needed
-                        # For LIMIT orders, update price to pre-market price
-                        from modules.kotak_neo_auto_trader.domain import (
-                            Money,
-                            Order,
-                        )
+                        from modules.kotak_neo_auto_trader.domain import Order, OrderType
 
-                        # Use pre-market price for LIMIT orders, None for MARKET orders
-                        new_price = (
-                            Money(premarket_price)
-                            if order.order_type.value == "LIMIT"
-                            else (order.price if order.price else None)
-                        )
-
+                        # Match live broker: adjusted orders become MARKET for open execution
                         new_order = Order(
                             symbol=order.symbol,
                             quantity=new_qty,
-                            order_type=order.order_type,
+                            order_type=OrderType.MARKET,
                             transaction_type=order.transaction_type,
-                            price=new_price,
                             variety=order.variety,
                             exchange=order.exchange,
                             validity=order.validity,
                         )
 
-                        # Preserve metadata
-                        if hasattr(order, "metadata") and order.metadata:
-                            new_order.metadata = order.metadata
-                        elif hasattr(order, "_metadata") and order._metadata:
-                            new_order._metadata = order._metadata
+                        # Preserve metadata (in-memory + DB record for entry_type / re-entry fields)
+                        merged_metadata: dict = {}
+                        if hasattr(order, "_metadata") and isinstance(order._metadata, dict):
+                            merged_metadata.update(order._metadata)
+                        if hasattr(order, "metadata") and isinstance(order.metadata, dict):
+                            merged_metadata.update(order.metadata)
+                        if cancelled_db_order and isinstance(
+                            cancelled_db_order.order_metadata, dict
+                        ):
+                            merged_metadata.update(cancelled_db_order.order_metadata)
+                        if cancelled_db_order and cancelled_db_order.entry_type:
+                            merged_metadata.setdefault(
+                                "entry_type", cancelled_db_order.entry_type
+                            )
+                        if merged_metadata:
+                            new_order._metadata = merged_metadata
 
                         # Place new order
                         new_order_id = self.broker.place_order(new_order)
                         self.logger.info(
-                            f"✅ {order.symbol}: AMO order modified successfully "
+                            f"✅ {order.symbol}: Pending buy adjusted (MARKET) "
                             f"(#{order.order_id} → #{new_order_id}, "
                             f"qty: {original_qty} → {new_qty}, "
-                            f"price logged: Rs {original_price:.2f} → Rs {premarket_price:.2f}, "
+                            f"ref Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f}, "
                             f"capital: Rs {original_qty * original_price:,.0f} → Rs {new_qty * premarket_price:,.0f})",
                             action="adjust_amo_quantities_premarket",
                         )
                         summary["adjusted"] += 1
 
+                        entry_type = merged_metadata.get("entry_type") if merged_metadata else None
+                        if not entry_type and cancelled_db_order:
+                            entry_type = cancelled_db_order.entry_type
+                        from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                            notify_premarket_adjusted,
+                        )
+
+                        notify_premarket_adjusted(
+                            engine_or_adapter=self,
+                            user_id=self.user_id,
+                            db_session=self.db,
+                            symbol=order.symbol,
+                            order_id=str(new_order_id),
+                            entry_type=entry_type,
+                            original_qty=original_qty,
+                            new_qty=new_qty,
+                            premarket_ltp=premarket_price,
+                            gap_pct=gap_pct,
+                            market_depth=None,
+                        )
+
                     except Exception as modify_error:
                         self.logger.error(
-                            f"{order.symbol}: Failed to modify AMO order: {modify_error}",
+                            f"{order.symbol}: Failed to adjust pending buy: {modify_error}",
                             exc_info=True,
                             action="adjust_amo_quantities_premarket",
                         )
@@ -766,7 +841,7 @@ class PaperTradingServiceAdapter:
 
                 except Exception as e:
                     self.logger.error(
-                        f"Error processing AMO order {order.symbol}: {e}",
+                        f"Error processing pending buy {order.symbol}: {e}",
                         exc_info=True,
                         action="adjust_amo_quantities_premarket",
                     )
@@ -774,7 +849,7 @@ class PaperTradingServiceAdapter:
 
             task_context["summary"] = summary
             self.logger.info(
-                f"Pre-market AMO adjustment completed: {summary}",
+                f"Pre-market pending buy adjustment completed: {summary}",
                 action="adjust_amo_quantities_premarket",
             )
 
@@ -937,6 +1012,16 @@ class PaperTradingServiceAdapter:
                 if not getattr(self, "running", True) or getattr(self, "shutdown_requested", False):
                     return
 
+                # Fill pending limit buys (e.g. pre-open re-entries) before sizing sells
+                try:
+                    self._execute_pending_limit_buys_before_sell_placement()
+                except Exception as e:
+                    self.logger.warning(
+                        f"Pre-sell pending buy execution failed: {e}",
+                        action="run_sell_monitor",
+                        exc_info=True,
+                    )
+
                 # Place sell orders for all holdings at frozen EMA9 target
                 try:
                     self._place_sell_orders()
@@ -1032,6 +1117,21 @@ class PaperTradingServiceAdapter:
                     exc_info=True,
                 )
 
+            try:
+                buy_cancel_summary = self._cancel_unexecuted_day_buy_orders(
+                    "EOD cleanup — unexecuted DAY/REGULAR buys expire after session"
+                )
+                task_context["day_buy_orders_cancelled"] = buy_cancel_summary.get("cancelled", 0)
+                task_context["day_buy_orders_db_cancelled"] = buy_cancel_summary.get(
+                    "db_only_cancelled", 0
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"EOD day-buy cancellation failed: {e}",
+                    action="run_eod_cleanup",
+                    exc_info=True,
+                )
+
             # Reset ALL flags for next day (including eod_cleanup — otherwise it
             # stays True forever and never runs again on subsequent days)
             self.logger.info(
@@ -1119,6 +1219,152 @@ class PaperTradingServiceAdapter:
                 action="_cancel_unexecuted_sell_orders",
             )
         return summary
+
+    def _cancel_unexecuted_day_buy_orders(self, reason: str) -> dict[str, int]:
+        """
+        Cancel open/pending REGULAR/DAY buy orders at EOD (broker + DB).
+
+        AMO pending buys are preserved for next-morning pre-market adjustment.
+        Mirrors NSE DAY order expiry on live; aligns paper simulator with live behavior.
+        """
+        from modules.kotak_neo_auto_trader.utils.order_field_extractor import (
+            EOD_DAY_BUY_CANCEL_REASON,
+            OrderFieldExtractor,
+        )
+
+        summary = {"cancelled": 0, "failed": 0, "skipped_amo": 0, "db_only_cancelled": 0}
+        cancel_reason = reason or EOD_DAY_BUY_CANCEL_REASON
+        broker_cancelled_ids: set[str] = set()
+
+        if not self.broker:
+            return summary
+
+        self.logger.info(
+            f"Cancelling unexecuted DAY/REGULAR buy orders: {cancel_reason}",
+            action="_cancel_unexecuted_day_buy_orders",
+        )
+
+        try:
+            pending_orders = self.broker.get_pending_orders() or []
+        except Exception as e:
+            self.logger.warning(
+                f"Could not list pending orders for day-buy cancellation: {e}",
+                action="_cancel_unexecuted_day_buy_orders",
+            )
+            pending_orders = []
+
+        for order in pending_orders:
+            if order.is_buy_order() and order.is_active() and order.is_amo_order():
+                summary["skipped_amo"] += 1
+                continue
+            if not order.is_eod_cancellable_day_buy():
+                continue
+            order_id = getattr(order, "order_id", None)
+            if not order_id:
+                continue
+            try:
+                if self.broker.cancel_order(order_id):
+                    summary["cancelled"] += 1
+                    broker_cancelled_ids.add(str(order_id))
+                    self.logger.info(
+                        f"Cancelled pending DAY buy {order.symbol} (#{order_id})",
+                        action="_cancel_unexecuted_day_buy_orders",
+                    )
+                else:
+                    summary["failed"] += 1
+            except Exception as cancel_err:
+                summary["failed"] += 1
+                self.logger.warning(
+                    f"Failed to cancel day buy order {order_id}: {cancel_err}",
+                    action="_cancel_unexecuted_day_buy_orders",
+                )
+
+        if self.db:
+            try:
+                from src.infrastructure.persistence.orders_repository import OrdersRepository
+
+                orders_repo = OrdersRepository(self.db)
+                db_orders, _ = orders_repo.list(self.user_id)
+                for db_order in db_orders:
+                    if not OrderFieldExtractor.is_eod_cancellable_day_buy_db_order(db_order):
+                        continue
+                    broker_id = str(db_order.broker_order_id or db_order.order_id or "")
+                    if broker_id and broker_id in broker_cancelled_ids:
+                        continue
+                    orders_repo.mark_cancelled(db_order, cancelled_reason=cancel_reason)
+                    summary["db_only_cancelled"] += 1
+                    self.logger.info(
+                        f"Marked PENDING DAY buy {db_order.symbol} "
+                        f"(#{broker_id or db_order.id}) cancelled in DB",
+                        action="_cancel_unexecuted_day_buy_orders",
+                    )
+            except Exception as db_err:
+                self.logger.warning(
+                    f"EOD day-buy DB sweep failed: {db_err}",
+                    action="_cancel_unexecuted_day_buy_orders",
+                    exc_info=True,
+                )
+
+        if any(summary[k] for k in ("cancelled", "failed", "db_only_cancelled", "skipped_amo")):
+            self.logger.info(
+                f"Day-buy cancellation summary: cancelled={summary['cancelled']}, "
+                f"db_only_cancelled={summary['db_only_cancelled']}, "
+                f"skipped_amo={summary['skipped_amo']}, failed={summary['failed']}",
+                action="_cancel_unexecuted_day_buy_orders",
+            )
+        return summary
+
+    def _execute_pending_limit_buys_before_sell_placement(self) -> int:
+        """
+        Execute open LIMIT buy orders before morning sell placement.
+
+        Pre-open re-entries are REGULAR LIMIT orders that fill at the open. Running
+        this before ``_place_sell_orders`` avoids placing sells sized to the
+        pre-reentry quantity (AVANTIFEED-style race at 9:15).
+        """
+        if not self.broker:
+            return 0
+
+        executed = 0
+        try:
+            pending_orders = self.broker.get_pending_orders() or []
+        except Exception as e:
+            self.logger.warning(
+                f"Could not list pending orders before sell placement: {e}",
+                action="_execute_pending_limit_buys_before_sell_placement",
+            )
+            return 0
+
+        from modules.kotak_neo_auto_trader.domain import OrderType
+
+        for order in pending_orders:
+            if not order.is_buy_order() or order.order_type != OrderType.LIMIT:
+                continue
+            if not order.is_active():
+                continue
+            try:
+                self.broker._execute_order(order)
+                if order.is_executed():
+                    executed += 1
+                    self.logger.info(
+                        f"Executed pending LIMIT buy before sell placement: "
+                        f"{order.symbol} x{order.quantity}",
+                        action="_execute_pending_limit_buys_before_sell_placement",
+                    )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to execute pending buy {order.order_id} before sell placement: {e}",
+                    action="_execute_pending_limit_buys_before_sell_placement",
+                )
+
+        if executed:
+            updated = self._sync_sell_order_quantities_with_holdings()
+            if updated:
+                self.logger.info(
+                    f"Synced {updated} sell order(s) after pre-placement buy fills",
+                    action="_execute_pending_limit_buys_before_sell_placement",
+                )
+        return executed
 
     def _place_sell_orders(self):
         """
@@ -1272,13 +1518,28 @@ class PaperTradingServiceAdapter:
                     executed = 0
             if executed > 0:
                 self.logger.info(
-                    f"Executed {executed} pending sell orders",
+                    f"Executed {executed} pending limit order(s)",
                     action="_monitor_sell_orders",
                 )
         except Exception as e:
             self.logger.error(
                 f"Error checking pending orders: {e}",
                 action="_monitor_sell_orders",
+            )
+
+        try:
+            sell_synced = self._sync_sell_order_quantities_with_holdings()
+            if sell_synced > 0:
+                self.logger.info(
+                    f"Updated {sell_synced} sell order quantity(ies) to match holdings "
+                    f"after re-entry execution",
+                    action="_monitor_sell_orders",
+                )
+        except Exception as e:
+            self.logger.warning(
+                f"Sell quantity sync after pending fills failed: {e}",
+                action="_monitor_sell_orders",
+                exc_info=True,
             )
 
         # Drop tracking for positions closed by limit fills
@@ -1741,15 +2002,18 @@ class PaperTradingServiceAdapter:
         # Normalize for comparison
         from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
-        holdings_map = {extract_base_symbol(h.symbol).upper(): h.quantity for h in holdings}
+        holdings_map: dict[str, int] = {}
+        for holding in holdings:
+            symbol_base = extract_base_symbol(holding.symbol).upper()
+            holdings_map[symbol_base] = holdings_map.get(symbol_base, 0) + int(holding.quantity)
 
         updated_count = 0
         for symbol, order_info in list(self.active_sell_orders.items()):
             # Normalize symbol from active_sell_orders (might be base or full)
             symbol_base = extract_base_symbol(symbol).upper()
             if symbol_base in holdings_map:
-                current_qty = order_info.get("qty", 0)
-                holdings_qty = holdings_map[symbol_base]
+                current_qty = int(order_info.get("qty", 0) or 0)
+                holdings_qty = int(holdings_map[symbol_base])
 
                 # If holdings quantity is greater than sell order quantity, update it
                 if holdings_qty > current_qty:
@@ -1944,6 +2208,52 @@ class PaperTradingServiceAdapter:
         except Exception as e:
             self.logger.debug(f"Failed to calculate EMA9 for {ticker}: {e}")
             return None
+
+    def _resolve_premarket_target_capital(self, ticker: str, premarket_price: float) -> float:
+        """
+        Execution capital for 9:05 qty recalc (liquidity-aware, same basis as 9:01).
+
+        Args:
+            ticker: Yahoo-style ticker (e.g. ``RELIANCE.NS``).
+            premarket_price: Pre-market LTP used for liquidity cap sizing.
+
+        Returns:
+            Capital budget in Rs for ``compute_premarket_qty``.
+        """
+        avg_volume = 0.0
+        indicator_service = getattr(self, "indicator_service", None)
+        if indicator_service is None and self.engine is not None:
+            indicator_service = getattr(self.engine, "indicator_service", None)
+        if indicator_service:
+            try:
+                indicators = indicator_service.get_daily_indicators_dict(ticker)
+                if indicators:
+                    avg_volume = float(indicators.get("avg_volume") or 0)
+            except Exception as e:
+                self.logger.debug(
+                    f"Could not load avg_volume for {ticker}: {e}",
+                    action="_resolve_premarket_target_capital",
+                )
+        if self.engine is not None:
+            return self.engine._calculate_execution_capital(premarket_price, avg_volume)
+        from services.liquidity_capital_service import LiquidityCapitalService
+
+        liquidity_service = LiquidityCapitalService(config=self.strategy_config)
+        user_capital = liquidity_service.user_capital
+        try:
+            if not avg_volume or avg_volume <= 0:
+                return user_capital
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume, stock_price=premarket_price
+            )
+            execution_capital = capital_data.get("execution_capital", user_capital)
+            return execution_capital if execution_capital > 0 else user_capital
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to calculate execution capital: {e}, using user_capital",
+                action="_resolve_premarket_target_capital",
+            )
+            return user_capital
 
 
 class PaperTradingEngineAdapter:
@@ -2335,17 +2645,31 @@ class PaperTradingEngineAdapter:
                 continue
 
             try:
-                # Calculate quantity based on execution capital or use strategy config
-                execution_capital = getattr(rec, "execution_capital", None)
-                if not execution_capital or execution_capital <= 0:
-                    # Use user_capital from strategy config (default: 200000.0)
-                    execution_capital = (
-                        self.strategy_config.user_capital
-                        if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-                        else 200000.0
+                # Capital sizing — mirrors live place_new_entries (LiquidityCapitalService).
+                stored_execution_capital = getattr(rec, "execution_capital", None)
+                price = rec.last_close
+                ind = self._get_daily_indicators(rec.ticker)
+                avg_vol = ind.get("avg_volume", 0) if ind else 0
+                if ind and ind.get("close"):
+                    try:
+                        indicator_close = float(ind["close"])
+                        if indicator_close > 0:
+                            price = indicator_close
+                    except (TypeError, ValueError):
+                        pass
+
+                execution_capital = self._calculate_execution_capital(price, avg_vol)
+                if (
+                    stored_execution_capital
+                    and stored_execution_capital > 0
+                    and stored_execution_capital != execution_capital
+                ):
+                    self.logger.info(
+                        f"{rec.ticker}: Execution capital updated from stored "
+                        f"Rs {stored_execution_capital:,.0f} to Rs {execution_capital:,.0f}",
+                        action="place_new_entries",
                     )
 
-                price = rec.last_close
                 if price <= 0:
                     self.logger.warning(
                         f"Invalid price for {rec.ticker}: {price}", action="place_new_entries"
@@ -2421,26 +2745,16 @@ class PaperTradingEngineAdapter:
                 # Extract base symbol (remove .NS suffix if present) for order placement
                 symbol = rec.ticker.replace(".NS", "").upper()
 
-                # Create MARKET order - variety depends on market hours
-                # During market hours: REGULAR orders execute immediately
-                # Outside market hours: AMO orders execute at next market open
-                from core.volume_analysis import is_market_hours
-                from modules.kotak_neo_auto_trader.domain import OrderVariety
-
-                # Determine order variety based on market hours
-                if is_market_hours():
-                    order_variety = OrderVariety.REGULAR
-                    self.logger.debug(f"Market is open - using REGULAR order variety for {symbol}")
-                else:
-                    order_variety = OrderVariety.AMO
-                    self.logger.debug(f"Market is closed - using AMO order variety for {symbol}")
+                # Fresh entry: LIMIT pre-open @ signal close; MARKET after 9:15 (live parity)
+                order_variety = self._buy_order_variety_for_market_hours()
+                entry_order_type, entry_price = self._buy_order_type_and_price_for_session(price)
 
                 order = Order(
                     symbol=symbol,
                     quantity=qty,
-                    order_type=OrderType.MARKET,  # MARKET order (matches real broker)
+                    order_type=entry_order_type,
                     transaction_type=TransactionType.BUY,
-                    # price=None for MARKET orders (not used, executes at market price)
+                    price=entry_price,
                     variety=order_variety,
                 )
 
@@ -2543,251 +2857,6 @@ class PaperTradingEngineAdapter:
 
         return summary
 
-    def monitor_positions(
-        self,
-    ):  # Deprecated: Position monitoring removed, re-entry now in buy order service
-        """
-        Monitor positions for reentry/exit signals (paper trading).
-
-        Implements the same re-entry logic as real trading:
-        - RSI-based re-entry at levels 30, 20, 10
-        - Daily cap (1 re-entry per symbol per day)
-        - Duplicate prevention (no active buy orders)
-        - Reset logic (when RSI > 30)
-
-        Returns:
-            Summary dict with monitoring statistics
-        """
-        from math import floor
-
-        summary = {"checked": 0, "reentries": 0, "skipped": 0}
-
-        if not self.broker or not self.broker.is_connected():
-            self.logger.error("Paper trading broker not connected", action="monitor_positions")
-            return summary
-
-        # Get current holdings
-        holdings = self.broker.get_holdings()
-        summary["checked"] = len(holdings)
-
-        if not holdings:
-            self.logger.debug("No holdings to monitor", action="monitor_positions")
-            return summary
-
-        # Load position metadata (levels_taken, reset_ready, reentry_dates)
-        metadata = self._load_position_metadata()
-
-        # Group holdings by symbol for re-entry evaluation
-        for holding in holdings:
-            symbol = holding.symbol.replace(".NS", "").replace(".BO", "").replace("-EQ", "")
-            ticker = f"{symbol}.NS"
-
-            try:
-                # Get daily indicators (RSI, price, EMA9)
-                indicators = self._get_daily_indicators(ticker)
-                if not indicators:
-                    self.logger.warning(
-                        f"Skip {symbol}: missing indicators", action="monitor_positions"
-                    )
-                    continue
-
-                rsi = indicators.get("rsi10", 0)
-                price = indicators.get("close", 0)
-
-                if price <= 0 or rsi <= 0:
-                    continue
-
-                # Initialize metadata for this symbol if not exists
-                if symbol not in metadata:
-                    metadata[symbol] = {
-                        "levels_taken": {"30": False, "20": False, "10": False},
-                        "reset_ready": False,
-                        "reentry_dates": [],
-                    }
-
-                levels = metadata[symbol]["levels_taken"]
-                reset_ready = metadata[symbol]["reset_ready"]
-                reentry_dates = metadata[symbol].get("reentry_dates", [])
-
-                # Reset handling: if RSI > 30, allow future cycles
-                if rsi > 30:
-                    metadata[symbol]["reset_ready"] = True
-                    self.logger.debug(
-                        f"{symbol}: RSI={rsi:.1f} > 30, marked reset_ready",
-                        action="monitor_positions",
-                    )
-
-                # If reset_ready and RSI drops below 30 again, trigger NEW CYCLE
-                if rsi < 30 and reset_ready:
-                    # This is a NEW CYCLE - reset all levels
-                    metadata[symbol]["levels_taken"] = {
-                        "30": False,
-                        "20": False,
-                        "10": False,
-                    }
-                    metadata[symbol]["reset_ready"] = False
-                    levels = metadata[symbol]["levels_taken"]
-                    self.logger.info(
-                        f"{symbol}: NEW CYCLE - RSI={rsi:.1f} < 30 after reset",
-                        action="monitor_positions",
-                    )
-                    # Immediately trigger reentry at this RSI<30 level
-                    next_level = 30
-                else:
-                    # Normal progression through levels
-                    next_level = None
-                    if levels.get("30") and not levels.get("20") and rsi < 20:
-                        next_level = 20
-                    elif levels.get("20") and not levels.get("10") and rsi < 10:
-                        next_level = 10
-                    elif not levels.get("30") and rsi < 30:
-                        # First level entry
-                        next_level = 30
-
-                if next_level is not None:
-                    # Daily cap: allow max 1 re-entry per symbol per day
-                    today = ist_now().date().isoformat()
-                    today_reentries = sum(1 for d in reentry_dates if d == today)
-
-                    if today_reentries >= 1:
-                        self.logger.info(
-                            f"Re-entry daily cap reached for {symbol}; skipping today",
-                            action="monitor_positions",
-                        )
-                        summary["skipped"] += 1
-                        continue
-
-                    # Calculate execution capital based on liquidity
-                    avg_vol = indicators.get("avg_volume", 0)
-                    execution_capital = self._calculate_execution_capital(price, avg_vol)
-
-                    qty = max(1, floor(execution_capital / price))
-
-                    # Balance check for re-entry
-                    account = self.broker.store.get_account()
-                    available_cash = account.get("available_cash", 0) if account else 0
-                    affordable = floor(available_cash / price) if price > 0 else 0
-
-                    if affordable < 1:
-                        self.logger.warning(
-                            f"Re-entry skip {symbol}: insufficient funds (need Rs {price:.2f})",
-                            action="monitor_positions",
-                        )
-                        summary["skipped"] += 1
-                        continue
-
-                    if qty > affordable:
-                        self.logger.info(
-                            f"Re-entry reducing qty from {qty} to {affordable} based on funds",
-                            action="monitor_positions",
-                        )
-                        qty = affordable
-
-                    if qty > 0:
-                        # Re-entry duplicate protection: check for active buy orders
-                        pending_orders = self.broker.get_all_orders()
-                        has_active_buy = any(
-                            order.symbol.replace(".NS", "").replace("-EQ", "") == symbol
-                            and order.transaction_type.value == "BUY"
-                            and order.status.value in ["PENDING", "OPEN"]
-                            for order in pending_orders
-                        )
-
-                        if has_active_buy:
-                            self.logger.info(
-                                f"Re-entry skip {symbol}: pending buy order exists",
-                                action="monitor_positions",
-                            )
-                            summary["skipped"] += 1
-                            continue
-
-                        # Place market buy order for re-entry (averaging down)
-                        from modules.kotak_neo_auto_trader.domain import (
-                            Order,
-                            OrderType,
-                            TransactionType,
-                        )
-
-                        reentry_order = Order(
-                            symbol=ticker,
-                            quantity=qty,
-                            order_type=OrderType.MARKET,
-                            transaction_type=TransactionType.BUY,
-                        )
-
-                        # Tag as re-entry with metadata for tracking
-                        reentry_order._metadata = {
-                            "original_ticker": ticker,
-                            "entry_type": "REENTRY",
-                            "rsi_level": next_level,
-                            "rsi_value": round(rsi, 2),
-                        }
-
-                        order_id = self.broker.place_order(reentry_order)
-
-                        if order_id:
-                            self.logger.info(
-                                f"Re-entry {symbol}: qty={qty} at ~Rs{price:.2f} "
-                                f"(RSI={rsi:.1f}, Level={next_level})",
-                                action="monitor_positions",
-                            )
-
-                            # Update metadata
-                            metadata[symbol]["levels_taken"][str(next_level)] = True
-                            metadata[symbol]["reentry_dates"].append(today)
-                            summary["reentries"] += 1
-                        else:
-                            self.logger.warning(
-                                f"Re-entry order failed for {symbol}", action="monitor_positions"
-                            )
-                            summary["skipped"] += 1
-
-            except Exception as e:
-                self.logger.error(
-                    f"Error monitoring {symbol}: {e}",
-                    exc_info=True,
-                    action="monitor_positions",
-                )
-
-        # Save updated metadata
-        self._save_position_metadata(metadata)
-
-        self.logger.info(
-            f"Position monitoring: checked={summary['checked']}, "
-            f"reentries={summary['reentries']}, skipped={summary['skipped']}",
-            action="monitor_positions",
-        )
-
-        return summary
-
-    def _load_position_metadata(self) -> dict:
-        """Load position metadata (levels_taken, reset_ready, reentry_dates)"""
-        import json
-
-        metadata_file = Path(self.storage_path) / "position_metadata.json"
-
-        try:
-            if metadata_file.exists():
-                with open(metadata_file) as f:
-                    return json.load(f)
-        except Exception as e:
-            self.logger.warning(f"Failed to load position metadata: {e}")
-
-        return {}
-
-    def _save_position_metadata(self, metadata: dict):
-        """Save position metadata to file"""
-        import json
-
-        metadata_file = Path(self.storage_path) / "position_metadata.json"
-
-        try:
-            metadata_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(metadata_file, "w") as f:
-                json.dump(metadata, f, indent=2)
-        except Exception as e:
-            self.logger.error(f"Failed to save position metadata: {e}")
-
     def _get_daily_indicators(
         self, ticker: str, *, add_current_day: bool = True
     ) -> dict | None:
@@ -2833,15 +2902,53 @@ class PaperTradingEngineAdapter:
             self.logger.warning(f"Failed to get indicators for {ticker}: {e}")
             return None
 
+    def _buy_order_variety_for_market_hours(self):
+        """
+        Order variety for paper buys — mirrors live ``AutoTradeEngine._get_order_variety_for_market_hours``.
+
+        REGULAR during the cash session window (incl. pre-open); ``strategy_config.default_variety`` otherwise.
+        """
+        from core.volume_analysis import is_market_hours
+        from modules.kotak_neo_auto_trader.domain import OrderVariety
+
+        if is_market_hours():
+            return OrderVariety.REGULAR
+        default_variety = (
+            self.strategy_config.default_variety
+            if self.strategy_config and hasattr(self.strategy_config, "default_variety")
+            else "AMO"
+        )
+        return OrderVariety.from_string(str(default_variety))
+
+    def _buy_order_type_and_price_for_session(self, reference_close: float):
+        """
+        Buy order type/price for paper — mirrors live ``_attempt_place_order`` session rules.
+
+        Pre-open (9:00–9:15 IST): REGULAR LIMIT at indicator/signal close.
+        Regular session and after-hours: MARKET (variety from ``_buy_order_variety_for_market_hours``).
+        """
+        from core.volume_analysis import is_pre_open_session
+        from modules.kotak_neo_auto_trader.domain import Money, OrderType
+
+        if is_pre_open_session():
+            return OrderType.LIMIT, Money(reference_close)
+        return OrderType.MARKET, None
+
     def place_reentry_orders(self) -> dict[str, int]:
         """
-        Check re-entry conditions and place AMO orders for re-entries (paper trading).
+        Check re-entry conditions and place buy orders for re-entries.
+
+        Pre-open (9:00–9:15 IST): REGULAR LIMIT at reference close; after 9:15 or off-hours:
+        MARKET (variety from ``_buy_order_variety_for_market_hours``). Pending buys are
+        eligible for 9:05 adjustment via ``adjust_amo_quantities_premarket``.
 
         Called from ``run_buy_orders`` (default 9:01 IST), same as live trading.
 
         Returns:
             Summary dict with placement statistics
         """
+        from math import floor
+
         from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
 
         summary = {
@@ -2849,6 +2956,7 @@ class PaperTradingEngineAdapter:
             "placed": 0,
             "failed_balance": 0,
             "skipped_duplicates": 0,
+            "skipped_duplicate_level_today": 0,
             "skipped_invalid_rsi": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
@@ -2884,19 +2992,13 @@ class PaperTradingEngineAdapter:
             )
 
             # Re-entry RSI source policy (matches live AutoTradeEngine.place_reentry_orders):
-            # morning run uses previous closed-day RSI; post-close uses today-inclusive RSI.
-            from datetime import time as dt_time
-
-            from core.volume_analysis import is_market_hours
-            from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-
-            now_time = ist_now().time()
-            market_close = dt_time(15, 30)
-            use_latest_rsi_after_close = (
-                AutoTradeEngine.is_trading_weekday()
-                and (not is_market_hours())
-                and now_time >= market_close
+            # morning run uses previous closed-day RSI; post-close uses today-inclusive RSI
+            # only when same-day NSE bhavcopy is confirmed (safe if schedule runs early).
+            from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+                should_use_same_day_close_for_indicators,
             )
+
+            use_latest_rsi_after_close = should_use_same_day_close_for_indicators()
 
             # Active BUY orders only — re-entry adds to existing holdings (matches live engine).
             pending_orders = self.broker.get_all_orders()
@@ -3054,6 +3156,15 @@ class PaperTradingEngineAdapter:
                         summary["skipped_duplicates"] += 1
                         continue
 
+                    if self.has_reentry_at_level_today(normalized_symbol, next_level):
+                        self.logger.info(
+                            f"Skipping {symbol}: re-entry at level {next_level} already placed "
+                            f"or filled today (same-day level guard)",
+                            action="place_reentry_orders",
+                        )
+                        summary["skipped_duplicate_level_today"] += 1
+                        continue
+
                     self.logger.info(
                         f"Re-entry opportunity for {symbol}: entry_rsi={entry_rsi:.2f}, "
                         f"current_rsi={current_rsi:.2f}, next_level={next_level}, "
@@ -3073,7 +3184,7 @@ class PaperTradingEngineAdapter:
 
                     # Calculate execution capital and quantity
                     execution_capital = self._calculate_execution_capital(current_price, avg_volume)
-                    qty = int(execution_capital / current_price)
+                    qty = max(1, floor(execution_capital / current_price))
 
                     if qty <= 0:
                         self.logger.warning(
@@ -3106,15 +3217,19 @@ class PaperTradingEngineAdapter:
                                 continue
                     # If portfolio is None, proceed without balance check (for testing)
 
-                    # Place re-entry order (AMO-like, similar to fresh entries)
-                    from modules.kotak_neo_auto_trader.domain import Money
+                    # Re-entry: same session rules as fresh entry; 9:05 adjusts qty / MKT
+                    order_variety = self._buy_order_variety_for_market_hours()
+                    reentry_order_type, reentry_price = self._buy_order_type_and_price_for_session(
+                        current_price
+                    )
 
                     reentry_order = Order(
                         symbol=ticker,
                         quantity=qty,
-                        order_type=OrderType.LIMIT,
+                        order_type=reentry_order_type,
                         transaction_type=TransactionType.BUY,
-                        price=Money(current_price),  # AMO order at current price
+                        price=reentry_price,
+                        variety=order_variety,
                     )
 
                     # Tag as re-entry with metadata for tracking
@@ -3353,6 +3468,33 @@ class PaperTradingEngineAdapter:
             )
             return False
 
+    def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
+        """Return True when a system re-entry at ``level`` was placed or filled today (IST)."""
+        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
+        from src.infrastructure.db.timezone_utils import ist_now
+        from src.infrastructure.persistence.orders_repository import OrdersRepository
+        from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        try:
+            positions_repo = PositionsRepository(self.db)
+            position = positions_repo.get_by_symbol(self.user_id, base_symbol)
+            orders_repo = OrdersRepository(self.db)
+            orders_list, _ = orders_repo.list(self.user_id)
+            return has_reentry_at_level_today(
+                position=position,
+                orders=list(orders_list or []),
+                base_symbol=base_symbol,
+                level=level,
+                today=ist_now().date(),
+            )
+        except Exception as e:
+            self.logger.error(
+                f"Error checking same-day reentry level for {base_symbol}: {e}",
+                exc_info=True,
+                action="has_reentry_at_level_today",
+            )
+            return False
+
     def _determine_reentry_level(
         self, entry_rsi: float, current_rsi: float, position: Any
     ) -> tuple[int | None, dict[str, Any]]:
@@ -3581,7 +3723,10 @@ class PaperTradingEngineAdapter:
 
     def _calculate_execution_capital(self, price: float, avg_volume: float) -> float:
         """
-        Calculate execution capital based on liquidity (matches real trading logic).
+        Calculate execution capital based on liquidity (same path as live AutoTradeEngine).
+
+        Uses ``LiquidityCapitalService`` with this adapter's ``strategy_config`` so paper
+        re-entry sizing matches live Kotak trading.
 
         Args:
             price: Current stock price
@@ -3590,27 +3735,27 @@ class PaperTradingEngineAdapter:
         Returns:
             Execution capital in Rs
         """
-        # Default capital from strategy config
-        default_capital = (
-            self.strategy_config.user_capital
-            if self.strategy_config and hasattr(self.strategy_config, "user_capital")
-            else 20000.0
-        )
+        from services.liquidity_capital_service import LiquidityCapitalService
 
-        # If volume data not available, use default
-        if not avg_volume or avg_volume <= 0:
-            return default_capital
+        liquidity_service = LiquidityCapitalService(config=self.strategy_config)
+        user_capital = liquidity_service.user_capital
 
-        # Calculate liquidity-based capital
-        # This matches the logic from AutoTradeEngine.calculate_execution_capital
-        avg_value = price * avg_volume
+        try:
+            if not avg_volume or avg_volume <= 0:
+                return user_capital
 
-        # Tiers based on daily value traded
-        if avg_value >= 100_000_000:  # >= 10 crore
-            return min(50000.0, default_capital * 2.5)
-        elif avg_value >= 50_000_000:  # >= 5 crore
-            return min(40000.0, default_capital * 2.0)
-        elif avg_value >= 20_000_000:  # >= 2 crore
-            return min(30000.0, default_capital * 1.5)
-        else:
-            return default_capital
+            capital_data = liquidity_service.calculate_execution_capital(
+                avg_volume=avg_volume, stock_price=price
+            )
+            execution_capital = capital_data.get("execution_capital", user_capital)
+
+            if execution_capital <= 0:
+                execution_capital = user_capital
+
+            return execution_capital
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to calculate execution capital: {e}, using user_capital from config",
+                action="_calculate_execution_capital",
+            )
+            return user_capital

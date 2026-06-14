@@ -23,9 +23,11 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.infrastructure.db.timezone_utils import (  # noqa: E402
+    as_ist_aware,
     coerce_db_timestamp_to_ist,
     ist_now,
     ist_now_naive,
+    ist_to_utc,
 )
 
 from modules.kotak_neo_auto_trader.services import (  # noqa: E402
@@ -2773,15 +2775,20 @@ class SellOrderManager:
                     except Exception as e:
                         logger.error(f"Error updating position {symbol} quantity: {e}")
 
-                # Case 3: Manual buy detected (broker_qty > positions_qty) - IGNORE
+                # Case 3: Broker qty exceeds DB — sync from closed system buys when applicable
                 elif broker_qty > positions_qty:
-                    stats["ignored"] += 1
-                    logger.debug(
-                        f"Manual buy detected for {symbol}: "
-                        f"broker has {broker_qty} shares, "
-                        f"positions table shows {positions_qty} shares. "
-                        f"Ignoring (manual holdings not tracked by system)."
-                    )
+                    if self._sync_position_qty_from_closed_buys(
+                        symbol, float(positions_qty), broker_qty=float(broker_qty)
+                    ):
+                        stats["updated"] += 1
+                    else:
+                        stats["ignored"] += 1
+                        logger.debug(
+                            f"Manual buy detected for {symbol}: "
+                            f"broker has {broker_qty} shares, "
+                            f"positions table shows {positions_qty} shares. "
+                            f"Ignoring (manual holdings not tracked by system)."
+                        )
 
                 # Case 4: Perfect match (broker_qty == positions_qty) - No action needed
                 else:
@@ -5277,33 +5284,31 @@ class SellOrderManager:
                     symbol
                 )
 
-                # Check if any result shows EXECUTED status (completed sell order)
+                # Check if any result shows EXECUTED status for a SELL order only.
+                # Buy executions share the same symbol cache and must not block sell placement.
                 for result in verification_results:
-                    if result.get("status") == "EXECUTED":
-                        # Extract price from broker_order if available
-                        broker_order = result.get("broker_order")
-                        order_price = 0.0
-                        if broker_order:
-                            order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
+                    if result.get("status") != "EXECUTED":
+                        continue
 
-                        order_id = result.get("order_id", "")
-                        # Try to get filled quantity from broker_order if available
-                        filled_qty = 0
-                        order_qty = 0
-                        if broker_order:
-                            filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
-                            order_qty = OrderFieldExtractor.get_quantity(broker_order)
-                        logger.info(
-                            f"Found completed sell order for {symbol} from OrderStatusVerifier: "
-                            f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
-                            f"Filled: {filled_qty}/{order_qty}"
-                        )
-                        return {
-                            "order_id": order_id,
-                            "price": order_price,
-                            "filled_qty": filled_qty,
-                            "order_qty": order_qty,
-                        }
+                    broker_order = result.get("broker_order")
+                    if not broker_order or not OrderFieldExtractor.is_sell_order(broker_order):
+                        continue
+
+                    order_price = OrderFieldExtractor.get_price(broker_order) or 0.0
+                    order_id = result.get("order_id", "")
+                    filled_qty = OrderFieldExtractor.get_filled_quantity(broker_order)
+                    order_qty = OrderFieldExtractor.get_quantity(broker_order)
+                    logger.info(
+                        f"Found completed sell order for {symbol} from OrderStatusVerifier: "
+                        f"Order ID {order_id}, Price: Rs {order_price:.2f}, "
+                        f"Filled: {filled_qty}/{order_qty}"
+                    )
+                    return {
+                        "order_id": order_id,
+                        "price": order_price,
+                        "filled_qty": filled_qty,
+                        "order_qty": order_qty,
+                    }
             except Exception as e:
                 logger.debug(f"Error checking OrderStatusVerifier results for {symbol}: {e}")
                 # Fall through to direct API call
@@ -5361,6 +5366,222 @@ class SellOrderManager:
         except Exception as e:
             logger.debug(f"Error checking for completed sell order for {symbol}: {e}")
             return None
+
+    def _closed_buy_execution_time(self, order: Any) -> datetime | None:
+        """Best-effort execution timestamp for cycle-scoped closed-buy totals."""
+        for attr in ("execution_time", "filled_at", "closed_at", "placed_at"):
+            value = getattr(order, attr, None)
+            if value is None or not isinstance(value, datetime):
+                continue
+            try:
+                return coerce_db_timestamp_to_ist(value)
+            except Exception:
+                continue
+        return None
+
+    def _closed_system_buy_totals(
+        self,
+        full_symbol: str,
+        *,
+        opened_at: datetime | None = None,
+        require_broker_trade_mode: bool = True,
+    ) -> tuple[float, float] | None:
+        """
+        Sum closed system buy executions for *full_symbol* (qty, volume-weighted avg).
+
+        When *opened_at* is set, only buys executed on or after the current open
+        position's ``opened_at`` are included (current trade cycle).
+        """
+        if not self.orders_repo or not self.user_id or DbOrderStatus is None:
+            return None
+
+        symbol_upper = str(full_symbol or "").upper()
+        base_symbol = extract_base_symbol(symbol_upper).upper()
+        total_qty = 0.0
+        total_cost = 0.0
+        opened_at_ist = None
+        if opened_at is not None:
+            opened_at_ist = (
+                coerce_db_timestamp_to_ist(opened_at)
+                if opened_at.tzinfo is None
+                else as_ist_aware(opened_at)
+            )
+
+        try:
+            orders, _ = self.orders_repo.list(self.user_id, status=DbOrderStatus.CLOSED, limit=None)
+        except Exception as exc:
+            logger.debug(f"Could not list closed buys for {symbol_upper}: {exc}")
+            return None
+
+        for order in orders:
+            if str(getattr(order, "side", "") or "").lower() != "buy":
+                continue
+            order_symbol = str(getattr(order, "symbol", "") or "").upper()
+            if order_symbol != symbol_upper and extract_base_symbol(order_symbol).upper() != base_symbol:
+                continue
+            if str(getattr(order, "orig_source", "") or "").lower() == "manual":
+                continue
+            trade_mode = getattr(order, "trade_mode", None)
+            if require_broker_trade_mode:
+                if trade_mode != TradeMode.BROKER:
+                    continue
+            elif trade_mode is not None and trade_mode != TradeMode.BROKER:
+                continue
+
+            if opened_at_ist is not None:
+                order_time = self._closed_buy_execution_time(order)
+                if order_time is None or order_time < opened_at_ist:
+                    continue
+
+            try:
+                exec_qty = float(getattr(order, "execution_qty", None) or order.quantity or 0)
+            except (TypeError, ValueError):
+                continue
+            if exec_qty <= 0:
+                continue
+
+            exec_price = (
+                getattr(order, "execution_price", None)
+                or getattr(order, "avg_price", None)
+                or getattr(order, "price", None)
+            )
+            try:
+                exec_price_f = float(exec_price) if exec_price is not None else 0.0
+            except (TypeError, ValueError):
+                exec_price_f = 0.0
+            if exec_price_f <= 0:
+                continue
+
+            total_qty += exec_qty
+            total_cost += exec_qty * exec_price_f
+
+        if total_qty <= 0:
+            return None
+        return total_qty, total_cost / total_qty
+
+    def _sync_position_qty_from_closed_buys(
+        self,
+        symbol: str,
+        current_qty: float,
+        broker_qty: float | None = None,
+    ) -> bool:
+        """
+        Raise open position qty/avg when closed system buys in the current cycle exceed DB.
+
+        Totals are scoped to the open position's ``opened_at`` and explicit broker
+        ``trade_mode`` rows only. Sync is skipped when scoped system qty exceeds broker
+        holdings (manual buy on top of system qty).
+        """
+        if not self.positions_repo or not self.user_id:
+            return False
+
+        try:
+            existing = self.positions_repo.get_by_symbol(self.user_id, symbol)
+        except Exception as exc:
+            logger.debug(f"Could not load position for closed-buy sync {symbol}: {exc}")
+            return False
+
+        if not existing or getattr(existing, "closed_at", None) is not None:
+            return False
+
+        totals = self._closed_system_buy_totals(
+            symbol,
+            opened_at=getattr(existing, "opened_at", None),
+            require_broker_trade_mode=True,
+        )
+        if totals is None:
+            return False
+
+        expected_qty, expected_avg = totals
+        if broker_qty is not None and expected_qty > float(broker_qty) + 0.01:
+            return False
+
+        sync_qty = (
+            min(expected_qty, float(broker_qty)) if broker_qty is not None else expected_qty
+        )
+        if sync_qty <= current_qty + 0.01:
+            return False
+
+        try:
+            self.positions_repo.upsert(
+                user_id=self.user_id,
+                symbol=symbol,
+                quantity=sync_qty,
+                avg_price=expected_avg,
+                opened_at=getattr(existing, "opened_at", None),
+                entry_rsi=getattr(existing, "entry_rsi", None),
+            )
+            logger.info(
+                f"Synced position {symbol} from closed buy orders: "
+                f"qty {current_qty} -> {sync_qty}, avg Rs {expected_avg:.2f}"
+            )
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to sync position {symbol} from closed buys: {exc}")
+            return False
+
+    def resolve_sell_modify_price(
+        self,
+        *,
+        symbol: str,
+        order_id: str | None,
+        reported_price: float,
+    ) -> float | None:
+        """
+        Resolve a limit price for modify/cancel-replace when broker pending API omits it.
+
+        Priority: positive broker-reported price → DB order price → in-memory target → EMA9.
+        """
+        if reported_price and reported_price > 0:
+            return float(reported_price)
+
+        if order_id and self.orders_repo and self.user_id:
+            try:
+                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, str(order_id))
+                if db_order and db_order.price is not None:
+                    db_price = float(db_order.price)
+                    if db_price > 0:
+                        logger.debug(
+                            f"Using DB price for sell modify {symbol} order {order_id}: "
+                            f"Rs {db_price:.2f}"
+                        )
+                        return db_price
+            except (TypeError, ValueError, AttributeError) as exc:
+                logger.debug(f"DB price lookup failed for sell modify {order_id}: {exc}")
+
+        symbol_upper = str(symbol or "").upper()
+        base_symbol = extract_base_symbol(symbol_upper).upper()
+        tracked = self.active_sell_orders.get(symbol_upper) or self.active_sell_orders.get(
+            base_symbol
+        )
+        if tracked:
+            for key in ("target_price", "price"):
+                try:
+                    tracked_price = float(tracked.get(key) or 0)
+                except (TypeError, ValueError):
+                    tracked_price = 0.0
+                if tracked_price > 0:
+                    logger.debug(
+                        f"Using tracked sell target for {symbol_upper} modify: Rs {tracked_price:.2f}"
+                    )
+                    return tracked_price
+
+        ticker = None
+        placed_symbol = symbol_upper
+        if tracked:
+            ticker = tracked.get("ticker")
+            placed_symbol = str(tracked.get("placed_symbol") or symbol_upper)
+
+        ema9 = self._get_ema9_with_retry(
+            ticker or get_ticker_from_full_symbol(symbol_upper),
+            broker_symbol=placed_symbol,
+            symbol=symbol_upper,
+        )
+        if ema9 and float(ema9) > 0:
+            logger.debug(f"Using EMA9 fallback for sell modify {symbol_upper}: Rs {float(ema9):.2f}")
+            return float(ema9)
+
+        return None
 
     def get_existing_sell_orders(self) -> dict[str, dict[str, Any]]:
         """
@@ -5473,10 +5694,11 @@ class SellOrderManager:
 
                                     # Check 1: Database order was updated more than 5 minutes ago
                                     if db_order.updated_at:
-                                        from datetime import datetime
-
+                                        db_updated_utc = ist_to_utc(
+                                            coerce_db_timestamp_to_ist(db_order.updated_at)
+                                        )
                                         age_minutes = (
-                                            datetime.now(UTC) - db_order.updated_at
+                                            datetime.now(UTC) - db_updated_utc
                                         ).total_seconds() / 60
                                         if age_minutes > 5:
                                             is_stale = True
@@ -5502,7 +5724,10 @@ class SellOrderManager:
                                                 if broker_time.tzinfo != UTC:
                                                     broker_time = broker_time.astimezone(UTC)
 
-                                                if broker_time > db_order.updated_at:
+                                                db_updated_utc = ist_to_utc(
+                                                    coerce_db_timestamp_to_ist(db_order.updated_at)
+                                                )
+                                                if broker_time > db_updated_utc:
                                                     is_stale = True
                                                     staleness_reason = "Broker order timestamp is newer than database update"
                                             except Exception:
@@ -5583,6 +5808,14 @@ class SellOrderManager:
                             )
 
                     if full_symbol and qty > 0:
+                        resolved_price = self.resolve_sell_modify_price(
+                            symbol=full_symbol,
+                            order_id=str(order_id) if order_id else None,
+                            reported_price=float(price or 0),
+                        )
+                        if resolved_price is not None and resolved_price > 0:
+                            price = resolved_price
+
                         order_info = {
                             "order_id": order_id,
                             "qty": qty,
@@ -6322,6 +6555,17 @@ class SellOrderManager:
                 sell_order_qty = sell_order.get("qty", 0)
                 sell_order_id = sell_order.get("order_id")
                 sell_order_price = sell_order.get("price", 0)
+                modify_price = self.resolve_sell_modify_price(
+                    symbol=full_symbol,
+                    order_id=str(sell_order_id) if sell_order_id else None,
+                    reported_price=float(sell_order_price or 0),
+                )
+                if modify_price is None or modify_price <= 0:
+                    logger.warning(
+                        f"Cannot fix sell qty mismatch for {full_symbol}: "
+                        f"no valid modify price (reported={sell_order_price})"
+                    )
+                    continue
 
                 # Check for mismatch
                 if sell_order_id and position_qty != sell_order_qty:
@@ -6336,7 +6580,7 @@ class SellOrderManager:
                         order_id=str(sell_order_id),
                         symbol=full_symbol,
                         qty=int(position_qty),
-                        new_price=sell_order_price,
+                        new_price=modify_price,
                     ):
                         logger.info(
                             f"Fixed sell order quantity mismatch for {full_symbol}: "
@@ -6346,7 +6590,7 @@ class SellOrderManager:
                         self._register_order(
                             symbol=symbol,
                             order_id=sell_order_id,
-                            target_price=sell_order_price,
+                            target_price=modify_price,
                             qty=position_qty,
                             ticker=order_info.get("ticker"),
                             placed_symbol=order_info.get("placed_symbol") or full_symbol,

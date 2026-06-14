@@ -230,18 +230,9 @@ class TestBrokerAPIFailures(unittest.TestCase):
         self.engine.get_available_cash = Mock(return_value=100000)  # Less than needed (200000)
         self.engine._attempt_place_order = Mock(return_value=(False, None))
 
-        # Mock scrip master for symbol resolution
-        mock_scrip_master = Mock()
-        mock_scrip_master.symbol_map = {"TEST": "TEST-EQ"}  # Truthy value
+        from tests.unit.kotak.conftest import assign_tradable_scrip_master
 
-        def mock_get_instrument(symbol, exchange="NSE"):
-            # Return broker symbol with suffix
-            if symbol.upper() == "TEST":
-                return {"token": 12345, "symbol": "TEST-EQ", "exchange": exchange}
-            return {"token": 12346, "symbol": f"{symbol.upper()}-EQ", "exchange": exchange}
-
-        mock_scrip_master.get_instrument = mock_get_instrument
-        self.engine.scrip_master = mock_scrip_master
+        assign_tradable_scrip_master(self.engine, "TEST")
 
         recs = [
             Recommendation(

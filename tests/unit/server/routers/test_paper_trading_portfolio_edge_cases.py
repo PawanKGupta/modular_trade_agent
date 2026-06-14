@@ -372,12 +372,8 @@ class TestPaperTradingPortfolioEdgeCases:
             price=110.0,
         )
 
-        def list_side_effect(user_id, *args, **kwargs):
-            if kwargs.get("side") == "sell":
-                return ([sell_order], 1)
-            return ([paper_order], 1)
-
-        self.mock_orders_repo.list.side_effect = list_side_effect
+        # Router loads all orders once and filters sells in-process (real OrdersRepository API).
+        self.mock_orders_repo.list.return_value = ([paper_order, sell_order], 2)
 
         result = paper_trading.get_paper_trading_portfolio(db=self.db_session, current=self.user)
 

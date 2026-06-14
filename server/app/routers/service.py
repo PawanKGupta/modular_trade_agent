@@ -12,7 +12,11 @@ from src.application.services.conflict_detection_service import ConflictDetectio
 from src.application.services.individual_service_manager import IndividualServiceManager
 from src.application.services.multi_user_trading_service import MultiUserTradingService
 from src.infrastructure.db.models import Users
-from src.infrastructure.db.timezone_utils import ist_now
+from src.infrastructure.db.timezone_utils import (
+    db_timestamp_to_utc_for_api,
+    ist_now,
+    service_status_heartbeat_to_utc_for_api,
+)
 from src.infrastructure.logging.file_log_reader import FileLogReader
 from src.infrastructure.persistence.service_status_repository import ServiceStatusRepository
 from src.infrastructure.persistence.service_task_repository import ServiceTaskRepository
@@ -140,29 +144,22 @@ def get_service_status(
             status_repo = ServiceStatusRepository(db)
             status_obj = status_repo.get_or_create(current.id)
 
-        # CRITICAL: Ensure timestamps are timezone-aware (UTC) for proper frontend display
-        # PostgreSQL stores timestamps in UTC, but they may be returned as naive datetimes
-        # Making them timezone-aware ensures FastAPI serializes them correctly with 'Z' suffix
-        # If naive, assume they're UTC (PostgreSQL default) and mark them as such
-        # If timezone-aware but not UTC, convert to UTC
+        # Serialize DB timestamps as UTC ISO strings. Naive IST wall-clock values
+        # (e.g. service_status.last_heartbeat from ist_now_naive()) must not be
+        # tagged as UTC without conversion — that shifts the UI by +5:30.
+        api_now = ist_now()
         if status_obj.last_heartbeat:
-            if status_obj.last_heartbeat.tzinfo is None:
-                status_obj.last_heartbeat = status_obj.last_heartbeat.replace(tzinfo=UTC)
-            elif status_obj.last_heartbeat.tzinfo != UTC:
-                # Convert to UTC if in different timezone
-                status_obj.last_heartbeat = status_obj.last_heartbeat.astimezone(UTC)
+            status_obj.last_heartbeat = service_status_heartbeat_to_utc_for_api(
+                status_obj.last_heartbeat, reference=api_now
+            )
         if status_obj.last_task_execution:
-            if status_obj.last_task_execution.tzinfo is None:
-                status_obj.last_task_execution = status_obj.last_task_execution.replace(tzinfo=UTC)
-            elif status_obj.last_task_execution.tzinfo != UTC:
-                # Convert to UTC if in different timezone
-                status_obj.last_task_execution = status_obj.last_task_execution.astimezone(UTC)
+            status_obj.last_task_execution = db_timestamp_to_utc_for_api(
+                status_obj.last_task_execution, reference=api_now
+            )
         if status_obj.updated_at:
-            if status_obj.updated_at.tzinfo is None:
-                status_obj.updated_at = status_obj.updated_at.replace(tzinfo=UTC)
-            elif status_obj.updated_at.tzinfo != UTC:
-                # Convert to UTC if in different timezone
-                status_obj.updated_at = status_obj.updated_at.astimezone(UTC)
+            status_obj.updated_at = db_timestamp_to_utc_for_api(
+                status_obj.updated_at, reference=api_now
+            )
 
         return ServiceStatusResponse(
             service_running=status_obj.service_running,

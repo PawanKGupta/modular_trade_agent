@@ -458,7 +458,12 @@ class TestSellMonitorOrderVerificationIntegration:
 
         # Mock OrderStatusVerifier with results
         mock_verifier = Mock()
-        mock_broker_order = {"nOrdNo": "ORDER123", "price": 2500.0, "fldQty": 10}
+        mock_broker_order = {
+            "nOrdNo": "ORDER123",
+            "price": 2500.0,
+            "fldQty": 10,
+            "transactionType": "SELL",
+        }
 
         with patch.object(
             OrderFieldExtractor, "get_price", return_value=2500.0

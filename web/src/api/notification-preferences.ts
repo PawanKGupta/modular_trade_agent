@@ -24,6 +24,7 @@ export type NotificationPreferences = {
 	notify_retry_queue_removed: boolean;
 	notify_retry_queue_retried: boolean;
 	notify_partial_fill: boolean;
+	notify_balance_shortfall: boolean;
 	// System event preferences
 	notify_system_errors: boolean;
 	notify_system_warnings: boolean;

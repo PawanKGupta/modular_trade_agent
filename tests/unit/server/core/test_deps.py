@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException, status
 
 from server.app.core import deps
+from tests.support.mock_request import mock_request
 
 
 class DummyUser:
@@ -14,6 +15,15 @@ class DummyUser:
         self.role = "USER"
         self.id = 1
         self.email_verified_at = ist_now()
+        self.deleted_at = None
+        self.must_change_password = False
+        self.token_version = 0
+        self.mfa_enabled = False
+
+
+@pytest.fixture
+def stub_request():
+    return mock_request(path="/api/v1/auth/me")
 
 
 class DummyUserRepo:
@@ -41,7 +51,7 @@ def _token(payload: dict) -> str:
     return f"token:{payload}"
 
 
-def test_get_current_user_success(monkeypatch, stub_user):
+def test_get_current_user_success(monkeypatch, stub_user, stub_request):
     stub_user.user.role = "user"
 
     def fake_decode(token):
@@ -50,7 +60,7 @@ def test_get_current_user_success(monkeypatch, stub_user):
 
     monkeypatch.setattr(deps, "decode_token", fake_decode)
     creds = DummyCredentials("valid-token")
-    user = deps.get_current_user(credentials=creds, db=stub_user.session)
+    user = deps.get_current_user(stub_request, credentials=creds, db=stub_user.session)
     assert user is stub_user.user
 
 
@@ -61,34 +71,34 @@ def test_get_current_user_success(monkeypatch, stub_user):
         (DummyCredentials("x", scheme="Basic"), status.HTTP_401_UNAUTHORIZED),
     ],
 )
-def test_get_current_user_missing_credentials(credentials, expected_status, stub_user):
+def test_get_current_user_missing_credentials(credentials, expected_status, stub_user, stub_request):
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=credentials, db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=credentials, db=stub_user.session)
     assert exc.value.status_code == expected_status
 
 
-def test_get_current_user_invalid_token(monkeypatch, stub_user):
+def test_get_current_user_invalid_token(monkeypatch, stub_user, stub_request):
     monkeypatch.setattr(deps, "decode_token", lambda _: None)
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-def test_get_current_user_missing_uid(monkeypatch, stub_user):
+def test_get_current_user_missing_uid(monkeypatch, stub_user, stub_request):
     monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": ""})
     with pytest.raises(HTTPException):
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
 
 
-def test_get_current_user_no_uid_key(monkeypatch, stub_user):
+def test_get_current_user_no_uid_key(monkeypatch, stub_user, stub_request):
     """Test when payload doesn't have 'uid' key at all"""
     monkeypatch.setattr(deps, "decode_token", lambda _: {"sub": "user-123"})
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-def test_get_current_user_user_not_found(monkeypatch, stub_user):
+def test_get_current_user_user_not_found(monkeypatch, stub_user, stub_request):
     """Test when user is not found in database"""
 
     class EmptyUserRepo:
@@ -98,11 +108,11 @@ def test_get_current_user_user_not_found(monkeypatch, stub_user):
     monkeypatch.setattr(deps, "UserRepository", lambda db: EmptyUserRepo())
     monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "999"})
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-def test_get_current_user_bearer_case_insensitive(monkeypatch, stub_user):
+def test_get_current_user_bearer_case_insensitive(monkeypatch, stub_user, stub_request):
     """Test that bearer scheme is case-insensitive"""
     stub_user.user.role = "user"
 
@@ -112,25 +122,25 @@ def test_get_current_user_bearer_case_insensitive(monkeypatch, stub_user):
     monkeypatch.setattr(deps, "decode_token", fake_decode)
     # Test lowercase "bearer"
     creds = DummyCredentials("valid-token", scheme="bearer")
-    user = deps.get_current_user(credentials=creds, db=stub_user.session)
+    user = deps.get_current_user(stub_request, credentials=creds, db=stub_user.session)
     assert user is stub_user.user
 
 
-def test_get_current_user_inactive(monkeypatch, stub_user):
+def test_get_current_user_inactive(monkeypatch, stub_user, stub_request):
     stub_user.user.is_active = False
 
     monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "1"})
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
-def test_get_current_user_unverified_email(monkeypatch, stub_user):
+def test_get_current_user_unverified_email(monkeypatch, stub_user, stub_request):
     stub_user.user.email_verified_at = None
 
     monkeypatch.setattr(deps, "decode_token", lambda _: {"uid": "1"})
     with pytest.raises(HTTPException) as exc:
-        deps.get_current_user(credentials=DummyCredentials("bad"), db=stub_user.session)
+        deps.get_current_user(stub_request, credentials=DummyCredentials("bad"), db=stub_user.session)
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
     assert "verify your email" in exc.value.detail.lower()
 

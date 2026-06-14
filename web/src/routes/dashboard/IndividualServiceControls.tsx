@@ -7,7 +7,7 @@ import {
 	runTaskOnce,
 } from '@/api/service';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { formatTimeAgo, formatDuration } from '@/utils/time';
+import { formatApiTimestampDisplay, formatDuration } from '@/utils/time';
 
 interface IndividualServiceControlsProps {
 	service: IndividualServiceStatus;
@@ -16,6 +16,7 @@ interface IndividualServiceControlsProps {
 
 const TASK_DISPLAY_NAMES: Record<string, string> = {
 	premarket_retry: 'Pre-market Retry',
+	premarket_amo_adjustment: 'Pre-market Buy Adjustment',
 	sell_monitor: 'Sell Monitor',
 	analysis: 'Analysis',
 	buy_orders: 'Buy Orders',
@@ -24,12 +25,14 @@ const TASK_DISPLAY_NAMES: Record<string, string> = {
 };
 
 const TASK_DESCRIPTIONS: Record<string, string> = {
-	premarket_retry: 'Retries failed buy orders after morning placement (default 9:03 AM IST)',
+	premarket_retry: 'Retries failed buy orders after morning placement',
+	premarket_amo_adjustment:
+		'Adjusts pending buy quantities before market open when enabled in trading config',
 	sell_monitor: 'Monitors sell orders continuously, converts to market on RSI exit',
 	analysis: 'Analyzes stocks and generates recommendations',
-	buy_orders: 'Places REGULAR buy orders at market open (default 9:01 AM IST)',
+	buy_orders: 'Places REGULAR buy orders at market open (after prior-day analysis)',
 	buy_margin_preview:
-		'Evening margin preview for next-morning buys — notify only, no placement (default 4:05 PM IST)',
+		'Evening margin preview for next-morning new entries and re-entries — notify only, no placement',
 	eod_cleanup: 'End-of-day cleanup and reset for the next day',
 };
 
@@ -37,17 +40,7 @@ export function IndividualServiceControls({
 	service,
 	unifiedServiceRunning,
 }: IndividualServiceControlsProps) {
-	const renderTimestamp = (timestamp: string) => {
-		const date = new Date(timestamp);
-		const secondsDiff = Math.floor((Date.now() - date.getTime()) / 1000);
-		const relative = formatTimeAgo(secondsDiff);
-		return (
-			<>
-				{date.toLocaleString()}
-				<span className="text-[var(--muted)] ml-2 text-xs">({relative})</span>
-			</>
-		);
-	};
+	const renderTimestamp = (timestamp: string) => formatApiTimestampDisplay(timestamp);
 	const qc = useQueryClient();
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 	const [conflictStickyWhileRunning, setConflictStickyWhileRunning] = useState(false);

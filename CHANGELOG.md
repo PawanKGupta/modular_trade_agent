@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.2] - 2026-06-14
+
+Release from branch `releases/rebound_2622`. See [docs/development/RELEASE_PLAN_V26.2.2.md](docs/development/RELEASE_PLAN_V26.2.2.md) for deploy checklist.
+
+### Added
+
+- **User data security:** Refresh-token rotation with reuse detection, `token_version` session invalidation, optional MFA schema, soft-delete columns, audit logging for auth events; pre-deploy checklist in [USER_DATA_SECURITY.md](docs/security/USER_DATA_SECURITY.md).
+- **Signup email allowlist:** Approved provider list at signup and profile email change; `EMAIL_DOMAIN_ALLOWLIST_EXTRA` for corporate domains.
+- **Login lockout UX:** Pre-lockout warnings and live countdown from `429 retry_after_seconds`.
+- **In-app help center:** Public `/help` onboarding and FAQ (broker-neutral).
+- **Trading notifications:** Multi-channel delivery for order events; balance shortfall digest alerts; 9:05 pre-market depth logging and MARKET finalization path.
+- **Screener tradability filter:** Unified equity tradability gate before analysis.
+- **Service schedules:** Admin-editable buy margin preview and premarket AMO adjustment schedules (DB-backed; redeploy/restart to apply workers).
+- **Dev tooling:** Cursor-native dev team workflow docs; cross-platform Graphify MCP launcher.
+
+### Changed
+
+- **Service status notifications:** Off by default; unified IST heartbeat display; hardened start/stop across redeploys.
+- **Paper/live parity:** Morning buy staging, re-entry capital sizing, sell qty sync after re-entry fills, cycle-scoped closed-buy sync.
+- **OHLCV / NSE:** Bhavcopy ingest and same-day re-entry RSI gated on publish window; skip intraday gap-fill for today before market close.
+- **Portfolio limits:** `max_portfolio_size` counts system holdings only.
+- **Re-entry guard:** Block duplicate same-day re-entries at the same RSI level.
+- **Alembic:** Stale version-row prune instead of wiping migration metadata.
+
+### Fixed
+
+- Session restore on page refresh with httpOnly cookie auth (and dev localStorage path).
+- Paper services stopping after redeploy (stale scheduler locks).
+- Paper holdings target price from pending sell limit in DB.
+- Sell placement blocked when executed buy cached in `OrderStatusVerifier`.
+- Re-entry sell resize when broker pending order reports price zero.
+- Weekly OHLCV cache rejection on incomplete Yahoo tail bar.
+- Playwright E2E auth/session flakes in CI (Bearer-only test API, session-restore waits, single worker).
+- Web unit test line coverage restored above 90% threshold.
+
+### Migration
+
+- **Required:** `alembic upgrade head` before starting API (4 revisions since 26.2.1: notification defaults, balance-shortfall prefs, user-data-security schema). Backup Postgres first in production.
+- **Review `.env`:** `EMAIL_DOMAIN_ALLOWLIST_*`, `AUTH_COOKIE_SECURE`, `RATE_LIMIT_BACKEND`/`REDIS_URL` for multi-replica API; see [USER_DATA_SECURITY.md](docs/security/USER_DATA_SECURITY.md).
+
 ## [26.2.1] - 2026-06-06
 
 Release from branch `releases/rebound_2621`. See [docs/development/RELEASE_PLAN_V26.2.1.md](docs/development/RELEASE_PLAN_V26.2.1.md) for deploy checklist.

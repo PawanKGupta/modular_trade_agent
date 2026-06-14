@@ -360,7 +360,7 @@ class TestPaperTradingEngineAdapter:
         assert "TCS.NS" in tickers or "TCS" in tickers
 
     def test_place_new_entries(self, db_session, test_user, mock_paper_broker):
-        """Test placing new entries as MARKET AMO orders"""
+        """Off-hours fresh entries use MARKET AMO (live parity after session)."""
         from config.strategy_config import StrategyConfig
         from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
         from modules.kotak_neo_auto_trader.domain import OrderType, OrderVariety
@@ -385,18 +385,107 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        with patch("core.volume_analysis.is_market_hours", return_value=False):
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+        ):
             summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         assert summary["placed"] == 1
         assert mock_paper_broker.place_order.called
 
-        # Verify order is MARKET AMO type (matches real broker)
         placed_order = mock_paper_broker.place_order.call_args[0][0]
         assert placed_order.order_type == OrderType.MARKET
         assert placed_order.variety == OrderVariety.AMO
-        assert placed_order.price is None  # MARKET orders don't have price parameter
+        assert placed_order.price is None
+
+    def test_place_new_entries_recalculates_capital_from_liquidity_service(
+        self, db_session, test_user, mock_paper_broker
+    ):
+        """Fresh entries recalculate execution capital via LiquidityCapitalService (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS",
+                verdict="buy",
+                last_close=50.0,
+                execution_capital=99999.0,
+            )
+        ]
+
+        mock_indicators = {"close": 50.0, "avg_volume": 10000, "rsi10": 25.0, "ema9": 52.0}
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=False),
+            patch("core.volume_analysis.is_pre_open_session", return_value=False),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
+        ):
+            summary = adapter.place_new_entries(recommendations)
+
+        assert summary["placed"] == 1
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        # 10% of 10000 * 50 = 50000 capital → 1000 shares
+        assert placed_order.quantity == 1000
+
+    def test_place_new_entries_uses_limit_pre_open(self, db_session, test_user, mock_paper_broker):
+        """9:01 pre-open fresh entries use REGULAR LIMIT @ signal close (live parity)."""
+        from config.strategy_config import StrategyConfig
+        from modules.kotak_neo_auto_trader.auto_trade_engine import Recommendation
+        from modules.kotak_neo_auto_trader.domain import OrderType, OrderVariety
+
+        strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
+
+        adapter = PaperTradingEngineAdapter(
+            broker=mock_paper_broker,
+            user_id=test_user.id,
+            db_session=db_session,
+            strategy_config=strategy_config,
+            logger=MagicMock(),
+        )
+        mock_paper_broker.config = MagicMock()
+        mock_paper_broker.config.max_position_size = 100000.0
+
+        recommendations = [
+            Recommendation(
+                ticker="RELIANCE.NS", verdict="buy", last_close=2500.0, execution_capital=100000.0
+            )
+        ]
+
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
+        with (
+            patch("core.volume_analysis.is_market_hours", return_value=True),
+            patch("core.volume_analysis.is_pre_open_session", return_value=True),
+            patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators),
+        ):
+            summary = adapter.place_new_entries(recommendations)
+
+        assert summary["placed"] == 1
+        placed_order = mock_paper_broker.place_order.call_args[0][0]
+        assert placed_order.order_type == OrderType.LIMIT
+        assert placed_order.variety == OrderVariety.REGULAR
+        assert placed_order.price is not None
+        assert float(placed_order.price.amount) == 2500.0
 
     def test_place_new_entries_prevents_duplicate_symbols_with_different_formats(
         self, db_session, test_user, mock_paper_broker
@@ -463,7 +552,15 @@ class TestPaperTradingEngineAdapter:
             )
         ]
 
-        summary = adapter.place_new_entries(recommendations)
+        mock_indicators = {
+            "close": 2500.0,
+            "avg_volume": 1_000_000,
+            "rsi10": 25.0,
+            "ema9": 2520.0,
+        }
+
+        with patch.object(adapter, "_get_daily_indicators", return_value=mock_indicators):
+            summary = adapter.place_new_entries(recommendations)
 
         assert summary["attempted"] == 1
         # Order should be placed but with adjusted quantity
@@ -700,10 +797,15 @@ class TestPaperTradingSellMonitoring:
     """Test frozen EMA9 sell monitoring strategy"""
 
     @pytest.fixture
-    def adapter_with_holdings(self, db_session, test_user):
+    def adapter_with_holdings(self, db_session, test_user, monkeypatch):
         """Create adapter with mock holdings for sell monitoring tests"""
         from config.strategy_config import StrategyConfig
         from src.infrastructure.persistence.positions_repository import PositionsRepository
+
+        monkeypatch.setattr(
+            "src.application.services.paper_trading_service_adapter.get_user_logger",
+            lambda **kwargs: MagicMock(),
+        )
 
         strategy_config = StrategyConfig(user_capital=100000.0, max_portfolio_size=6)
 
@@ -770,6 +872,63 @@ class TestPaperTradingSellMonitoring:
         adapter.price_service = MagicMock()
 
         return adapter
+
+    def test_paper_place_sell_matches_system_holdings_when_aligned(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """P4: when paper holdings match system positions, sell qty equals system qty."""
+        from unittest.mock import patch
+
+        placed = []
+
+        def capture_place(order):
+            placed.append(order)
+            return "SELL_ALIGNED"
+
+        adapter_with_holdings.broker.place_order.side_effect = capture_place
+        adapter_with_holdings.broker.get_pending_orders.return_value = []
+
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", side_effect=_ema9_for_ticker
+        ):
+            adapter_with_holdings._place_sell_orders()
+
+        reliance_orders = [o for o in placed if "RELIANCE" in o.symbol]
+        assert len(reliance_orders) == 1
+        assert reliance_orders[0].quantity == 40
+
+    def test_paper_place_sell_uses_full_holdings_when_manual_excess_on_broker(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """
+        P4 / paper vs live divergence: paper sizes sells from broker holdings only.
+
+        Live broker path caps with positions table (min). Paper does not — if holdings
+        include shares not tracked in positions (simulated manual buy on paper broker),
+        sell placement uses the full holdings quantity.
+        """
+        from unittest.mock import MagicMock, patch
+
+        placed = []
+
+        def capture_place(order):
+            placed.append(order)
+            return "SELL_MANUAL_EXCESS"
+
+        inflated = MagicMock()
+        inflated.symbol = "RELIANCE-EQ"
+        inflated.quantity = 50
+        adapter_with_holdings.broker.get_holdings.return_value = [inflated]
+        adapter_with_holdings.broker.place_order.side_effect = capture_place
+        adapter_with_holdings.broker.get_pending_orders.return_value = []
+
+        with patch.object(
+            adapter_with_holdings, "_calculate_ema9", side_effect=_ema9_for_ticker
+        ):
+            adapter_with_holdings._place_sell_orders()
+
+        assert len(placed) == 1
+        assert placed[0].quantity == 50
 
     def test_place_sell_orders_frozen_ema9(self, db_session, test_user, adapter_with_holdings):
         """Test that sell orders are placed at frozen EMA9 target"""
@@ -963,6 +1122,52 @@ class TestPaperTradingSellMonitoring:
         assert "RELIANCE" not in adapter_with_holdings.active_sell_orders
         assert adapter_with_holdings.broker.check_and_execute_pending_orders.called
         adapter_with_holdings.broker.place_order.assert_not_called()
+
+    def test_monitor_sell_orders_syncs_sell_qty_after_reentry_fill(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """After a pending buy fills at open, sell qty should match total holdings (AVANTIFEED case)."""
+        from unittest.mock import MagicMock, patch
+
+        import pandas as pd
+
+        adapter_with_holdings.active_sell_orders = {
+            "AVANTIFEED": {
+                "order_id": "SELL_88",
+                "target_price": 1116.9,
+                "qty": 88,
+                "ticker": "AVANTIFEED.NS",
+                "entry_date": "2026-06-10",
+            }
+        }
+
+        mock_holding = MagicMock()
+        mock_holding.symbol = "AVANTIFEED"
+        mock_holding.quantity = 185
+        adapter_with_holdings.broker.get_holdings.return_value = [mock_holding]
+        adapter_with_holdings.broker.check_and_execute_pending_orders = MagicMock(
+            return_value={"checked": 1, "executed": 1, "still_pending": 0}
+        )
+        adapter_with_holdings.broker.get_holding = MagicMock(return_value=mock_holding)
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.broker.place_order.return_value = "SELL_185"
+
+        mock_data = _set_today_like_index(
+            pd.DataFrame({"high": [1000.0], "close": [1000.0]})
+        )
+
+        with (
+            patch("core.data_fetcher.fetch_ohlcv_yf", return_value=mock_data),
+            patch.object(
+                adapter_with_holdings, "_get_current_rsi10_paper", return_value=45.0
+            ),
+            patch.object(adapter_with_holdings, "_calculate_ema9", return_value=1116.9),
+            patch.object(adapter_with_holdings, "_save_sell_orders_to_file"),
+        ):
+            adapter_with_holdings._monitor_sell_orders()
+
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["qty"] == 185
+        assert adapter_with_holdings.active_sell_orders["AVANTIFEED"]["order_id"] == "SELL_185"
 
     def test_monitor_sell_orders_daily_high_fills_pending_limit(
         self, db_session, test_user, adapter_with_holdings
@@ -1491,6 +1696,41 @@ class TestPaperTradingSellMonitoring:
 
         adapter_with_holdings.broker.cancel_order.assert_called_with("EOD_SELL_1")
         assert adapter_with_holdings.active_sell_orders == {}
+
+    def test_eod_cleanup_cancels_pending_day_buy_not_amo(
+        self, db_session, test_user, adapter_with_holdings
+    ):
+        """EOD cleanup cancels REGULAR/DAY pending buys but preserves AMO."""
+        from unittest.mock import MagicMock, patch
+
+        day_buy = MagicMock()
+        day_buy.symbol = "GALLANTT.NS"
+        day_buy.is_buy_order.return_value = True
+        day_buy.is_sell_order.return_value = False
+        day_buy.is_active.return_value = True
+        day_buy.is_amo_order.return_value = False
+        day_buy.is_eod_cancellable_day_buy.return_value = True
+        day_buy.order_id = "EOD_BUY_DAY_1"
+
+        amo_buy = MagicMock()
+        amo_buy.symbol = "RELIANCE.NS"
+        amo_buy.is_buy_order.return_value = True
+        amo_buy.is_sell_order.return_value = False
+        amo_buy.is_active.return_value = True
+        amo_buy.is_amo_order.return_value = True
+        amo_buy.is_eod_cancellable_day_buy.return_value = False
+        amo_buy.order_id = "EOD_BUY_AMO_1"
+
+        adapter_with_holdings.broker.get_pending_orders.return_value = [day_buy, amo_buy]
+        adapter_with_holdings.broker.cancel_order.return_value = True
+        adapter_with_holdings.reporter = None
+        adapter_with_holdings.active_sell_orders = {}
+
+        with patch.object(adapter_with_holdings, "_save_sell_orders_to_file"):
+            with patch.object(adapter_with_holdings, "_cancel_unexecuted_sell_orders", return_value={}):
+                adapter_with_holdings.run_eod_cleanup()
+
+        adapter_with_holdings.broker.cancel_order.assert_called_once_with("EOD_BUY_DAY_1")
 
     @pytest.mark.skip(
         reason="File-based sell order tracking is deprecated. Orders are now tracked in database only."

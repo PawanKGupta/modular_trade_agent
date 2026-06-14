@@ -240,9 +240,14 @@ class AutoTradeEngine:
             auth=self.auth,
             strategy_config=self.strategy_config,
             orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
+            positions_repo=self.positions_repo if hasattr(self, "positions_repo") else None,
             user_id=self.user_id,
             enable_caching=True,
         )
+
+        # Batched balance-shortfall digest (one notification per buy/preview run)
+        self._shortfall_digest_items: list = []
+        self._shortfall_digest_defer = False
 
         # Initialize OrderValidationService (Phase 3.1: Order Validation & Verification)
         # Portfolio, orders, and orders_repo will be set after login
@@ -327,6 +332,123 @@ class AutoTradeEngine:
             )
             # Fallback to singleton pattern on error
             return get_telegram_notifier(db_session=self.db)
+
+    def begin_balance_shortfall_digest(self) -> None:
+        """Start batching shortfall alerts for a single digest at flush."""
+        self._shortfall_digest_items = []
+        self._shortfall_digest_defer = True
+
+    def flush_balance_shortfall_digest(self, *, dry_run: bool) -> None:
+        """Send one multi-channel digest for all shortfalls recorded in this batch."""
+        self._shortfall_digest_defer = False
+        if not self._shortfall_digest_items:
+            return
+        items = list(self._shortfall_digest_items)
+        self._shortfall_digest_items = []
+        self._send_balance_shortfall_digest(items, dry_run=dry_run)
+
+    def balance_shortfall_digest_batch(self, *, dry_run: bool):
+        """Context manager: batch entry + re-entry shortfalls into one notification."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _batch():
+            self.begin_balance_shortfall_digest()
+            try:
+                yield
+            finally:
+                self.flush_balance_shortfall_digest(dry_run=dry_run)
+
+        return _batch()
+
+    def _send_balance_shortfall_digest(
+        self, items: list, *, dry_run: bool
+    ) -> None:
+        """Dispatch a balance shortfall digest on all enabled channels."""
+        from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
+            dispatch_trading_notification,
+        )
+        from modules.kotak_neo_auto_trader.utils.balance_shortfall_digest import (
+            format_balance_shortfall_digest_plain,
+            format_balance_shortfall_digest_telegram,
+            format_balance_shortfall_digest_title,
+        )
+        from src.infrastructure.db.timezone_utils import ist_now
+
+        telegram_body = format_balance_shortfall_digest_telegram(items, dry_run=dry_run)
+        message_plain = format_balance_shortfall_digest_plain(items, dry_run=dry_run)
+        title = format_balance_shortfall_digest_title(items, dry_run=dry_run)
+        digest_key = "preview" if dry_run else "live"
+        order_id = f"balance_shortfall_digest:{digest_key}:{ist_now().strftime('%Y-%m-%d')}"
+
+        if self.user_id and self.db:
+            try:
+                from services.notification_preference_service import (
+                    NotificationEventType,
+                    NotificationPreferenceService,
+                )
+
+                dispatch_trading_notification(
+                    user_id=self.user_id,
+                    event_type=NotificationEventType.BALANCE_SHORTFALL,
+                    title=title,
+                    message_plain=message_plain,
+                    telegram_body=telegram_body,
+                    db_session=self.db,
+                    preference_service=NotificationPreferenceService(self.db),
+                    telegram_notifier=self.telegram_notifier,
+                    level="warning",
+                    order_id=order_id,
+                    dedupe=False,
+                )
+                return
+            except Exception as notify_err:
+                logger.warning(f"Failed to send balance shortfall digest: {notify_err}")
+
+        if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
+            try:
+                self.telegram_notifier.send_message(
+                    telegram_body,
+                    user_id=self.user_id,
+                    rate_limit_exempt=True,
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to send balance shortfall digest: {notify_err}")
+        else:
+            send_telegram(telegram_body)
+
+    def _notify_balance_shortfall(
+        self,
+        *,
+        broker_symbol: str,
+        qty: int,
+        close: float,
+        required_cash: float,
+        avail_cash: float | None,
+        shortfall: float,
+        dry_run: bool,
+        entry_type: str = "entry",
+        affordable_qty: int | None = None,
+    ) -> None:
+        """Record a shortfall; send immediately or include in an active digest batch."""
+        from modules.kotak_neo_auto_trader.utils.balance_shortfall_digest import (
+            BalanceShortfallItem,
+        )
+
+        item = BalanceShortfallItem(
+            broker_symbol=broker_symbol,
+            qty=qty,
+            close=close,
+            required_cash=required_cash,
+            avail_cash=avail_cash,
+            shortfall=shortfall,
+            entry_type="reentry" if entry_type == "reentry" else "entry",
+            affordable_qty=affordable_qty,
+        )
+        if self._shortfall_digest_defer:
+            self._shortfall_digest_items.append(item)
+            return
+        self._send_balance_shortfall_digest([item], dry_run=dry_run)
 
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _load_trades_history(self) -> dict[str, Any]:
@@ -2592,130 +2714,80 @@ class AutoTradeEngine:
             logger.error(f"Error checking reentry level for {base_symbol}: {e}")
             return False
 
+    def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
+        """
+        Return True when a system re-entry at ``level`` was already placed or filled today.
+
+        Independent of cycle metadata: blocks duplicate same-level re-entries on the same
+        IST calendar day even after a cycle reset.
+        """
+        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
+
+        try:
+            if not self.positions_repo or not self.user_id:
+                return False
+
+            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
+            orders: list[Any] = []
+            if self.orders_repo:
+                orders_list, _ = self.orders_repo.list(self.user_id)
+                orders = list(orders_list or [])
+
+            return has_reentry_at_level_today(
+                position=position,
+                orders=orders,
+                base_symbol=base_symbol,
+                level=level,
+                today=ist_now().date(),
+            )
+        except Exception as e:
+            logger.error(f"Error checking same-day reentry level for {base_symbol}: {e}")
+            return False
+
     def _resolve_broker_symbol(self, base_symbol: str) -> str:
         """
         Resolve base symbol to actual broker trading symbol using scrip master.
 
-        Scrip master is the SINGLE SOURCE OF TRUTH for symbol resolution.
-        If scrip master is not available or symbol is not found, raises an error.
-
-        IMPORTANT: Only resolves to -EQ segment symbols. T2T segments (-BE, -BL, -BZ)
-        are rejected as they are not supported for trading.
+        Uses shared ``resolve_tradable_equity`` (EQ-first, deny ``INF`` ISIN / T2T-only).
 
         Args:
-            base_symbol: Base symbol (e.g., "SALSTEEL") or already resolved symbol (e.g., "SALSTEEL-EQ")
+            base_symbol: Base symbol (e.g., "SALSTEEL") or resolved symbol (e.g., "SALSTEEL-EQ")
 
         Returns:
-            Resolved broker symbol (e.g., "SALSTEEL-EQ") - ONLY -EQ symbols
+            Resolved broker symbol (e.g., "SALSTEEL-EQ") — company equity only
 
         Raises:
-            ValueError: If scrip master is not available, symbol cannot be resolved,
-                       or only T2T segment available (no -EQ variant)
+            ValueError: If scrip master is unavailable or symbol is not tradable equity
         """
-        # Get exchange from user's trading config (from database UserTradingConfig)
-        # This is the user's preference stored in their trading configuration
-        # Falls back to config.DEFAULT_EXCHANGE only if strategy_config not available (standalone usage)
+        from src.infrastructure.brokers.tradable_equity_resolver import (
+            DeniedEquity,
+            ResolvedEquity,
+            denial_message,
+            resolve_tradable_equity,
+        )
+
         exchange = (
             self.strategy_config.default_exchange
             if self.strategy_config
             else config.DEFAULT_EXCHANGE
         )
 
-        # If symbol already has suffix, validate it exists in scrip master
-        if any(base_symbol.upper().endswith(suf) for suf in ["-EQ", "-BE", "-BL", "-BZ"]):
-            # Reject T2T segments - only -EQ is allowed
-            if any(base_symbol.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
-                raise ValueError(
-                    f"Symbol {base_symbol} is a T2T segment stock (-BE/-BL/-BZ) which is not supported. "
-                    f"Only -EQ segment stocks are allowed for trading."
-                )
-
-            # Validate that -EQ symbol exists in scrip master
-            if self.scrip_master and self.scrip_master.symbol_map:
-                instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
-                if instrument and instrument.get("symbol"):
-                    # Symbol exists in scrip master, use as-is
-                    logger.debug(
-                        f"Symbol {base_symbol} already has -EQ suffix and exists in scrip master ({exchange})"
-                    )
-                    return base_symbol
-                else:
-                    # Symbol has suffix but not in scrip master - this is an error
-                    raise ValueError(
-                        f"Symbol {base_symbol} not found in scrip master ({exchange}). "
-                        f"Please verify the symbol is correct."
-                    )
-            else:
-                # Scrip master not available, but symbol has -EQ suffix - assume it's valid
-                logger.warning(
-                    f"Scrip master not available, but symbol {base_symbol} has -EQ suffix. "
-                    f"Using as-is (not validated)."
-                )
-                return base_symbol
-
-        # Scrip master is REQUIRED for symbol resolution
         if not self.scrip_master or not self.scrip_master.symbol_map:
             raise ValueError(
                 f"Scrip master is not available. Cannot resolve symbol {base_symbol}. "
                 f"Please ensure scrip master is loaded before placing orders."
             )
 
-        try:
-            # First, try to get -EQ variant explicitly
-            eq_symbol = f"{base_symbol}-EQ"
-            instrument = self.scrip_master.get_instrument(eq_symbol, exchange=exchange)
+        result = resolve_tradable_equity(base_symbol, self.scrip_master, exchange=exchange)
+        if isinstance(result, DeniedEquity):
+            raise ValueError(denial_message(result))
+        if not isinstance(result, ResolvedEquity):
+            raise ValueError(f"Unexpected tradability result for {base_symbol}")
 
-            if instrument and instrument.get("symbol"):
-                resolved = instrument["symbol"]
-                # Double-check it's -EQ (safety check)
-                if resolved.upper().endswith("-EQ"):
-                    logger.info(
-                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange}) - EQ variant"
-                    )
-                    return resolved
-                else:
-                    logger.warning(f"Expected -EQ variant but got {resolved} for {base_symbol}")
-
-            # If -EQ not found, try base symbol (might resolve to something else)
-            instrument = self.scrip_master.get_instrument(base_symbol, exchange=exchange)
-            if instrument and instrument.get("symbol"):
-                resolved = instrument["symbol"]
-
-                # Check if resolved symbol is T2T segment - reject it
-                if any(resolved.upper().endswith(suf) for suf in ["-BE", "-BL", "-BZ"]):
-                    raise ValueError(
-                        f"Symbol {base_symbol} resolves to T2T segment {resolved} which is not supported. "
-                        f"Only -EQ segment stocks are allowed for trading. "
-                        f"The stock may only be available in T2T segment on {exchange}."
-                    )
-
-                # Check if it's -EQ
-                if resolved.upper().endswith("-EQ"):
-                    logger.info(
-                        f"Resolved {base_symbol} -> {resolved} via scrip master ({exchange})"
-                    )
-                    return resolved
-                else:
-                    # Resolved to something unexpected
-                    raise ValueError(
-                        f"Symbol {base_symbol} resolved to unexpected format: {resolved}. "
-                        f"Expected -EQ segment symbol."
-                    )
-            else:
-                # Symbol not found in scrip master
-                raise ValueError(
-                    f"Symbol {base_symbol} not found in scrip master ({exchange}). "
-                    f"Please verify the symbol is correct or check if it's listed on {exchange}."
-                )
-        except ValueError:
-            # Re-raise ValueError (our custom errors)
-            raise
-        except Exception as e:
-            # Wrap other exceptions
-            raise ValueError(
-                f"Failed to resolve symbol {base_symbol} via scrip master: {e}. "
-                f"Scrip master is the single source of truth for symbol resolution."
-            ) from e
+        logger.info(
+            f"Resolved {base_symbol} -> {result.symbol} via tradable equity resolver ({exchange})"
+        )
+        return result.symbol
 
     def _attempt_place_order(
         self,
@@ -4145,15 +4217,18 @@ class AutoTradeEngine:
                 # Extract base symbol (remove -EQ suffix if present)
                 base_symbol = symbol.replace("-EQ", "")
 
-                # Get ticker from order metadata or construct from symbol
+                # Get ticker / entry type from order metadata or construct from symbol
                 ticker = None
+                entry_type = None
                 if self.orders_repo and self.user_id:
                     try:
                         db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
-                        if db_order and db_order.order_metadata:
-                            ticker = db_order.order_metadata.get(
-                                "ticker"
-                            ) or db_order.order_metadata.get("original_ticker")
+                        if db_order:
+                            entry_type = db_order.entry_type
+                            if db_order.order_metadata:
+                                ticker = db_order.order_metadata.get(
+                                    "ticker"
+                                ) or db_order.order_metadata.get("original_ticker")
                     except Exception:
                         pass  # Ignore errors - will construct ticker below
 
@@ -4169,12 +4244,15 @@ class AutoTradeEngine:
                         "ticker": ticker,
                         "order_id": order_id,
                         "original_qty": original_qty,
+                        "entry_type": entry_type,
                     }
                 )
 
             # Fetch prices and calculate EMA9 for all orders in parallel
             price_results = {}
             ema9_results = {}
+            avg_volume_results = {}
+            market_depth_results = {}
             if order_data:
                 logger.info(
                     f"Pre-fetching prices and calculating EMA9 for {len(order_data)} orders in parallel..."
@@ -4190,24 +4268,72 @@ class AutoTradeEngine:
                         "order_id": order_id,
                         "price": None,
                         "ema9": None,
+                        "avg_volume": 0.0,
+                        "market_depth": None,
                     }
                     try:
+                        indicator_service = getattr(self, "indicator_service", None)
+                        if indicator_service:
+                            try:
+                                indicators = indicator_service.get_daily_indicators_dict(
+                                    ticker
+                                )
+                                if indicators:
+                                    result["avg_volume"] = float(
+                                        indicators.get("avg_volume") or 0
+                                    )
+                            except Exception as e:
+                                logger.debug(
+                                    f"{base_symbol}: Failed to load avg_volume: {e}"
+                                )
+
                         # Fetch pre-market price
                         price = market_data.get_ltp(symbol, exchange="NSE")
                         if price and price > 0:
                             result["price"] = price
 
-                            # Calculate EMA9 using fetched price
+                        # Log-only: bid + ask depth (5 levels each; does not affect sizing)
+                        from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                            DEPTH_DETAIL_FETCH_ERROR,
+                            DEPTH_DETAIL_NO_TOKEN,
+                            unavailable_depth_snapshot,
+                        )
+
+                        scrip_master = getattr(self, "scrip_master", None)
+                        if scrip_master:
                             try:
-                                ema9 = self.indicator_service.calculate_ema9_realtime(
-                                    ticker=ticker,
-                                    broker_symbol=symbol,
-                                    current_ltp=price,
+                                token = scrip_master.get_token(symbol, exchange="NSE")
+                                if token:
+                                    result["market_depth"] = market_data.get_market_depth(
+                                        token
+                                    )
+                                else:
+                                    result["market_depth"] = unavailable_depth_snapshot(
+                                        DEPTH_DETAIL_NO_TOKEN
+                                    )
+                            except Exception as depth_err:
+                                logger.debug(
+                                    f"{base_symbol}: pre-market depth fetch failed: {depth_err}"
                                 )
-                                if ema9 and ema9 > 0:
-                                    result["ema9"] = ema9
-                            except Exception as e:
-                                logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
+                                result["market_depth"] = unavailable_depth_snapshot(
+                                    DEPTH_DETAIL_FETCH_ERROR
+                                )
+
+                        if price and price > 0:
+                            # Calculate EMA9 using fetched price
+                            if indicator_service:
+                                try:
+                                    ema9 = indicator_service.calculate_ema9_realtime(
+                                        ticker=ticker,
+                                        broker_symbol=symbol,
+                                        current_ltp=price,
+                                    )
+                                    if ema9 and ema9 > 0:
+                                        result["ema9"] = ema9
+                                except Exception as e:
+                                    logger.debug(
+                                        f"{base_symbol}: Failed to calculate EMA9: {e}"
+                                    )
                     except Exception as e:
                         logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
 
@@ -4221,6 +4347,8 @@ class AutoTradeEngine:
                         order_id, result = future.result()
                         price_results[order_id] = result["price"]
                         ema9_results[order_id] = result["ema9"]
+                        avg_volume_results[order_id] = result["avg_volume"]
+                        market_depth_results[order_id] = result["market_depth"]
 
                 logger.info(
                     f"Pre-fetch complete: {len([p for p in price_results.values() if p is not None])}/{len(order_data)} prices, "
@@ -4246,6 +4374,23 @@ class AutoTradeEngine:
                     continue
 
                 logger.info(f"{base_symbol}: Pre-market price = Rs {premarket_price:.2f}")
+
+                from modules.kotak_neo_auto_trader.utils.market_depth_utils import (
+                    DEPTH_DETAIL_NOT_FETCHED,
+                    log_premarket_depth,
+                    unavailable_depth_snapshot,
+                )
+
+                snapshot = market_depth_results.get(order_id)
+                if snapshot is None:
+                    snapshot = unavailable_depth_snapshot(DEPTH_DETAIL_NOT_FETCHED)
+                log_premarket_depth(
+                    logger,
+                    base_symbol,
+                    ltp=premarket_price,
+                    snapshot=snapshot,
+                    entry_type=order_info.get("entry_type"),
+                )
 
                 # Use pre-calculated EMA9
                 ema9 = ema9_results.get(order_id)
@@ -4290,27 +4435,21 @@ class AutoTradeEngine:
                                             f"{base_symbol}: Failed to update DB record: {db_err}"
                                         )
 
-                                # Send Telegram notification
-                                if self.telegram_notifier and self.telegram_notifier.enabled:
-                                    try:
-                                        message_text = (
-                                            f"🚫 *Order Cancelled - Gap Up Above EMA9*\n\n"
-                                            f"Symbol: `{base_symbol}`\n"
-                                            f"Pre-market: Rs {premarket_price:.2f}\n"
-                                            f"EMA9: Rs {ema9:.2f}\n"
-                                            f"Threshold: Rs {ema9_threshold:.2f} (EMA9 - 1%)\n"
-                                            f"Reason: Price gap-up above entry target"
-                                        )
-                                        self.telegram_notifier.notify_system_alert(
-                                            alert_type="ORDER_CANCELLED_EMA9",
-                                            message_text=message_text,
-                                            severity="WARNING",
-                                            user_id=self.user_id,
-                                        )
-                                    except Exception as notify_err:
-                                        logger.warning(
-                                            f"Failed to send Telegram notification: {notify_err}"
-                                        )
+                                from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                                    notify_premarket_ema9_cancelled,
+                                )
+
+                                notify_premarket_ema9_cancelled(
+                                    engine_or_adapter=self,
+                                    user_id=self.user_id,
+                                    db_session=self.db,
+                                    symbol=base_symbol,
+                                    order_id=order_id,
+                                    entry_type=order_info.get("entry_type"),
+                                    premarket_ltp=premarket_price,
+                                    ema9=ema9,
+                                    ema9_threshold=ema9_threshold,
+                                )
 
                                 continue  # Skip quantity adjustment for cancelled order
                             else:
@@ -4327,31 +4466,52 @@ class AutoTradeEngine:
                         f"{base_symbol}: EMA9 calculation failed - proceeding with quantity adjustment"
                     )
 
-                # 4. Recalculate quantity to keep capital constant
-                target_capital = self.strategy_config.user_capital
-                new_qty = max(config.MIN_QTY, floor(target_capital / premarket_price))
+                from modules.kotak_neo_auto_trader.utils.premarket_adjustment import (
+                    PREMARKET_LIMIT_PROXY_LOG,
+                    compute_premarket_qty,
+                    needs_premarket_market_finalize,
+                )
 
-                # 5. Check if quantity adjustment is needed
-                if new_qty == original_qty:
-                    logger.info(f"{base_symbol}: No adjustment needed (qty={original_qty})")
+                ticker = order_info["ticker"]
+                avg_volume = avg_volume_results.get(order_id, 0.0)
+                execution_capital = self._calculate_execution_capital(
+                    ticker, premarket_price, avg_volume
+                )
+                new_qty = compute_premarket_qty(
+                    execution_capital,
+                    premarket_price,
+                    min_qty=config.MIN_QTY,
+                )
+                is_limit = OrderFieldExtractor.is_limit_broker_order(order)
+
+                if not needs_premarket_market_finalize(
+                    is_limit=is_limit,
+                    new_qty=new_qty,
+                    original_qty=original_qty,
+                ):
+                    logger.info(
+                        f"{base_symbol}: No adjustment needed (MARKET, qty={original_qty})"
+                    )
                     summary["no_adjustment_needed"] += 1
                     continue
 
-                # Calculate gap percentage
-                original_value = original_qty * premarket_price
                 gap_pct = (
-                    (premarket_price - (target_capital / original_qty))
-                    / (target_capital / original_qty)
+                    (premarket_price - (execution_capital / original_qty))
+                    / (execution_capital / original_qty)
                 ) * 100
 
                 original_price = float(
                     order.get("price", order.get("prc", order.get("orderPrice", 0))) or 0
                 )
+                qty_changed = new_qty != original_qty
+                if is_limit:
+                    logger.info(f"{base_symbol}: {PREMARKET_LIMIT_PROXY_LOG}")
                 logger.info(
-                    f"{base_symbol}: Adjusting AMO order: "
-                    f"qty {original_qty} → {new_qty}, "
-                    f"price Rs {original_price:.2f} → Rs {premarket_price:.2f} "
-                    f"(gap: {gap_pct:+.2f}%, capital: Rs {self.strategy_config.user_capital:,.0f})"
+                    f"{base_symbol}: Finalizing pending buy as MARKET: "
+                    f"qty {original_qty} → {new_qty}"
+                    f"{'' if qty_changed else ' (unchanged)'}, "
+                    f"close proxy Rs {original_price:.2f} → pre-market Rs {premarket_price:.2f} "
+                    f"(gap: {gap_pct:+.2f}%, execution_capital: Rs {execution_capital:,.0f})"
                 )
 
                 try:
@@ -4384,26 +4544,24 @@ class AutoTradeEngine:
                                     f"{base_symbol}: Failed to update DB record: {db_err}"
                                 )
 
-                        # Send Telegram notification
-                        if self.telegram_notifier and self.telegram_notifier.enabled:
-                            try:
-                                message_text = (
-                                    f"📊 *Pre-Market Adjustment*\n\n"
-                                    f"Symbol: `{base_symbol}`\n"
-                                    f"Qty: {original_qty} → {new_qty} ({new_qty - original_qty:+d})\n"
-                                    f"Gap: {gap_pct:+.2f}%\n"
-                                    f"Pre-market: Rs {premarket_price:.2f}"
-                                )
-                                self.telegram_notifier.notify_system_alert(
-                                    alert_type="PRE_MARKET_ADJUSTMENT",
-                                    message_text=message_text,
-                                    severity="INFO",
-                                    user_id=self.user_id,
-                                )
-                            except Exception as notify_err:
-                                logger.warning(
-                                    f"Failed to send Telegram notification: {notify_err}"
-                                )
+                        from modules.kotak_neo_auto_trader.premarket_notification_dispatcher import (
+                            notify_premarket_adjusted,
+                        )
+
+                        depth_snapshot = market_depth_results.get(order_id)
+                        notify_premarket_adjusted(
+                            engine_or_adapter=self,
+                            user_id=self.user_id,
+                            db_session=self.db,
+                            symbol=base_symbol,
+                            order_id=order_id,
+                            entry_type=order_info.get("entry_type"),
+                            original_qty=original_qty,
+                            new_qty=new_qty,
+                            premarket_ltp=premarket_price,
+                            gap_pct=gap_pct,
+                            market_depth=depth_snapshot,
+                        )
                     else:
                         logger.error(f"❌ {base_symbol}: AMO modification failed: {result}")
                         summary["modification_failed"] += 1
@@ -4428,27 +4586,143 @@ class AutoTradeEngine:
             logger.error(f"Error during pre-market AMO adjustment: {e}", exc_info=True)
             return summary
 
+    def cancel_unexecuted_day_buy_orders_at_eod(self) -> dict[str, int]:
+        """
+        Cancel unexecuted REGULAR/DAY pending buys at end of session (EOD task).
+
+        AMO pending buys are left open for next-morning ``adjust_amo_quantities_premarket``.
+        Also marks orphan PENDING non-AMO rows in the database as cancelled.
+        """
+        from .utils.order_field_extractor import (
+            EOD_DAY_BUY_CANCEL_REASON,
+            OrderFieldExtractor,
+        )
+
+        summary = {"cancelled": 0, "failed": 0, "skipped_amo": 0, "db_only_cancelled": 0}
+        broker_cancelled_ids: set[str] = set()
+
+        if not self.orders:
+            logger.warning("Orders client not initialized — skipping EOD day-buy cancellation")
+            return summary
+
+        if not self.auth or not self.auth.is_authenticated():
+            if not self.login():
+                logger.error("Re-authentication failed — cannot cancel EOD day-buy orders")
+                return summary
+
+        logger.info("Cancelling unexecuted DAY/REGULAR pending buy orders (EOD)...")
+
+        try:
+            pending_orders = self.orders.get_pending_orders() or []
+        except Exception as e:
+            logger.warning(f"Could not fetch pending orders for EOD day-buy cancel: {e}")
+            pending_orders = []
+
+        for order in pending_orders:
+            if OrderFieldExtractor.is_pending_open_buy_order(order) and (
+                OrderFieldExtractor.is_amo_broker_order(order)
+            ):
+                summary["skipped_amo"] += 1
+                continue
+            if not OrderFieldExtractor.is_eod_cancellable_day_buy_broker_order(order):
+                continue
+
+            order_id = OrderFieldExtractor.get_order_id(order)
+            symbol = OrderFieldExtractor.get_symbol(order)
+            if not order_id:
+                continue
+
+            try:
+                if self.orders.cancel_order(order_id):
+                    summary["cancelled"] += 1
+                    broker_cancelled_ids.add(order_id)
+                    logger.info(f"Cancelled pending DAY buy {symbol} (#{order_id}) at EOD")
+                else:
+                    summary["failed"] += 1
+            except Exception as e:
+                summary["failed"] += 1
+                logger.warning(f"Failed to cancel day buy {symbol} (#{order_id}) at EOD: {e}")
+
+        if self.orders_repo and self.user_id:
+            try:
+                db_orders, _ = self.orders_repo.list(self.user_id)
+                for db_order in db_orders:
+                    if not OrderFieldExtractor.is_eod_cancellable_day_buy_db_order(db_order):
+                        continue
+                    broker_id = str(db_order.broker_order_id or db_order.order_id or "")
+                    if broker_id and broker_id in broker_cancelled_ids:
+                        continue
+                    self.orders_repo.mark_cancelled(
+                        db_order, cancelled_reason=EOD_DAY_BUY_CANCEL_REASON
+                    )
+                    summary["db_only_cancelled"] += 1
+                    logger.info(
+                        f"Marked PENDING DAY buy {db_order.symbol} "
+                        f"(#{broker_id or db_order.id}) cancelled in DB at EOD"
+                    )
+            except Exception as e:
+                logger.warning(f"EOD day-buy DB sweep failed: {e}", exc_info=True)
+
+        logger.info(
+            f"EOD day-buy cancellation complete: broker_cancelled={summary['cancelled']}, "
+            f"db_only_cancelled={summary['db_only_cancelled']}, "
+            f"skipped_amo={summary['skipped_amo']}, failed={summary['failed']}"
+        )
+        return summary
+
     # ---------------------- New entries ----------------------
+    def _merge_evening_margin_preview_summaries(
+        self, entry_summary: dict, reentry_summary: dict
+    ) -> dict[str, int | list | dict]:
+        """Combine new-entry and re-entry evening margin preview results."""
+        return {
+            "attempted": int(entry_summary.get("attempted", 0))
+            + int(reentry_summary.get("attempted", 0)),
+            "placed": 0,
+            "preview_sufficient": int(entry_summary.get("preview_sufficient", 0))
+            + int(reentry_summary.get("preview_sufficient", 0)),
+            "failed_balance": int(entry_summary.get("failed_balance", 0))
+            + int(reentry_summary.get("failed_balance", 0)),
+            "skipped": int(entry_summary.get("skipped", 0)),
+            "dry_run": True,
+            "ticker_attempts": entry_summary.get("ticker_attempts", []),
+            "entry": entry_summary,
+            "reentry": reentry_summary,
+        }
+
     def preview_evening_buy_margins(self) -> dict[str, int | list]:
         """
         Evening margin preview (no broker placement).
 
-        Loads buy recommendations and runs the same checks as ``place_new_entries``
-        with ``dry_run=True``, sending notifications for insufficient margin.
+        Runs ``place_new_entries`` and ``place_reentry_orders`` with ``dry_run=True``,
+        sending multi-channel notifications for insufficient margin on both paths.
         """
-        recs = self.load_latest_recommendations()
-        if not recs:
-            logger.info("No recommendations for evening margin preview")
-            return {
-                "attempted": 0,
-                "placed": 0,
-                "preview_sufficient": 0,
-                "failed_balance": 0,
-                "skipped": 0,
-                "dry_run": True,
-                "ticker_attempts": [],
-            }
-        return self.place_new_entries(recs, dry_run=True)
+        with self.balance_shortfall_digest_batch(dry_run=True):
+            recs = self.load_latest_recommendations()
+            if recs:
+                entry_summary = self.place_new_entries(recs, dry_run=True)
+            else:
+                logger.info("No recommendations for evening margin preview (new entries)")
+                entry_summary = {
+                    "attempted": 0,
+                    "placed": 0,
+                    "preview_sufficient": 0,
+                    "failed_balance": 0,
+                    "skipped": 0,
+                    "dry_run": True,
+                    "ticker_attempts": [],
+                }
+
+            reentry_summary = self.place_reentry_orders(dry_run=True)
+        merged = self._merge_evening_margin_preview_summaries(entry_summary, reentry_summary)
+        logger.info(
+            "Evening margin preview complete: "
+            f"entry_sufficient={entry_summary.get('preview_sufficient', 0)}, "
+            f"entry_shortfall={entry_summary.get('failed_balance', 0)}, "
+            f"reentry_sufficient={reentry_summary.get('preview_sufficient', 0)}, "
+            f"reentry_shortfall={reentry_summary.get('failed_balance', 0)}"
+        )
+        return merged
 
     def place_new_entries(
         self,
@@ -5393,43 +5667,15 @@ class AutoTradeEngine:
                 continue
 
             if not has_sufficient_balance:
-                timestamp = ist_now().strftime("%Y-%m-%d %H:%M:%S")
-                if dry_run:
-                    telegram_msg = (
-                        f"💰 *Insufficient Margin (Evening Preview)*\n\n"
-                        f"Symbol: `{broker_symbol}`\n"
-                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                        f"No order placed. Fund account before morning buy run (9:01 AM IST).\n\n"
-                        f"_Time: {timestamp}_"
-                    )
-                else:
-                    telegram_msg = (
-                        f"💰 *Insufficient Balance - BUY*\n\n"
-                        f"Symbol: `{broker_symbol}`\n"
-                        f"Needed: Rs {required_cash:,.0f} for {qty} @ Rs {close:.2f}\n"
-                        f"Available: Rs {(avail_cash or 0.0):,.0f}\n"
-                        f"Shortfall: Rs {shortfall:,.0f}\n\n"
-                        f"Order saved for retry at premarket_retry or manually.\n\n"
-                        f"_Time: {timestamp}_"
-                    )
-                # Use TelegramNotifier to respect notification preferences
-                if self.telegram_notifier and self.telegram_notifier.enabled:
-                    try:
-                        self.telegram_notifier.notify_system_alert(
-                            alert_type="BALANCE_SHORTFALL",
-                            message_text=telegram_msg,
-                            severity="WARNING",
-                            user_id=self.user_id,
-                        )
-                    except Exception as notify_err:
-                        logger.warning(
-                            f"Failed to send balance shortfall notification: {notify_err}"
-                        )
-                else:
-                    # Fallback to old method if telegram_notifier not available (backward compatibility)
-                    send_telegram(telegram_msg)
+                self._notify_balance_shortfall(
+                    broker_symbol=broker_symbol,
+                    qty=qty,
+                    close=close,
+                    required_cash=required_cash,
+                    avail_cash=avail_cash,
+                    shortfall=shortfall,
+                    dry_run=dry_run,
+                )
 
                 # Logger message without emojis
                 log_suffix = (
@@ -5559,11 +5805,12 @@ class AutoTradeEngine:
         return summary
 
     # ---------------------- Re-entry and exit ----------------------
-    def place_reentry_orders(self) -> dict[str, int]:
+    def place_reentry_orders(self, *, dry_run: bool = False) -> dict[str, int]:
         """
-        Check re-entry conditions and place AMO orders for re-entries.
+        Check re-entry conditions and place buy orders for re-entries (LIMIT pre-open, same as fresh entry).
 
-        Called from ``run_buy_orders`` (default 9:01 IST morning placement).
+        Called from ``run_buy_orders`` (default 9:01 IST morning placement) and
+        ``preview_evening_buy_margins`` (``dry_run=True``).
 
         Re-entry logic based on entry RSI level:
         - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
@@ -5580,10 +5827,13 @@ class AutoTradeEngine:
         summary = {
             "attempted": 0,
             "placed": 0,
+            "preview_sufficient": 0,
             "failed_balance": 0,
+            "dry_run": dry_run,
             "skipped_no_position": 0,
             "skipped_duplicates": 0,
-            "skipped_duplicate_level": 0,  # Re-entry at same level already placed today
+            "skipped_duplicate_level": 0,  # Re-entry at same level already exists in current cycle
+            "skipped_duplicate_level_today": 0,  # Same level already placed/filled today (IST)
             "skipped_invalid_rsi": 0,
             "skipped_missing_data": 0,
             "skipped_invalid_qty": 0,
@@ -5612,7 +5862,7 @@ class AutoTradeEngine:
 
         # Manual Trade Detection Timing Fix: Reconcile positions before placing reentry orders
         # This ensures we detect manual trades that happened during market hours
-        if hasattr(self, "sell_manager") and self.sell_manager:
+        if not dry_run and hasattr(self, "sell_manager") and self.sell_manager:
             try:
                 reconciliation_stats = self.sell_manager._reconcile_positions_with_broker_holdings()
                 if (
@@ -5640,19 +5890,14 @@ class AutoTradeEngine:
             f"Evaluating re-entry for {len(open_positions)} open position(s) "
             f"(orders placed only when RSI level rules qualify)..."
         )
-        from datetime import time as dt_time
-
-        from core.volume_analysis import is_market_hours
-
         # Re-entry RSI source policy:
-        # - At/after market close on trading days, use current day close-inclusive RSI.
-        # - During next-day market hours, keep using previous closed-day RSI snapshot
-        #   until the next post-close evaluation window.
-        now_time = ist_now().time()
-        market_close = dt_time(15, 30)
-        use_latest_rsi_after_close = (
-            self.is_trading_weekday() and (not is_market_hours()) and now_time >= market_close
+        # - Post-close with confirmed same-day NSE bhavcopy: today-inclusive RSI.
+        # - Otherwise (intraday, pre-bhavcopy, or early schedule): prior closed-day RSI.
+        from src.application.services.nse_bhavcopy_availability import (  # noqa: PLC0415
+            should_use_same_day_close_for_indicators,
         )
+
+        use_latest_rsi_after_close = should_use_same_day_close_for_indicators()
 
         # Get portfolio snapshot for capacity checks
         if self.portfolio_service:
@@ -5778,7 +6023,7 @@ class AutoTradeEngine:
                 )
 
                 # Update position metadata if needed (cycle tracking, reset detection)
-                if any(v is not None for v in metadata_updates.values()):
+                if not dry_run and any(v is not None for v in metadata_updates.values()):
                     try:
                         # Get current cycle metadata
                         cycle_meta = self._get_position_cycle_metadata(position)
@@ -5851,6 +6096,16 @@ class AutoTradeEngine:
                     )
                     continue
 
+                if self.has_reentry_at_level_today(symbol, next_level):
+                    logger.info(
+                        f"Skipping {symbol}: Re-entry at level {next_level} already placed or "
+                        f"filled today (same-day level guard; cycle={current_cycle})"
+                    )
+                    summary["skipped_duplicate_level_today"] = (
+                        summary.get("skipped_duplicate_level_today", 0) + 1
+                    )
+                    continue
+
                 # Check for duplicates (only active buy orders, NOT holdings)
                 # Reentries allow buying more of existing position
                 base_symbol = self.parse_symbol_for_broker(ticker)
@@ -5884,7 +6139,7 @@ class AutoTradeEngine:
                 execution_capital = self._calculate_execution_capital(
                     ticker, current_price, avg_volume
                 )
-                qty = int(execution_capital / current_price)
+                qty = max(config.MIN_QTY, floor(execution_capital / current_price))
 
                 logger.info(
                     f"Re-entry quantity calculation for {symbol}: "
@@ -5898,39 +6153,66 @@ class AutoTradeEngine:
                     continue
 
                 # Check balance and adjust quantity if needed
+                requested_qty = qty
                 affordable_qty = self.get_affordable_qty(current_price)
-                if affordable_qty < qty:
-                    logger.warning(
-                        f"Insufficient balance for {symbol}: "
-                        f"requested={qty}, affordable={affordable_qty}"
-                    )
-                    qty = affordable_qty
-                    if qty <= 0:
-                        # Save as failed order for retry
-                        failed_order_info = {
-                            "symbol": broker_symbol,
-                            "ticker": ticker,
-                            "close": current_price,
-                            "qty": qty,
-                            "required_cash": execution_capital,
-                            "shortfall": execution_capital - (affordable_qty * current_price),
-                            "reason": "insufficient_balance",
-                            "rsi10": current_rsi,
-                            "ema9": ind.get("ema9"),
-                            "ema200": ind.get("ema200"),
-                            "execution_capital": execution_capital,
-                            "entry_type": "reentry",
-                            "entry_rsi": entry_rsi,
-                            "reentry_level": next_level,
-                        }
-                        try:
-                            self._add_failed_order(failed_order_info)
-                            summary["failed_balance"] += 1
-                        except Exception as e:
-                            logger.warning(f"Failed to save re-entry order to failed orders: {e}")
-                        continue
+                avail_cash = None
+                try:
+                    avail_cash = self.get_available_cash()
+                except Exception:
+                    avail_cash = affordable_qty * current_price if current_price > 0 else 0.0
 
-                # Place re-entry order (AMO-like)
+                if affordable_qty < requested_qty:
+                    required_cash = requested_qty * current_price
+                    shortfall = max(0.0, required_cash - (affordable_qty * current_price))
+                    logger.warning(
+                        f"Insufficient balance for {symbol} re-entry: "
+                        f"requested={requested_qty}, affordable={affordable_qty}, "
+                        f"shortfall=Rs {shortfall:,.0f}"
+                    )
+                    self._notify_balance_shortfall(
+                        broker_symbol=broker_symbol,
+                        qty=requested_qty,
+                        close=current_price,
+                        required_cash=required_cash,
+                        avail_cash=avail_cash,
+                        shortfall=shortfall,
+                        dry_run=dry_run,
+                        entry_type="reentry",
+                        affordable_qty=affordable_qty if affordable_qty > 0 else None,
+                    )
+                    if affordable_qty <= 0:
+                        summary["failed_balance"] += 1
+                        if not dry_run:
+                            failed_order_info = {
+                                "symbol": broker_symbol,
+                                "ticker": ticker,
+                                "close": current_price,
+                                "qty": requested_qty,
+                                "required_cash": required_cash,
+                                "shortfall": shortfall,
+                                "reason": "insufficient_balance",
+                                "rsi10": current_rsi,
+                                "ema9": ind.get("ema9"),
+                                "ema200": ind.get("ema200"),
+                                "execution_capital": execution_capital,
+                                "entry_type": "reentry",
+                                "entry_rsi": entry_rsi,
+                                "reentry_level": next_level,
+                            }
+                            try:
+                                self._add_failed_order(failed_order_info)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to save re-entry order to failed orders: {e}"
+                                )
+                        continue
+                    qty = affordable_qty
+
+                if dry_run:
+                    summary["preview_sufficient"] += 1
+                    continue
+
+                # Place re-entry via _attempt_place_order (LIMIT pre-open, MARKET after 9:15)
                 # Enhanced Hybrid Approach: Include cycle number in order metadata
                 rec_source = "reentry"
                 cycle_meta = self._get_position_cycle_metadata(position)

@@ -237,6 +237,9 @@ def test_ensure_db_schema_creates_tables_and_bootstraps_admin(monkeypatch: pytes
         def mark_email_verified(self, _user):
             return None
 
+        def set_must_change_password(self, _user, required=True):
+            return None
+
     class _SettingsRepo:
         def __init__(self, db):
             self.db = db

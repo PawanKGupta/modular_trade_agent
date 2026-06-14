@@ -23,6 +23,18 @@ from services.notification_preference_service import (
 )
 
 
+def _telegram_pref_checked(mock_preference_service, user_id: int, event_type: str) -> bool:
+    """True if should_notify was invoked for the Telegram channel."""
+    for call in mock_preference_service.should_notify.call_args_list:
+        args, kwargs = call.args, call.kwargs
+        uid = kwargs.get("user_id", args[0] if args else None)
+        evt = kwargs.get("event_type", args[1] if len(args) > 1 else None)
+        channel = kwargs.get("channel")
+        if channel == "telegram" and uid == user_id and evt == event_type:
+            return True
+    return False
+
+
 class TestPhase3NotificationPreferences:
     """Integration tests for Phase 3 notification preferences"""
 
@@ -80,8 +92,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_PLACED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_PLACED
         )
         telegram_notifier.send_message.assert_called_once()
 
@@ -99,8 +111,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is False
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_PLACED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_PLACED
         )
         telegram_notifier.send_message.assert_not_called()
 
@@ -133,8 +145,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_REJECTED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_REJECTED
         )
 
     def test_notify_order_execution_with_preferences(
@@ -152,8 +164,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_EXECUTED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_EXECUTED
         )
 
     def test_notify_order_cancelled_with_preferences(
@@ -170,8 +182,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_CANCELLED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_CANCELLED
         )
 
     def test_notify_partial_fill_with_preferences(self, telegram_notifier, mock_preference_service):
@@ -188,8 +200,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.PARTIAL_FILL, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.PARTIAL_FILL
         )
 
     def test_notify_retry_queue_updated_maps_actions(
@@ -204,8 +216,8 @@ class TestPhase3NotificationPreferences:
             action="added",
             user_id=1,
         )
-        mock_preference_service.should_notify.assert_called_with(
-            user_id=1, event_type=NotificationEventType.RETRY_QUEUE_ADDED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.RETRY_QUEUE_ADDED
         )
 
         # Test "updated" action
@@ -215,8 +227,8 @@ class TestPhase3NotificationPreferences:
             action="updated",
             user_id=1,
         )
-        mock_preference_service.should_notify.assert_called_with(
-            user_id=1, event_type=NotificationEventType.RETRY_QUEUE_UPDATED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.RETRY_QUEUE_UPDATED
         )
 
         # Test "removed" action
@@ -226,8 +238,8 @@ class TestPhase3NotificationPreferences:
             action="removed",
             user_id=1,
         )
-        mock_preference_service.should_notify.assert_called_with(
-            user_id=1, event_type=NotificationEventType.RETRY_QUEUE_REMOVED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.RETRY_QUEUE_REMOVED
         )
 
         # Test "retried" action
@@ -237,8 +249,8 @@ class TestPhase3NotificationPreferences:
             action="retried",
             user_id=1,
         )
-        mock_preference_service.should_notify.assert_called_with(
-            user_id=1, event_type=NotificationEventType.RETRY_QUEUE_RETRIED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.RETRY_QUEUE_RETRIED
         )
 
     def test_notify_system_alert_maps_severity(self, telegram_notifier, mock_preference_service):
@@ -366,8 +378,8 @@ class TestPhase3NotificationPreferences:
         telegram_notifier.notify_order_execution("RELIANCE", "123", 10, user_id=1)
         telegram_notifier.notify_order_rejection("RELIANCE", "124", 10, "Reason", user_id=1)
 
-        # Should check preferences for each
-        assert mock_preference_service.should_notify.call_count == 3
+        # Should check preferences for each event (all channels per event)
+        assert mock_preference_service.should_notify.call_count >= 3
         assert telegram_notifier.send_message.call_count == 3
 
     def test_different_users_different_preferences(
@@ -375,7 +387,11 @@ class TestPhase3NotificationPreferences:
     ):
         """Test that different users can have different preferences"""
         # User 1: allow notifications
-        mock_preference_service.should_notify.side_effect = lambda user_id, **kwargs: user_id == 1
+        mock_preference_service.should_notify.side_effect = (
+            lambda user_id, _event_type, channel="telegram", **_kwargs: (
+                user_id == 1 if channel == "telegram" else False
+            )
+        )
 
         assert telegram_notifier.notify_order_placed("RELIANCE", "123", 10, user_id=1) is True
         assert telegram_notifier.notify_order_placed("RELIANCE", "123", 10, user_id=2) is False
@@ -402,8 +418,8 @@ class TestPhase3NotificationPreferences:
         )
 
         assert result is True
-        mock_preference_service.should_notify.assert_called_once_with(
-            user_id=1, event_type=NotificationEventType.ORDER_MODIFIED, channel="telegram"
+        assert _telegram_pref_checked(
+            mock_preference_service, 1, NotificationEventType.ORDER_MODIFIED
         )
         telegram_notifier.send_message.assert_called_once()
 
