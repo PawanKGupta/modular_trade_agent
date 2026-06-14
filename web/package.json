@@ -1,7 +1,7 @@
 {
   "name": "trade-agent-web",
   "private": true,
-  "version": "26.2.2",
+  "version": "26.2.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
@@ -19,10 +19,12 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.99.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react-syntax-highlighter": "^15.5.13",
     "axios": "^1.15.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.14.1",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@tailwindcss/postcss": "^4.2.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -53,7 +56,6 @@
     "playwright": "^1.59.1",
     "postcss": "^8.5.9",
     "prettier": "^3.8.2",
-    "@tailwindcss/postcss": "^4.2.2",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
     "typescript-eslint": "8.58.2",

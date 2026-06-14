@@ -3,6 +3,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { SettingsPage } from '../dashboard/SettingsPage';
 import { withProviders } from '@/test/utils';
 import { useSessionStore } from '@/state/sessionStore';
+import { server } from '@/mocks/server';
+import { http, HttpResponse } from 'msw';
+import { vi } from 'vitest';
+
+vi.mock('qrcode', () => ({
+	default: {
+		toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,mockqr'),
+	},
+}));
 
 describe('SettingsPage', () => {
 	beforeEach(() => {
@@ -97,16 +106,16 @@ describe('SettingsPage', () => {
 		renderPage();
 		await screen.findByText(/Trading mode/i);
 		// default paper checked
-		const paper = screen.getByLabelText(/Paper Trade/i) as HTMLInputElement;
+		const paper = screen.getByRole('radio', { name: /Paper Trade/i }) as HTMLInputElement;
 		expect(paper.checked).toBe(true);
 		// switch to broker
-		const brokerRadio = screen.getByLabelText(/Kotak Neo/i);
+		const brokerRadio = screen.getByRole('radio', { name: /Kotak Neo/i });
 		fireEvent.click(brokerRadio);
 		const brokerInput = await screen.findByPlaceholderText(/kotak-neo/i);
 		fireEvent.change(brokerInput, { target: { value: 'kotak-neo' } });
-		const save = screen.getByRole('button', { name: /save settings/i });
+		const save = screen.getByRole('button', { name: /save trading settings/i });
 		fireEvent.click(save);
-		await waitFor(() => expect(save).toHaveTextContent(/save settings/i));
+		await waitFor(() => expect(save).toHaveTextContent(/save trading settings/i));
 	});
 
 	it('shows broker credentials section when broker mode is selected', async () => {
@@ -115,7 +124,7 @@ describe('SettingsPage', () => {
 
 		// Should show broker credentials section
 		await waitFor(() => {
-			expect(screen.getByText(/Basic Credentials/i)).toBeInTheDocument();
+			expect(screen.getByText(/API credentials/i)).toBeInTheDocument();
 			expect(screen.getByText(/App Token \(API Key\)/i)).toBeInTheDocument();
 			expect(screen.getByText(/Client ID \(UCC\)/i)).toBeInTheDocument();
 			expect(screen.getByText(/Required for REST Login/i)).toBeInTheDocument();
@@ -164,7 +173,7 @@ describe('SettingsPage', () => {
 		fireEvent.change(apiSecretInput, { target: { value: 'test-secret' } });
 
 		// Select basic test mode
-		const basicTestRadio = screen.getByLabelText(/Basic Test/i);
+		const basicTestRadio = screen.getByRole('radio', { name: /Basic \(API Key/i });
 		fireEvent.click(basicTestRadio);
 
 		// Test connection
@@ -187,7 +196,7 @@ describe('SettingsPage', () => {
 		fireEvent.change(apiSecretInput, { target: { value: 'test-secret' } });
 
 		// Select full test mode
-		const fullTestRadio = screen.getByLabelText(/Full Test/i);
+		const fullTestRadio = screen.getByRole('radio', { name: /Full \(REST/i });
 		fireEvent.click(fullTestRadio);
 
 		const mobileInput = await screen.findByPlaceholderText(/Enter mobile number/i);
@@ -205,5 +214,110 @@ describe('SettingsPage', () => {
 		await waitFor(() => {
 			expect(screen.getByText(/Connection successful/i)).toBeInTheDocument();
 		}, { timeout: 10000 });
+	});
+
+	it('allows setting up MFA and displaying QR code', async () => {
+		const setupMock = vi.fn().mockResolvedValue({
+			provisioning_uri: 'otpauth://totp/Rebound:test@example.com?secret=MOCKSECRET&issuer=Rebound',
+			secret: 'MOCKSECRET',
+			backup_codes: ['code1', 'code2'],
+		});
+		const verifyMock = vi.fn().mockResolvedValue({ message: 'Verified' });
+
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/mfa/setup', async () => {
+				await setupMock();
+				return HttpResponse.json({
+					provisioning_uri: 'otpauth://totp/Rebound:test@example.com?secret=MOCKSECRET&issuer=Rebound',
+					secret: 'MOCKSECRET',
+					backup_codes: ['code1', 'code2'],
+				});
+			}),
+			http.post('http://localhost:8000/api/v1/auth/mfa/verify', async ({ request }) => {
+				const body = await request.json() as { code: string };
+				await verifyMock(body.code);
+				return HttpResponse.json({ message: 'MFA enabled successfully.' });
+			}),
+		);
+
+		renderPage();
+
+		// Open security section
+		const securityHeader = await screen.findByText(/Security & two-factor auth/i);
+		fireEvent.click(securityHeader);
+
+		// Click set up MFA
+		const setupBtn = await screen.findByRole('button', { name: /Set up MFA/i });
+		fireEvent.click(setupBtn);
+
+		// Wait for QR code image and secret to be displayed
+		const qrCode = await screen.findByAltText(/MFA QR code/i);
+		expect(qrCode).toBeInTheDocument();
+		expect(screen.getByText('MOCKSECRET')).toBeInTheDocument();
+		expect(screen.getByText(/code1\s+code2/i)).toBeInTheDocument();
+
+		// Enter 6-digit confirmation code
+		const confirmInput = screen.getByLabelText(/Enter the 6-digit code to confirm/i);
+		fireEvent.change(confirmInput, { target: { value: '123456' } });
+
+		const confirmBtn = screen.getByRole('button', { name: /Confirm & Enable MFA/i });
+		fireEvent.click(confirmBtn);
+
+		// Verification mock should be called with correct code
+		await waitFor(() => {
+			expect(verifyMock).toHaveBeenCalledWith('123456');
+			expect(screen.getByText(/MFA enabled successfully/i)).toBeInTheDocument();
+		});
+	});
+
+	it('allows disabling MFA when enabled', async () => {
+		// Mock user with MFA enabled
+		useSessionStore.setState({
+			user: {
+				id: 1,
+				email: 'test@example.com',
+				name: 'Test User',
+				mobile_number: null,
+				roles: ['user'],
+				email_verified: true,
+				mfa_enabled: true,
+			},
+			isAuthenticated: true,
+			isAdmin: false,
+			hasHydrated: true,
+		});
+
+		const disableMock = vi.fn().mockResolvedValue({ message: 'Disabled' });
+
+		server.use(
+			http.post('http://localhost:8000/api/v1/auth/mfa/disable', async ({ request }) => {
+				const body = await request.json() as { current_password?: string; code?: string };
+				await disableMock(body.current_password, body.code);
+				return HttpResponse.json({ message: 'MFA disabled.' });
+			}),
+		);
+
+		renderPage();
+
+		// Open security section
+		const securityHeader = await screen.findByText(/Security & two-factor auth/i);
+		fireEvent.click(securityHeader);
+
+		// Verify we see MFA is active message
+		await screen.findByText(/MFA is active on your account/i);
+
+		const passwordInput = screen.getByPlaceholderText('Current password');
+		const codeInput = screen.getByPlaceholderText('6-digit authenticator or backup code');
+
+		fireEvent.change(passwordInput, { target: { value: 'Secret123!' } });
+		fireEvent.change(codeInput, { target: { value: '123456' } });
+
+		const disableBtn = screen.getByRole('button', { name: /Disable MFA/i });
+		fireEvent.click(disableBtn);
+
+		await waitFor(() => {
+			expect(disableMock).toHaveBeenCalledWith('Secret123!', '123456');
+			expect(screen.getByText(/MFA disabled/i)).toBeInTheDocument();
+		});
 	});
 });
