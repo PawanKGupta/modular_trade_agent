@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
 	HelpAppLink,
+	HelpCode,
 	HelpEmphasis,
 	HelpFaqList,
 	HelpInternalLink,
@@ -22,6 +23,30 @@ const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
 	{
 		q: 'Is my broker website password stored?',
 		a: 'Rebound stores encrypted broker API credentials (for Kotak Neo today: App Token, Client ID, mobile, MPIN, TOTP secret). Your separate Rebound login password is stored securely for app access.',
+	},
+	{
+		q: 'How are my broker credentials protected on the server?',
+		a: (
+			<>
+				All broker credentials (App Token, Client ID, mobile number, MPIN, and TOTP secret key) are encrypted at rest in the database using <HelpEmphasis>AES-128/Fernet symmetric encryption</HelpEmphasis>. The decryption key (<HelpCode>APP_DATA_ENCRYPTION_KEY</HelpCode>) resides exclusively in the server environment, and credentials are decrypted strictly in-memory during authentication.
+			</>
+		),
+	},
+	{
+		q: 'Could my API tokens or secrets leak into log files?',
+		a: (
+			<>
+				No. Rebound uses automated log sanitization filters. All logging outputs are parsed by security middleware that automatically masks sensitive keys (such as passwords, tokens, JWTs, and MPINs) using regular expression patterns before they are written to disk.
+			</>
+		),
+	},
+	{
+		q: 'How does Rebound handle session and brute-force security?',
+		a: (
+			<>
+				In production mode, Rebound uses secure <HelpEmphasis>httpOnly and Secure session cookies</HelpEmphasis> to protect session tokens against XSS. Additionally, a built-in rate-limiting firewall blocks brute-force login attempts by implementing a temporary lockout window on client IPs after repeated authentication failures.
+			</>
+		),
 	},
 	{
 		q: 'Can I stop automation anytime?',
