@@ -769,25 +769,11 @@ class MLVerdictService(VerdictService):
         features["has_bullish_engulfing"] = 1.0 if "bullish_engulfing" in signals else 0.0
         features["has_divergence"] = 1.0 if "bullish_divergence" in signals else 0.0
 
-        # Multi-timeframe
-        features["alignment_score"] = (
-            float(timeframe_confirmation.get("alignment_score", 0))
-            if timeframe_confirmation
-            else 0.0
-        )
+        # alignment_score removed: was hardcoded 0 in training data (train/serve skew).
+        # Reintroduce only after historical weekly data collection is implemented.
 
-        # Fundamentals
-        if fundamentals:
-            features["pe"] = (
-                float(fundamentals.get("pe", 0)) if fundamentals.get("pe") is not None else 0.0
-            )
-            features["pb"] = (
-                float(fundamentals.get("pb", 0)) if fundamentals.get("pb") is not None else 0.0
-            )
-        else:
-            features["pe"] = 0.0
-            features["pb"] = 0.0
-
+        # pe/pb removed: fetch_fundamentals() returns live ratios with no date parameter
+        # (temporal leakage). Reintroduce only with a point-in-time fundamental source.
         features["fundamental_ok"] = 1.0 if fundamental_ok else 0.0
 
         # ML ENHANCED DIP FEATURES (Phase 5): Add new dip-buying features
@@ -850,7 +836,7 @@ class MLVerdictService(VerdictService):
             features["nifty_vs_sma20_pct"] = market_features["nifty_vs_sma20_pct"]
             features["nifty_vs_sma50_pct"] = market_features["nifty_vs_sma50_pct"]
             features["india_vix"] = market_features["india_vix"]
-            features["sector_strength"] = market_features["sector_strength"]
+            # sector_strength removed: stub returns 0.0 always (dead feature).
 
             logger.debug(
                 f"Added market regime features: trend={market_features['nifty_trend']}, "
@@ -859,12 +845,10 @@ class MLVerdictService(VerdictService):
             )
         except Exception as e:
             logger.warning(f"Could not fetch market regime features: {e}, using defaults")
-            # Use default/neutral values if market data unavailable
-            features["nifty_trend"] = 0.0  # Neutral
+            features["nifty_trend"] = 0.0
             features["nifty_vs_sma20_pct"] = 0.0
             features["nifty_vs_sma50_pct"] = 0.0
-            features["india_vix"] = 20.0  # Average VIX
-            features["sector_strength"] = 0.0
+            features["india_vix"] = 20.0
 
         # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
         # For live predictions, use current date unless analysis_date provided

@@ -23,7 +23,7 @@ select = ["E", "F", "I", "B", "UP", "S", "PL"]
 ignore = ["S101"] # allow assert in tests
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "PLR2004", "PLC0415", "PLR0913", "PLW0108", "F841", "E501"]
+"tests/**" = ["S", "PLR2004", "PLC0415", "PLR0913", "PLW0108", "F841", "E501", "E402"]
 # FastAPI Query/Depends in signatures; large CSV router — refactors tracked separately.
 "server/app/routers/export.py" = ["B008", "PLR0913", "PLR0915", "E501", "PLR2004"]
 # Large monitoring surface; magic thresholds and long log strings.
@@ -36,6 +36,8 @@ ignore = ["S101"] # allow assert in tests
 "core/news_sentiment.py" = ["PLR0912", "PLR0915", "UP035", "UP006", "UP045", "S112", "PLR2004", "E501", "PLC0415"]
 # Singleton pipeline + lazy torch/transformers imports.
 "core/news_sentiment_transformers.py" = ["PLW0603", "PLC0415", "PLR0911"]
+# sys.path bootstrap required for standalone script execution; large monolithic function.
+"scripts/collect_training_data.py" = ["E402", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "E501", "S307", "E722"]
 # sys.path bootstrap + long log lines; legacy integration style.
 "tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
 # Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.

@@ -10,9 +10,6 @@ ema9_distance_pct
 has_hammer
 has_bullish_engulfing
 has_divergence
-alignment_score
-pe
-pb
 fundamental_ok
 dip_depth_from_20d_high_pct
 consecutive_red_days
@@ -24,7 +21,6 @@ nifty_trend
 nifty_vs_sma20_pct
 nifty_vs_sma50_pct
 india_vix
-sector_strength
 day_of_week
 is_monday
 is_friday

@@ -79,10 +79,10 @@ class TestMLVerdictService:
         assert features["price_above_ema200"] == 1.0
         assert "has_hammer" in features
         assert features["has_hammer"] == 1.0
-        assert "alignment_score" in features
-        assert features["alignment_score"] == 6
-        assert "pe" in features
-        assert features["pe"] == 15.0
+        # alignment_score and pe/pb removed (train/serve skew and temporal leakage)
+        assert "alignment_score" not in features
+        assert "pe" not in features
+        assert "pb" not in features
 
     def test_extract_features_with_dataframe(self):
         """Test feature extraction with DataFrame"""

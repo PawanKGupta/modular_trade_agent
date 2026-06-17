@@ -23,25 +23,23 @@ This prevents look-ahead bias where the model would see Day X+1's close data
 that wasn't available when the trading decision was made.
 """
 
-import sys
-import os
-from pathlib import Path
-from datetime import datetime, timedelta
-import pandas as pd
 import argparse
-from typing import List, Dict, Optional
-import numpy as np
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pandas as pd
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from utils.logger import logger
+from core.feature_engineering import calculate_all_dip_features
 from services.data_service import DataService
 from services.indicator_service import IndicatorService
 from services.signal_service import SignalService
 from services.verdict_service import VerdictService
-from core.feature_engineering import calculate_all_dip_features
+from utils.logger import logger
 
 
 def extract_features_at_date(
@@ -51,7 +49,7 @@ def extract_features_at_date(
     indicator_service: IndicatorService,
     signal_service: SignalService,
     verdict_service: VerdictService,
-) -> Optional[Dict]:
+) -> dict | None:
     """
     Extract features at a specific entry date
 
@@ -163,8 +161,8 @@ def extract_features_at_date(
             "has_hammer": False,  # Will be computed if needed
             "has_bullish_engulfing": False,  # Will be computed if needed
             "has_divergence": False,  # Will be computed if needed
-            # Multi-timeframe (simplified - would need weekly data)
-            "alignment_score": 0,  # Will be computed if needed
+            # alignment_score removed: was hardcoded 0 (train/serve skew).
+            # Reintroduce after implementing historical weekly data collection.
         }
 
         # Detect patterns
@@ -179,18 +177,12 @@ def extract_features_at_date(
             features["has_bullish_engulfing"] = False
             features["has_divergence"] = False
 
-        # Get fundamentals if available
-        try:
-            fundamentals = verdict_service.fetch_fundamentals(ticker)
-            features["pe"] = fundamentals.get("pe")
-            features["pb"] = fundamentals.get("pb")
-            features["fundamental_ok"] = not (
-                fundamentals.get("pe") is not None and fundamentals.get("pe") < 0
-            )
-        except:
-            features["pe"] = None
-            features["pb"] = None
-            features["fundamental_ok"] = True
+        # PE/PB dropped: fetch_fundamentals() calls yfinance.Ticker.info which returns
+        # current ratios with no date parameter — applying today's PE to a 2018 entry
+        # row is temporal leakage. Drop until a point-in-time fundamental source exists.
+        features["pe"] = None
+        features["pb"] = None
+        features["fundamental_ok"] = True
 
         # ML ENHANCED DIP FEATURES (Phase 4): Add advanced dip-buying features
         try:
@@ -223,7 +215,7 @@ def extract_features_at_date(
             features["nifty_vs_sma20_pct"] = market_features["nifty_vs_sma20_pct"]
             features["nifty_vs_sma50_pct"] = market_features["nifty_vs_sma50_pct"]
             features["india_vix"] = market_features["india_vix"]
-            features["sector_strength"] = market_features["sector_strength"]
+            # sector_strength removed: market_regime_service stub returns 0.0 always.
 
             logger.debug(
                 f"{ticker}: Added market regime features (trend={market_features['nifty_trend']}, vix={market_features['india_vix']:.1f})"
@@ -234,7 +226,7 @@ def extract_features_at_date(
             features["nifty_vs_sma20_pct"] = 0.0
             features["nifty_vs_sma50_pct"] = 0.0
             features["india_vix"] = 20.0  # Average VIX
-            features["sector_strength"] = 0.0
+            # sector_strength removed
 
         # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
         # Uses signal_date (when decision was made)
@@ -312,7 +304,7 @@ def extract_features_at_date(
         return None
 
 
-def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> List[Dict]:
+def create_labels_from_backtest_results_with_reentry(backtest_results: dict) -> list[dict]:
     """
     Create labeled training examples from backtest results
     WITH RE-ENTRY EXTRACTION (Phase 5)
@@ -339,6 +331,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
     if isinstance(full_results_str, str):
         try:
             import re
+
             import numpy as np
             from pandas import Timestamp
 
@@ -489,7 +482,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
             is_reentry = fill_idx > 0
 
             logger.info(
-                f"      {'Re-entry' if is_reentry else 'Initial'} #{fill_idx+1}: {fill_date_str} @ {fill_price:.2f}"
+                f"      {'Re-entry' if is_reentry else 'Initial'} #{fill_idx + 1}: {fill_date_str} @ {fill_price:.2f}"
             )
 
             # Extract features at this fill date
@@ -548,7 +541,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
             # RE-ENTRY CONTEXT FEATURES (Phase 5): Help ML distinguish fills
             features["is_reentry"] = is_reentry
             features["fill_number"] = fill_idx + 1
-            features["total_fills_in_position"] = total_fills
+            features["total_fills_in_position"] = fill_idx + 1
             features["position_id"] = position_id
             features["fill_price"] = fill_price
             features["initial_entry_price"] = initial_price
@@ -575,7 +568,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: Dict) -> 
             features["fill_quantity"] = fill_quantity  # Add for reference
 
             labeled_examples.append(features)
-            logger.info(f"        Extracted features for fill #{fill_idx+1}")
+            logger.info(f"        Extracted features for fill #{fill_idx + 1}")
 
     return labeled_examples
 
@@ -606,7 +599,7 @@ def collect_training_data(
 
     for i, row in df_backtest.iterrows():
         ticker = row["ticker"]
-        logger.info(f"[{i+1}/{total}] Processing {ticker}...")
+        logger.info(f"[{i + 1}/{total}] Processing {ticker}...")
 
         # Create labeled examples from this backtest result (WITH RE-ENTRY EXTRACTION)
         examples = create_labels_from_backtest_results_with_reentry(row)
@@ -631,13 +624,13 @@ def collect_training_data(
     logger.info(f"Saved training data to {output_file}")
 
     # Print summary
-    logger.info(f"\nTraining Data Summary:")
+    logger.info("\nTraining Data Summary:")
     logger.info(f"  Total Examples: {len(df_training)}")
     logger.info(f"  Unique Tickers: {df_training['ticker'].nunique()}")
     logger.info(f"  Unique Positions: {df_training['position_id'].nunique()}")
     logger.info(f"  Re-entries: {df_training['is_reentry'].sum()}")
     logger.info(f"  Initial Entries: {(~df_training['is_reentry']).sum()}")
-    logger.info(f"\nLabel Distribution:")
+    logger.info("\nLabel Distribution:")
     logger.info(df_training["label"].value_counts())
 
     return df_training
