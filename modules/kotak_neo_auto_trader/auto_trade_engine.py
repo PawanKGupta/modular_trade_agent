@@ -361,9 +361,7 @@ class AutoTradeEngine:
 
         return _batch()
 
-    def _send_balance_shortfall_digest(
-        self, items: list, *, dry_run: bool
-    ) -> None:
+    def _send_balance_shortfall_digest(self, items: list, *, dry_run: bool) -> None:
         """Dispatch a balance shortfall digest on all enabled channels."""
         from modules.kotak_neo_auto_trader.trading_notification_dispatcher import (
             dispatch_trading_notification,
@@ -4275,17 +4273,11 @@ class AutoTradeEngine:
                         indicator_service = getattr(self, "indicator_service", None)
                         if indicator_service:
                             try:
-                                indicators = indicator_service.get_daily_indicators_dict(
-                                    ticker
-                                )
+                                indicators = indicator_service.get_daily_indicators_dict(ticker)
                                 if indicators:
-                                    result["avg_volume"] = float(
-                                        indicators.get("avg_volume") or 0
-                                    )
+                                    result["avg_volume"] = float(indicators.get("avg_volume") or 0)
                             except Exception as e:
-                                logger.debug(
-                                    f"{base_symbol}: Failed to load avg_volume: {e}"
-                                )
+                                logger.debug(f"{base_symbol}: Failed to load avg_volume: {e}")
 
                         # Fetch pre-market price
                         price = market_data.get_ltp(symbol, exchange="NSE")
@@ -4304,9 +4296,7 @@ class AutoTradeEngine:
                             try:
                                 token = scrip_master.get_token(symbol, exchange="NSE")
                                 if token:
-                                    result["market_depth"] = market_data.get_market_depth(
-                                        token
-                                    )
+                                    result["market_depth"] = market_data.get_market_depth(token)
                                 else:
                                     result["market_depth"] = unavailable_depth_snapshot(
                                         DEPTH_DETAIL_NO_TOKEN
@@ -4331,9 +4321,7 @@ class AutoTradeEngine:
                                     if ema9 and ema9 > 0:
                                         result["ema9"] = ema9
                                 except Exception as e:
-                                    logger.debug(
-                                        f"{base_symbol}: Failed to calculate EMA9: {e}"
-                                    )
+                                    logger.debug(f"{base_symbol}: Failed to calculate EMA9: {e}")
                     except Exception as e:
                         logger.debug(f"{base_symbol}: Failed to fetch pre-market price: {e}")
 
@@ -4489,9 +4477,7 @@ class AutoTradeEngine:
                     new_qty=new_qty,
                     original_qty=original_qty,
                 ):
-                    logger.info(
-                        f"{base_symbol}: No adjustment needed (MARKET, qty={original_qty})"
-                    )
+                    logger.info(f"{base_symbol}: No adjustment needed (MARKET, qty={original_qty})")
                     summary["no_adjustment_needed"] += 1
                     continue
 
@@ -6104,6 +6090,18 @@ class AutoTradeEngine:
                     summary["skipped_duplicate_level_today"] = (
                         summary.get("skipped_duplicate_level_today", 0) + 1
                     )
+                    continue
+
+                # Hard block: level-10 (fill #3) re-entries are permanently blocked.
+                # Walk-forward validation (Phase 4) showed fill #3 win rate = 20.3% vs 77.2%
+                # for initial entries. The production RF model already rejects these at
+                # threshold 0.60, but this guard is upstream and independent of ML.
+                if next_level == 10:
+                    logger.info(
+                        f"Skipping {symbol}: fill #3 (level=10) hard-blocked — "
+                        f"backtest win rate 20.3%% at this depth (Phase 4 research guard)"
+                    )
+                    summary["skipped_fill3_block"] = summary.get("skipped_fill3_block", 0) + 1
                     continue
 
                 # Check for duplicates (only active buy orders, NOT holdings)

@@ -37,7 +37,7 @@ from services.ml_training_metadata import (
     verdict_classifier_exclude_columns,
 )
 
-DATA_PATH = r"C:\Personal\Projects\TradingView\data_backup\ml_training_data_phase1.csv"
+DATA_PATH = r"C:\Personal\Projects\TradingView\data_backup\ml_training_data_phase2.csv"
 
 FOLDS = [
     {

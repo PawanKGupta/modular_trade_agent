@@ -912,7 +912,7 @@ class UserTradingConfig(Base):
     # ML Configuration
     ml_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ml_model_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    ml_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+    ml_confidence_threshold: Mapped[float] = mapped_column(Float, default=0.6, nullable=False)
     ml_combine_with_rules: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ml_price_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Scheduling Preferences (JSON field for flexibility)

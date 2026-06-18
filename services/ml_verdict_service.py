@@ -557,6 +557,33 @@ class MLVerdictService(VerdictService):
             return self._ml_prediction_info
         return None
 
+    def get_position_size_factor(
+        self,
+        low_clip: float = 0.5,
+        high_clip: float = 2.0,
+        score_floor: float = 0.55,
+        score_ceil: float = 1.0,
+    ) -> float:
+        """
+        Return linear position-size multiplier based on the last ML confidence score.
+
+        Formula (Phase 5 research):
+            factor = clip((confidence - score_floor) / (score_ceil - score_floor), low_clip, high_clip)
+
+        Returns 1.0 (flat) when no ML prediction is available or verdict != "buy".
+        Callers multiply base lot size by this factor before placing an order.
+        """
+        pred = self.get_last_ml_prediction()
+        if pred is None:
+            return 1.0
+        if pred.get("ml_verdict") != "buy":
+            return 1.0
+        confidence = pred.get("ml_confidence", 0.0)
+        if score_ceil <= score_floor:
+            return 1.0
+        raw = (confidence - score_floor) / (score_ceil - score_floor)
+        return float(max(low_clip, min(high_clip, raw)))
+
     def _resolve_verdict_class_names(self) -> list[str]:
         """Map ``predict_proba`` indices to verdict strings (XGBoost uses numeric classes_)."""
         if not self.model_loaded or self.model is None:
