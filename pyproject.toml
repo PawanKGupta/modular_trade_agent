@@ -38,6 +38,7 @@ ignore = ["S101"] # allow assert in tests
 "core/news_sentiment_transformers.py" = ["PLW0603", "PLC0415", "PLR0911"]
 # sys.path bootstrap required for standalone script execution; large monolithic function.
 "scripts/collect_training_data.py" = ["E402", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR2004", "E501", "S307", "E722"]
+"scripts/walk_forward_validation.py" = ["E402", "PLR0915", "PLR2004", "E501"]
 # sys.path bootstrap + long log lines; legacy integration style.
 "tests/integration/test_ml_pipeline.py" = ["E402", "PLC0415", "PLR0915", "E501"]
 # Legacy Phase-3 step module (E501); see ML pipeline deprecation in that module.

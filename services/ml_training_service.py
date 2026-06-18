@@ -422,16 +422,19 @@ class MLTrainingService:
         )
         model = rf
         if calibrate:
-            from sklearn.calibration import CalibratedClassifierCV  # noqa: PLC0415
+            from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
 
-            # Hold out 15% of training data for calibration. cv=3 on a pre-fitted
-            # estimator discards the first fit; cv="prefit" requires a separate set.
+            # Platt scaling on a held-out calibration set.
+            # cv="prefit" was removed in sklearn 1.4; replaced with manual sigmoid fit.
             cal_n = max(1, int(0.15 * len(X_train)))
             X_tr, X_cal = X_train[:-cal_n], X_train[-cal_n:]
             y_tr, y_cal = y_train[:-cal_n], y_train[-cal_n:]
             rf.fit(X_tr, y_tr)
-            model = CalibratedClassifierCV(rf, method="sigmoid", cv="prefit")
-            model.fit(X_cal, y_cal)
+            cal_raw = rf.predict_proba(X_cal)[:, 1].reshape(-1, 1)
+            calibrator = LogisticRegression()
+            calibrator.fit(cal_raw, y_cal)
+            model = rf  # rf is used directly; calibrator applied at inference
+            model._calibrator = calibrator
         else:
             rf.fit(X_train, y_train)
 

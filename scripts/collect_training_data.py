@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+import yfinance as yf
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -42,6 +43,80 @@ from services.verdict_service import VerdictService
 from utils.logger import logger
 
 
+def _fetch_market_history(start: str = "2015-01-01", end: str = "2026-01-01") -> dict:
+    """
+    Pre-fetch ^INDIAVIX and ^NSEI once for the entire collection run.
+    Returns dict with pandas Series indexed by date for fast per-row lookup.
+    This replaces per-date API calls in market_regime_service which silently
+    fell back to stub defaults (vix=21.88) under rate limiting.
+    """
+    logger.info("Pre-fetching market history (^INDIAVIX, ^NSEI)...")
+    result = {"vix": None, "nifty": None}
+    try:
+        vix_raw = yf.download("^INDIAVIX", start=start, end=end, progress=False, auto_adjust=False)
+        if not vix_raw.empty:
+            if isinstance(vix_raw.columns, pd.MultiIndex):
+                vix_raw.columns = vix_raw.columns.get_level_values(0)
+            vix_raw.index = pd.to_datetime(vix_raw.index).tz_localize(None).normalize()
+            result["vix"] = vix_raw["Close"].dropna()
+            logger.info(
+                f"  VIX: {len(result['vix'])} days ({result['vix'].index[0].date()} to {result['vix'].index[-1].date()})"
+            )
+    except Exception as e:
+        logger.warning(f"  Could not fetch VIX history: {e} — will use default 20.0")
+
+    try:
+        nifty_raw = yf.download("^NSEI", start=start, end=end, progress=False, auto_adjust=False)
+        if not nifty_raw.empty:
+            if isinstance(nifty_raw.columns, pd.MultiIndex):
+                nifty_raw.columns = nifty_raw.columns.get_level_values(0)
+            nifty_raw.index = pd.to_datetime(nifty_raw.index).tz_localize(None).normalize()
+            result["nifty"] = nifty_raw[["Close", "Open", "High", "Low"]].dropna()
+            logger.info(
+                f"  Nifty: {len(result['nifty'])} days ({result['nifty'].index[0].date()} to {result['nifty'].index[-1].date()})"
+            )
+    except Exception as e:
+        logger.warning(f"  Could not fetch Nifty history: {e} — nifty features will use defaults")
+
+    return result
+
+
+def _get_vix_for_date(vix_series: "pd.Series | None", date_str: str) -> float:
+    if vix_series is None or vix_series.empty:
+        return 20.0
+    try:
+        dt = pd.Timestamp(date_str).normalize()
+        val = vix_series.asof(dt)
+        if pd.isna(val):
+            return 20.0
+        return float(max(10.0, min(val, 80.0)))
+    except Exception:
+        return 20.0
+
+
+def _get_nifty_features_for_date(nifty_df: "pd.DataFrame | None", date_str: str) -> dict:
+    defaults = {"nifty_trend": 0.0, "nifty_vs_sma20_pct": 0.0, "nifty_vs_sma50_pct": 0.0}
+    if nifty_df is None or nifty_df.empty:
+        return defaults
+    try:
+        dt = pd.Timestamp(date_str).normalize()
+        idx = nifty_df.index.get_indexer([dt], method="pad")[0]
+        if idx < 50:
+            return defaults
+        window = nifty_df.iloc[: idx + 1]
+        close = float(window["Close"].iloc[-1])
+        sma20 = float(window["Close"].tail(20).mean())
+        sma50 = float(window["Close"].tail(50).mean())
+        trend = 1.0 if close > sma50 else (-1.0 if close < sma50 else 0.0)
+        return {
+            "nifty_trend": trend,
+            "nifty_vs_sma20_pct": round((close - sma20) / sma20 * 100, 4),
+            "nifty_vs_sma50_pct": round((close - sma50) / sma50 * 100, 4),
+        }
+    except Exception:
+        return defaults
+
+
 def extract_features_at_date(
     ticker: str,
     entry_date: str,
@@ -49,6 +124,7 @@ def extract_features_at_date(
     indicator_service: IndicatorService,
     signal_service: SignalService,
     verdict_service: VerdictService,
+    market_history: dict | None = None,
 ) -> dict | None:
     """
     Extract features at a specific entry date
@@ -201,32 +277,18 @@ def extract_features_at_date(
             features["volume_green_vs_red_ratio"] = 1.0
             features["support_hold_count"] = 0
 
-        # MARKET REGIME FEATURES (2025-11-11): Add broader market context
-        # Uses signal_date (day before entry) to match feature extraction timing
-        try:
-            from services.market_regime_service import get_market_regime_service
-
-            market_regime_service = get_market_regime_service()
-            market_features = market_regime_service.get_market_regime_features(
-                date=signal_date_str  # Use signal date for consistency
-            )
-
-            features["nifty_trend"] = market_features["nifty_trend"]
-            features["nifty_vs_sma20_pct"] = market_features["nifty_vs_sma20_pct"]
-            features["nifty_vs_sma50_pct"] = market_features["nifty_vs_sma50_pct"]
-            features["india_vix"] = market_features["india_vix"]
-            # sector_strength removed: market_regime_service stub returns 0.0 always.
-
-            logger.debug(
-                f"{ticker}: Added market regime features (trend={market_features['nifty_trend']}, vix={market_features['india_vix']:.1f})"
-            )
-        except Exception as e:
-            logger.warning(f"{ticker}: Failed to fetch market regime features: {e}, using defaults")
-            features["nifty_trend"] = 0.0  # Neutral
-            features["nifty_vs_sma20_pct"] = 0.0
-            features["nifty_vs_sma50_pct"] = 0.0
-            features["india_vix"] = 20.0  # Average VIX
-            # sector_strength removed
+        # MARKET REGIME FEATURES: Use pre-fetched history for fast, reliable lookups.
+        # Per-date market_regime_service calls silently fell back to stubs (vix=21.88)
+        # under rate limiting during bulk collection. Bulk pre-fetch fixes this.
+        mh = market_history or {}
+        nifty_feats = _get_nifty_features_for_date(mh.get("nifty"), signal_date_str)
+        features["nifty_trend"] = nifty_feats["nifty_trend"]
+        features["nifty_vs_sma20_pct"] = nifty_feats["nifty_vs_sma20_pct"]
+        features["nifty_vs_sma50_pct"] = nifty_feats["nifty_vs_sma50_pct"]
+        features["india_vix"] = _get_vix_for_date(mh.get("vix"), signal_date_str)
+        logger.debug(
+            f"{ticker}: regime trend={features['nifty_trend']}, vix={features['india_vix']:.1f}"
+        )
 
         # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
         # Uses signal_date (when decision was made)
@@ -304,7 +366,9 @@ def extract_features_at_date(
         return None
 
 
-def create_labels_from_backtest_results_with_reentry(backtest_results: dict) -> list[dict]:
+def create_labels_from_backtest_results_with_reentry(
+    backtest_results: dict, market_history: dict | None = None
+) -> list[dict]:
     """
     Create labeled training examples from backtest results
     WITH RE-ENTRY EXTRACTION (Phase 5)
@@ -494,6 +558,7 @@ def create_labels_from_backtest_results_with_reentry(backtest_results: dict) -> 
                     indicator_service=indicator_service,
                     signal_service=signal_service,
                     verdict_service=verdict_service,
+                    market_history=market_history,
                 )
 
                 if not features:
@@ -594,6 +659,10 @@ def collect_training_data(
 
     logger.info(f"Found {len(df_backtest)} backtest results")
 
+    # Pre-fetch market history once — avoids per-row API calls that silently fall
+    # back to stub defaults (india_vix=21.88) under rate limiting.
+    market_history = _fetch_market_history()
+
     all_training_data = []
     total = len(df_backtest)
 
@@ -602,7 +671,7 @@ def collect_training_data(
         logger.info(f"[{i + 1}/{total}] Processing {ticker}...")
 
         # Create labeled examples from this backtest result (WITH RE-ENTRY EXTRACTION)
-        examples = create_labels_from_backtest_results_with_reentry(row)
+        examples = create_labels_from_backtest_results_with_reentry(row, market_history)
 
         if examples:
             all_training_data.extend(examples)
