@@ -59,7 +59,7 @@ class TestConfigFactory:
         # Verify ML defaults
         assert config.ml_enabled is False
         assert config.ml_price_enabled is False
-        assert config.ml_confidence_threshold == 0.5
+        assert config.ml_confidence_threshold == 0.6
         # Verify behavior settings defaults
         assert config.enable_premarket_amo_adjustment is True
 
