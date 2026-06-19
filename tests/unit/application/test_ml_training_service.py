@@ -249,6 +249,71 @@ def test_deploy_to_canonical_missing_artifact_raises(training_service, admin_use
         training_service.deploy_to_canonical(model.id)
 
 
+def test_register_external_model_creates_db_record(training_service, admin_user, tmp_path: Path):
+    """register_external_model inserts a model + synthetic job row visible in the registry."""
+    # Create a fake pkl on disk (content doesn't matter for registration).
+    fake_pkl = tmp_path / "my_model.pkl"
+    fake_pkl.write_bytes(b"fake-pkl-content")
+
+    model = training_service.register_external_model(
+        registered_by=admin_user.id,
+        model_type="verdict_classifier",
+        model_path=str(fake_pkl),
+        version="v0-legacy",
+        accuracy=0.732,
+        training_data_through_date=date(2025, 11, 30),
+        notes="Phase 5 dataset",
+        auto_activate=False,
+    )
+
+    assert model.id is not None
+    assert model.version == "v0-legacy"
+    assert model.accuracy == 0.732
+    assert model.training_data_through_date == date(2025, 11, 30)
+    assert not model.is_active
+
+    # Synthetic import job must exist and be completed.
+    job = training_service.job_repo.get(model.training_job_id)
+    assert job is not None
+    assert job.status == "completed"
+    assert job.algorithm == "external_import"
+
+    # Must appear in the model list.
+    listed = training_service.model_repo.list(model_type="verdict_classifier")
+    assert any(m.id == model.id for m in listed)
+
+
+def test_register_external_model_auto_activate(training_service, admin_user, tmp_path: Path):
+    """auto_activate=True marks the model active and copies pkl to canonical path."""
+    fake_pkl = tmp_path / "models" / "verdict_classifier" / "random_forest-v1.pkl"
+    fake_pkl.parent.mkdir(parents=True)
+    fake_pkl.write_bytes(b"fake-pkl-content")
+
+    model = training_service.register_external_model(
+        registered_by=admin_user.id,
+        model_type="verdict_classifier",
+        model_path=str(fake_pkl),
+        version="v1-script",
+        auto_activate=True,
+    )
+
+    assert model.is_active
+    canonical = training_service.artifact_dir.parent / "verdict_model_random_forest.pkl"
+    assert canonical.is_file()
+    assert canonical.read_bytes() == b"fake-pkl-content"
+
+
+def test_register_external_model_missing_file_raises(training_service, admin_user, tmp_path: Path):
+    """register_external_model raises FileNotFoundError when the pkl is absent."""
+    with pytest.raises(FileNotFoundError):
+        training_service.register_external_model(
+            registered_by=admin_user.id,
+            model_type="verdict_classifier",
+            model_path=str(tmp_path / "ghost.pkl"),
+            version="v-ghost",
+        )
+
+
 def test_run_training_job_failure_updates_status(training_service, admin_user, tmp_path: Path):
     csv_path = tmp_path / "verdict_train.csv"
     _write_verdict_csv(csv_path)

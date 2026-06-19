@@ -16,6 +16,8 @@ from server.app.schemas.ml import (
     MLTrainingJobResponse,
     MLTrainingJobsResponse,
     MLTrainingRequest,
+    RegisterModelRequest,
+    RegisterModelResponse,
 )
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.session import SessionLocal
@@ -165,4 +167,36 @@ def activate_model(
             f"and deployed to {canonical_path.name}"
         ),
         model=updated_model,
+    )
+
+
+@router.post(
+    "/models/register",
+    response_model=RegisterModelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_model(
+    payload: RegisterModelRequest,
+    admin=Depends(require_admin),
+    service: MLTrainingService = Depends(get_ml_training_service),
+):
+    """Register a model artifact trained outside the UI into the DB registry."""
+    try:
+        model = service.register_external_model(
+            registered_by=admin.id,
+            model_type=payload.model_type,
+            model_path=payload.model_path,
+            version=payload.version,
+            accuracy=payload.accuracy,
+            training_data_through_date=payload.training_data_through_date,
+            notes=payload.notes,
+            auto_activate=payload.auto_activate,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RegisterModelResponse(
+        message=f"Model {model.version} registered for {model.model_type}",
+        model=model,
     )

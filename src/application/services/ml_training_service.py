@@ -334,6 +334,79 @@ class MLTrainingService:
 
         return dst_pkl
 
+    def register_external_model(  # noqa: PLR0913
+        self,
+        *,
+        registered_by: int,
+        model_type: str,
+        model_path: str,
+        version: str,
+        accuracy: float | None = None,
+        training_data_through_date: date | None = None,
+        notes: str | None = None,
+        auto_activate: bool = False,
+    ):
+        """Register a model artifact trained outside the UI into the DB registry.
+
+        Creates a synthetic completed import job so the FK constraint is satisfied,
+        then creates the model row. Optionally deploys to the canonical runtime path.
+        Returns the persisted MLModel.
+        """
+        src = Path(model_path)
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"Model artifact not found: {model_path}. "
+                "Provide the absolute path as it appears inside the container."
+            )
+
+        # Synthetic import job — satisfies the NOT NULL FK without polluting the
+        # training job list with a pending/running entry.
+        job = self.job_repo.create(
+            started_by=registered_by,
+            model_type=model_type,
+            algorithm="external_import",
+            training_data_path=model_path,
+        )
+        self.job_repo.update_status(
+            job.id,
+            status="completed",
+            model_path=model_path,
+            accuracy=accuracy,
+            logs=f"Registered externally via admin API. notes={notes!r}",
+        )
+
+        model = self.model_repo.create(
+            model_type=model_type,
+            version=version,
+            model_path=model_path,
+            training_job_id=job.id,
+            created_by=registered_by,
+            accuracy=accuracy,
+            is_active=False,
+            training_data_through_date=training_data_through_date,
+        )
+
+        if auto_activate:
+            self.model_repo.set_active(model.id)
+            try:
+                self.deploy_to_canonical(model.id)
+            except Exception as exc:
+                logger.warning(
+                    "register_external_model: model %s set active but canonical deploy failed: %s",
+                    model.id,
+                    exc,
+                )
+            model = self.model_repo.get(model.id)
+
+        logger.info(
+            "Registered external model %s/%s (id=%s) from %s",
+            model_type,
+            version,
+            model.id,
+            model_path,
+        )
+        return model
+
     def activate_and_deploy(self, model_id: int) -> tuple:
         """Set model active in DB and deploy artifact to the canonical runtime path.
 

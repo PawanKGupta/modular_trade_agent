@@ -5,19 +5,24 @@ import {
 	getTrainingJobs,
 	startTrainingJob,
 	activateModel,
+	registerModel,
 	type MLModel,
 	type MLTrainingJob,
 	type StartTrainingPayload,
+	type RegisterModelPayload,
 } from '@/api/ml-training';
 import { MLTrainingForm } from './MLTrainingForm';
 import { MLTrainingJobsTable } from './MLTrainingJobsTable';
 import { MLModelsTable } from './MLModelsTable';
+import { MLRegisterModelForm } from './MLRegisterModelForm';
 import { getApiErrorMessage } from '@/utils/getApiErrorMessage';
 
 export function MLTrainingPage() {
 	const queryClient = useQueryClient();
 	const [trainingServerError, setTrainingServerError] = useState<string | null>(null);
 	const [activateServerError, setActivateServerError] = useState<string | null>(null);
+	const [registerServerError, setRegisterServerError] = useState<string | null>(null);
+	const [showRegisterForm, setShowRegisterForm] = useState(false);
 
 	const {
 		data: jobs = [],
@@ -48,6 +53,21 @@ export function MLTrainingPage() {
 		},
 		onError: (err) => {
 			setTrainingServerError(getApiErrorMessage(err));
+		},
+	});
+
+	const registerModelMutation = useMutation({
+		mutationFn: (payload: RegisterModelPayload) => registerModel(payload),
+		onMutate: () => {
+			setRegisterServerError(null);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['mlModels'] });
+			queryClient.invalidateQueries({ queryKey: ['mlTrainingJobs'] });
+			setShowRegisterForm(false);
+		},
+		onError: (err) => {
+			setRegisterServerError(getApiErrorMessage(err));
 		},
 	});
 
@@ -100,6 +120,31 @@ export function MLTrainingPage() {
 					</button>
 				</div>
 				<MLTrainingJobsTable jobs={jobs} isLoading={jobsLoading} />
+			</div>
+
+			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6 space-y-3 sm:space-y-4">
+				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
+					<div>
+						<h2 className="text-base sm:text-lg font-semibold">Register Existing Model</h2>
+						<p className="text-xs text-[var(--muted)]">
+							Import a model trained outside the UI so it appears in the registry below.
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={() => setShowRegisterForm((v) => !v)}
+						className="text-xs text-[var(--accent)] min-h-[36px] sm:min-h-0 px-3 py-2 sm:py-1"
+					>
+						{showRegisterForm ? 'Cancel' : 'Register Model'}
+					</button>
+				</div>
+				{showRegisterForm && (
+					<MLRegisterModelForm
+						onSubmit={(payload) => registerModelMutation.mutate(payload)}
+						isSubmitting={registerModelMutation.isPending}
+						serverError={registerServerError}
+					/>
+				)}
 			</div>
 
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6 space-y-3 sm:space-y-4">

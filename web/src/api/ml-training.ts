@@ -72,3 +72,23 @@ export async function activateModel(modelId: number): Promise<{ message: string;
 	);
 	return data;
 }
+
+export interface RegisterModelPayload {
+	model_type: 'verdict_classifier' | 'price_regressor';
+	model_path: string;
+	version: string;
+	accuracy?: number | null;
+	training_data_through_date?: string | null;
+	notes?: string | null;
+	auto_activate?: boolean;
+}
+
+export async function registerModel(
+	payload: RegisterModelPayload
+): Promise<{ message: string; model: MLModel }> {
+	const { data } = await api.post<{ message: string; model: MLModel }>(
+		'/admin/ml/models/register',
+		payload
+	);
+	return data;
+}
