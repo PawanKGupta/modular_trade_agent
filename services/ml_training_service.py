@@ -128,7 +128,13 @@ class MLTrainingService:
                 f"{y.sum()} positive ({y.mean():.1%}) of {len(y)} rows"
             )
         else:
-            y = df["label"].values
+            # Keep labels as-is; may be int (0/1) or string ('buy'/'avoid'/'watch'/'strong_buy').
+            # np.asarray converts PyArrow-backed Series to a plain numpy array safely.
+            raw_labels = df["label"].values
+            try:
+                y = np.asarray(raw_labels, dtype=int)
+            except (ValueError, TypeError):
+                y = np.asarray(raw_labels)
             logger.warning(
                 "   actual_pnl_pct not found — falling back to label column. "
                 "Regenerate dataset before production training."
@@ -148,8 +154,9 @@ class MLTrainingService:
             if has_sample_weight:
                 logger.info("      Using quantity-based sample weights")
 
-        # Handle missing values
-        X = X.fillna(0)  # Simple fill with 0 (can be improved)
+        # Handle missing values; convert to numpy to avoid PyArrow-backed
+        # DataFrame incompatibility with sklearn 1.8 / Pandas 3.0 indexing.
+        X = X.fillna(0).to_numpy(dtype=float)
 
         # PHASE 5 + TimeSeriesSplit: Use GroupKFold + temporal ordering
         if has_position_id and groups is not None:
@@ -160,7 +167,7 @@ class MLTrainingService:
             # Sort data by entry_date for temporal ordering
             if "entry_date" in df.columns:
                 df_sorted = df.sort_values("entry_date").reset_index(drop=True)
-                X = df_sorted[feature_cols].copy().fillna(0)
+                X = df_sorted[feature_cols].copy().fillna(0).to_numpy(dtype=float)
                 if "actual_pnl_pct" in df_sorted.columns:
                     y = (df_sorted["actual_pnl_pct"] >= 1.0).astype(int).values
                 else:

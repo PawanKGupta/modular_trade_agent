@@ -219,6 +219,8 @@ exclude = [
 	"server/app/routers/orders.py",
 	"tests/unit/server/jobs/test_scheduler.py",
 	"tests/unit/application/test_paper_trading_buy_orders_reentry.py",
+	"tests/unit/services/test_ml_services_unit.py",
+	"tests/unit/services/test_ml_verdict_service_balanced.py",
 ]
 
 [tool.ruff.lint.isort]
