@@ -252,6 +252,12 @@ class MLVerdictService(VerdictService):
         Returns:
             Tuple of (verdict, justification)
         """
+        # Reset per-call ML prediction cache up front. This service instance is reused
+        # across every ticker in a batch; without this reset an early return below (e.g.
+        # fundamental-avoid) would leave the PREVIOUS ticker's prediction in the cache,
+        # and get_last_ml_prediction() would report it for the wrong ticker.
+        self._ml_prediction_info = None
+
         # Stage 1: Chart quality filter (hard filter)
         # If chart quality fails, immediately return "avoid" without ML prediction
         # This is a CRITICAL filter - ML model should NEVER predict when chart quality fails
@@ -484,8 +490,11 @@ class MLVerdictService(VerdictService):
                                 f"Rule-based verdict: {rule_verdict} (for comparison)",
                             ]
 
-                        # Store ML prediction info
-                        ml_prediction_info = {
+                        # Store ML prediction info directly on self: this branch returns
+                        # immediately below, so it never reaches the fall-through store block.
+                        # (Previously assigned to a local that was discarded on return, which
+                        # is why above-threshold predictions appeared "not available".)
+                        self._ml_prediction_info = {
                             "ml_verdict": ml_verdict,
                             "ml_confidence": ml_confidence,
                             "ml_probabilities": ml_probs,
@@ -547,9 +556,7 @@ class MLVerdictService(VerdictService):
                 f"({ml_prediction_info['ml_confidence']:.1%}), verdict_source: {verdict_source}"
             )
         else:
-            # Clear previous ML prediction if no new one available
-            if hasattr(self, "_ml_prediction_info"):
-                delattr(self, "_ml_prediction_info")
+            # No prediction this call; cache already reset to None at entry.
             logger.debug("No ML prediction info to store")
 
         return verdict, justification
@@ -563,9 +570,7 @@ class MLVerdictService(VerdictService):
             (rules-only baseline when ML ran), verdict_source, etc., or None if no
             prediction was stored for the last call.
         """
-        if hasattr(self, "_ml_prediction_info"):
-            return self._ml_prediction_info
-        return None
+        return getattr(self, "_ml_prediction_info", None)
 
     def get_position_size_factor(
         self,

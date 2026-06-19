@@ -653,7 +653,12 @@ class AnalysisService:
                     else:
                         verdict_source = "rule_based"
                 else:
-                    logger.warning(f"{ticker}: [WARN]? ML prediction NOT available (returned None)")
+                    # Normal fallback: ML did not produce a prediction on this pass
+                    # (e.g. insufficient data, or an early hard-filter return). Rule-based
+                    # logic is used instead — not an error condition.
+                    logger.info(
+                        f"{ticker}: ML prediction not available this pass; using rule-based"
+                    )
 
             # Step 12: Apply candle quality check (may downgrade verdict)
             verdict, candle_analysis, downgrade_reason = (
