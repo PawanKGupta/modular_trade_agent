@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -239,6 +240,14 @@ class MLTrainingService:
 
             if config.auto_activate or replacement_active_candidates is None:
                 self.model_repo.set_active(persisted_model.id)
+                try:
+                    self.deploy_to_canonical(persisted_model.id)
+                except Exception as deploy_exc:
+                    logger.warning(
+                        "Auto-activate: model %s active in DB but canonical deploy failed: %s",
+                        persisted_model.id,
+                        deploy_exc,
+                    )
         except Exception as exc:
             failure_payload = _json_safe(
                 {
@@ -272,3 +281,64 @@ class MLTrainingService:
 
         next_num = max(_digits(model.version) for model in existing) + 1
         return f"v{next_num}"
+
+    # Maps model_type → canonical pkl stem under self.artifact_dir.parent
+    _CANONICAL_STEM: dict[str, str] = {
+        "verdict_classifier": "verdict_model_random_forest",
+    }
+
+    def deploy_to_canonical(self, model_id: int) -> Path:
+        """Copy a versioned model artifact to the canonical runtime path.
+
+        MLVerdictService always loads from models/verdict_model_random_forest.pkl
+        (and its two companion files). This method bridges the DB registry to the
+        runtime by overwriting those canonical files with the activated version.
+
+        Returns the canonical pkl path that was written.
+        Raises ValueError if model_id not found or model_type has no canonical mapping.
+        """
+        model = self.model_repo.get(model_id)
+        if model is None:
+            raise ValueError(f"Model {model_id} not found")
+
+        stem = self._CANONICAL_STEM.get(model.model_type)
+        if stem is None:
+            raise ValueError(
+                f"No canonical path registered for model_type '{model.model_type}'. "
+                f"Known types: {list(self._CANONICAL_STEM)}"
+            )
+
+        src_pkl = Path(model.model_path)
+        if not src_pkl.is_file():
+            raise FileNotFoundError(
+                f"Model artifact not found on disk: {src_pkl}. "
+                "Re-train or restore the file before activating."
+            )
+
+        canonical_dir = self.artifact_dir.parent  # models/
+        dst_pkl = canonical_dir / f"{stem}.pkl"
+
+        shutil.copy2(src_pkl, dst_pkl)
+        logger.info("Deployed %s → %s", src_pkl.name, dst_pkl)
+
+        # Copy companion sidecars when present (features txt + verdict manifest)
+        for src_suffix, dst_suffix in (
+            ("_features.txt", "_features.txt"),
+            (".verdict_features.json", ".verdict_features.json"),
+        ):
+            src_side = src_pkl.with_name(src_pkl.stem + src_suffix)
+            dst_side = canonical_dir / f"{stem}{dst_suffix}"
+            if src_side.is_file():
+                shutil.copy2(src_side, dst_side)
+                logger.info("Deployed sidecar %s → %s", src_side.name, dst_side.name)
+
+        return dst_pkl
+
+    def activate_and_deploy(self, model_id: int) -> tuple:
+        """Set model active in DB and deploy artifact to the canonical runtime path.
+
+        Returns (updated_model, canonical_pkl_path).
+        """
+        updated_model = self.model_repo.set_active(model_id)
+        canonical_path = self.deploy_to_canonical(model_id)
+        return updated_model, canonical_path

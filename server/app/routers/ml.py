@@ -153,8 +153,16 @@ def activate_model(
     model = service.model_repo.get(model_id)
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
-    updated_model = service.model_repo.set_active(model_id)
+    try:
+        updated_model, canonical_path = service.activate_and_deploy(model_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return ActivateModelResponse(
-        message=f"Model {updated_model.version} activated for {updated_model.model_type}",
+        message=(
+            f"Model {updated_model.version} activated for {updated_model.model_type} "
+            f"and deployed to {canonical_path.name}"
+        ),
         model=updated_model,
     )

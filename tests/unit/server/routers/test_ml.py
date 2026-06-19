@@ -137,6 +137,13 @@ class DummyMLTrainingService:
             training_data_path=config.training_data_path,
         )
 
+    def activate_and_deploy(self, model_id: int):
+        """Stub: set active in the dummy repo and return a fake canonical path."""
+        from pathlib import Path
+
+        updated_model = self.model_repo.set_active(model_id)
+        return updated_model, Path("models/verdict_model_random_forest.pkl")
+
 
 @pytest.fixture
 def ml_service(monkeypatch):
@@ -513,7 +520,7 @@ def test_activate_model_success(ml_service, admin_user):
 
     result = ml.activate_model(model_id=123, admin=admin_user, service=ml_service)
 
-    assert result.message == "Model v2.0 activated for verdict_classifier"
+    assert "v2.0" in result.message and "verdict_classifier" in result.message
     assert result.model.id == 123
     assert result.model.is_active is True
     assert model.is_active is True
