@@ -27,6 +27,7 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+from services.ml_calibrated_rf import ProductionCalibratedRF
 from services.ml_training_metadata import (
     select_training_feature_columns,
     verdict_classifier_exclude_columns,
@@ -56,25 +57,6 @@ EXTRA_EXCLUDE = {
 }
 
 CAL_FRACTION = 0.15
-
-
-class ProductionCalibratedRF:
-    """
-    RF + Platt scaling wrapper compatible with MLVerdictService.
-
-    classes_ = ["avoid", "buy"] so MLVerdictService.predict_proba returns
-    [p_avoid, p_buy] and maps index 1 → verdict "buy".
-    """
-
-    def __init__(self, rf: RandomForestClassifier, platt: LogisticRegression) -> None:
-        self.rf = rf
-        self.platt = platt
-        self.classes_ = np.array(["avoid", "buy"])
-
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        raw = self.rf.predict_proba(X)[:, 1].reshape(-1, 1)
-        p_buy = self.platt.predict_proba(raw)[:, 1]
-        return np.column_stack([1 - p_buy, p_buy])
 
 
 def main() -> None:

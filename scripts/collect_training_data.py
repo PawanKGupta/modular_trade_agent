@@ -43,13 +43,15 @@ from services.verdict_service import VerdictService
 from utils.logger import logger
 
 
-def _fetch_market_history(start: str = "2015-01-01", end: str = "2026-01-01") -> dict:
+def _fetch_market_history(start: str = "2015-01-01", end: str | None = None) -> dict:
     """
     Pre-fetch ^INDIAVIX and ^NSEI once for the entire collection run.
     Returns dict with pandas Series indexed by date for fast per-row lookup.
     This replaces per-date API calls in market_regime_service which silently
     fell back to stub defaults (vix=21.88) under rate limiting.
     """
+    if end is None:
+        end = (datetime.now()).strftime("%Y-%m-%d")
     logger.info("Pre-fetching market history (^INDIAVIX, ^NSEI)...")
     result = {"vix": None, "nifty": None}
     try:

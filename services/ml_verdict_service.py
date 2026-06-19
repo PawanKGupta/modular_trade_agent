@@ -11,6 +11,9 @@ from typing import Any
 import joblib
 import pandas as pd
 
+from services.ml_calibrated_rf import (
+    ProductionCalibratedRF,
+)  # noqa: F401 — must be imported so joblib can deserialize pickled models
 from services.ml_verdict_feature_manifest import load_verdict_feature_manifest
 from services.verdict_service import VerdictService
 from src.infrastructure.db.timezone_utils import ist_now_naive
