@@ -6092,18 +6092,6 @@ class AutoTradeEngine:
                     )
                     continue
 
-                # Hard block: level-10 (fill #3) re-entries are permanently blocked.
-                # Walk-forward validation (Phase 4) showed fill #3 win rate = 20.3% vs 77.2%
-                # for initial entries. The production RF model already rejects these at
-                # threshold 0.60, but this guard is upstream and independent of ML.
-                if next_level == 10:
-                    logger.info(
-                        f"Skipping {symbol}: fill #3 (level=10) hard-blocked — "
-                        f"backtest win rate 20.3%% at this depth (Phase 4 research guard)"
-                    )
-                    summary["skipped_fill3_block"] = summary.get("skipped_fill3_block", 0) + 1
-                    continue
-
                 # Check for duplicates (only active buy orders, NOT holdings)
                 # Reentries allow buying more of existing position
                 base_symbol = self.parse_symbol_for_broker(ticker)
