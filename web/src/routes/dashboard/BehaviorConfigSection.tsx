@@ -206,7 +206,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 								min="0"
 								max="1"
 								value={config.ml_confidence_threshold}
-								onChange={(e) => onChange({ ml_confidence_threshold: parseFloat(e.target.value) || 0.7 })}
+								onChange={(e) => onChange({ ml_confidence_threshold: parseFloat(e.target.value) || 0.6 })}
 								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.ml_confidence_threshold}</div>
