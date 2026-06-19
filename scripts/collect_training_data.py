@@ -608,7 +608,7 @@ def create_labels_from_backtest_results_with_reentry(
             # RE-ENTRY CONTEXT FEATURES (Phase 5): Help ML distinguish fills
             features["is_reentry"] = is_reentry
             features["fill_number"] = fill_idx + 1
-            features["total_fills_in_position"] = fill_idx + 1
+            features["total_fills_in_position"] = total_fills
             features["position_id"] = position_id
             features["fill_price"] = fill_price
             features["initial_entry_price"] = initial_price

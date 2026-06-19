@@ -34,7 +34,12 @@ from services.ml_training_metadata import (
 )
 from services.ml_verdict_feature_manifest import write_verdict_feature_manifest
 
-DATA_PATH = r"C:\Personal\Projects\TradingView\data_backup\ml_training_data_phase2.csv"
+_DEFAULT_DATA_PATH = r"C:\Personal\Projects\TradingView\data_backup\ml_training_data_phase2.csv"
+DATA_PATH = (
+    _DEFAULT_DATA_PATH
+    if Path(_DEFAULT_DATA_PATH).exists()
+    else str(project_root / "data" / "ml_training_data.csv")
+)
 MODEL_OUT = project_root / "models" / "verdict_model_random_forest.pkl"
 VERSIONS_PATH = project_root / "models" / "model_versions.json"
 
