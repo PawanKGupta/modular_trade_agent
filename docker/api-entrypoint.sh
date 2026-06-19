@@ -4,6 +4,14 @@ set +e
 
 cd /app || exit 1
 
+# Seed /app/models from the image-baked fallback on first boot (empty volume).
+# On subsequent restarts the volume already contains the canonical pkl so this is a no-op.
+if [ -z "$(ls -A /app/models 2>/dev/null)" ] && [ -d /app/models_default ]; then
+  echo "Seeding ML models volume from image defaults..."
+  cp -r /app/models_default/. /app/models/
+  echo "ML models seeded."
+fi
+
 echo "Checking database migration status..."
 python /app/tools/alembic_reconcile_drift.py
 RECON_EXIT=$?
