@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, type ReactNode } from 'react';
 import { getTradingConfig, updateTradingConfig, resetTradingConfig, type TradingConfig, DEFAULT_CONFIG } from '@/api/trading-config';
 import { StrategyConfigSection } from './StrategyConfigSection';
 import { RiskConfigSection } from './RiskConfigSection';
@@ -8,11 +8,53 @@ import { OrderConfigSection } from './OrderConfigSection';
 import { BehaviorConfigSection } from './BehaviorConfigSection';
 import { ConfigPresets } from './ConfigPresets';
 
+function CollapsibleTile({
+	title,
+	open,
+	onToggle,
+	children,
+}: {
+	title: string;
+	open: boolean;
+	onToggle: () => void;
+	children: ReactNode;
+}) {
+	return (
+		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg">
+			<button
+				type="button"
+				onClick={onToggle}
+				className="w-full flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 text-left"
+			>
+				<span className="text-base sm:text-lg font-semibold">{title}</span>
+				<span className="text-[var(--muted)] text-lg leading-none select-none">
+					{open ? '▲' : '▼'}
+				</span>
+			</button>
+			{open && <div className="px-3 sm:px-6 pb-3 sm:pb-6">{children}</div>}
+		</div>
+	);
+}
+
+const TILES = ['presets', 'strategy', 'capital', 'risk', 'order', 'behavior'] as const;
+type TileKey = typeof TILES[number];
+
 export function TradingConfigPage() {
 	const qc = useQueryClient();
 	const [hasChanges, setHasChanges] = useState(false);
 	const [localConfig, setLocalConfig] = useState<TradingConfig | null>(null);
 	const justSavedRef = useRef(false);
+	const [openTiles, setOpenTiles] = useState<Record<TileKey, boolean>>({
+		presets: false,
+		strategy: false,
+		capital: false,
+		risk: false,
+		order: false,
+		behavior: false,
+	});
+
+	const toggleTile = (key: TileKey) =>
+		setOpenTiles((prev) => ({ ...prev, [key]: !prev[key] }));
 
 	const { data: config, isLoading } = useQuery<TradingConfig>({
 		queryKey: ['tradingConfig'],
@@ -126,43 +168,49 @@ export function TradingConfigPage() {
 				</div>
 			</div>
 
-			{/* Configuration Presets */}
-			<ConfigPresets onApply={handlePresetApply} />
+			<CollapsibleTile title="Configuration Presets" open={openTiles.presets} onToggle={() => toggleTile('presets')}>
+				<ConfigPresets onApply={handlePresetApply} />
+			</CollapsibleTile>
 
-			{/* Strategy Parameters Section */}
-			<StrategyConfigSection
-				config={localConfig}
-				defaultConfig={DEFAULT_CONFIG}
-				onChange={handleConfigChange}
-			/>
+			<CollapsibleTile title="Strategy Parameters" open={openTiles.strategy} onToggle={() => toggleTile('strategy')}>
+				<StrategyConfigSection
+					config={localConfig}
+					defaultConfig={DEFAULT_CONFIG}
+					onChange={handleConfigChange}
+				/>
+			</CollapsibleTile>
 
-			{/* Capital & Position Management Section */}
-			<CapitalConfigSection
-				config={localConfig}
-				defaultConfig={DEFAULT_CONFIG}
-				onChange={handleConfigChange}
-			/>
+			<CollapsibleTile title="Capital & Position Management" open={openTiles.capital} onToggle={() => toggleTile('capital')}>
+				<CapitalConfigSection
+					config={localConfig}
+					defaultConfig={DEFAULT_CONFIG}
+					onChange={handleConfigChange}
+				/>
+			</CollapsibleTile>
 
-			{/* Risk Management Section */}
-			<RiskConfigSection
-				config={localConfig}
-				defaultConfig={DEFAULT_CONFIG}
-				onChange={handleConfigChange}
-			/>
+			<CollapsibleTile title="Risk Management" open={openTiles.risk} onToggle={() => toggleTile('risk')}>
+				<RiskConfigSection
+					config={localConfig}
+					defaultConfig={DEFAULT_CONFIG}
+					onChange={handleConfigChange}
+				/>
+			</CollapsibleTile>
 
-			{/* Order Defaults Section */}
-			<OrderConfigSection
-				config={localConfig}
-				defaultConfig={DEFAULT_CONFIG}
-				onChange={handleConfigChange}
-			/>
+			<CollapsibleTile title="Order Defaults" open={openTiles.order} onToggle={() => toggleTile('order')}>
+				<OrderConfigSection
+					config={localConfig}
+					defaultConfig={DEFAULT_CONFIG}
+					onChange={handleConfigChange}
+				/>
+			</CollapsibleTile>
 
-			{/* Behavior Settings Section */}
-			<BehaviorConfigSection
-				config={localConfig}
-				defaultConfig={DEFAULT_CONFIG}
-				onChange={handleConfigChange}
-			/>
+			<CollapsibleTile title="Behavior Settings" open={openTiles.behavior} onToggle={() => toggleTile('behavior')}>
+				<BehaviorConfigSection
+					config={localConfig}
+					defaultConfig={DEFAULT_CONFIG}
+					onChange={handleConfigChange}
+				/>
+			</CollapsibleTile>
 
 			{/* Save button at bottom */}
 			{hasChanges && (

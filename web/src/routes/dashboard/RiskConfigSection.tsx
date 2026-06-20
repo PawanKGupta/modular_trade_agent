@@ -14,9 +14,7 @@ export function RiskConfigSection({ config, defaultConfig, onChange }: RiskConfi
 	};
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Risk Management</h2>
-
+		<>
 			{/* Stop Loss Configuration */}
 			<div className="mb-4 sm:mb-6">
 				<h3 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3 text-[var(--muted)]">Stop Loss Percentages</h3>
@@ -199,6 +197,6 @@ export function RiskConfigSection({ config, defaultConfig, onChange }: RiskConfi
 					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }

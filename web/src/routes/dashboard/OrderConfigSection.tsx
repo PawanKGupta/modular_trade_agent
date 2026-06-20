@@ -10,9 +10,7 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 	const isDefault = (key: keyof TradingConfig) => config[key] === defaultConfig[key];
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Order Defaults</h2>
-
+		<>
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
 				<div>
 					<label htmlFor="default_exchange" className="block text-xs sm:text-sm mb-1">
@@ -97,6 +95,6 @@ export function OrderConfigSection({ config, defaultConfig, onChange }: OrderCon
 					<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.default_validity}</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
