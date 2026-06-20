@@ -13,6 +13,7 @@ vi.mock('@/api/ml-training', () => ({
 	getMLModels: vi.fn(),
 	startTrainingJob: vi.fn(),
 	activateModel: vi.fn(),
+	registerModel: vi.fn(),
 }));
 
 describe('MLTrainingPage', () => {
@@ -116,6 +117,12 @@ describe('MLTrainingPage', () => {
 			)
 		);
 
+		// The training form is collapsed by default — expand it first.
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /New Training Job/i })).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: /New Training Job/i }));
+
 		await waitFor(() => {
 			expect(screen.getByRole('button', { name: /Start Training/i })).toBeInTheDocument();
 		});
@@ -147,6 +154,12 @@ describe('MLTrainingPage', () => {
 				{ queryClient }
 			)
 		);
+
+		// The training form is collapsed by default — expand it first.
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /New Training Job/i })).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: /New Training Job/i }));
 
 		await waitFor(() => {
 			expect(screen.getByRole('button', { name: /Start Training/i })).toBeInTheDocument();

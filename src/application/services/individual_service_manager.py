@@ -701,11 +701,7 @@ class IndividualServiceManager:
         )
 
         # Analysis subprocess allows up to 30 minutes; other run-once tasks stay at 5 minutes.
-        max_execution_time = (
-            ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS
-            if task_name == "analysis"
-            else 300
-        )
+        max_execution_time = ANALYSIS_RUN_ONCE_TIMEOUT_SECONDS if task_name == "analysis" else 300
 
         try:
             logger.info(
@@ -1345,10 +1341,6 @@ class IndividualServiceManager:
         tradability_filtered_count = 0
         for row in results:
             if not isinstance(row, dict) or row.get("status") not in {"success", None}:
-                continue
-
-            verdict = row.get("final_verdict") or row.get("verdict") or row.get("ml_verdict")
-            if verdict not in {"buy", "strong_buy"}:
                 continue
 
             # Thin re-check: non-tradable equity (ETF/MF, T2T-only, no EQ)
@@ -2035,9 +2027,7 @@ class IndividualServiceManager:
             if thread_is_alive:
                 actual_execution_status = "running"
 
-            individual_run_in_progress = (
-                thread_is_alive or actual_execution_status == "running"
-            )
+            individual_run_in_progress = thread_is_alive or actual_execution_status == "running"
 
             # Get is_running from service status (synced above if needed)
             is_running = service.is_running if service else False
@@ -2385,11 +2375,8 @@ class IndividualServiceManager:
 
         # 9:05 task: per-order Telegram already sent; only in-app one-liner here.
         skip_service_broadcast = premarket_summary is not None and status == "success"
-        if (
-            not skip_service_broadcast
-            and pref_service.should_notify(
-                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
-            )
+        if not skip_service_broadcast and pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="telegram"
         ):
             notifier = self._get_telegram_notifier(user_id)
             if notifier and notifier.enabled:
@@ -2431,11 +2418,8 @@ class IndividualServiceManager:
 
         # Send Email notification if enabled and preference allows
         email_sent = False
-        if (
-            not skip_service_broadcast
-            and pref_service.should_notify(
-                user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
-            )
+        if not skip_service_broadcast and pref_service.should_notify(
+            user_id, NotificationEventType.SERVICE_EXECUTION_COMPLETED, channel="email"
         ):
             preferences = pref_service.get_preferences(user_id)
             if preferences and preferences.email_address:
