@@ -1422,15 +1422,20 @@ class IndividualServiceManager:
                         f"unexpected time restriction (current time: {now.strftime('%H:%M:%S')})"
                     )
 
-                logger.warning(
-                    f"Signals update skipped: {reason}. Analysis completed but results "
-                    f"not persisted to Signals table.",
+                logger.info(
+                    f"Signal updates gated ({reason}): running metadata-only refresh "
+                    f"(ML confidence/verdict) on existing ACTIVE buy signals; "
+                    f"no new signals inserted, no signals expired.",
                     action="run_analysis",
                     task_name="analysis",
                 )
+                # Metadata-only: refresh ML fields on existing ACTIVE buy signals
+                # without inserting new signals or expiring any.
+                counts = dedup_service.deduplicate_and_update_signals(
+                    processed_rows, skip_time_check=True, metadata_only=True
+                )
+                summary.update(counts)
                 summary["skipped_reason"] = reason
-                summary["skipped"] = len(processed_rows)
-                summary["processed"] = 0  # Nothing was actually processed
                 return summary
 
             # Smart expiration is now handled inside deduplicate_and_update_signals

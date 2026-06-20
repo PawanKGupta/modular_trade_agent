@@ -206,7 +206,10 @@ class AnalysisDeduplicationService:
         return True
 
     def deduplicate_and_update_signals(
-        self, new_signals: list[dict], skip_time_check: bool = False
+        self,
+        new_signals: list[dict],
+        skip_time_check: bool = False,
+        metadata_only: bool = False,
     ) -> dict[str, int]:
         """
         Update existing signals or insert new ones with smart expiration logic.
@@ -220,12 +223,19 @@ class AnalysisDeduplicationService:
         Args:
             new_signals: List of signal dictionaries from analysis
             skip_time_check: If True, skip the should_update_signals() check (already checked upstream)
+            metadata_only: If True, only refresh ML/metadata fields on existing ACTIVE buy signals;
+                no new signals are inserted and no signals are expired. Used during trading hours
+                so ML confidence stays current without disrupting the session.
 
         Returns:
             dict with 'updated', 'inserted', 'skipped', and 'expired' counts
         """
         if not skip_time_check and not self.should_update_signals():
-            return {"updated": 0, "inserted": 0, "skipped": len(new_signals), "expired": 0}
+            # During trading hours: still refresh ML metadata on existing ACTIVE buy signals
+            # so Buying Zone shows current confidence without inserting/expiring anything.
+            return self.deduplicate_and_update_signals(
+                new_signals, skip_time_check=True, metadata_only=True
+            )
 
         # Get ALL existing signals (not just within window) to check for matches
         # We'll find the latest signal for each symbol
@@ -327,6 +337,10 @@ class AnalysisDeduplicationService:
                             updated_count += 1
                             # Note: If user has TRADED it, they won't see the updated signal
                             # (filtered out when loading), but base signal is updated for other users
+                        elif metadata_only:
+                            # Trading hours: no expire/insert — ML metadata already refreshed above
+                            # when both verdicts are buy. Any other transition is skipped.
+                            skipped_count += 1
                         elif is_buy_signal and not existing_is_buy:
                             # Verdict changed to BUY: Expire old, create new
                             existing_signal.status = SignalStatus.EXPIRED
@@ -343,7 +357,7 @@ class AnalysisDeduplicationService:
 
                     elif existing_signal.status == SignalStatus.REJECTED:
                         # REJECTED signal: Create new signal (fresh chance)
-                        if is_buy_signal:
+                        if is_buy_signal and not metadata_only:
                             new_signal = self._create_signal_from_data(signal_data)
                             if new_signal:
                                 self.db.add(new_signal)
@@ -353,7 +367,7 @@ class AnalysisDeduplicationService:
 
                     elif existing_signal.status == SignalStatus.EXPIRED:
                         # EXPIRED signal: Create new signal (fresh start)
-                        if is_buy_signal:
+                        if is_buy_signal and not metadata_only:
                             new_signal = self._create_signal_from_data(signal_data)
                             if new_signal:
                                 self.db.add(new_signal)
@@ -364,7 +378,7 @@ class AnalysisDeduplicationService:
                     elif existing_signal.status == SignalStatus.TRADED:
                         # TRADED signal (base status): Keep original, create new for non-traded users
                         # Check if THIS user has an open position (Positions table, not order status)
-                        if is_buy_signal:
+                        if is_buy_signal and not metadata_only:
                             # Check if user has open position for symbol
                             user_has_open_position = False
                             if self.user_id:
@@ -394,8 +408,8 @@ class AnalysisDeduplicationService:
                         else:
                             skipped_count += 1
 
-                # No existing signal: Create new signal
-                elif is_buy_signal:
+                # No existing signal: Create new signal (skipped during metadata_only pass)
+                elif is_buy_signal and not metadata_only:
                     new_signal = self._create_signal_from_data(signal_data)
                     if new_signal:
                         self.db.add(new_signal)
