@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.3] - 2026-06-20
+
+Release from branch `releases/rebound_2623`. See [docs/development/RELEASE_PLAN_V26.2.3.md](docs/development/RELEASE_PLAN_V26.2.3.md) for deploy checklist.
+
+### Added
+
+- **ML leakage fixes (Phase 0):** Eliminated forward-looking features, calibration bug, and train/serve feature skew in verdict classifier. Walk-forward validated threshold set to 0.6 (was 0.5).
+- **FinBERT + India sentiment overrides:** India-specific red-flag phrases (promoter pledge, SEBI notice, ED/CBI raids, F&O ban, NPA, etc.) now force news sentiment score to -1.0, overriding FinBERT's general-finance misclassification.
+- **ML model persistence (Docker):** `trading_models` named volume mounts to `/app/models` in both `docker-compose.yml` and `docker-compose.prod.yml` — activated model artifacts survive container restarts and image rebuilds.
+- **ML model auto-seed on first boot:** `api-entrypoint.sh` copies baseline models baked into the image (`/app/models_default/`) into the volume on first boot when the volume is empty. No manual intervention needed on fresh deploys.
+- **Activate-and-deploy:** Activating a model version via UI or `POST /api/v1/admin/ml/models/{id}/activate` now copies the versioned artifact to the canonical runtime path (`models/verdict_model_random_forest.pkl`) immediately — no manual file copy required.
+- **Register external model:** `POST /api/v1/admin/ml/models/register` endpoint and "Register Existing Model" UI form allow importing externally-trained `.pkl` files into the model registry with optional `auto_activate`.
+- **ML help page:** New in-app help page at `/help/ml-signals` covering confidence thresholds, signal lifecycle, walk-forward validation, and tuning options.
+- **ML section in Getting Started guide and FAQ.**
+
+### Fixed
+
+- **Stale buy signals after verdict downgrade:** `_persist_analysis_results` previously pre-filtered to `buy`/`strong_buy` only, preventing `deduplicate_and_update_signals` from expiring ACTIVE signals when a stock re-analysed to `watch`/`avoid`. Removed the pre-filter — downgraded verdicts now correctly expire their old signal.
+- **ML confidence threshold default:** Frontend `DEFAULT_CONFIG` corrected from 0.7 → 0.6 to match backend default.
+- **joblib unpickling failure** and hardcoded market-history cutoff resolved.
+- **sklearn 1.8 calibration compatibility** and India VIX stub fixed.
+- **Above-threshold ML prediction persistence** and cross-ticker leak prevented.
+
+### Changed
+
+- **ML confidence threshold default:** `ml_confidence_threshold` in `StrategyConfig` and `ML_CONFIDENCE_THRESHOLD` env default raised from 0.5 → 0.6 (walk-forward validated).
+- **Trading Config UI:** All config sections now collapsed by default using the same `SectionCard` accordion pattern as Settings — SVG chevron, smooth CSS animation, single-open accordion, proper aria attributes.
+- **Notification Preferences UI:** Same `SectionCard` accordion pattern applied to all sections; save action moved to a sticky bottom bar.
+- **ML Training UI:** "New Training Job" form collapsed by default; "Register Existing Model" moved to bottom of page.
+
+### No Alembic migrations
+
+No database schema changes in this release — `alembic upgrade head` is a no-op.
+
+---
+
 ## [26.2.2.1] - 2026-06-14
 
 Hotfix release from branch `hotfix/rebound_26221`. See [docs/development/RELEASE_PLAN_V26.2.2.1.md](docs/development/RELEASE_PLAN_V26.2.2.1.md) for deploy checklist.
