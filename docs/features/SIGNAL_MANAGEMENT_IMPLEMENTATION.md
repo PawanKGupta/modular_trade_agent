@@ -1,6 +1,6 @@
 # Signal Management Implementation
 
-**Date**: 2025-12-13
+**Date**: 2025-12-13 (updated 2026-06-20)
 **Status**: Completed
 **Priority**: High
 
@@ -11,13 +11,14 @@
 1. [Overview](#overview)
 2. [Signal Expiry and Holiday Calendar](#signal-expiry-and-holiday-calendar)
 3. [Signal FAILED Status](#signal-failed-status)
-4. [Implementation Summary](#implementation-summary)
-5. [Files Modified](#files-modified)
-6. [Test Coverage](#test-coverage)
-7. [Edge Cases and Fixes](#edge-cases-and-fixes)
-8. [User Experience](#user-experience)
-9. [Migration Instructions](#migration-instructions)
-10. [Summary](#summary)
+4. [Verdict-Downgrade Expiration](#verdict-downgrade-expiration)
+5. [Implementation Summary](#implementation-summary)
+6. [Files Modified](#files-modified)
+7. [Test Coverage](#test-coverage)
+8. [Edge Cases and Fixes](#edge-cases-and-fixes)
+9. [User Experience](#user-experience)
+10. [Migration Instructions](#migration-instructions)
+11. [Summary](#summary)
 
 ---
 
@@ -379,6 +380,35 @@ if user_status in [SignalStatus.TRADED, SignalStatus.REJECTED, SignalStatus.FAIL
 - Error caught and logged
 - Order update still succeeds
 - Worst case: Order FAILED, signal stays TRADED (same as before - no regression)
+
+---
+
+## Verdict-Downgrade Expiration
+
+### Problem
+
+When a re-analysis run produced a `watch` or `avoid` verdict for a symbol that previously had an ACTIVE `buy` signal, the old signal was not being expired. The symbol would remain in the buying zone despite no longer qualifying as a buy.
+
+**Root cause:** `_persist_analysis_results` in `individual_service_manager.py` pre-filtered analysis rows to `buy`/`strong_buy` verdicts before building `processed_rows`. Symbols with downgraded verdicts were silently dropped, so they never reached `deduplicate_and_update_signals`. The fallback `mark_old_signals_as_expired` (which uses a timestamp comparison) was unreliable in this path and returned 0 expired rows.
+
+### Fix
+
+Removed the buy-only pre-filter from `_persist_analysis_results`. All successfully-analysed symbols now pass through to `deduplicate_and_update_signals` regardless of verdict.
+
+`deduplicate_and_update_signals` already contained the correct handling for this case (lines 338-342 of `analysis_deduplication_service.py`):
+
+```python
+else:
+    # Verdict changed away from BUY: Expire old signal
+    existing_signal.status = SignalStatus.EXPIRED
+    expired_count += 1
+```
+
+When a symbol has an existing ACTIVE `buy` signal and the new verdict is `watch`/`avoid`, this path fires and expires the signal inline — no reliance on the timestamp-based bulk expiry.
+
+Non-buy symbols with **no** existing signal are still skipped (no new signal is inserted). The only behavioural change is that downgraded symbols now expire their old ACTIVE signal rather than leaving it alive.
+
+**File changed:** `src/application/services/individual_service_manager.py` — `_persist_analysis_results()`.
 
 ---
 
