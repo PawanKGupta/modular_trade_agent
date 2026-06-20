@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, useRef, type ReactNode } from 'react';
+import { useEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { getTradingConfig, updateTradingConfig, resetTradingConfig, type TradingConfig, DEFAULT_CONFIG } from '@/api/trading-config';
 import { StrategyConfigSection } from './StrategyConfigSection';
 import { RiskConfigSection } from './RiskConfigSection';
@@ -8,53 +8,68 @@ import { OrderConfigSection } from './OrderConfigSection';
 import { BehaviorConfigSection } from './BehaviorConfigSection';
 import { ConfigPresets } from './ConfigPresets';
 
-function CollapsibleTile({
-	title,
-	open,
-	onToggle,
-	children,
-}: {
+type SectionCardProps = {
+	id: string;
+	icon: string;
 	title: string;
-	open: boolean;
+	isOpen: boolean;
 	onToggle: () => void;
 	children: ReactNode;
-}) {
+};
+
+function SectionCard({ id, icon, title, isOpen, onToggle, children }: SectionCardProps) {
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg">
+		<div className="rounded-lg border border-[#1e293b] bg-[#0c1521] overflow-hidden transition-shadow hover:shadow-[0_0_0_1px_#334155]">
 			<button
 				type="button"
+				id={`${id}-header`}
+				aria-expanded={isOpen}
+				aria-controls={`${id}-body`}
 				onClick={onToggle}
-				className="w-full flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 text-left"
+				className="w-full flex items-center justify-between px-4 py-3.5 text-left gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
 			>
-				<span className="text-base sm:text-lg font-semibold">{title}</span>
-				<span className="text-[var(--muted)] text-lg leading-none select-none">
-					{open ? '▲' : '▼'}
-				</span>
+				<div className="flex items-center gap-3 min-w-0">
+					<span className="text-base shrink-0">{icon}</span>
+					<span className="font-medium text-sm sm:text-base truncate">{title}</span>
+				</div>
+				<svg
+					className={`w-4 h-4 shrink-0 text-[var(--muted)] transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+					viewBox="0 0 20 20"
+					fill="currentColor"
+					aria-hidden="true"
+				>
+					<path
+						fillRule="evenodd"
+						d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
+						clipRule="evenodd"
+					/>
+				</svg>
 			</button>
-			{open && <div className="px-3 sm:px-6 pb-3 sm:pb-6">{children}</div>}
+			<div
+				id={`${id}-body`}
+				role="region"
+				aria-labelledby={`${id}-header`}
+				className={`transition-all duration-200 ease-in-out ${isOpen ? 'max-h-[9999px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden pointer-events-none'}`}
+			>
+				<div className="px-4 pb-5 pt-1 border-t border-[#1e293b]">{children}</div>
+			</div>
 		</div>
 	);
 }
 
-const TILES = ['presets', 'strategy', 'capital', 'risk', 'order', 'behavior'] as const;
-type TileKey = typeof TILES[number];
+type SectionKey = 'presets' | 'strategy' | 'capital' | 'risk' | 'order' | 'behavior';
 
 export function TradingConfigPage() {
 	const qc = useQueryClient();
 	const [hasChanges, setHasChanges] = useState(false);
 	const [localConfig, setLocalConfig] = useState<TradingConfig | null>(null);
 	const justSavedRef = useRef(false);
-	const [openTiles, setOpenTiles] = useState<Record<TileKey, boolean>>({
-		presets: false,
-		strategy: false,
-		capital: false,
-		risk: false,
-		order: false,
-		behavior: false,
-	});
+	const [openSection, setOpenSection] = useState<SectionKey | ''>('');
 
-	const toggleTile = (key: TileKey) =>
-		setOpenTiles((prev) => ({ ...prev, [key]: !prev[key] }));
+	const toggle = useCallback(
+		(key: SectionKey) => setOpenSection((prev) => (prev === key ? '' : key)),
+		[],
+	);
 
 	const { data: config, isLoading } = useQuery<TradingConfig>({
 		queryKey: ['tradingConfig'],
@@ -168,49 +183,49 @@ export function TradingConfigPage() {
 				</div>
 			</div>
 
-			<CollapsibleTile title="Configuration Presets" open={openTiles.presets} onToggle={() => toggleTile('presets')}>
+			<SectionCard id="tc-presets" icon="🗂️" title="Configuration Presets" isOpen={openSection === 'presets'} onToggle={() => toggle('presets')}>
 				<ConfigPresets onApply={handlePresetApply} />
-			</CollapsibleTile>
+			</SectionCard>
 
-			<CollapsibleTile title="Strategy Parameters" open={openTiles.strategy} onToggle={() => toggleTile('strategy')}>
+			<SectionCard id="tc-strategy" icon="📊" title="Strategy Parameters" isOpen={openSection === 'strategy'} onToggle={() => toggle('strategy')}>
 				<StrategyConfigSection
 					config={localConfig}
 					defaultConfig={DEFAULT_CONFIG}
 					onChange={handleConfigChange}
 				/>
-			</CollapsibleTile>
+			</SectionCard>
 
-			<CollapsibleTile title="Capital & Position Management" open={openTiles.capital} onToggle={() => toggleTile('capital')}>
+			<SectionCard id="tc-capital" icon="💰" title="Capital & Position Management" isOpen={openSection === 'capital'} onToggle={() => toggle('capital')}>
 				<CapitalConfigSection
 					config={localConfig}
 					defaultConfig={DEFAULT_CONFIG}
 					onChange={handleConfigChange}
 				/>
-			</CollapsibleTile>
+			</SectionCard>
 
-			<CollapsibleTile title="Risk Management" open={openTiles.risk} onToggle={() => toggleTile('risk')}>
+			<SectionCard id="tc-risk" icon="🛡️" title="Risk Management" isOpen={openSection === 'risk'} onToggle={() => toggle('risk')}>
 				<RiskConfigSection
 					config={localConfig}
 					defaultConfig={DEFAULT_CONFIG}
 					onChange={handleConfigChange}
 				/>
-			</CollapsibleTile>
+			</SectionCard>
 
-			<CollapsibleTile title="Order Defaults" open={openTiles.order} onToggle={() => toggleTile('order')}>
+			<SectionCard id="tc-order" icon="📋" title="Order Defaults" isOpen={openSection === 'order'} onToggle={() => toggle('order')}>
 				<OrderConfigSection
 					config={localConfig}
 					defaultConfig={DEFAULT_CONFIG}
 					onChange={handleConfigChange}
 				/>
-			</CollapsibleTile>
+			</SectionCard>
 
-			<CollapsibleTile title="Behavior Settings" open={openTiles.behavior} onToggle={() => toggleTile('behavior')}>
+			<SectionCard id="tc-behavior" icon="⚡" title="Behavior Settings" isOpen={openSection === 'behavior'} onToggle={() => toggle('behavior')}>
 				<BehaviorConfigSection
 					config={localConfig}
 					defaultConfig={DEFAULT_CONFIG}
 					onChange={handleConfigChange}
 				/>
-			</CollapsibleTile>
+			</SectionCard>
 
 			{/* Save button at bottom */}
 			{hasChanges && (
