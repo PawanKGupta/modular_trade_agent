@@ -94,6 +94,45 @@ _NEGATIVE_WORDS = {
     "warns",
 }
 
+# India-specific red-flag phrases that FinBERT misclassifies (hard override → score = -1.0).
+# "promoter pledge" reads as positive to general finance models but is a major risk signal
+# in Indian markets (promoter borrowing against equity = forced selling risk).
+_INDIA_NEGATIVE_PHRASES = [
+    "promoter pledge",
+    "promoter pledges",
+    "pledged shares",
+    "share pledge",
+    "shares pledged",
+    "sebi notice",
+    "sebi order",
+    "sebi ban",
+    "insider trading",
+    "nse ban",
+    "bse ban",
+    "f&o ban",
+    "fno ban",
+    "nclt",
+    "insolvency",
+    "wilful defaulter",
+    "npa",
+    "debt restructuring",
+    "ed raid",
+    "cbi raid",
+    "income tax raid",
+    "it raid",
+    "promoter selling",
+    "bulk deal sell",
+]
+
+
+def _apply_india_overrides(title: str, score: float) -> float:
+    """Force score to -1.0 if the headline contains India-specific red-flag phrases."""
+    text = title.lower()
+    for phrase in _INDIA_NEGATIVE_PHRASES:
+        if phrase in text:
+            return -1.0
+    return score
+
 
 def _token_score(text: str) -> float:
     if not text:
@@ -298,7 +337,11 @@ def analyze_news_sentiment(ticker: str, as_of_date: Optional[str] = None) -> dic
             max_length=NEWS_SENTIMENT_TRANSFORMER_MAX_LENGTH,
         )
         if tf_scores is not None and len(tf_scores) == used_count:
-            used_scores = tf_scores
+            # Apply India-specific phrase overrides on top of FinBERT scores
+            used_scores = [
+                _apply_india_overrides(title, score)
+                for title, score in zip(used_titles, tf_scores, strict=True)
+            ]
             scorer = "transformer"
             model_name = NEWS_SENTIMENT_TRANSFORMER_MODEL
         else:

@@ -10,9 +10,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 	const isDefault = (key: keyof TradingConfig) => config[key] === defaultConfig[key];
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Behavior Settings</h2>
-
+		<>
 			<div className="space-y-3 sm:space-y-4">
 				<div>
 					<label htmlFor="allow_duplicate_recommendations_same_day" className="flex items-center gap-2 min-h-[44px] sm:min-h-0">
@@ -206,7 +204,7 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 								min="0"
 								max="1"
 								value={config.ml_confidence_threshold}
-								onChange={(e) => onChange({ ml_confidence_threshold: parseFloat(e.target.value) || 0.7 })}
+								onChange={(e) => onChange({ ml_confidence_threshold: parseFloat(e.target.value) || 0.6 })}
 								className="w-full p-2 rounded bg-[#0f1720] border border-[#1e293b]"
 							/>
 							<div className="text-xs text-[var(--muted)] mt-1">Default: {defaultConfig.ml_confidence_threshold}</div>
@@ -234,6 +232,6 @@ export function BehaviorConfigSection({ config, defaultConfig, onChange }: Behav
 					</div>
 				)}
 			</div>
-		</div>
+		</>
 	);
 }

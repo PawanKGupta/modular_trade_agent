@@ -36,6 +36,7 @@ services:
       - ../data:/app/data
       - ../logs:/app/logs
       - paper_trading_data:/app/paper_trading  # Paper trading data persistence (use named volume for proper permissions)
+      - trading_models:/app/models             # ML model artifacts — persists activated models across restarts
 
     networks:
       - tradeagent-network
@@ -108,4 +109,6 @@ volumes:
   paper_trading_data:
     driver: local
   postgres_data:
+    driver: local
+  trading_models:
     driver: local

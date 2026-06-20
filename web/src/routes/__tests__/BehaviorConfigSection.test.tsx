@@ -12,7 +12,6 @@ describe('BehaviorConfigSection', () => {
 		const onChange = vi.fn();
 		render(<BehaviorConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/Behavior Settings/i)).toBeInTheDocument();
 		expect(screen.getByText(/Allow Duplicate Recommendations Same Day/i)).toBeInTheDocument();
 		expect(screen.getByText(/Exit on EMA9 or RSI50/i)).toBeInTheDocument();
 		expect(screen.getByText(/Min Combined Score/i)).toBeInTheDocument();

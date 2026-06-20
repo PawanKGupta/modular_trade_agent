@@ -16,6 +16,8 @@ from server.app.schemas.ml import (
     MLTrainingJobResponse,
     MLTrainingJobsResponse,
     MLTrainingRequest,
+    RegisterModelRequest,
+    RegisterModelResponse,
 )
 from src.application.services.ml_training_service import MLTrainingService, TrainingJobConfig
 from src.infrastructure.db.session import SessionLocal
@@ -153,8 +155,48 @@ def activate_model(
     model = service.model_repo.get(model_id)
     if not model:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
-    updated_model = service.model_repo.set_active(model_id)
+    try:
+        updated_model, canonical_path = service.activate_and_deploy(model_id)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return ActivateModelResponse(
-        message=f"Model {updated_model.version} activated for {updated_model.model_type}",
+        message=(
+            f"Model {updated_model.version} activated for {updated_model.model_type} "
+            f"and deployed to {canonical_path.name}"
+        ),
         model=updated_model,
+    )
+
+
+@router.post(
+    "/models/register",
+    response_model=RegisterModelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_model(
+    payload: RegisterModelRequest,
+    admin=Depends(require_admin),
+    service: MLTrainingService = Depends(get_ml_training_service),
+):
+    """Register a model artifact trained outside the UI into the DB registry."""
+    try:
+        model = service.register_external_model(
+            registered_by=admin.id,
+            model_type=payload.model_type,
+            model_path=payload.model_path,
+            version=payload.version,
+            accuracy=payload.accuracy,
+            training_data_through_date=payload.training_data_through_date,
+            notes=payload.notes,
+            auto_activate=payload.auto_activate,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    return RegisterModelResponse(
+        message=f"Model {model.version} registered for {model.model_type}",
+        model=model,
     )

@@ -47,6 +47,10 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 # Copy entire project (API needs access to src/, models/, etc.)
 COPY . .
 
+# Preserve image-baked models as seed fallback before the volume mount shadows /app/models.
+# api-entrypoint.sh copies these into the volume on first boot when /app/models is empty.
+RUN cp -r /app/models /app/models_default
+
 # Create directories with proper permissions; ensure entrypoint is executable
 RUN mkdir -p data logs paper_trading && \
     chmod +x /app/docker/api-entrypoint.sh && \

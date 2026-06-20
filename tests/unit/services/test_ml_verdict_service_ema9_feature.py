@@ -7,15 +7,15 @@ Tests that ema9_distance_pct is correctly extracted during live predictions.
 
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
+
 import pandas as pd
-import numpy as np
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import pytest
+
 from services.ml_verdict_service import MLVerdictService
 
 
@@ -155,8 +155,8 @@ class TestEMA9DistanceFeature:
             df=df,
         )
 
-        # Should have all 43 features
-        assert len(features) == 43, f"Expected 43 features, got {len(features)}"
+        # Feature count: 39 after Phase 5 cleanup (removed pe, pb, alignment_score, sector_strength)
+        assert len(features) == 39, f"Expected 39 features, got {len(features)}"
 
         # Verify key features present
         assert "ema9_distance_pct" in features

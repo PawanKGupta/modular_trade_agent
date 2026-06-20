@@ -22,6 +22,7 @@ export const HELP_SLUG = {
 	brokerApi: 'broker-api',
 	connectBroker: 'connect-broker',
 	billing: 'billing',
+	mlSignals: 'ml-signals',
 	faq: 'faq',
 } as const;
 
@@ -56,6 +57,11 @@ export const HELP_NAV_ITEMS: HelpNavItem[] = [
 		slug: HELP_SLUG.billing,
 		title: 'Performance fees',
 		description: 'How live-trading billing works',
+	},
+	{
+		slug: HELP_SLUG.mlSignals,
+		title: 'ML-powered signals',
+		description: 'How the AI classifier works and what confidence means',
 	},
 	{
 		slug: HELP_SLUG.faq,

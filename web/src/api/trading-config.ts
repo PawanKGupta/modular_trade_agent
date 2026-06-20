@@ -176,7 +176,7 @@ export const DEFAULT_CONFIG: TradingConfig = {
 	ml_price_enabled: false,
 	ml_price_models_available: false,
 	ml_model_version: null,
-	ml_confidence_threshold: 0.7,
+	ml_confidence_threshold: 0.6,
 	ml_combine_with_rules: true,
 };
 

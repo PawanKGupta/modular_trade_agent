@@ -77,3 +77,22 @@ class MLModelsResponse(BaseModel):
 class ActivateModelResponse(BaseModel):
     message: str
     model: MLModelResponse
+
+
+class RegisterModelRequest(BaseModel):
+    """Register a model artifact that was trained outside the UI (e.g. via script)."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_type: Literal["verdict_classifier", "price_regressor"]
+    model_path: constr(min_length=1, strip_whitespace=True, max_length=1024)
+    version: constr(min_length=1, strip_whitespace=True, max_length=64)
+    accuracy: float | None = None
+    training_data_through_date: date | None = None
+    notes: constr(max_length=512) | None = None
+    auto_activate: bool = False
+
+
+class RegisterModelResponse(BaseModel):
+    message: str
+    model: MLModelResponse

@@ -5,12 +5,22 @@ ML-enhanced verdict service that uses trained models to predict verdicts.
 Falls back to rule-based logic if ML model is unavailable.
 """
 
+import sys
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
 
+from services.ml_calibrated_rf import (
+    ProductionCalibratedRF,
+)  # noqa: F401 — must be imported so joblib can deserialize pickled models
+
+# Safety net for models pickled before the class was moved to ml_calibrated_rf.
+# If the model was serialized under __main__.ProductionCalibratedRF (e.g. by running
+# train_production_model.py directly), inject the class so joblib.load can resolve it.
+if "__main__" in sys.modules:
+    sys.modules["__main__"].ProductionCalibratedRF = ProductionCalibratedRF
 from services.ml_verdict_feature_manifest import load_verdict_feature_manifest
 from services.verdict_service import VerdictService
 from src.infrastructure.db.timezone_utils import ist_now_naive
@@ -242,6 +252,12 @@ class MLVerdictService(VerdictService):
         Returns:
             Tuple of (verdict, justification)
         """
+        # Reset per-call ML prediction cache up front. This service instance is reused
+        # across every ticker in a batch; without this reset an early return below (e.g.
+        # fundamental-avoid) would leave the PREVIOUS ticker's prediction in the cache,
+        # and get_last_ml_prediction() would report it for the wrong ticker.
+        self._ml_prediction_info = None
+
         # Stage 1: Chart quality filter (hard filter)
         # If chart quality fails, immediately return "avoid" without ML prediction
         # This is a CRITICAL filter - ML model should NEVER predict when chart quality fails
@@ -474,8 +490,11 @@ class MLVerdictService(VerdictService):
                                 f"Rule-based verdict: {rule_verdict} (for comparison)",
                             ]
 
-                        # Store ML prediction info
-                        ml_prediction_info = {
+                        # Store ML prediction info directly on self: this branch returns
+                        # immediately below, so it never reaches the fall-through store block.
+                        # (Previously assigned to a local that was discarded on return, which
+                        # is why above-threshold predictions appeared "not available".)
+                        self._ml_prediction_info = {
                             "ml_verdict": ml_verdict,
                             "ml_confidence": ml_confidence,
                             "ml_probabilities": ml_probs,
@@ -537,9 +556,7 @@ class MLVerdictService(VerdictService):
                 f"({ml_prediction_info['ml_confidence']:.1%}), verdict_source: {verdict_source}"
             )
         else:
-            # Clear previous ML prediction if no new one available
-            if hasattr(self, "_ml_prediction_info"):
-                delattr(self, "_ml_prediction_info")
+            # No prediction this call; cache already reset to None at entry.
             logger.debug("No ML prediction info to store")
 
         return verdict, justification
@@ -553,9 +570,36 @@ class MLVerdictService(VerdictService):
             (rules-only baseline when ML ran), verdict_source, etc., or None if no
             prediction was stored for the last call.
         """
-        if hasattr(self, "_ml_prediction_info"):
-            return self._ml_prediction_info
-        return None
+        return getattr(self, "_ml_prediction_info", None)
+
+    def get_position_size_factor(
+        self,
+        low_clip: float = 0.5,
+        high_clip: float = 2.0,
+        score_floor: float = 0.55,
+        score_ceil: float = 1.0,
+    ) -> float:
+        """
+        Return linear position-size multiplier based on the last ML confidence score.
+
+        Formula (Phase 5 research):
+            factor = clip((confidence - score_floor) / (score_ceil - score_floor), low_clip, high_clip)
+
+        Returns 1.0 (flat) when no ML prediction is available or verdict not in ('buy', 'strong_buy').
+        Callers multiply base lot size by this factor before placing an order.
+        """
+        pred = self.get_last_ml_prediction()
+        if pred is None:
+            return 1.0
+        if pred.get("ml_verdict") not in ("buy", "strong_buy"):
+            return 1.0
+        confidence = pred.get("ml_confidence", 0.0)
+        if confidence > 1.0:
+            confidence = confidence / 100.0
+        if score_ceil <= score_floor:
+            return 1.0
+        raw = (confidence - score_floor) / (score_ceil - score_floor)
+        return float(max(low_clip, min(high_clip, raw)))
 
     def _resolve_verdict_class_names(self) -> list[str]:
         """Map ``predict_proba`` indices to verdict strings (XGBoost uses numeric classes_)."""
@@ -572,6 +616,21 @@ class MLVerdictService(VerdictService):
             raw,
         )
         return [str(c) for c in raw]
+
+    def _predict_probabilities(self, feature_vector: list[float]):
+        """Return class probabilities, applying _calibrator (Platt scaling) if present.
+
+        Handles two model shapes:
+        - ProductionCalibratedRF: calibration is baked into predict_proba.
+        - Raw RF from ml_training_service with _calibrator attribute set separately.
+        """
+        import numpy as np
+
+        if hasattr(self.model, "_calibrator") and self.model._calibrator is not None:
+            raw_prob = self.model.predict_proba([feature_vector])[:, 1].reshape(-1, 1)
+            p_buy = self.model._calibrator.predict_proba(raw_prob)[:, 1][0]
+            return np.array([1.0 - p_buy, p_buy])
+        return self.model.predict_proba([feature_vector])[0]
 
     def _predict_with_ml(
         self,
@@ -618,7 +677,7 @@ class MLVerdictService(VerdictService):
             feature_vector = self._vectorize_ml_features_for_model(features)
 
             # Predict
-            probabilities = self.model.predict_proba([feature_vector])[0]
+            probabilities = self._predict_probabilities(feature_vector)
             verdicts = self._verdict_classes or self._resolve_verdict_class_names()
 
             # Get verdict with highest probability
@@ -769,25 +828,11 @@ class MLVerdictService(VerdictService):
         features["has_bullish_engulfing"] = 1.0 if "bullish_engulfing" in signals else 0.0
         features["has_divergence"] = 1.0 if "bullish_divergence" in signals else 0.0
 
-        # Multi-timeframe
-        features["alignment_score"] = (
-            float(timeframe_confirmation.get("alignment_score", 0))
-            if timeframe_confirmation
-            else 0.0
-        )
+        # alignment_score removed: was hardcoded 0 in training data (train/serve skew).
+        # Reintroduce only after historical weekly data collection is implemented.
 
-        # Fundamentals
-        if fundamentals:
-            features["pe"] = (
-                float(fundamentals.get("pe", 0)) if fundamentals.get("pe") is not None else 0.0
-            )
-            features["pb"] = (
-                float(fundamentals.get("pb", 0)) if fundamentals.get("pb") is not None else 0.0
-            )
-        else:
-            features["pe"] = 0.0
-            features["pb"] = 0.0
-
+        # pe/pb removed: fetch_fundamentals() returns live ratios with no date parameter
+        # (temporal leakage). Reintroduce only with a point-in-time fundamental source.
         features["fundamental_ok"] = 1.0 if fundamental_ok else 0.0
 
         # ML ENHANCED DIP FEATURES (Phase 5): Add new dip-buying features
@@ -850,7 +895,7 @@ class MLVerdictService(VerdictService):
             features["nifty_vs_sma20_pct"] = market_features["nifty_vs_sma20_pct"]
             features["nifty_vs_sma50_pct"] = market_features["nifty_vs_sma50_pct"]
             features["india_vix"] = market_features["india_vix"]
-            features["sector_strength"] = market_features["sector_strength"]
+            # sector_strength removed: stub returns 0.0 always (dead feature).
 
             logger.debug(
                 f"Added market regime features: trend={market_features['nifty_trend']}, "
@@ -859,12 +904,10 @@ class MLVerdictService(VerdictService):
             )
         except Exception as e:
             logger.warning(f"Could not fetch market regime features: {e}, using defaults")
-            # Use default/neutral values if market data unavailable
-            features["nifty_trend"] = 0.0  # Neutral
+            features["nifty_trend"] = 0.0
             features["nifty_vs_sma20_pct"] = 0.0
             features["nifty_vs_sma50_pct"] = 0.0
-            features["india_vix"] = 20.0  # Average VIX
-            features["sector_strength"] = 0.0
+            features["india_vix"] = 20.0
 
         # TIME-BASED FEATURES (2025-11-12): Add temporal patterns
         # For live predictions, use current date unless analysis_date provided
@@ -1122,7 +1165,7 @@ class MLVerdictService(VerdictService):
 
             feature_vector = self._vectorize_ml_features_for_model(features)
 
-            probabilities = self.model.predict_proba([feature_vector])[0]
+            probabilities = self._predict_probabilities(feature_vector)
             verdicts = self._verdict_classes or self._resolve_verdict_class_names()
 
             verdict_idx = probabilities.argmax()

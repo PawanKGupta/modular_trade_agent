@@ -8,7 +8,6 @@ describe('ConfigPresets', () => {
 		const onApply = vi.fn();
 		render(<ConfigPresets onApply={onApply} />);
 
-		expect(screen.getByText(/Configuration Presets/i)).toBeInTheDocument();
 		expect(screen.getByText(/Conservative/i)).toBeInTheDocument();
 		expect(screen.getByText(/Moderate/i)).toBeInTheDocument();
 		expect(screen.getByText(/Aggressive/i)).toBeInTheDocument();

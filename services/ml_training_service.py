@@ -117,9 +117,29 @@ class MLTrainingService:
         exclude_cols = verdict_classifier_exclude_columns()
         feature_cols = select_training_feature_columns(df, exclude_cols)
 
-        # Extract features and labels
+        # Extract features and labels.
+        # Derive Label 1 directly from actual_pnl_pct to avoid threshold mismatches
+        # in the legacy label column (confirmed: training data used different thresholds
+        # than what collect_training_data.py currently contains).
+        if "actual_pnl_pct" in df.columns:
+            y = (df["actual_pnl_pct"] >= 1.0).astype(int).values
+            logger.info(
+                "   Labels derived from actual_pnl_pct >= 1.0: "
+                f"{y.sum()} positive ({y.mean():.1%}) of {len(y)} rows"
+            )
+        else:
+            # Keep labels as-is; may be int (0/1) or string ('buy'/'avoid'/'watch'/'strong_buy').
+            # np.asarray converts PyArrow-backed Series to a plain numpy array safely.
+            raw_labels = df["label"].values
+            try:
+                y = np.asarray(raw_labels, dtype=int)
+            except (ValueError, TypeError):
+                y = np.asarray(raw_labels)
+            logger.warning(
+                "   actual_pnl_pct not found — falling back to label column. "
+                "Regenerate dataset before production training."
+            )
         X = df[feature_cols].copy()
-        y = df["label"].values
 
         # Check for re-entry support (Phase 5)
         has_position_id = "position_id" in df.columns
@@ -134,8 +154,9 @@ class MLTrainingService:
             if has_sample_weight:
                 logger.info("      Using quantity-based sample weights")
 
-        # Handle missing values
-        X = X.fillna(0)  # Simple fill with 0 (can be improved)
+        # Handle missing values; convert to numpy to avoid PyArrow-backed
+        # DataFrame incompatibility with sklearn 1.8 / Pandas 3.0 indexing.
+        X = X.fillna(0).to_numpy(dtype=float)
 
         # PHASE 5 + TimeSeriesSplit: Use GroupKFold + temporal ordering
         if has_position_id and groups is not None:
@@ -146,8 +167,11 @@ class MLTrainingService:
             # Sort data by entry_date for temporal ordering
             if "entry_date" in df.columns:
                 df_sorted = df.sort_values("entry_date").reset_index(drop=True)
-                X = df_sorted[feature_cols].copy().fillna(0)
-                y = df_sorted["label"].values
+                X = df_sorted[feature_cols].copy().fillna(0).to_numpy(dtype=float)
+                if "actual_pnl_pct" in df_sorted.columns:
+                    y = (df_sorted["actual_pnl_pct"] >= 1.0).astype(int).values
+                else:
+                    y = df_sorted["label"].values
                 groups = df_sorted["position_id"].values
                 sample_weights = df_sorted["sample_weight"].values if has_sample_weight else None
                 logger.info(
@@ -307,9 +331,7 @@ class MLTrainingService:
         feature_cols_path.write_text("\n".join(feature_cols), encoding="utf-8")
         logger.info(f"   Feature columns saved to: {feature_cols_path}")
 
-        write_verdict_feature_manifest(
-            model_path, feature_cols, label_classes=label_classes
-        )
+        write_verdict_feature_manifest(model_path, feature_cols, label_classes=label_classes)
 
         return str(model_path), float(accuracy)
 
@@ -405,14 +427,23 @@ class MLTrainingService:
             random_state=random_state,
             n_jobs=-1,
         )
-        rf.fit(X_train, y_train)
-
         model = rf
         if calibrate:
-            from sklearn.calibration import CalibratedClassifierCV  # noqa: PLC0415
+            from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
 
-            model = CalibratedClassifierCV(rf, method="sigmoid", cv=3)
-            model.fit(X_train, y_train)
+            # Platt scaling on a held-out calibration set.
+            # cv="prefit" was removed in sklearn 1.4; replaced with manual sigmoid fit.
+            cal_n = max(1, int(0.15 * len(X_train)))
+            X_tr, X_cal = X_train[:-cal_n], X_train[-cal_n:]
+            y_tr, y_cal = y_train[:-cal_n], y_train[-cal_n:]
+            rf.fit(X_tr, y_tr)
+            cal_raw = rf.predict_proba(X_cal)[:, 1].reshape(-1, 1)
+            calibrator = LogisticRegression()
+            calibrator.fit(cal_raw, y_cal)
+            model = rf  # rf is used directly; calibrator applied at inference
+            model._calibrator = calibrator
+        else:
+            rf.fit(X_train, y_train)
 
         preds = model.predict(X_test) if len(X_test) else []
         acc = accuracy_score(y_test, preds) if len(y_test) else 0.0

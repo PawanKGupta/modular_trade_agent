@@ -12,7 +12,6 @@ describe('StrategyConfigSection', () => {
 		const onChange = vi.fn();
 		render(<StrategyConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/Strategy Parameters/i)).toBeInTheDocument();
 		expect(screen.getByText(/RSI Configuration/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/RSI Period/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/RSI Oversold Threshold/i)).toBeInTheDocument();

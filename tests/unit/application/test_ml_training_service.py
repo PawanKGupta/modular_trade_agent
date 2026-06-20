@@ -149,6 +149,171 @@ def test_run_training_job_incremental_second_pass(training_service, admin_user, 
     assert first_row is not None and first_row.is_active
 
 
+def test_deploy_to_canonical_copies_pkl_and_sidecars(training_service, admin_user, tmp_path: Path):
+    """deploy_to_canonical copies the versioned pkl + companion files to the canonical paths."""
+    csv_path = tmp_path / "verdict_train.csv"
+    _write_verdict_csv(csv_path)
+
+    config = TrainingJobConfig(
+        model_type="verdict_classifier",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 10},
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job = training_service.start_training_job(started_by=admin_user.id, config=config)
+    training_service.run_training_job(job.id, config)
+
+    models = training_service.model_repo.list(model_type="verdict_classifier")
+    assert models, "a model should have been persisted"
+    model = models[0]
+
+    canonical_pkl = training_service.deploy_to_canonical(model.id)
+    assert canonical_pkl.is_file(), "canonical pkl must exist after deploy"
+    assert canonical_pkl.name == "verdict_model_random_forest.pkl"
+
+    # Verify the canonical pkl content matches the source (same bytes)
+    src_pkl = Path(model.model_path)
+    assert canonical_pkl.read_bytes() == src_pkl.read_bytes()
+
+
+def test_activate_and_deploy_sets_db_flag_and_deploys(training_service, admin_user, tmp_path: Path):
+    """activate_and_deploy marks active in DB and deploys canonical artifact."""
+    csv_path = tmp_path / "verdict_train.csv"
+    _write_verdict_csv(csv_path)
+
+    # Train v1 with auto_activate so it becomes the active baseline.
+    config_v1 = TrainingJobConfig(
+        model_type="verdict_classifier",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 10},
+        auto_activate=True,
+        incremental_training=False,
+    )
+    job1 = training_service.start_training_job(started_by=admin_user.id, config=config_v1)
+    training_service.run_training_job(job1.id, config_v1)
+
+    # Train v2 without auto_activate — it stays inactive because v1 is active.
+    config_v2 = TrainingJobConfig(
+        model_type="verdict_classifier",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 12},
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job2 = training_service.start_training_job(started_by=admin_user.id, config=config_v2)
+    training_service.run_training_job(job2.id, config_v2)
+
+    models = sorted(
+        training_service.model_repo.list(model_type="verdict_classifier"), key=lambda m: m.id
+    )
+    v2 = models[-1]
+    assert not v2.is_active, "v2 should be inactive before activate_and_deploy"
+
+    updated, canonical_path = training_service.activate_and_deploy(v2.id)
+
+    assert updated.is_active
+    assert canonical_path.is_file()
+    assert canonical_path.name == "verdict_model_random_forest.pkl"
+    # v1 must have been deactivated
+    v1 = training_service.model_repo.get(models[0].id)
+    assert not v1.is_active
+
+
+def test_deploy_to_canonical_missing_artifact_raises(training_service, admin_user, tmp_path: Path):
+    """deploy_to_canonical raises FileNotFoundError when model pkl is gone from disk."""
+    csv_path = tmp_path / "verdict_train.csv"
+    _write_verdict_csv(csv_path)
+
+    config = TrainingJobConfig(
+        model_type="verdict_classifier",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 10},
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job = training_service.start_training_job(started_by=admin_user.id, config=config)
+    training_service.run_training_job(job.id, config)
+
+    models = training_service.model_repo.list(model_type="verdict_classifier")
+    model = models[0]
+
+    # Remove the pkl from disk to simulate a missing artifact.
+    Path(model.model_path).unlink()
+
+    with pytest.raises(FileNotFoundError):
+        training_service.deploy_to_canonical(model.id)
+
+
+def test_register_external_model_creates_db_record(training_service, admin_user, tmp_path: Path):
+    """register_external_model inserts a model + synthetic job row visible in the registry."""
+    # Create a fake pkl on disk (content doesn't matter for registration).
+    fake_pkl = tmp_path / "my_model.pkl"
+    fake_pkl.write_bytes(b"fake-pkl-content")
+
+    model = training_service.register_external_model(
+        registered_by=admin_user.id,
+        model_type="verdict_classifier",
+        model_path=str(fake_pkl),
+        version="v0-legacy",
+        accuracy=0.732,
+        training_data_through_date=date(2025, 11, 30),
+        notes="Phase 5 dataset",
+        auto_activate=False,
+    )
+
+    assert model.id is not None
+    assert model.version == "v0-legacy"
+    assert model.accuracy == 0.732
+    assert model.training_data_through_date == date(2025, 11, 30)
+    assert not model.is_active
+
+    # Synthetic import job must exist and be completed.
+    job = training_service.job_repo.get(model.training_job_id)
+    assert job is not None
+    assert job.status == "completed"
+    assert job.algorithm == "external_import"
+
+    # Must appear in the model list.
+    listed = training_service.model_repo.list(model_type="verdict_classifier")
+    assert any(m.id == model.id for m in listed)
+
+
+def test_register_external_model_auto_activate(training_service, admin_user, tmp_path: Path):
+    """auto_activate=True marks the model active and copies pkl to canonical path."""
+    fake_pkl = tmp_path / "models" / "verdict_classifier" / "random_forest-v1.pkl"
+    fake_pkl.parent.mkdir(parents=True)
+    fake_pkl.write_bytes(b"fake-pkl-content")
+
+    model = training_service.register_external_model(
+        registered_by=admin_user.id,
+        model_type="verdict_classifier",
+        model_path=str(fake_pkl),
+        version="v1-script",
+        auto_activate=True,
+    )
+
+    assert model.is_active
+    canonical = training_service.artifact_dir.parent / "verdict_model_random_forest.pkl"
+    assert canonical.is_file()
+    assert canonical.read_bytes() == b"fake-pkl-content"
+
+
+def test_register_external_model_missing_file_raises(training_service, admin_user, tmp_path: Path):
+    """register_external_model raises FileNotFoundError when the pkl is absent."""
+    with pytest.raises(FileNotFoundError):
+        training_service.register_external_model(
+            registered_by=admin_user.id,
+            model_type="verdict_classifier",
+            model_path=str(tmp_path / "ghost.pkl"),
+            version="v-ghost",
+        )
+
+
 def test_run_training_job_failure_updates_status(training_service, admin_user, tmp_path: Path):
     csv_path = tmp_path / "verdict_train.csv"
     _write_verdict_csv(csv_path)

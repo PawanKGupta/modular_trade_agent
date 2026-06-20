@@ -17,6 +17,7 @@ services:
       - trading_data:/app/data
       - trading_logs:/app/logs
       - paper_trading_data:/app/paper_trading  # Paper trading data persistence
+      - trading_models:/app/models             # ML model artifacts — persists activated models across restarts
 
     # Production logging
     logging:
@@ -51,4 +52,6 @@ volumes:
   trading_logs:
     driver: local
   paper_trading_data:
+    driver: local
+  trading_models:
     driver: local

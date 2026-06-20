@@ -36,6 +36,7 @@ import { HelpKotakApiPage } from './routes/help/HelpKotakApiPage';
 import { HelpConnectKotakPage } from './routes/help/HelpConnectKotakPage';
 import { HelpBillingPage } from './routes/help/HelpBillingPage';
 import { HelpFaqPage } from './routes/help/HelpFaqPage';
+import { HelpMLPage } from './routes/help/HelpMLPage';
 
 export function createAppRouter() {
 	return createBrowserRouter([
@@ -57,6 +58,7 @@ export function createAppRouter() {
 				{ path: 'kotak-api', element: <Navigate to="/help/broker-api" replace /> },
 				{ path: 'connect-kotak', element: <Navigate to="/help/connect-broker" replace /> },
 				{ path: 'billing', element: <HelpBillingPage /> },
+				{ path: 'ml-signals', element: <HelpMLPage /> },
 				{ path: 'faq', element: <HelpFaqPage /> },
 			],
 		},

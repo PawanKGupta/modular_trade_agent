@@ -1,6 +1,6 @@
 # ML Integration - Complete Guide
 
-**Last Updated:** 2026-05-08
+**Last Updated:** 2026-06-20
 **Status:** Production Ready
 
 ---
@@ -47,11 +47,13 @@ Integrate AI/ML capabilities into the trading agent system to enhance verdict pr
 ### Training via Web UI (Recommended)
 
 1. **Access ML Training Page**: Navigate to `/dashboard/admin/ml` (admin only)
-2. **Start Training Job**:
+2. **Start Training Job** (collapsed by default — click "New Training Job" to expand):
    - Configure training parameters
    - Select model type (Random Forest, XGBoost)
    - Start training job
-3. **Monitor Progress**: View training status and job history in the UI
+3. **Monitor Progress**: View training status and job history in the "Recent Training Jobs" section
+4. **Activate**: Click "Activate" on a model row — this both sets it active in the DB **and** copies the artifact to the canonical runtime path so live analysis picks it up immediately
+5. **Register an externally-trained model** (bottom of the page, collapsed by default): use "Register Existing Model" to import a `.pkl` trained outside the UI (e.g. via `train_production_model.py`)
 
 ### Training via API
 
@@ -326,6 +328,31 @@ pip install xgboost
 
 **Production deployment:** The repo ships **`models/verdict_model_random_forest.pkl`** only. Price models are **not** committed by default (`*.pkl` gitignored except tracked verdict files). Training writes `models/price_model_<type>_<target>.pkl`; runtime also accepts the canonical name `models/price_model_random_forest.pkl` (copy/symlink after train). `utils.ml_price_availability` discovers active `price_regressor` rows, the canonical file, or any `models/price_model_*.pkl`. If `ml_price_enabled=True` but no file exists on the API host, analysis **falls back to rule-based** target/stop (warning in logs). Trading Config API exposes `ml_price_models_available`; enabling the toggle via PUT returns **400** until a model file is present. **Immediate ops** for misconfigured users: deploy a trained `.pkl` to both host and `tradeagent-api` image, or `UPDATE user_trading_config SET ml_price_enabled = false WHERE ml_price_enabled = true;`
 
+**Canonical path deploy (`deploy_to_canonical` / `activate_and_deploy`):** Every admin training job stores versioned artifacts under `models/verdict_classifier/random_forest-vN.pkl`. `MLVerdictService` always loads from the **canonical path** `models/verdict_model_random_forest.pkl`. When you activate a model (via UI or `POST /api/v1/admin/ml/models/{id}/activate`), `MLTrainingService.activate_and_deploy()` sets the DB row active **and** calls `deploy_to_canonical()` which copies the versioned pkl (plus `.verdict_features.json` and `_features.txt` sidecars) to the canonical path. This means activating via the UI immediately applies the model to live analysis — no manual file copy needed. If the versioned artifact is missing from disk, the activate endpoint returns HTTP 422.
+
+**Docker: persistent models volume (`trading_models`):** In Docker Compose deployments the canonical `models/` directory is backed by a named volume (`trading_models:/app/models`). This means the deployed canonical pkl **survives container restarts and image rebuilds** — you do not need to re-activate after a `docker compose up --build`. The volume is declared in both `docker/docker-compose.yml` and `docker/docker-compose.prod.yml`.
+
+**Docker: auto-seed on first boot:** When a fresh `trading_models` volume is mounted (empty directory), the API container entrypoint (`docker/api-entrypoint.sh`) automatically copies the baseline models baked into the image from `/app/models_default/` to `/app/models/` before starting the server. This ensures a working verdict model is available even on a clean first deploy without a pre-existing volume. The bake step runs during `docker build` (in `docker/Dockerfile.api`): `RUN cp -r /app/models /app/models_default`. If the volume already contains files, seeding is skipped.
+
+**Registering an externally-trained model (`register_external_model`):** If a model was trained outside the UI (e.g. via `train_production_model.py` run locally and then copied into the container), use `POST /api/v1/admin/ml/models/register` to make it visible in the registry:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/admin/ml/models/register \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_type": "verdict_classifier",
+    "model_path": "/app/models/verdict_model_random_forest.pkl",
+    "version": "v0-legacy",
+    "accuracy": 0.732,
+    "training_data_through_date": "2025-11-30",
+    "notes": "Phase 5 dataset, walk-forward validated",
+    "auto_activate": true
+  }'
+```
+
+`model_path` must be the **absolute path inside the container**. With `auto_activate: true` the model is immediately set active and deployed to the canonical path. The endpoint creates a synthetic `external_import` training job row to satisfy the DB foreign key, so the model appears in the "Model Versions" table alongside normally-trained ones.
+
 **Observation fields (`verdict` vs `rule_verdict`):** In `AnalysisService.analyze_ticker` results, `verdict` is the **final actionable** label (after ML/threshold/combine logic inside `MLVerdictService` when enabled, then candle-quality downgrade). **`rule_verdict`** is the **rules-only baseline** aligned with `get_last_ml_prediction()["rule_verdict"]` when ML produced metadata; if ML did not run, `rule_verdict` matches `verdict`. Use `rule_verdict` for monitoring/Telegram “what rules alone said” comparisons, not as a synonym for final.
 
 **Verdict feature contract (train/serve):** `services.ml_training_service.MLTrainingService.train_verdict_classifier` writes **`{stem}.verdict_features.json`** next to the pickled classifier (alongside `{stem}_features.txt`). At load, `MLVerdictService` **prefers this manifest**: ordered `feature_names`, schema version `artifact` / `feature_schema_version`, and a check against sklearn `n_features_in_` when present. Missing or incompatible manifests fall back to legacy sidecars / `feature_names_in_`; mismatch disables ML verdict for that path. Admin jobs record `artifacts.verdict_features_manifest` in `.meta.json` when the file exists.
@@ -544,11 +571,23 @@ python scripts/bulk_backtest_all_stocks.py && python scripts/collect_training_da
 
 ### Issue: No ML verdicts in Telegram
 
-**Solution:** Check if model file exists:
+**Solution:** Check if the canonical model file exists inside the container:
 ```bash
-ls models/verdict_model_random_forest.pkl
+docker exec tradeagent-api ls -lh /app/models/verdict_model_random_forest.pkl
 ```
-If not, run training first.
+If missing:
+- In Docker: check the `trading_models` volume — it may need seeding. Restart the container (entrypoint auto-seeds from `/app/models_default` if the volume is empty).
+- Activate a model via the ML Training UI — this copies the versioned artifact to the canonical path.
+- Or register an existing model via `POST /admin/ml/models/register` with `auto_activate: true`.
+
+### Issue: Model activated in UI but live analysis still uses old model
+
+**Cause (pre-fix):** Activating only set a DB flag; the canonical `.pkl` file was unchanged.
+**Current behaviour:** `activate_and_deploy()` copies the versioned artifact to `models/verdict_model_random_forest.pkl` on every activation. If you see stale predictions, confirm the copy happened:
+```bash
+docker exec tradeagent-api ls -lh /app/models/verdict_model_random_forest.pkl
+```
+If the timestamp didn't update, the artifact may have been missing from disk — check for a 422 response from the activate endpoint.
 
 ### Issue: ML model not loading
 

@@ -7,6 +7,7 @@ import {
 	HelpPage,
 	HelpParagraph,
 	HelpSection,
+	HelpAppLink,
 } from './HelpProse';
 import { HELP_SLUG } from './helpNav';
 
@@ -50,6 +51,18 @@ export function HelpHomePage() {
 					On live broker mode, Rebound may invoice a <HelpEmphasis>performance fee</HelpEmphasis> each month — a
 					percentage of net realized profit after losses are recovered. See{' '}
 					<HelpInternalLink slug="billing">Performance fees</HelpInternalLink> for details.
+				</HelpParagraph>
+			</HelpSection>
+
+			<HelpSection title="AI-powered analysis">
+				<HelpParagraph>
+					Every stock that passes the rule-based scanner is also evaluated by a trained{' '}
+					<HelpEmphasis>machine-learning classifier</HelpEmphasis>. Signals only reach your{' '}
+					<HelpAppLink to="/dashboard/buying-zone">Buying Zone</HelpAppLink> when{' '}
+					both the rules <HelpEmphasis>and</HelpEmphasis> the model agree — reducing noise and
+					surfacing higher-confidence ideas. Each signal shows an ML confidence percentage so you
+					can prioritise accordingly. Learn more in{' '}
+					<HelpInternalLink slug={HELP_SLUG.mlSignals}>ML-powered signals</HelpInternalLink>.
 				</HelpParagraph>
 			</HelpSection>
 

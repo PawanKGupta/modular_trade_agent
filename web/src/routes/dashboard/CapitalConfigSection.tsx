@@ -14,9 +14,7 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 	const paperCapitalChange = config.paper_trading_initial_capital - (defaultConfig.paper_trading_initial_capital ?? 300000);
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Capital & Position Management</h2>
-
+		<>
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
 				<div>
 					<label htmlFor="user_capital" className="block text-xs sm:text-sm mb-1">
@@ -108,6 +106,6 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 					</div>
 				</div>
 			)}
-		</div>
+		</>
 	);
 }

@@ -6,8 +6,7 @@ interface ConfigPresetsProps {
 
 export function ConfigPresets({ onApply }: ConfigPresetsProps) {
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Configuration Presets</h2>
+		<>
 			<p className="text-xs sm:text-sm text-[var(--muted)] mb-3 sm:mb-4">
 				Apply predefined configuration templates. This will update your settings but won't save until you click "Save Changes".
 			</p>
@@ -28,6 +27,6 @@ export function ConfigPresets({ onApply }: ConfigPresetsProps) {
 					</div>
 				))}
 			</div>
-		</div>
+		</>
 	);
 }

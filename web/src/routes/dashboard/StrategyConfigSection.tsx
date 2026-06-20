@@ -10,9 +10,7 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 	const isDefault = (key: keyof TradingConfig) => config[key] === defaultConfig[key];
 
 	return (
-		<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6">
-			<h2 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Strategy Parameters</h2>
-
+		<>
 			{/* RSI Configuration */}
 			<div className="mb-4 sm:mb-6">
 				<h3 className="text-xs sm:text-sm font-medium mb-2 sm:mb-3 text-[var(--muted)]">RSI Configuration</h3>
@@ -229,6 +227,6 @@ export function StrategyConfigSection({ config, defaultConfig, onChange }: Strat
 					</div>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }

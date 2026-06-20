@@ -120,6 +120,30 @@ Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md
 
 **Notable changes:** User-data-security schema and session model; service status notifications default off; paper/live trading parity fixes; email domain allowlist for new signups.
 
+## ML Model Persistence (Docker)
+
+The API container mounts a named Docker volume for ML model files:
+
+```
+trading_models:/app/models
+```
+
+This volume is declared in both `docker/docker-compose.yml` and `docker/docker-compose.prod.yml`. Key properties:
+
+- **Survives restarts and rebuilds**: The canonical verdict model (`models/verdict_model_random_forest.pkl`) is not lost when you `docker compose up --build` or restart the container.
+- **Auto-seeded on first boot**: If the volume is empty (fresh install), the entrypoint copies the baseline model baked into the image (`/app/models_default/`) into `/app/models/` before the server starts. Subsequent boots skip this step.
+- **Activated models persist**: When you activate a model in the ML Training UI, the artifact is written to this volume and remains active across restarts.
+
+If you ever need to reset to the image's bundled baseline model:
+```bash
+# Stop the stack, remove the volume, then restart (auto-seed re-runs)
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+docker volume rm trading_models
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+```
+
+See [ML Complete Guide](../architecture/ML_COMPLETE_GUIDE.md) for full detail on model activation, registration, and the canonical path deploy.
+
 ## 🔗 Related Documentation
 
 - [Docker README](../../docker/README.md) - Docker-specific documentation

@@ -71,7 +71,8 @@ def test_ml_verdict_service():
     assert features["rsi_10"] == 28.5, "RSI value should match"
     assert "has_hammer" in features, "Hammer pattern should be in features"
     assert features["has_hammer"] == 1.0, "Hammer should be True"
-    assert features["pe"] == 15.0, "PE should match"
+    # pe/pb dropped from features (point-in-time leakage) — assert they are absent or None
+    assert features.get("pe") is None, "PE should be None (dropped due to temporal leakage)"
     logger.info("? Test 3 PASSED: Feature extraction")
 
     # Test 4: Fallback to rule-based

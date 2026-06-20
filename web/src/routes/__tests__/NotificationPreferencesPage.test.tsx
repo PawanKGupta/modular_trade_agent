@@ -133,7 +133,7 @@ describe('NotificationPreferencesPage', () => {
 		});
 
 		// Enable Email
-		const emailCheckbox = screen.getByLabelText(/Email/i) as HTMLInputElement;
+		const emailCheckbox = screen.getByLabelText(/^Email/) as HTMLInputElement;
 		fireEvent.click(emailCheckbox);
 
 		await waitFor(() => {
@@ -169,7 +169,7 @@ describe('NotificationPreferencesPage', () => {
 		});
 	});
 
-	it('disables save button when no changes', async () => {
+	it('does not display save button when no changes', async () => {
 		renderPage();
 
 		// Wait for content to load
@@ -177,11 +177,8 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/Notification Preferences/i)).toBeInTheDocument();
 		});
 
-		// Wait for save button
-		const saveButton = await waitFor(() => {
-			return screen.getByRole('button', { name: /Save Preferences/i });
-		});
-		expect(saveButton).toBeDisabled();
+		// Save button should not be in the DOM when there are no changes
+		expect(screen.queryByRole('button', { name: /Save Preferences/i })).not.toBeInTheDocument();
 	});
 
 	it('shows error message on save failure', async () => {
@@ -235,7 +232,7 @@ describe('NotificationPreferencesPage', () => {
 	});
 
 	it('allows setting quiet hours', async () => {
-		renderPage();
+		const { container } = renderPage();
 
 		await waitFor(() => {
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
@@ -247,10 +244,9 @@ describe('NotificationPreferencesPage', () => {
 			expect(screen.getByText(/End Time/i)).toBeInTheDocument();
 		});
 
-		// Find inputs by searching near the label text
-		const quietHoursSection = screen.getByText(/Quiet Hours/i).closest('section');
-		const timeInputs = quietHoursSection?.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
-		expect(timeInputs?.length).toBeGreaterThanOrEqual(2);
+		// Find inputs directly by type since they are the only time inputs on the page
+		const timeInputs = container.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
+		expect(timeInputs.length).toBeGreaterThanOrEqual(2);
 
 		const startTimeInput = timeInputs[0];
 		const endTimeInput = timeInputs[1];
@@ -271,7 +267,7 @@ describe('NotificationPreferencesPage', () => {
 		const notificationApi = await import('@/api/notification-preferences');
 		vi.mocked(notificationApi.getNotificationPreferences).mockResolvedValue(prefsWithQuietHours);
 
-		renderPage();
+		const { container } = renderPage();
 
 		await waitFor(() => {
 			expect(screen.getByText(/Quiet Hours/i)).toBeInTheDocument();
@@ -282,9 +278,8 @@ describe('NotificationPreferencesPage', () => {
 		});
 
 		// Find the inputs before clearing to verify they have values
-		const quietHoursSection = screen.getByText(/Quiet Hours/i).closest('section');
-		const timeInputsBefore = quietHoursSection?.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
-		expect(timeInputsBefore?.length).toBeGreaterThanOrEqual(2);
+		const timeInputsBefore = container.querySelectorAll('input[type="time"]') as NodeListOf<HTMLInputElement>;
+		expect(timeInputsBefore.length).toBeGreaterThanOrEqual(2);
 		expect(timeInputsBefore[0].value).toBe('22:00');
 		expect(timeInputsBefore[1].value).toBe('08:00');
 

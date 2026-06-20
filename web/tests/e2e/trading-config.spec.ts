@@ -32,6 +32,9 @@ test.describe('Trading Configuration Page', () => {
 		await authenticatedPage.goto('/dashboard/trading-config');
 		await authenticatedPage.waitForLoadState('domcontentloaded');
 
+		// Expand strategy section
+		await authenticatedPage.click('#tc-strategy-header');
+
 		// Find and modify RSI period
 		const rsiPeriodInput = authenticatedPage.getByLabel(/RSI Period/i).first();
 		await rsiPeriodInput.clear();
@@ -50,6 +53,9 @@ test.describe('Trading Configuration Page', () => {
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
 		await authenticatedPage.waitForTimeout(500);
+
+		// Expand strategy section
+		await authenticatedPage.click('#tc-strategy-header');
 
 		// Modify a field
 		const rsiPeriodInput = authenticatedPage.getByLabel(/RSI Period/i).first();
@@ -97,6 +103,9 @@ test.describe('Trading Configuration Page', () => {
 		await authenticatedPage.goto('/dashboard/trading-config');
 		await authenticatedPage.waitForLoadState('domcontentloaded');
 
+		// Expand presets section
+		await authenticatedPage.click('#tc-presets-header');
+
 		// Find and click a preset button
 		const presetButtons = authenticatedPage.getByRole('button', { name: /Apply Preset/i });
 		const firstPreset = presetButtons.first();
@@ -115,6 +124,9 @@ test.describe('Trading Configuration Page', () => {
 		// Wait for page to finish loading (check for loading text to disappear)
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
 		await authenticatedPage.waitForTimeout(500);
+
+		// Expand strategy section
+		await authenticatedPage.click('#tc-strategy-header');
 
 		// Use ID directly and wait for it to be visible
 		const chartQualityCheckbox = authenticatedPage.locator('#chart_quality_enabled');
@@ -142,6 +154,9 @@ test.describe('Trading Configuration Page', () => {
 		// Wait for page to finish loading
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
 		await authenticatedPage.waitForTimeout(500);
+
+		// Expand behavior section
+		await authenticatedPage.click('#tc-behavior-header');
 
 		// Use ID directly and wait for it to be visible
 		const newsSentimentCheckbox = authenticatedPage.locator('#news_sentiment_enabled');
@@ -173,6 +188,9 @@ test.describe('Trading Configuration Page', () => {
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
 		await authenticatedPage.waitForTimeout(500);
 
+		// Expand behavior section
+		await authenticatedPage.click('#tc-behavior-header');
+
 		// Use ID directly and wait for it to be visible
 		const mlCheckbox = authenticatedPage.locator('#ml_enabled');
 		await expect(mlCheckbox).toBeVisible({ timeout: 10000 });
@@ -202,6 +220,9 @@ test.describe('Trading Configuration Page', () => {
 		await authenticatedPage.waitForSelector('text=Loading trading configuration', { state: 'hidden', timeout: 10000 }).catch(() => {});
 		await authenticatedPage.waitForTimeout(500);
 
+		// Expand strategy section
+		await authenticatedPage.click('#tc-strategy-header');
+
 		// Modify RSI period
 		const rsiPeriodInput = authenticatedPage.getByLabel(/RSI Period/i).first();
 		await expect(rsiPeriodInput).toBeVisible({ timeout: 10000 });
@@ -209,6 +230,9 @@ test.describe('Trading Configuration Page', () => {
 		await authenticatedPage.waitForTimeout(200);
 		await rsiPeriodInput.clear();
 		await rsiPeriodInput.fill('15');
+
+		// Expand capital section
+		await authenticatedPage.click('#tc-capital-header');
 
 		// Modify capital
 		const capitalInput = authenticatedPage.getByLabel(/Capital per Trade/i).first();
@@ -255,6 +279,9 @@ test.describe('Trading Configuration Page', () => {
 
 	test('cancels unsaved changes', async ({ authenticatedPage }) => {
 		await authenticatedPage.goto('/dashboard/trading-config');
+
+		// Expand strategy section
+		await authenticatedPage.click('#tc-strategy-header');
 
 		// Modify a field
 		const rsiPeriodInput = authenticatedPage.getByLabel(/RSI Period/i);

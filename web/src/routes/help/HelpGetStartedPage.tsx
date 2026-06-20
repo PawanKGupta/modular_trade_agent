@@ -106,12 +106,39 @@ export function HelpGetStartedPage() {
 				</HelpParagraph>
 			</HelpSection>
 
-			<HelpSection title="Step 6 — Billing (live users)">
+			<HelpSection title="Step 6 — ML-powered signals (optional)">
+				<HelpParagraph>
+					Rebound ships with a pre-trained machine-learning classifier that runs on every analysis
+					and filters signals by confidence. It is on by default — no setup needed.
+				</HelpParagraph>
+				<HelpList
+					items={[
+						<>
+							Open <HelpAppLink to="/dashboard/trading-config">Trading Config</HelpAppLink> →{' '}
+							<HelpEmphasis>ML Configuration</HelpEmphasis> to see whether{' '}
+							<HelpEmphasis>Enable ML Predictions</HelpEmphasis> is on.
+						</>,
+						<>
+							In <HelpAppLink to="/dashboard/buying-zone">Buying Zone</HelpAppLink>, enable the{' '}
+							<HelpEmphasis>ML Verdict</HelpEmphasis> and{' '}
+							<HelpEmphasis>ML Confidence</HelpEmphasis> columns via the column selector to see
+							the AI score alongside each signal.
+						</>,
+						<>
+							Read <HelpInternalLink slug={HELP_SLUG.mlSignals}>ML-powered signals</HelpInternalLink>{' '}
+							to understand what the confidence threshold means and how to tune it.
+						</>,
+					]}
+				/>
+			</HelpSection>
+
+			<HelpSection title="Step 7 — Billing (live users)">
 				<HelpParagraph>
 					Read <HelpInternalLink slug={HELP_SLUG.billing}>Performance fees</HelpInternalLink> and keep{' '}
 					<HelpAppLink to="/dashboard/billing">Billing</HelpAppLink> invoices paid on time.
 				</HelpParagraph>
 			</HelpSection>
+
 		</HelpPage>
 	);
 }

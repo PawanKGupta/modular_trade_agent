@@ -344,6 +344,50 @@ class TestConfidenceAwareCombination:
         # Verify ML prediction was not called
         assert not hasattr(service, "_ml_prediction_info") or service._ml_prediction_info is None
 
+    def test_ml_prediction_cache_does_not_leak_across_tickers(self, service):
+        """
+        Regression: the service instance is reused across tickers in a batch.
+
+        A ticker that hits an early hard-filter return (e.g. fundamental-avoid)
+        must NOT report the PREVIOUS ticker's cached ML prediction. determine_verdict
+        resets the cache at entry, so get_last_ml_prediction() returns None here.
+        """
+        # Ticker A: ML runs and caches a prediction.
+        service._predict_with_ml = Mock(return_value=("buy", 0.80, {"buy": 0.80}))
+        service.determine_verdict(
+            signals=["volume_spike"],
+            rsi_value=25.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True,
+        )
+        assert service.get_last_ml_prediction() is not None  # A cached
+
+        # Ticker B: fundamental-avoid hard filter returns before ML runs.
+        verdict_b, _ = service.determine_verdict(
+            signals=["volume_spike"],
+            rsi_value=25.0,
+            is_above_ema200=True,
+            vol_ok=True,
+            vol_strong=False,
+            fundamental_ok=True,
+            timeframe_confirmation=None,
+            news_sentiment=None,
+            chart_quality_passed=True,
+            fundamental_assessment={
+                "fundamental_avoid": True,
+                "fundamental_reason": "loss_making_expensive",
+            },
+        )
+
+        assert verdict_b == "avoid"
+        # Must NOT carry ticker A's stale prediction.
+        assert service.get_last_ml_prediction() is None
+
     def test_confidence_aware_edge_cases(self, service):
         """Test edge cases in confidence-aware combination"""
         # Test exact 70% threshold

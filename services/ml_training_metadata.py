@@ -76,7 +76,6 @@ VERDICT_AND_REGRESSOR_METADATA: tuple[str, ...] = (
     "fill_price",
     "exit_reason",
     "max_drawdown_pct",
-    "is_reentry",
 )
 
 DIP_EPISODE_METADATA: tuple[str, ...] = (
