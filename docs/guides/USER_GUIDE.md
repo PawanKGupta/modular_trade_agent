@@ -47,8 +47,11 @@ For auth pages and profile settings, see the [Complete UI Guide — Authenticati
   - RSI, EMA9, EMA200 values
   - Distance to EMA9
   - Backtest scores
-  - ML verdicts and confidence
+  - **ML Verdict** — the classifier's label (`buy`, `watch`, `avoid`)
+  - **ML Confidence** — probability score 0–1 (e.g. 0.74 = 74 % confident)
   - Buy range, target, stop loss
+
+**ML signal lifecycle:** Signals are automatically expired when a re-analysis run downgrades a stock's verdict to `watch` or `avoid`. You never need to manually clean up stale signals — the buying zone always reflects the current combined (rules + ML) opinion.
 
 **Actions:**
 - **Reject Signal:** Click reject button to mark signal as rejected
@@ -340,10 +343,11 @@ Service events include:
 - See [UI Guide — Admin Billing](UI_GUIDE.md#15-admin-billing-dashboardadminbilling--admin-only)
 
 #### ML Training
-- View ML training status
-- Start/stop training jobs
-- View training history
-- Monitor model performance
+- View ML training status and job history
+- Start new training jobs (collapsed by default — click "New Training Job" to expand)
+- Activate a model version — copies the artifact to the runtime path so live analysis uses it immediately
+- Register an externally-trained model via "Register Existing Model" at the bottom of the page
+- Monitor model accuracy and training-data watermark per version
 
 #### Logs
 - View system logs
@@ -413,11 +417,43 @@ Service events include:
    - Reject weak signals
    - Monitor approved signals
 
+## ML-Powered Signals
+
+Rebound uses a trained machine-learning classifier (Random Forest / XGBoost) to score every stock that passes the rule-based scanner. The two verdicts are combined so a signal only reaches Buying Zone when **both rules and the model agree it is a buy**.
+
+### What you see in Buying Zone
+
+| Column | What it means |
+|--------|---------------|
+| ML Verdict | `buy` / `watch` / `avoid` from the classifier |
+| ML Confidence | Probability 0–1 the model assigns to a buy (e.g. 0.74 = 74 %) |
+
+Enable these columns via the column selector if they are hidden.
+
+### Tuning ML in Trading Config
+
+Go to **Trading Config → ML Configuration**:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| Enable ML Predictions | On | Turn the classifier on or off |
+| ML Confidence Threshold | 0.6 | Minimum confidence to count the ML verdict |
+| Combine ML with Rule-Based Logic | On | Both must agree for a buy signal |
+| Use ML for target / stop | Off | Optional second model for price levels |
+
+**Raising the threshold** (e.g. to 0.75) produces fewer but higher-conviction signals. **Lowering it** (e.g. to 0.5) lets more signals through with slightly less ML certainty.
+
+### Signal lifecycle with ML
+
+When a re-analysis run returns `watch` or `avoid` for a stock already in Buying Zone, its signal is automatically expired — removed without any manual action. The buying zone always shows the current combined (rules + ML) opinion.
+
+---
+
 ## Tips and Best Practices
 
 ### Signal Analysis
 - **High Backtest Score:** Signals with >60 backtest score are more reliable
-- **ML Confidence:** ML confidence >0.7 indicates strong signal
+- **ML Confidence:** Confidence ≥ 0.6 has cleared the threshold; ≥ 0.75 is high-conviction
 - **Distance to EMA9:** Closer distance (<5%) means faster target achievement
 - **Volume:** Higher volume ratio indicates stronger participation
 

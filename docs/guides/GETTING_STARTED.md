@@ -180,7 +180,23 @@ Before live trading, test with paper trading:
 1. Navigate to **Buying Zone** to see trading signals
 2. Signals are generated based on your strategy configuration
 
-### 5. Bulk backtest (CLI, optional)
+### 5. Check ML predictions
+
+Rebound ships with a pre-trained ML classifier that runs on every analysis run and adds a confidence score to each signal. It is **on by default** — nothing to configure for standard usage.
+
+**Verify it is active:**
+1. Go to **Trading Config → ML Configuration**
+2. Confirm **Enable ML Predictions** is checked
+3. Note the **ML Confidence Threshold** (default 0.6 — signals must score ≥ 60 % to be promoted)
+
+**See ML scores in Buying Zone:**
+- Open **Buying Zone** and use the column selector to enable **ML Verdict** and **ML Confidence** columns
+- Signals show both the rule-based assessment and the model's confidence side-by-side
+- High-confidence signals (≥ 0.75) are the strongest combined picks
+
+**Want to retrain on your own trade history?** Go to **Admin → ML Training** after building up trade records. See [ML Complete Guide](../architecture/ML_COMPLETE_GUIDE.md) for details.
+
+### 6. Bulk backtest (CLI, optional)
 
 For ChartInk list analysis with integrated backtest scoring:
 

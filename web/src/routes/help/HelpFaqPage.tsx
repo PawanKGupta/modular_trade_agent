@@ -67,6 +67,49 @@ const FAQ_ITEMS: { q: string; a: ReactNode }[] = [
 		),
 	},
 	{
+		q: 'What does the ML confidence percentage mean?',
+		a: (
+			<>
+				Each signal in Buying Zone shows an <HelpEmphasis>ML Confidence</HelpEmphasis> percentage — the
+				probability the trained classifier assigns to the stock being a good buy at this point. A higher
+				percentage means the model is more certain. Signals only appear when confidence clears the
+				configured threshold (default 60 %). You can tune this under{' '}
+				<HelpAppLink to="/dashboard/trading-config">Trading Config → ML Configuration</HelpAppLink>.
+			</>
+		),
+	},
+	{
+		q: 'Does the ML model replace the rule-based analysis?',
+		a: (
+			<>
+				No — it works <HelpEmphasis>alongside</HelpEmphasis> it. By default both must agree (Combine ML with
+				Rule-Based Logic is on). If you disable that option the ML verdict alone decides, but most users
+				leave it on for an extra layer of filtering.
+			</>
+		),
+	},
+	{
+		q: 'What happens if a signal\'s verdict changes after I see it?',
+		a: (
+			<>
+				If re-analysis produces a <HelpEmphasis>watch</HelpEmphasis> or{' '}
+				<HelpEmphasis>avoid</HelpEmphasis> verdict for a stock already in your Buying Zone, the signal is
+				automatically expired and removed. Your buying zone always reflects the current view of both the
+				rules and the model — you never need to manually clean up stale signals.
+			</>
+		),
+	},
+	{
+		q: 'Can I turn off ML predictions?',
+		a: (
+			<>
+				Yes. In <HelpAppLink to="/dashboard/trading-config">Trading Config</HelpAppLink> under{' '}
+				<HelpEmphasis>ML Configuration</HelpEmphasis>, uncheck <HelpEmphasis>Enable ML Predictions</HelpEmphasis>.
+				The system falls back to rule-based signals only — nothing else changes.
+			</>
+		),
+	},
+	{
 		q: 'Will I always make money?',
 		a: 'No. Trading involves risk of loss. Rebound does not guarantee profits.',
 	},
