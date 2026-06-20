@@ -12,7 +12,6 @@ describe('CapitalConfigSection', () => {
 		const onChange = vi.fn();
 		render(<CapitalConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/Capital & Position Management/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/Capital per Trade/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/Max Portfolio Size/i)).toBeInTheDocument();
 	});

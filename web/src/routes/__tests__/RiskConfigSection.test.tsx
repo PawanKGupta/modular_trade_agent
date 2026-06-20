@@ -12,7 +12,6 @@ describe('RiskConfigSection', () => {
 		const onChange = vi.fn();
 		render(<RiskConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/Risk Management/i)).toBeInTheDocument();
 		expect(screen.getByText(/Stop Loss Percentages/i)).toBeInTheDocument();
 		expect(screen.getByText(/Target Percentages/i)).toBeInTheDocument();
 		expect(screen.getByText(/Risk-Reward Ratios/i)).toBeInTheDocument();

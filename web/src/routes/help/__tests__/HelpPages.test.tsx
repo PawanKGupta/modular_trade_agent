@@ -7,6 +7,7 @@ import { HelpKotakApiPage } from '../HelpKotakApiPage';
 import { HelpConnectKotakPage } from '../HelpConnectKotakPage';
 import { HelpBillingPage } from '../HelpBillingPage';
 import { HelpFaqPage } from '../HelpFaqPage';
+import { HelpMLPage } from '../HelpMLPage';
 import { HELP_LEGACY_SLUG, HELP_NAV_ITEMS, HELP_SLUG } from '../helpNav';
 import { withProviders } from '@/test/utils';
 
@@ -17,6 +18,7 @@ const HELP_ROUTES: { path: string; name: RegExp }[] = [
 	{ path: '/help/connect-broker', name: /connect your broker/i },
 	{ path: '/help/billing', name: /performance fees/i },
 	{ path: '/help/faq', name: /^faq$/i },
+	{ path: '/help/ml-signals', name: /ML-powered signals/i },
 ];
 
 function renderHelpAt(path: string) {
@@ -31,6 +33,7 @@ function renderHelpAt(path: string) {
 						<Route path="connect-broker" element={<HelpConnectKotakPage />} />
 						<Route path="billing" element={<HelpBillingPage />} />
 						<Route path="faq" element={<HelpFaqPage />} />
+						<Route path="ml-signals" element={<HelpMLPage />} />
 					</Route>
 				</Routes>
 			</MemoryRouter>,
@@ -97,5 +100,12 @@ describe('Help center', () => {
 		expect(HELP_SLUG.brokerApi).toBe('broker-api');
 		expect(HELP_SLUG.connectBroker).toBe('connect-broker');
 		expect(HELP_LEGACY_SLUG.kotakApi).toBe('kotak-api');
+	});
+
+	it('renders ML-powered signals help page', () => {
+		renderHelpAt('/help/ml-signals');
+		expect(screen.getByRole('heading', { name: /ML-powered signals/i })).toBeInTheDocument();
+		expect(screen.getByText(/What the ML engine does/i)).toBeInTheDocument();
+		expect(screen.getByText(/Walk-forward validated/i)).toBeInTheDocument();
 	});
 });

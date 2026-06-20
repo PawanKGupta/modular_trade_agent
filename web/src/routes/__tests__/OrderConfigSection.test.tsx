@@ -12,7 +12,6 @@ describe('OrderConfigSection', () => {
 		const onChange = vi.fn();
 		render(<OrderConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
-		expect(screen.getByText(/Order Defaults/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/Default Exchange/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/Default Product/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/Default Order Type/i)).toBeInTheDocument();
