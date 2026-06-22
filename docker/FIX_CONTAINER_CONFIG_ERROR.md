@@ -14,19 +14,21 @@ This is a known bug in Docker Compose v1.29.2 when recreating containers.
 Run these commands on your Ubuntu server:
 
 ```bash
-cd ~/modular_trade_agent/docker
+cd ~/rebound   # or wherever your compose files live
 
 # Stop containers WITHOUT removing volumes
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 
 # Remove the problematic containers (keeps volumes)
 docker rm -f tradeagent-api tradeagent-web 2>/dev/null || true
 
-# Optional: Remove old images to force rebuild
-docker rmi docker_api-server docker_web-frontend 2>/dev/null || true
+# Optional: Remove old images so a fresh pull is used
+docker rmi ghcr.io/pawankgupta/modular_trade_agent/api ghcr.io/pawankgupta/modular_trade_agent/web 2>/dev/null || true
 
-# Rebuild and start fresh (volumes are preserved)
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Pull latest image and start fresh (volumes are preserved)
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## Alternative: Fix Only One Container
@@ -53,18 +55,19 @@ If you already ran `docker-compose down` and lost your data:
 
 2. **If volumes exist, you can restore by:**
    ```bash
-   # Start containers - they will reconnect to existing volumes
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+   # Pull image and start — containers reconnect to existing volumes
+   export APP_VERSION=v26.2.3.1
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
    ```
 
 3. **If volumes are gone, restore from backup:**
    ```bash
-   # If you have backups in ~/backups/
-   cd ~/modular_trade_agent
-   cp ~/backups/app.db data/app.db
+   # Restore Postgres dump (see docs/deployment/BACKUP_RESTORE_UNINSTALL_GUIDE.md)
    # Then start containers
-   cd docker
-   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+   export APP_VERSION=v26.2.3.1
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
    ```
 
 ## Root Cause
@@ -75,8 +78,8 @@ The error occurs when Docker Compose tries to inspect an existing container's im
 
 To avoid this error and data loss:
 
-1. **NEVER use `docker-compose down`** - it removes volumes and deletes data
-2. **Use `docker-compose stop`** instead - safely stops containers without removing volumes
-3. **For updates:** Use `docker-compose up -d --build` - recreates containers but keeps volumes
-4. **Backup regularly:** Set up automated backups of your data directory
-5. **Named volumes are configured** - they persist even when containers are removed (unless you use `down -v`)
+1. **NEVER use `docker compose down`** without `-v` — `down` alone keeps volumes, but be cautious
+2. **Use `docker compose stop`** to safely stop containers without touching volumes
+3. **For updates:** `APP_VERSION=vX docker compose pull && docker compose up -d` — pulls new image, keeps volumes
+4. **Backup regularly:** See [Backup & Restore Guide](../docs/deployment/BACKUP_RESTORE_UNINSTALL_GUIDE.md)
+5. **Named volumes are configured** - they persist even when containers are removed (only lost with `down -v`)

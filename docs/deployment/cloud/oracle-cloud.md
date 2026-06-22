@@ -178,29 +178,30 @@ ssh ubuntu@$INSTANCE_IP
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Clone repository
-cd /home/ubuntu
-git clone https://github.com/your-repo/modular_trade_agent.git
-cd modular_trade_agent
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker ubuntu
+newgrp docker
 
-# Install Git LFS (required for ML model files)
-sudo apt install -y git-lfs
-git lfs install
-git lfs pull
+# Create working directory and fetch Compose files
+mkdir rebound && cd rebound
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
 
-# Run Docker deployment script
-bash docker/deploy-oracle.sh
+# Configure environment
+cp .env.example .env
+# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
+nano .env
+
+# Pull images and start
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-The deployment script (`docker/deploy-oracle.sh`) will:
-1. ✅ Check and install Docker if needed
-2. ✅ Check and install Docker Compose (v1) if needed
-3. ✅ Create `.env` file with default configuration (PostgreSQL)
-4. ✅ Build Docker images
-5. ✅ Start all services (API, Web, Database)
-6. ✅ Display access URLs
-
-**Note:** The script handles all Docker setup automatically. For manual Docker installation on Linux, see [Linux Deployment Guide](../platforms/linux.md#-docker-installation).
+For manual Docker installation details, see [Linux Deployment Guide](../platforms/linux.md#-docker-installation).
 
 ### Step 4: Access Web UI
 
@@ -227,7 +228,7 @@ For detailed verification steps and Docker management commands, see [Linux Deplo
 **Quick verification:**
 ```bash
 # Check service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 
 # Check health
 curl http://localhost:8000/health
@@ -246,8 +247,9 @@ After deployment, use this checklist to validate your Modular Trade Agent on Ora
 ### Prerequisites
 
 - [ ] VM created and accessible via SSH (ubuntu user)
-- [ ] Repository cloned at: `/home/ubuntu/modular_trade_agent`
-- [ ] Docker deployed and services running
+- [ ] Docker installed and running
+- [ ] `.env` file configured with credentials
+- [ ] Services running (`docker compose ps` shows all healthy)
 - [ ] Web UI accessible: http://YOUR_VM_IP:5173
 - [ ] Admin credentials configured
 - [ ] **Note:** Broker credentials are configured via Web UI (Settings → Broker Credentials), not in .env files
@@ -545,8 +547,9 @@ Create alarms for:
 - [ ] VM created (Ampere or AMD)
 - [ ] SSH access configured
 - [ ] Oracle Cloud firewall rules configured (ports 22, 5173, 8000 in Security Lists)
-- [ ] Repository cloned and Git LFS pulled
-- [ ] Docker deployment script executed (`docker/deploy-oracle.sh`)
+- [ ] Docker installed and user added to docker group
+- [ ] `.env` file configured (from `.env.example`)
+- [ ] Images pulled with `docker compose pull`
 - [ ] Docker services running (api-server, web-frontend, tradeagent-db)
 - [ ] Web UI accessible from internet (http://YOUR_VM_IP:5173)
 - [ ] Admin user created and logged in

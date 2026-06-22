@@ -90,19 +90,17 @@ KeyError: 'ContainerConfig'
 **Solution:**
 ```bash
 # Stop containers WITHOUT removing volumes (preserves data)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Remove problematic containers (keeps volumes)
 docker rm -f tradeagent-api tradeagent-web tradeagent-db 2>/dev/null || true
 
-# Optional: Remove old images to force rebuild
-docker rmi docker_api-server docker_web-frontend 2>/dev/null || true
-
-# Rebuild and start fresh (volumes are preserved)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+# Pull fresh image and start (volumes are preserved)
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-**⚠️ IMPORTANT:** Never use `docker-compose down` as it removes volumes and deletes your data!
+**⚠️ IMPORTANT:** Never use `docker compose down -v` — the `-v` flag removes volumes and deletes your data. Plain `docker compose down` keeps volumes.
 
 ---
 
@@ -195,33 +193,23 @@ WARNING — ml_verdict_service — ⚠️ Failed to load ML model: 118
 ```
 
 **Solution:**
+
+The ML model is baked into the Docker image and seeded into the `trading_models` volume on first boot. If the model is missing:
+
 ```bash
-cd /path/to/modular_trade_agent
+# 1. Check the trading_models volume exists and is mounted
+docker volume ls | grep trading_models
 
-# Install Git LFS if not already installed
-sudo apt install -y git-lfs
-git lfs install
+# 2. Check auto-seed ran on startup
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "model\|seed"
 
-# Pull ML model files from Git LFS
-git lfs pull
+# 3. If volume is empty or corrupt, remove it to trigger re-seed on next start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+docker volume rm trading_models
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 
-# Verify model file exists
-ls -la models/verdict_model_random_forest.pkl
-
-# If still missing:
-# 1. Check you're on the correct branch
-git branch
-git checkout main  # or your branch name
-
-# 2. Pull again
-git lfs pull
-
-# 3. Or copy manually from local machine:
-#    scp models/verdict_model_random_forest.pkl user@SERVER_IP:~/modular_trade_agent/models/
-
-# For Docker: Rebuild API container to include model files
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build api-server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d api-server
+# 4. Or activate a model manually via the ML Training UI (Admin → ML Training)
 ```
 
 ---
@@ -231,21 +219,22 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 **For Docker Deployment:**
 ```bash
 # Check service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # View logs for all services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # View logs for specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f web-frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f tradeagent-db
 
 # Restart specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
 
-# Rebuild and restart
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build api-server
+# Pull fresh image and restart
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ---
@@ -426,57 +415,26 @@ sudo apt-get autoclean
 
 ## 🟣 Build & Installation Issues
 
-### Issue: Docker Build Fails
+### Issue: Image Pull Fails
 
 **Error:**
 ```
-ERROR: failed to solve: process "/bin/sh -c ..." did not complete successfully
+Error response from daemon: pull access denied / manifest unknown
 ```
 
 **Solution:**
 ```bash
-# Build without cache
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build --no-cache
+# Verify the tag exists on ghcr.io
+docker manifest inspect ghcr.io/pawankgupta/modular_trade_agent/api:v26.2.3.1
 
-# Build specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build --no-cache api-server
+# Re-pull with explicit version
+APP_VERSION=v26.2.3.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
 
-# Check build logs for specific errors
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build api-server 2>&1 | tee build.log
+# Check internet connectivity
+curl -I https://ghcr.io
 
-# Common fixes:
-# 1. Ensure Git LFS is installed and models are pulled
-# 2. Check internet connection (for package downloads)
-# 3. Increase Docker build memory if needed
-```
-
----
-
-### Issue: Git LFS Files Not Pulled
-
-**Symptoms:**
-- ML model files missing
-- Large files show as pointers
-
-**Solution:**
-```bash
-# Install Git LFS
-sudo apt install -y git-lfs
-git lfs install
-
-# Pull LFS files
-git lfs pull
-
-# Verify files are actual files, not pointers
-ls -lh models/verdict_model_random_forest.pkl
-# Should show actual file size (not 130 bytes)
-
-# If still pointers:
-git lfs fetch
-git lfs checkout
-
-# Check Git LFS status
-git lfs ls-files
+# If the image tag doesn't exist yet, use 'latest'
+APP_VERSION=latest docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
 ```
 
 ---
@@ -786,12 +744,10 @@ exec format error
 
 **Solution:**
 ```bash
-# Most images support multi-architecture automatically
-# If issues occur, explicitly specify platform:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.yml build --platform linux/amd64
-
-# Or in docker-compose.yml, add platform specification:
-# platform: linux/amd64
+# The published images are multi-arch (amd64 + arm64) — should work natively on Apple Silicon.
+# If you see exec format errors, force the amd64 image:
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 #### Issue: macOS Firewall Blocking Docker
