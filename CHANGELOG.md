@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.3.1] - 2026-06-22
+
+Hotfix release from branch `hotfix/limit_order_fill_price`. See [docs/development/RELEASE_PLAN_V26.2.3.1.md](docs/development/RELEASE_PLAN_V26.2.3.1.md) for deploy checklist.
+
+### Fixed
+
+- **Paper trading limit order fill price:** Limit orders now fill at the current market price rather than the limit price when the market offers a better price (i.e. `current_price < limit` for buys, `current_price > limit` for sells). This matches real exchange behaviour where the limit is the worst acceptable price, not the guaranteed fill price. Previously, paper buy orders executed at yesterday's indicator close even when the stock opened lower — overstating entry costs and understating P&L.
+
+### No Alembic migrations
+
+No database schema changes — `alembic upgrade head` is a no-op.
+
+---
+
 ## [26.2.3] - 2026-06-20
 
 Release from branch `releases/rebound_2623`. See [docs/development/RELEASE_PLAN_V26.2.3.md](docs/development/RELEASE_PLAN_V26.2.3.md) for deploy checklist.
