@@ -50,7 +50,8 @@ TZ=Asia/Kolkata
 
 # Admin User (auto-created on first deployment when DB is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change_me
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 
 # Optional: Encryption key for credential encryption

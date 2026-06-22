@@ -113,13 +113,15 @@ docker compose version
 
 ### Firewall Configuration
 
+> **Production note:** Port 8000 (API server) should ideally be restricted to loopback (`127.0.0.1`) and fronted by an nginx/Caddy reverse proxy with TLS. Opening it directly to `0.0.0.0/0` exposes the API and its `/docs` endpoint to the internet without transport encryption. See [HTTPS Setup Guide](../cloud/HTTPS_ORACLE_DUCKDNS.md) if you plan to expose this server publicly.
+
 #### Ubuntu/Debian (UFW)
 
 ```bash
 # Allow ports
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 5173/tcp  # Web UI
-sudo ufw allow 8000/tcp  # API
+sudo ufw allow 8000/tcp  # API (restrict to reverse-proxy IP in production)
 
 # Enable firewall
 sudo ufw enable
@@ -131,7 +133,7 @@ sudo ufw enable
 # Allow ports
 sudo firewall-cmd --permanent --add-port=22/tcp   # SSH
 sudo firewall-cmd --permanent --add-port=5173/tcp # Web UI
-sudo firewall-cmd --permanent --add-port=8000/tcp # API
+sudo firewall-cmd --permanent --add-port=8000/tcp # API (restrict to reverse-proxy IP in production)
 
 # Reload firewall
 sudo firewall-cmd --reload
@@ -182,7 +184,8 @@ The `.env` file in the project root controls configuration:
 # Database (PostgreSQL in Docker)
 # Note: Docker Compose overrides this with PostgreSQL connection string
 # The DB_URL here is for reference - Docker uses PostgreSQL container
-DB_URL=postgresql+psycopg2://trader:changeme@tradeagent-db:5432/tradeagent
+DB_URL=postgresql+psycopg2://trader:<your-db-password>@tradeagent-db:5432/tradeagent
+# Set POSTGRES_PASSWORD in .env to the same value used above
 
 # Timezone
 TZ=Asia/Kolkata
@@ -193,7 +196,8 @@ APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # Admin User Auto-Creation (only on first deployment when database is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=ChangeThisPassword123!
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python3 -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 ```
 
@@ -201,6 +205,7 @@ ADMIN_NAME=Admin User
 - The `.env` file is automatically created by the quickstart scripts (with SQLite for local dev).
 - For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `APP_DATA_ENCRYPTION_KEY`.
 - Docker Compose will use PostgreSQL container regardless of `.env` DB_URL value.
+- If serving over HTTPS (recommended for production), set `AUTH_COOKIE_SECURE=true` in `.env` so session cookies are only sent over encrypted connections.
 
 ### Credential Management
 
@@ -219,7 +224,9 @@ After deployment:
 - **Web Frontend**: http://localhost:5173 (or http://your-server-ip:5173)
 - **API Server**: http://localhost:8000 (or http://your-server-ip:8000)
 - **Health Check**: http://localhost:8000/health
-- **API Docs**: http://localhost:8000/docs
+- **API Docs**: http://localhost:8000/docs — disable in production if not needed (exposes full API schema)
+
+> **Production:** Use HTTPS to protect credentials in transit. See [HTTPS Setup Guide](../cloud/HTTPS_ORACLE_DUCKDNS.md).
 
 ## 🔄 Updating the Application
 
@@ -360,11 +367,11 @@ docker system df
 
 **Solution**:
 ```bash
-# Set SELinux to permissive (temporary)
-sudo setenforce 0
-
-# Or configure SELinux for Docker (permanent)
+# Configure SELinux for Docker (permanent — preferred)
 sudo setsebool -P container_manage_cgroup on
+
+# Temporary diagnosis only — do NOT leave this in place on production
+sudo setenforce 0
 ```
 
 ## 🔧 Trading Services Management

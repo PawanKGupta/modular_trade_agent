@@ -209,8 +209,8 @@ After deployment completes:
 
 1. **Access Web UI**: `http://YOUR_VM_IP:5173`
 2. **Login** with admin credentials:
-   - Email: `admin@example.com` (or as set in `.env`)
-   - Password: `ChangeThisPassword123!` (or as set in `.env`)
+   - Email: value of `ADMIN_EMAIL` from your `.env`
+   - Password: value of `ADMIN_PASSWORD` from your `.env`
 3. **Configure Broker Credentials**:
    - Go to Settings → Broker Credentials
    - Enter your Kotak Neo credentials

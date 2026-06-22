@@ -85,15 +85,17 @@ DB_URL=sqlite:///./data/app.db
 
 # Admin User (auto-created on first run if DB is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change_me
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 
-# JWT Secret (generate a random string)
-JWT_SECRET=your-secret-key-here
+# JWT Secret — generate with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET=<generate-using-command-above>
 
 # Encryption Key for credentials (required for broker/MFA secret storage)
-# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-APP_DATA_ENCRYPTION_KEY=your-base64-encoded-key
+# Generate and write directly to avoid shell history exposure:
+#   python -c "from cryptography.fernet import Fernet; print('APP_DATA_ENCRYPTION_KEY=' + Fernet.generate_key().decode())" >> .env
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # CORS (for development)
 CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
