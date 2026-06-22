@@ -21,57 +21,29 @@ Complete guide for deploying Rebound — Modular Trade Agent on Windows.
    - Includes Docker Engine, Docker Compose, and Kubernetes
    - Requires WSL2 backend (automatically configured)
 
-2. **Git for Windows** (if not already installed)
-   - Download from: https://git-scm.com/download/win
-   - Includes Git LFS support
+2. **PowerShell 5.1+** (included with Windows 10/11)
 
-3. **PowerShell 5.1+** (included with Windows 10/11)
+## 🚀 Quick Start (Image-Based — Recommended)
 
-## 🚀 Quick Start
-
-### Automated Deployment
+No git clone required. Pull pre-built images from GitHub Container Registry.
 
 ```powershell
-# Clone repository
-git clone <repository-url>
-cd modular_trade_agent
+# Create a working directory
+mkdir rebound; cd rebound
 
-# Install Git LFS (required for ML models)
-git lfs install
-git lfs pull
+# Download Compose files
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml" -OutFile docker-compose.yml
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml" -OutFile docker-compose.prod.yml
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example" -OutFile .env.example
 
-# Run quickstart script
-.\docker\docker-quickstart.ps1
-```
+# Configure environment
+Copy-Item .env.example .env
+# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
-The script will:
-1. ✅ Check Docker installation
-2. ✅ Create `.env` file if missing
-3. ✅ Build Docker images
-4. ✅ Start all services
-5. ✅ Display access URLs
-
-### Manual Deployment
-
-```powershell
-# Ensure Docker Desktop is running
-# Check Docker status
-docker --version
-docker-compose --version
-
-# Navigate to project root
-cd C:\path\to\modular_trade_agent
-
-# Create .env file (if not exists)
-# Edit .env with your configuration
-
-# Build and start (production mode with named volumes)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
-
-# Or for development (uses bind mounts, faster for code changes):
-# docker-compose -f docker/docker-compose.yml build
-# docker-compose -f docker/docker-compose.yml up -d
+# Pull images and start
+$env:APP_VERSION = "v26.2.3.1"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## 🔧 Windows-Specific Configuration
@@ -175,46 +147,34 @@ After deployment:
 
 ## 🔄 Updating the Application
 
-### Option 1: Rebuild with Data Preservation (Recommended)
-
-Preserves all data including database, credentials, and trading history:
+Preserves all data (database, credentials, trading history) — volumes are not removed.
 
 ```powershell
-# Pull latest code
-git pull origin main
-git lfs pull  # If ML models were updated
+# Set the new version
+$env:APP_VERSION = "v26.2.3.1"   # replace with target version
 
-# Rebuild and restart (volumes preserved)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+# Pull new images and restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Option 2: Complete Rebuild (Removes All Data)
-
-**⚠️ WARNING:** This removes all containers and volumes, deleting all data.
+### Rollback
 
 ```powershell
-# Pull latest code
-git pull origin main
-git lfs pull
-
-# Stop and remove containers (WARNING: Removes volumes and data!)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
-
-# Rebuild images
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-
-# Start containers
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+$env:APP_VERSION = "v26.2.3"    # previous version
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Rebuild Specific Service Only
+### Complete Reset (Removes All Data)
+
+**⚠️ WARNING:** This removes all volumes and deletes all data including the database.
 
 ```powershell
-# Rebuild and restart only API server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build api-server
-
-# Rebuild and restart only frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down -v
+$env:APP_VERSION = "v26.2.3.1"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ## 🔄 Service Management

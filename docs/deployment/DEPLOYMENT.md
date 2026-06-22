@@ -50,7 +50,62 @@ For cloud provider specific deployment instructions:
 - **[Backup & Restore Guide](BACKUP_RESTORE_UNINSTALL_GUIDE.md)** - Database backup and restore procedures
 - **[Health Check Guide](HEALTH_CHECK.md)** - Monitoring and health check procedures
 
-## 🚀 Quick Start
+## 🚀 Fresh Deployment (Image-Based — Recommended for New Users)
+
+No git clone or build step required. Pull the pre-built images from GitHub Container Registry (ghcr.io) and start.
+
+### 1. Create a working directory and fetch the Compose files
+
+**Windows (PowerShell):**
+```powershell
+mkdir rebound && cd rebound
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml" -OutFile docker-compose.yml
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml" -OutFile docker-compose.prod.yml
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example" -OutFile .env.example
+```
+
+**Linux/macOS:**
+```bash
+mkdir rebound && cd rebound
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
+```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+# Edit .env — fill in SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, and any broker credentials
+```
+
+### 3. Pull images and start
+
+```bash
+# Set the version you want to deploy
+export APP_VERSION=v26.2.3.1        # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.1"   # Windows PowerShell
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### 4. Create the first admin user
+
+```bash
+docker compose exec api-server python -m scripts.create_admin
+```
+
+**Access:**
+- Web UI: http://localhost:5173
+- API: http://localhost:8000
+- Health: http://localhost:8000/health
+
+---
+
+## 🚀 Quick Start (Source-Based)
+
+If you have the repository cloned locally:
 
 ### Windows
 ```powershell
@@ -71,7 +126,6 @@ For cloud provider specific deployment instructions:
 
 - [ ] Docker installed (version 20.10+)
 - [ ] Docker Compose installed (version 1.29.2+)
-- [ ] Repository cloned with Git LFS
 - [ ] `.env` file configured
 - [ ] Services started and running
 - [ ] Web UI accessible
@@ -85,11 +139,14 @@ For cloud provider specific deployment instructions:
 From **v26.2**, **v26.2.0**, or **`releases/rebound_2620`** deployments:
 
 1. **Backup** the database ([Postgres backup guide](POSTGRES_DOCKER_BACKUP_CRON.md)).
-2. Pull branch `releases/rebound_2621` or tag **`v26.2.1`**.
+2. Pull image **`v26.2.1`** or check out branch `releases/rebound_2621`:
+   ```bash
+   APP_VERSION=v26.2.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+   APP_VERSION=v26.2.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+   ```
 3. Merge new variables from [`.env.example`](../../.env.example) — especially **`SMTP_*`**, billing/Razorpay, OHLCV/NSE, and news settings.
-4. Rebuild and restart containers (see [Docker README](../../docker/README.md)).
-5. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`).
-6. Post-deploy smoke: signup/verify login, Billing pages, admin run-once analysis.
+4. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`).
+5. Post-deploy smoke: signup/verify login, Billing pages, admin run-once analysis.
 
 Full checklist: [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -99,9 +156,12 @@ Full checklist: [RELEASE_PLAN_V26.2.1.md](../development/RELEASE_PLAN_V26.2.1.md
 
 From **`v26.2.2`**, **`releases/rebound_2622`**, or earlier 26.2.x deployments:
 
-1. Pull branch `hotfix/rebound_26221` or tag **`v26.2.2.1`**.
-2. Rebuild and restart Web UI containers (or package/deploy the updated frontend files).
-3. Post-deploy smoke: verify MFA setup renders QR code, verify MFA login challenge is prompted inline at login.
+```bash
+APP_VERSION=v26.2.2.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+APP_VERSION=v26.2.2.1 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+```
+
+Post-deploy smoke: verify MFA setup renders QR code, verify MFA login challenge is prompted inline at login.
 
 Full checklist: [RELEASE_PLAN_V26.2.2.1.md](../development/RELEASE_PLAN_V26.2.2.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -110,11 +170,14 @@ Full checklist: [RELEASE_PLAN_V26.2.2.1.md](../development/RELEASE_PLAN_V26.2.2.
 From **`v26.2.1`**, **`releases/rebound_2621`**, or earlier 26.2.x deployments:
 
 1. **Backup** the database ([Postgres backup guide](POSTGRES_DOCKER_BACKUP_CRON.md)).
-2. Pull branch `releases/rebound_2622` or tag **`v26.2.2`**.
-3. Merge new variables from [`.env.example`](../../.env.example) — especially **`EMAIL_DOMAIN_ALLOWLIST_*`**, auth cookie/rate-limit settings, and notification prefs. Complete the [user data security pre-deploy checklist](../security/USER_DATA_SECURITY.md).
-4. Rebuild and restart containers (see [Docker README](../../docker/README.md)).
-5. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`). Four Alembic revisions since 26.2.1.
-6. Post-deploy smoke: login + page refresh, signup allowlist, Service Status, `/help`, trading path in your environment.
+2. Merge new variables from [`.env.example`](../../.env.example) — especially **`EMAIL_DOMAIN_ALLOWLIST_*`**, auth cookie/rate-limit settings, and notification prefs. Complete the [user data security pre-deploy checklist](../security/USER_DATA_SECURITY.md).
+3. Pull image and restart:
+   ```bash
+   APP_VERSION=v26.2.2 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+   APP_VERSION=v26.2.2 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+   ```
+4. Run **`alembic upgrade head`** (automatic on API startup in Docker; verify with `alembic current`). Four Alembic revisions since 26.2.1.
+5. Post-deploy smoke: login + page refresh, signup allowlist, Service Status, `/help`, trading path in your environment.
 
 Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
@@ -122,25 +185,43 @@ Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md
 
 ## Upgrading to 26.2.3.1
 
-From **`v26.2.3`**, **`releases/rebound_2623`**, or earlier 26.2.x deployments:
+From **`v26.2.3`**, **`releases/rebound_2623`**, or earlier 26.2.x deployments.
+No Alembic migrations and no `.env` changes required.
 
-1. Pull branch `hotfix/limit_order_fill_price` or tag **`v26.2.3.1`**.
-2. Restart the Python trading service. No frontend rebuild or DB migration needed.
-3. Post-deploy smoke: run a paper trading cycle and confirm buy LIMIT orders fill at the opening price (not yesterday's close) when the stock gaps down; confirm sell LIMIT orders (EMA9 targets) still fill at the strategy target price.
+**Image-based (recommended):**
+```bash
+export APP_VERSION=v26.2.3.1        # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.1"   # Windows PowerShell
+
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+```
+
+**Source-based:**
+```bash
+git fetch origin
+git checkout v26.2.3.1
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+```
+
+Post-deploy smoke: run a paper trading cycle and confirm buy LIMIT orders fill at the opening price (not yesterday's close) when the stock gaps down; confirm sell LIMIT orders (EMA9 targets) still fill at the strategy target price.
 
 Full checklist: [RELEASE_PLAN_V26.2.3.1.md](../development/RELEASE_PLAN_V26.2.3.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
 ## Upgrading to 26.2.3
 
-**Branch:** `releases/rebound_2623` · **No Alembic migrations** (safe, no DB changes)
+**No Alembic migrations** (safe, no DB changes)
 
 1. **Backup** Postgres (always recommended before any deploy).
-2. Pull `releases/rebound_2623` (or tag `v26.2.3`).
-3. No `.env` changes required for standard usage. Optional: set `ML_CONFIDENCE_THRESHOLD=0.6` explicitly if previously overriding the old 0.5 default.
-4. Rebuild and restart the Docker stack: `docker compose up --build -d`.
-   - The `trading_models` volume is new in this release. On first start it will be created and auto-seeded from the image-baked baseline model. If you already have a custom model, activate it via the ML Training UI after startup — this writes it to the volume.
-5. No `alembic upgrade head` required (no migrations). Verify with `alembic current` if desired.
-6. **Post-deploy smoke:**
+2. No `.env` changes required for standard usage. Optional: set `ML_CONFIDENCE_THRESHOLD=0.6` explicitly if previously overriding the old 0.5 default.
+3. Pull image and restart:
+   ```bash
+   APP_VERSION=v26.2.3 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+   APP_VERSION=v26.2.3 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+   ```
+   The `trading_models` volume is new in this release. On first start it will be created and auto-seeded from the image-baked baseline model. If you already have a custom model, activate it via the ML Training UI after startup.
+4. No `alembic upgrade head` required (no migrations). Verify with `alembic current` if desired.
+5. **Post-deploy smoke:**
    - Login → Buying Zone (check ML Verdict / ML Confidence columns)
    - Trading Config → all sections collapsed; expand each, confirm values persist on save
    - Notification Preferences → accordion sections work
