@@ -11,7 +11,7 @@ Hotfix release from branch `hotfix/limit_order_fill_price`. See [docs/developmen
 
 ### Fixed
 
-- **Paper trading limit order fill price:** Limit orders now fill at the current market price rather than the limit price when the market offers a better price (i.e. `current_price < limit` for buys, `current_price > limit` for sells). This matches real exchange behaviour where the limit is the worst acceptable price, not the guaranteed fill price. Previously, paper buy orders executed at yesterday's indicator close even when the stock opened lower — overstating entry costs and understating P&L.
+- **Paper trading buy limit order fill price:** Buy limit orders now fill at `current_price` (the market price) rather than `order.price` (the limit price) when `current_price <= limit`. The limit price is the worst acceptable price — if the market is cheaper at execution, a real exchange fills at market. Previously, paper buy orders always executed at yesterday's indicator close even when the stock opened lower, overstating entry costs and understating P&L. Sell limit orders (EMA9 targets) are unaffected and continue to fill at `order.price` — the realistic fill path for sells is the daily-high touch check (`try_fill_sell_limit_on_session_high`), not a live price snapshot.
 
 ### No Alembic migrations
 

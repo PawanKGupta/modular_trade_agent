@@ -9,11 +9,12 @@
 
 ## Scope
 
-Single bugfix on top of `v26.2.3`:
+Two commits on top of `v26.2.3`:
 
 | Theme | Operator impact |
 |-------|-----------------|
-| Paper trading limit fill price | Buy/sell limit orders now fill at the actual market price when it is better than the limit, matching real NSE exchange behaviour and producing accurate P&L |
+| Paper trading buy limit fill price | Buy limit orders now fill at `current_price` (market price) rather than `order.price` (limit price) when `current_price ≤ limit` — matches real NSE exchange price improvement; lower entry costs and accurate P&L |
+| Sell limit fill price scoped correctly | Sell limit orders (EMA9 targets) continue to fill at `order.price` — realistic fills for sells go through the daily-high touch path, not a live price snapshot |
 
 ---
 
@@ -21,8 +22,8 @@ Single bugfix on top of `v26.2.3`:
 
 | Gate | Result (2026-06-22 local) |
 |------|---------------------------|
-| `test_execute_limit_buy_below_market` | Passes — fills at current price (1450), not limit (1500) |
-| `test_execute_limit_sell_above_market` | Passes — fills at current price (3500), not limit (3400) |
+| `test_execute_limit_buy_below_market` | Passes — buy fills at current price (1450), not limit (1500) |
+| `test_execute_limit_sell_above_market` | Passes — sell fills at limit price (3400), not current price (3500) |
 | Full `tests/paper_trading/test_order_simulator.py` suite | **23 passed** |
 | Ruff + Black | Clean |
 
@@ -34,8 +35,9 @@ Single bugfix on top of `v26.2.3`:
 2. Restart the Python trading service (no frontend change, no DB migration).
 3. **Post-deploy smoke:**
    - Run a paper trading cycle during pre-open (9:00–9:15 IST).
-   - Confirm buy orders placed as LIMIT fill at the opening price when the stock opens below yesterday's close — not at the limit price.
-   - Confirm paper P&L entries reflect the lower (actual) fill price.
+   - Confirm buy LIMIT orders fill at the opening price when the stock opens below yesterday's close — not at the limit price.
+   - Confirm sell LIMIT orders still fill at the EMA9 target price.
+   - Confirm paper P&L entries reflect the corrected (lower) buy entry price.
 
 ---
 
@@ -51,7 +53,7 @@ Single bugfix on top of `v26.2.3`:
 - [x] `CHANGELOG.md` `[26.2.3.1]`
 - [x] This release plan
 - [x] Upgrade notes in [DEPLOYMENT.md](../deployment/DEPLOYMENT.md#upgrading-to-26231)
-- [ ] Tag `v26.2.3.1` on branch tip (local; push with explicit approval)
+- [x] Tag `v26.2.3.1` on branch tip
 
 ---
 
