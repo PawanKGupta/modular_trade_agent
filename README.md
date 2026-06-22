@@ -42,14 +42,26 @@ A professional-grade **multi-user trading system** for Indian stock markets (NSE
 
 ## 🚀 Quick Start
 
-### Using Docker (Recommended)
+### Option 1: Docker — Pull Images (Recommended for New Deployments)
+
+No git clone or build step required.
 
 ```bash
-# Windows
-.\docker\docker-quickstart.ps1
+# Create a working directory
+mkdir rebound && cd rebound
 
-# Linux/Mac
-./docker/docker-quickstart.sh
+# Download Compose files
+# Linux/macOS:
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
+cp .env.example .env
+# Edit .env — set JWT_SECRET, APP_DATA_ENCRYPTION_KEY, POSTGRES_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD
+
+# Pull images and start
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 **Access:**
@@ -57,54 +69,40 @@ A professional-grade **multi-user trading system** for Indian stock markets (NSE
 - API: http://localhost:8000
 - Health: http://localhost:8000/health
 
-See [docker/README.md](docker/README.md) for detailed Docker setup.
+See [docs/deployment/DEPLOYMENT.md](docs/deployment/DEPLOYMENT.md) for platform-specific guides (Windows, Linux, macOS, Oracle Cloud).
 
-### Manual Setup
+### Option 2: Manual Setup (Development)
 
-1. **Install Dependencies**
-   ```bash
-   # Backend
-   pip install -r requirements.txt
-   pip install -r server/requirements.txt
+For local development with hot-reload. Requires Python 3.12+ and Node.js 20+.
 
-   # Frontend
-   cd web
-   npm install
-   ```
+```bash
+# 1. Create and activate virtualenv
+python -m venv .venv
+# Windows: .venv\Scripts\activate  |  Linux/macOS: source .venv/bin/activate
 
-2. **Configure Environment**
-   ```bash
-   # Create .env file in project root
-   DB_URL=sqlite:///./data/app.db
-   ADMIN_EMAIL=admin@example.com
-   ADMIN_PASSWORD=change_me
-   ADMIN_NAME=Admin User
-   JWT_SECRET=your-secret-key
-   ENCRYPTION_KEY=your-encryption-key
-   ```
+# 2. Install dependencies
+pip install -r requirements.txt
+pip install -r server/requirements.txt
+cd web && npm install && cd ..
 
-3. **Initialize Database**
-   ```bash
-   # Run migrations (if using Alembic)
-   alembic upgrade head
+# 3. Configure environment — copy and edit the example
+cp .env.example .env
+# Minimum required variables:
+#   ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME
+#   JWT_SECRET   (generate: python -c "import secrets; print(secrets.token_hex(32))")
+#   APP_DATA_ENCRYPTION_KEY  (generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 
-   # Or let the app auto-create tables on first run
-   ```
+# 4. Run Alembic migrations
+alembic upgrade head
 
-4. **Start Services**
-   ```bash
-   # Backend (from project root)
-   uvicorn server.app.main:app --reload --port 8000
+# 5. Start services (two terminals)
+uvicorn server.app.main:app --reload --port 8000   # Terminal 1
+cd web && npm run dev                               # Terminal 2
+```
 
-   # Frontend (from web/)
-   cd web
-   npm run dev
-   ```
+Go to http://localhost:5173, log in with your admin credentials, then configure broker and notification settings under **Settings**.
 
-5. **Configure Credentials**
-   - Access web UI: http://localhost:5173
-   - Login with admin credentials
-   - Go to Settings → Configure broker and Telegram credentials
+See [docs/guides/GETTING_STARTED.md](docs/guides/GETTING_STARTED.md) for the complete walkthrough.
 
 ## 📚 Documentation
 
@@ -215,7 +213,7 @@ See [docs/API.md](docs/API.md) for complete API documentation.
 - **Alembic** - Database migrations
 
 ### Frontend
-- **React 18** - UI framework
+- **React 19** - UI framework
 - **TypeScript** - Type safety
 - **TanStack Query** - Data fetching and caching
 - **React Router** - Routing
@@ -223,24 +221,18 @@ See [docs/API.md](docs/API.md) for complete API documentation.
 
 ### Infrastructure
 - **Docker** - Containerization
+- **ghcr.io** - Pre-built images published on every release tag
 - **SQLite** - Development database
-- **PostgreSQL** - Production database (optional)
+- **PostgreSQL** - Production database (required for multi-user / persistent OHLCV cache)
 - **Nginx** - Reverse proxy (production)
 
 ## 📋 Requirements
 
 - Python 3.12+
-- Node.js 18+
-- Docker (optional, for containerized deployment)
-- PostgreSQL (optional, for production)
+- Node.js 20+
+- Docker (for image-based deployment — recommended)
+- PostgreSQL (required for production; SQLite for local dev only)
 
-## 🔒 Security
-
-- All passwords are hashed using pbkdf2_sha256
-- Broker credentials are encrypted using Fernet (AES-128)
-- JWT tokens with configurable expiration
-- CORS protection
-- SQL injection protection via SQLAlchemy
 
 ## 📝 License
 
@@ -249,14 +241,6 @@ This project is for educational and personal use only.
 ## ⚠️ Disclaimer
 
 This software is for educational purposes only. It is not financial advice. Trading involves risk, and you should consult with a qualified financial advisor before making investment decisions. The authors are not responsible for any financial losses incurred through the use of this software.
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## 📞 Support
 

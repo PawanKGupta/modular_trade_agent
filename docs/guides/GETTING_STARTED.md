@@ -5,7 +5,7 @@ Complete guide to set up and run Rebound — Modular Trade Agent.
 ## Prerequisites
 
 - **Python 3.12+** (for backend)
-- **Node.js 18+** (for frontend)
+- **Node.js 20+** (for frontend)
 - **Docker Desktop** (optional, for containerized deployment)
 - **Git** (to clone the repository)
 
@@ -91,9 +91,9 @@ ADMIN_NAME=Admin User
 # JWT Secret (generate a random string)
 JWT_SECRET=your-secret-key-here
 
-# Encryption Key for credentials (optional, auto-generated if not provided)
+# Encryption Key for credentials (required for broker/MFA secret storage)
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=your-base64-encoded-key
+APP_DATA_ENCRYPTION_KEY=your-base64-encoded-key
 
 # CORS (for development)
 CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
