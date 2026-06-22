@@ -236,26 +236,26 @@ class OrderSimulator:
 
         # Check if limit price condition is met
         if order.is_buy_order():
-            # Buy limit: execute if current price <= limit price
+            # Buy limit: execute if current price <= limit price, fill at current price
+            # (limit is the worst acceptable price; if market is cheaper, pay market)
             if current_price.amount <= order.price.amount:
-                execution_price = order.price  # Execute at limit price
                 logger.info(
                     f"? Limit BUY executed: {order.symbol} "
-                    f"@ Rs {execution_price.amount:.2f} "
+                    f"@ Rs {current_price.amount:.2f} "
                     f"(Limit: Rs {order.price.amount:.2f})"
                 )
-                return True, "Limit order executed", execution_price
+                return True, "Limit order executed", current_price
             else:
                 return False, "Price above limit", None
-        # Sell limit: execute if current price >= limit price
+        # Sell limit: execute if current price >= limit price, fill at current price
+        # (limit is the worst acceptable price; if market is higher, receive market)
         elif current_price.amount >= order.price.amount:
-            execution_price = order.price  # Execute at limit price
             logger.info(
                 f"? Limit SELL executed: {order.symbol} "
-                f"@ Rs {execution_price.amount:.2f} "
+                f"@ Rs {current_price.amount:.2f} "
                 f"(Limit: Rs {order.price.amount:.2f})"
             )
-            return True, "Limit order executed", execution_price
+            return True, "Limit order executed", current_price
         else:
             return False, "Price below limit", None
 
