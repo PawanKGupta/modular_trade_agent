@@ -53,6 +53,8 @@ ignore = ["S101"] # allow assert in tests
 "services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
 # Admin training orchestrator; large try/except job runner.
 "src/application/services/ml_training_service.py" = ["PLR0915"]
+# Large deduplication+expiry loop; pre-existing complexity, refactor tracked separately.
+"src/application/services/analysis_deduplication_service.py" = ["PLR0912", "PLR0915", "PLR2004", "E501"]
 # Dip episode generator is intentionally stateful; refactor later.
 "services/dip_episode_dataset.py" = ["PLR0912", "PLR0915", "PLR2004"]
 # Legacy CLI / core analysis wrappers; refactor tracked separately.

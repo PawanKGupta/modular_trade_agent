@@ -120,6 +120,27 @@ Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md
 
 **Notable changes:** User-data-security schema and session model; service status notifications default off; paper/live trading parity fixes; email domain allowlist for new signups.
 
+## Upgrading to 26.2.3
+
+**Branch:** `releases/rebound_2623` · **No Alembic migrations** (safe, no DB changes)
+
+1. **Backup** Postgres (always recommended before any deploy).
+2. Pull `releases/rebound_2623` (or tag `v26.2.3`).
+3. No `.env` changes required for standard usage. Optional: set `ML_CONFIDENCE_THRESHOLD=0.6` explicitly if previously overriding the old 0.5 default.
+4. Rebuild and restart the Docker stack: `docker compose up --build -d`.
+   - The `trading_models` volume is new in this release. On first start it will be created and auto-seeded from the image-baked baseline model. If you already have a custom model, activate it via the ML Training UI after startup — this writes it to the volume.
+5. No `alembic upgrade head` required (no migrations). Verify with `alembic current` if desired.
+6. **Post-deploy smoke:**
+   - Login → Buying Zone (check ML Verdict / ML Confidence columns)
+   - Trading Config → all sections collapsed; expand each, confirm values persist on save
+   - Notification Preferences → accordion sections work
+   - Admin → ML Training → activate a model and confirm analysis picks it up
+   - `/help/ml-signals` loads without login
+
+Full checklist: [RELEASE_PLAN_V26.2.3.md](../development/RELEASE_PLAN_V26.2.3.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
+
+**Notable changes:** ML leakage fixes and walk-forward validated threshold (0.6); Docker model persistence volume; UI accordion polish (Trading Config + Notifications); stale-signal expiry fix.
+
 ## ML Model Persistence (Docker)
 
 The API container mounts a named Docker volume for ML model files:
