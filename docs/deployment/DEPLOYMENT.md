@@ -120,6 +120,16 @@ Full checklist: [RELEASE_PLAN_V26.2.2.md](../development/RELEASE_PLAN_V26.2.2.md
 
 **Notable changes:** User-data-security schema and session model; service status notifications default off; paper/live trading parity fixes; email domain allowlist for new signups.
 
+## Upgrading to 26.2.3.1
+
+From **`v26.2.3`**, **`releases/rebound_2623`**, or earlier 26.2.x deployments:
+
+1. Pull branch `hotfix/limit_order_fill_price` or tag **`v26.2.3.1`**.
+2. Restart the Python trading service. No frontend rebuild or DB migration needed.
+3. Post-deploy smoke: run a paper trading cycle and confirm buy LIMIT orders fill at the opening price (not yesterday's close) when the stock gaps down; confirm sell LIMIT orders (EMA9 targets) still fill at the strategy target price.
+
+Full checklist: [RELEASE_PLAN_V26.2.3.1.md](../development/RELEASE_PLAN_V26.2.3.1.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
+
 ## Upgrading to 26.2.3
 
 **Branch:** `releases/rebound_2623` · **No Alembic migrations** (safe, no DB changes)

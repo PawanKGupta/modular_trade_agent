@@ -1,7 +1,13 @@
 # Dockerfile for FastAPI Server
 # Separate container for the API server
 
+ARG APP_VERSION=dev
+
 FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="Rebound Trade Agent — API" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.source="https://github.com/PawanKGupta/modular_trade_agent"
 
 WORKDIR /app
 

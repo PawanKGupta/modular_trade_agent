@@ -8,9 +8,12 @@ services:
   # API Server - FastAPI backend
   # ============================================
   api-server:
+    image: ghcr.io/pawankgupta/modular_trade_agent/api:${APP_VERSION:-latest}
     build:
       context: ..                   # Build from parent directory (project root)
       dockerfile: docker/Dockerfile.api
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     container_name: tradeagent-api
     restart: unless-stopped
 
@@ -55,9 +58,12 @@ services:
   # Web Frontend - React app
   # ============================================
   web-frontend:
+    image: ghcr.io/pawankgupta/modular_trade_agent/web:${APP_VERSION:-latest}
     build:
       context: ..                   # Build from parent directory (project root)
       dockerfile: docker/Dockerfile.web
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
     container_name: tradeagent-web
     restart: unless-stopped
 
