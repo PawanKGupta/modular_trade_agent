@@ -270,9 +270,9 @@ After retraining, expected feature importance:
 
 ## 📚 Related Documents
 
-- [ML_TRAINING_DATA_IMPROVEMENTS.md](./ML_TRAINING_DATA_IMPROVEMENTS.md) - Look-ahead bias fix and other improvements
-- [ML_MONITORING_MODE_GUIDE.md](./ML_MONITORING_MODE_GUIDE.md) - How to use ML monitoring mode
-- [ML_MODEL_RETRAINING_GUIDE_ENHANCED.md](./ML_MODEL_RETRAINING_GUIDE_ENHANCED.md) - Model retraining steps
+- [ML_TRAINING_DATA_IMPROVEMENTS.md](../../archive/documents/ML_TRAINING_DATA_IMPROVEMENTS.md) - Look-ahead bias fix and other improvements
+- [ML_MONITORING_MODE_GUIDE.md](../guides/ML_MONITORING_MODE_GUIDE.md) - How to use ML monitoring mode
+- [ML_MODEL_RETRAINING_GUIDE_ENHANCED.md](../../archive/documents/ML_MODEL_RETRAINING_GUIDE_ENHANCED.md) - Model retraining steps
 
 ---
 

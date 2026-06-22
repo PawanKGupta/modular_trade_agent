@@ -28,17 +28,17 @@ Controls the core technical indicators used for signal generation.
   - Signals generated when RSI < this value
   - Recommended: 25-35
 
-- **RSI Extreme Oversold** (default: 10)
+- **RSI Extreme Oversold** (default: 20.0)
   - Extreme oversold level
   - Used for additional entries
   - Must be < RSI Oversold
-  - Recommended: 8-15
+  - Recommended: 15-25
 
-- **RSI Near Oversold** (default: 35)
+- **RSI Near Oversold** (default: 40.0)
   - Near oversold level
   - Used for early signals
   - Must be > RSI Oversold
-  - Recommended: 30-40
+  - Recommended: 35-45
 
 **Validation:** Extreme < Oversold < Near (enforced)
 
@@ -48,7 +48,7 @@ Controls capital allocation and position sizing.
 
 #### Capital Settings
 
-- **User Capital** (default: ₹2,00,000)
+- **User Capital** (default: ₹1,00,000)
   - Total capital available for trading
   - Used for position sizing
   - Adjust based on your account size
@@ -58,7 +58,7 @@ Controls capital allocation and position sizing.
   - Separate from real trading capital
   - Can be any amount for testing
 
-- **Max Portfolio Size**
+- **Max Portfolio Size** (default: 6)
   - Maximum number of positions
   - Prevents over-diversification
   - Recommended: 5-10
@@ -81,22 +81,22 @@ Filters stocks based on chart pattern quality.
   - Enable/disable chart quality filtering
   - Filters poor quality charts
 
-- **Chart Quality Min Score** (default: 60.0)
+- **Chart Quality Min Score** (default: 50.0)
   - Minimum chart quality score
   - Higher = stricter filtering
   - Range: 0-100
 
-- **Max Gap Frequency** (default: 20.0%)
+- **Max Gap Frequency** (default: 25.0%)
   - Maximum acceptable gap frequency
   - Filters charts with too many gaps
   - Lower = stricter
 
-- **Min Daily Range %** (default: 1.5%)
+- **Min Daily Range %** (default: 1.0%)
   - Minimum daily price range
   - Filters flat/choppy charts
   - Higher = stricter
 
-- **Max Extreme Candle Frequency** (default: 15.0%)
+- **Max Extreme Candle Frequency** (default: 20.0%)
   - Maximum extreme candle frequency
   - Filters volatile/unstable charts
   - Lower = stricter
@@ -107,54 +107,57 @@ Controls stop losses, targets, and risk-reward ratios.
 
 #### Stop Loss Settings
 
-- **Default Stop Loss %** (default: 6.0%)
+> [!NOTE]
+> All stop loss parameters default to `null` / `None` in the database model. This means stop loss protection is not active by default and must be explicitly configured to be applied.
+
+- **Default Stop Loss %** (default: `null` / `None`)
   - Standard stop loss percentage
   - Applied to most positions
   - Recommended: 5-8%
 
-- **Tight Stop Loss %** (default: 4.0%)
+- **Tight Stop Loss %** (default: `null` / `None`)
   - Tighter stop for high-confidence trades
   - Applied to strong signals
   - Must be < Default
   - Recommended: 3-5%
 
-- **Min Stop Loss %** (default: 3.0%)
+- **Min Stop Loss %** (default: `null` / `None`)
   - Minimum stop loss allowed
   - Safety limit
   - Must be < Tight
   - Recommended: 2-4%
 
-**Validation:** Min < Tight < Default (enforced)
+**Validation:** Min < Tight < Default (enforced if values are configured)
 
 #### Target Settings
 
-- **Default Target %** (default: 8.0%)
+- **Default Target %** (default: 10.0% / `0.10`)
   - Standard target percentage
   - Applied to most positions
   - Recommended: 6-12%
 
-- **Strong Buy Target %** (default: 12.0%)
+- **Strong Buy Target %** (default: 12.0% / `0.12`)
   - Higher target for strong signals
   - Applied to high-confidence trades
   - Recommended: 10-15%
 
-- **Excellent Target %** (default: 15.0%)
+- **Excellent Target %** (default: 15.0% / `0.15`)
   - Highest target for excellent setups
   - Applied to best signals
   - Recommended: 12-20%
 
 #### Risk-Reward Ratios
 
-- **Strong Buy Risk-Reward** (default: 2.0)
+- **Strong Buy Risk-Reward** (default: 3.0)
   - Minimum risk-reward for strong buys
   - Higher = more selective
   - Recommended: 1.5-3.0
 
-- **Buy Risk-Reward** (default: 1.5)
+- **Buy Risk-Reward** (default: 2.5)
   - Minimum risk-reward for buys
   - Recommended: 1.2-2.0
 
-- **Excellent Risk-Reward** (default: 2.5)
+- **Excellent Risk-Reward** (default: 3.5)
   - Minimum risk-reward for excellent setups
   - Recommended: 2.0-3.5
 
@@ -166,7 +169,7 @@ Default values for order placement.
   - Stock exchange
   - Options: NSE, BSE
 
-- **Default Product** (default: MIS)
+- **Default Product** (default: CNC)
   - Order product type
   - Options: MIS (Intraday), CNC (Delivery), NRML (Futures)
 
@@ -174,7 +177,7 @@ Default values for order placement.
   - Order execution type
   - Options: MARKET, LIMIT
 
-- **Default Variety** (default: REGULAR)
+- **Default Variety** (default: AMO)
   - Order variety
   - Options: REGULAR, AMO (After Market Order)
 
@@ -258,7 +261,7 @@ Configure machine learning features.
   - Options: v1, v2, v3, v4, etc.
   - Use latest trained model
 
-- **ML Confidence Threshold** (default: 0.7)
+- **ML Confidence Threshold** (default: 0.6)
   - Minimum ML confidence required
   - Higher = more selective
   - Range: 0-1
@@ -475,4 +478,4 @@ Configuration can also be managed via API:
 - `PUT /api/v1/user/trading-config` - Update config
 - `POST /api/v1/user/trading-config/reset` - Reset to defaults
 
-See [API Documentation](API.md) for details.
+See [API Documentation](../API.md) for details.

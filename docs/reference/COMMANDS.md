@@ -223,9 +223,9 @@ python trade_agent.py
 ```
 Runs analysis without backtesting (faster, but no historical scoring).
 
-### Analysis with Custom Date Range
+### Backtest with Custom Date Range
 ```powershell
-python trade_agent.py --backtest --start-date 2024-01-01 --end-date 2024-12-31
+python -m src.presentation.cli.application backtest --start-date 2024-01-01 --end-date 2024-12-31
 ```
 
 ### View Analysis Results

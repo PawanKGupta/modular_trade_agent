@@ -63,6 +63,37 @@ python -m src.presentation.cli.application analyze --no-alerts
 python -m src.presentation.cli.application analyze --min-score 30
 ```
 
+**`--execute-trades`** - Execute market orders for buy candidates (uses mock broker by default)
+```bash
+python -m src.presentation.cli.application analyze --execute-trades
+```
+
+**`--qty`** - Default quantity per BUY order (default: 1)
+```bash
+python -m src.presentation.cli.application analyze --execute-trades --qty 5
+```
+
+**`--no-sells`** - Do not place SELL orders for existing non-recommended holdings
+```bash
+python -m src.presentation.cli.application analyze --execute-trades --no-sells
+```
+
+**`--trade-csv`** - Path to trade history CSV file (default: trade_history.csv)
+```bash
+python -m src.presentation.cli.application analyze --execute-trades --trade-csv custom_trades.csv
+```
+
+**`--sell-pct`** - Percentage of existing holdings to sell when not recommended (default: 100)
+```bash
+python -m src.presentation.cli.application analyze --execute-trades --sell-pct 50
+```
+
+**`--use-live-broker`** - Use the live Kotak broker adapter instead of mock (requires valid credentials)
+```bash
+python -m src.presentation.cli.application analyze --execute-trades --use-live-broker
+```
+
+
 #### Combined Examples
 ```bash
 # Quick analysis without alerts or CSV

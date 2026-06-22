@@ -725,7 +725,7 @@ See [Feature Documentation](docs/features/FEATURE.md) for details.
 
 - [development/PROJECT_RULES.md](development/PROJECT_RULES.md) — Project rules (this repo)
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — Contribution guidelines
-- [getting-started/DOCUMENTATION_INDEX.md](getting-started/DOCUMENTATION_INDEX.md) — Documentation index
+- [README.md](README.md) — Documentation index
 
 ---
 

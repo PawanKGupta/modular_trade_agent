@@ -872,7 +872,6 @@ sudo journalctl -u docker -n 50
 4. **Check related documentation:**
    - [Platform Deployment Guides](platforms/) - Platform-specific deployment guides
    - [Health Check Guide](HEALTH_CHECK.md)
-   - [Platform Deployment Guides](platforms/) - Platform-specific deployment guides
    - [Cloud Deployment Guides](cloud/) - Cloud provider specific guides
 
 ---

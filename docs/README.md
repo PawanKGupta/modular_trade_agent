@@ -13,7 +13,7 @@ Complete documentation for Rebound — Modular Trade Agent.
 - **[API Documentation](API.md)** - Complete REST API reference
 - **[Deployment Guide](deployment/DEPLOYMENT.md)** - Production deployment instructions
 - **[Engineering Standards](engineering-standards-and-ci.md)** - Development standards and CI
-- **[Architecture Review & Improvement Plan](development/ARCHITECTURE_REVIEW_IMPROVEMENT_PLAN.md)** - Code-validated review, risks, and phased roadmap
+- **[Phase 2.4 Completion Report](development/PHASE_2_4_COMPLETION.md)** - Implementation details for broker trading history, tests, and coverage
 
 ### Advanced Documentation
 

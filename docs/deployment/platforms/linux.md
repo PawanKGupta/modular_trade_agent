@@ -113,7 +113,7 @@ docker compose version
 
 ### Firewall Configuration
 
-> **Production note:** Port 8000 (API server) should ideally be restricted to loopback (`127.0.0.1`) and fronted by an nginx/Caddy reverse proxy with TLS. Opening it directly to `0.0.0.0/0` exposes the API and its `/docs` endpoint to the internet without transport encryption. See [HTTPS Setup Guide](../cloud/HTTPS_ORACLE_DUCKDNS.md) if you plan to expose this server publicly.
+> **Production note:** Port 8000 (API server) should ideally be restricted to loopback (`127.0.0.1`) and fronted by an nginx/Caddy reverse proxy with TLS. Opening it directly to `0.0.0.0/0` exposes the API and its `/docs` endpoint to the internet without transport encryption. See [HTTPS Setup Guide](../HTTPS_ORACLE_DUCKDNS.md) if you plan to expose this server publicly.
 
 #### Ubuntu/Debian (UFW)
 
@@ -226,7 +226,7 @@ After deployment:
 - **Health Check**: http://localhost:8000/health
 - **API Docs**: http://localhost:8000/docs — disable in production if not needed (exposes full API schema)
 
-> **Production:** Use HTTPS to protect credentials in transit. See [HTTPS Setup Guide](../cloud/HTTPS_ORACLE_DUCKDNS.md).
+> **Production:** Use HTTPS to protect credentials in transit. See [HTTPS Setup Guide](../HTTPS_ORACLE_DUCKDNS.md).
 
 ## 🔄 Updating the Application
 

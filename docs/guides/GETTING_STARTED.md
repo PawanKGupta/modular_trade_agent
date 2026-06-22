@@ -32,7 +32,7 @@ This will:
 - Web UI: http://localhost:5173
 - API: http://localhost:8000
 
-See [docker/README.md](../docker/README.md) for detailed Docker documentation.
+See [docker/README.md](../../docker/README.md) for detailed Docker documentation.
 
 ### Option 2: Manual Setup
 
@@ -173,7 +173,7 @@ npm run dev
 Before live trading, test with paper trading:
 
 1. Navigate to **Paper Trading** in the web UI
-2. Set initial capital (default: ₹1,00,000)
+2. Set initial capital (default: ₹10,00,000)
 3. Enable paper trading mode
 4. Monitor simulated trades
 
@@ -311,8 +311,8 @@ results = asyncio.run(analyze_batch())
 ### Migration from Legacy Code
 
 If you're using deprecated `core.*` functions, see:
-- **[Migration Guide](MIGRATION_GUIDE_PHASE4.md)** - Complete migration instructions
-- **[Architecture Documentation](ARCHITECTURE.md)** - Service layer details
+- **[Migration Guide](../development/MIGRATION_GUIDE_PHASE4.md)** - Complete migration instructions
+- **[Architecture Documentation](../ARCHITECTURE.md)** - Service layer details
 
 **Key Services:**
 - `AnalysisService` - Main analysis orchestration
@@ -334,12 +334,12 @@ npm install
 
 - Read [User Guide](USER_GUIDE.md) to learn how to use the web interface
 - Review [Trading Configuration](TRADING_CONFIG.md) for strategy setup
-- Check [Architecture](ARCHITECTURE.md) to understand the system design
-- See [API Documentation](API.md) for programmatic access
+- Check [Architecture](../ARCHITECTURE.md) to understand the system design
+- See [API Documentation](../API.md) for programmatic access
 
 ## Getting Help
 
 - Review log files in `logs/` directory
 - Check application logs in the web UI (Admin → Logs)
 - Review [User Guide](USER_GUIDE.md) for feature usage
-- Check [API Documentation](API.md) for programmatic access
+- Check [API Documentation](../API.md) for programmatic access

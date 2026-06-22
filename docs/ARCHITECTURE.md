@@ -204,7 +204,7 @@ The service layer is the **recommended way** to interact with analysis functiona
 - **`EventBus`** - Event-driven architecture
 - **`AnalysisPipeline`** - Composable pipeline pattern
 
-**Migration:** See [docs/MIGRATION_GUIDE_PHASE4.md](MIGRATION_GUIDE_PHASE4.md) for migrating from `core.*` to services.
+**Migration:** See [docs/MIGRATION_GUIDE_PHASE4.md](development/MIGRATION_GUIDE_PHASE4.md) for migrating from `core.*` to services.
 
 **Example Usage:**
 ```python
@@ -264,7 +264,7 @@ results = asyncio.run(analyze())
 │  - Check if notification should be sent                 │
 │  - Check quiet hours                                    │
 │  - Get enabled channels                                 │
-│  - Cache management (5 min TTL)                         │
+│  - Cache management (Indefinite in-memory cache)        │
 └────────────────────┬──────────────────────────────────────┘
                      │
                      ▼
@@ -294,7 +294,7 @@ results = asyncio.run(analyze())
 - `clear_cache(user_id)` - Clear preference cache
 
 **Features:**
-- In-memory caching (5-minute TTL) to reduce database queries
+- In-memory caching (indefinite cache, cleared on updates) to reduce database queries
 - Automatic default preference creation for new users
 - Support for quiet hours (including spanning midnight)
 - Granular event type filtering
@@ -727,9 +727,9 @@ alembic downgrade -1
 - `GET /api/v1/user/notification-preferences` - Get user preferences
 - `PUT /api/v1/user/notification-preferences` - Update user preferences
 - `GET /api/v1/user/notifications` - Get in-app notifications (with filters)
-- `PUT /api/v1/user/notifications/{id}/read` - Mark notification as read
-- `PUT /api/v1/user/notifications/read-all` - Mark all notifications as read
-- `GET /api/v1/user/notifications/unread-count` - Get unread notification count
+- `POST /api/v1/user/notifications/{notification_id}/read` - Mark notification as read
+- `POST /api/v1/user/notifications/read-all` - Mark all notifications as read
+- `GET /api/v1/user/notifications/count` - Get unread notification count
 
 **Request/Response Schemas:**
 - `NotificationPreferencesResponse` - Response model with all preference fields

@@ -311,7 +311,7 @@ from config.strategy_config import StrategyConfig
   - `CHANGELOG.md` - Version history, changes, breaking changes
   - `PROJECT_RULES.md` - This document (project rules and standards)
   - `CONTRIBUTING.md` - Contribution guidelines
-  - `MAINTAINERS.md` - Maintenance processes and ownership
+  - `MAINTAINERS.md` (UNVERIFIED: Not supported by current implementation.)
   - `SECURITY.md` - Security policies and reporting
 - **Getting Started**: `documents/getting-started/`
   - `GETTING_STARTED.md` - Complete beginner's guide
@@ -772,11 +772,11 @@ from config.strategy_config import StrategyConfig
 
 ## References
 
-- [README.md](README.md) - Project overview and quick start
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
-- [MAINTAINERS.md](MAINTAINERS.md) - Maintenance processes
-- [documents/SYSTEM_ARCHITECTURE_EVOLUTION.md](documents/SYSTEM_ARCHITECTURE_EVOLUTION.md) - Architecture details
-- [documents/getting-started/DOCUMENTATION_INDEX.md](documents/getting-started/DOCUMENTATION_INDEX.md) - Documentation index
+- [README.md](../../README.md) - Project overview and quick start
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) - Contribution guidelines
+- `MAINTAINERS.md` (UNVERIFIED: Not supported by current implementation.)
+- [documents/SYSTEM_ARCHITECTURE_EVOLUTION.md](../../archive/documents/SYSTEM_ARCHITECTURE_EVOLUTION.md) - Architecture details
+- [documents/getting-started/DOCUMENTATION_INDEX.md](../../archive/documents/getting-started/DOCUMENTATION_INDEX.md) - Documentation index
 
 ---
 

@@ -261,7 +261,7 @@ Capital Adjusted: Yes (reduced due to liquidity)
 ## 📝 Configuration Reference
 
 ### Environment Variables
-See [SETTINGS.md](../../new_documentation/configuration/SETTINGS.md) for complete configuration reference.
+See [TRADING_CONFIG.md](../guides/TRADING_CONFIG.md) for complete configuration reference.
 
 ### StrategyConfig
 All settings are available in `StrategyConfig` with defaults:
@@ -287,9 +287,9 @@ All settings are available in `StrategyConfig` with defaults:
 ---
 
 ## 📚 Related Documentation
-- [IMPLEMENTATION_SUMMARY.md](../../IMPLEMENTATION_SUMMARY.md) - Complete implementation summary
-- [SETTINGS.md](../../new_documentation/configuration/SETTINGS.md) - Configuration reference
-- [README.md](../../README.md) - Main project documentation
+- [PHASE_2_4_COMPLETION.md](../development/PHASE_2_4_COMPLETION.md) - Complete implementation summary
+- [TRADING_CONFIG.md](../guides/TRADING_CONFIG.md) - Configuration reference
+- [README.md](../README.md) - Main project documentation
 
 ---
 

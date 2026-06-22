@@ -169,7 +169,7 @@ See [Paper Trading Complete Guide](PAPER_TRADING_COMPLETE.md) for complete docum
 - Chart quality settings
 - ML model configuration
 
-**UI Location:** `/dashboard/settings`
+**UI Location:** `/dashboard/config`
 
 See [Trading Configuration Guide](TRADING_CONFIG.md) for details.
 

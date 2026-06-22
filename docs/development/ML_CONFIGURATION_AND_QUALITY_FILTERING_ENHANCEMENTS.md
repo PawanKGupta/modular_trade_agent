@@ -625,8 +625,8 @@ Recommendations are now automatically sorted by priority score:
 ### Related Documentation
 
 - [ML Configuration Enhancements](./ML_CONFIGURATION_ENHANCEMENTS.md) - Original ML config documentation
-- [Strategy Config](./STRATEGY_CONFIG.md) - Strategy configuration details
-- [Backtest Scoring](./BACKTEST_SCORING.md) - Backtest scoring implementation
+- [Strategy Config](../guides/TRADING_CONFIG.md) - Strategy configuration details
+- [Backtest Scoring](../backtest/README.md) - Backtest scoring implementation
 
 ### Code References
 
