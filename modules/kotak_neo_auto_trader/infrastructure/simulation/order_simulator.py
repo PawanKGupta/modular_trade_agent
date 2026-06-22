@@ -247,15 +247,15 @@ class OrderSimulator:
                 return True, "Limit order executed", current_price
             else:
                 return False, "Price above limit", None
-        # Sell limit: execute if current price >= limit price, fill at current price
-        # (limit is the worst acceptable price; if market is higher, receive market)
+        # Sell limit: execute if current price >= limit price, fill at limit price
+        # (EMA9 target sells should record the strategy target, not a snapshot price)
         elif current_price.amount >= order.price.amount:
             logger.info(
                 f"? Limit SELL executed: {order.symbol} "
-                f"@ Rs {current_price.amount:.2f} "
+                f"@ Rs {order.price.amount:.2f} "
                 f"(Limit: Rs {order.price.amount:.2f})"
             )
-            return True, "Limit order executed", current_price
+            return True, "Limit order executed", order.price
         else:
             return False, "Price below limit", None
 

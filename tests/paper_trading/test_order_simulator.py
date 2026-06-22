@@ -111,7 +111,7 @@ class TestOrderSimulator:
         success, message, execution_price = simulator.execute_order(order)
 
         assert success is True
-        assert execution_price.amount == 3500.00  # fills at current price, not limit
+        assert execution_price.amount == 3400.00  # fills at limit price (EMA9 target)
 
     def test_slippage_application(self):
         """Test slippage is applied correctly"""
