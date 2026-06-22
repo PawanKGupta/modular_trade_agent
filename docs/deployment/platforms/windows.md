@@ -38,7 +38,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/PawanKGupta/modular_tr
 
 # Configure environment
 Copy-Item .env.example .env
-# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
 # Pull images and start
 $env:APP_VERSION = "v26.2.3.1"
@@ -113,7 +113,7 @@ TZ=Asia/Kolkata
 
 # Encryption key for credential encryption (generate with command below)
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=<generate-using-command-above>
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # Admin User Auto-Creation (only on first deployment when database is empty)
 ADMIN_EMAIL=admin@example.com
@@ -123,7 +123,7 @@ ADMIN_NAME=Admin User
 
 **Note:**
 - The `.env` file is automatically created by the quickstart scripts (with SQLite for local dev).
-- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `ENCRYPTION_KEY`.
+- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `APP_DATA_ENCRYPTION_KEY`.
 - Docker Compose will use PostgreSQL container regardless of `.env` DB_URL value.
 
 ### Credential Management
@@ -191,19 +191,19 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 
 ```powershell
 # Check status (use same files as deployment)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # View logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # Stop services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Start services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
 
 # Restart services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
 ```
 
 ## 🐛 Troubleshooting
@@ -288,7 +288,7 @@ Trading services (analysis, buy orders, sell monitoring, etc.) are managed via t
 
 ```powershell
 # PostgreSQL (production)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
 ```
 
 ### Run Migrations
@@ -296,14 +296,14 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ex
 ```powershell
 # Migrations run automatically on API server startup
 # Or manually:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
 ```
 
 ### Backup Database
 
 ```powershell
 # Backup PostgreSQL
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(Get-Date -Format 'yyyyMMdd').sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(Get-Date -Format 'yyyyMMdd').sql
 ```
 
 For detailed backup and restore procedures, see [Backup & Restore Guide](../BACKUP_RESTORE_UNINSTALL_GUIDE.md).

@@ -643,10 +643,10 @@ See [Notification Event Types](#notification-event-types) section below.
    - E2E tests: Playwright (optional)
 
 3. **Docker Development**
-   - `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up`
+   - `docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up`
 
 4. **Production Deployment**
-   - `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d`
+   - `docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d`
 
 ## Notification Event Types
 

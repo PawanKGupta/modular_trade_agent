@@ -56,27 +56,21 @@ docker-compose: command not found
 ```
 
 **Solution:**
+
+Docker Compose v2 ships as a plugin with modern Docker Desktop and Docker Engine. Install or update Docker:
+
 ```bash
-# Check if Docker Compose is installed
-docker-compose version
-
-# If not installed, install Docker Compose v1
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-
-# Make it executable
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Verify installation
-docker-compose version
-
-# Alternative: Install via pip (if curl method fails)
+# Ubuntu/Debian — install the compose plugin
 sudo apt-get update
-sudo apt-get install -y python3-pip
-sudo pip3 install docker-compose
+sudo apt-get install -y docker-compose-plugin
 
-# Verify installation
-docker-compose --version
+# Verify
+docker compose version
+
+# macOS / Windows — update Docker Desktop to latest (includes Compose v2)
 ```
+
+If you see `docker-compose` (v1 hyphenated) errors after migrating from an older setup, all commands in this project now use `docker compose` (v2 space-separated).
 
 ---
 
@@ -114,16 +108,16 @@ sqlalchemy.exc.OperationalError: could not connect to server
 **For Docker Deployment:**
 ```bash
 # Check if database container is running
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps tradeagent-db
 
 # Check database logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db
 
 # Restart database container
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart tradeagent-db
 
 # Check database health
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_isready -U trader
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_isready -U trader
 ```
 
 ---
@@ -148,10 +142,10 @@ sudo lsof -i :5173
 sudo kill -9 <PID>
 
 # For Docker: Stop containers first
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 
 # Then restart
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ---
@@ -180,7 +174,7 @@ sudo apt-get install -y chromium-browser chromium-chromedriver \
 chromium-browser --version || chromium --version
 
 # For Docker: Chromium is included in the image, but if issues occur:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
 ```
 
 ---
@@ -251,16 +245,16 @@ alembic.util.exc.CommandError: Can't locate revision identified by 'xxxxx'
 cd /path/to/modular_trade_agent
 
 # For Docker:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic current
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic history
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic current
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic history
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
 
 # If migration is stuck, check database state
 # For PostgreSQL:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT * FROM alembic_version;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT * FROM alembic_version;"
 
 # For SQLite:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT * FROM alembic_version;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT * FROM alembic_version;"
 ```
 
 ---
@@ -275,19 +269,19 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ex
 **Solution:**
 ```bash
 # 1. Check if service is running
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps web-frontend
 
 # 2. Check if port is listening
 sudo netstat -tlnp | grep 5173
 
 # 3. Check service logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend
 
 # 4. Test from server itself
 curl http://localhost:5173
 
 # 5. Check if frontend build succeeded
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i error
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i error
 
 # 6. Check firewall rules (if accessing from remote)
 # Ensure port 5173 is open in firewall
@@ -306,10 +300,10 @@ curl http://localhost:8000/health
 **Solution:**
 ```bash
 # 1. Check if API service is running
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps api-server
 
 # 2. Check API logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server -n 100
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server -n 100
 
 # 3. Check if port is listening
 sudo netstat -tlnp | grep 8000
@@ -321,7 +315,7 @@ curl http://localhost:8000/health
 # See "Database Connection Failed" section above
 
 # 6. Restart API service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
 ```
 
 ---
@@ -335,20 +329,20 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml re
 **Solution:**
 ```bash
 # 1. Check if admin user was created (check logs)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i admin
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i admin
 
 # 2. Check .env file has admin credentials
 cat .env | grep ADMIN
 
 # 3. Verify database has users table
 # For PostgreSQL:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT email, role FROM users;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT email, role FROM users;"
 
 # For SQLite:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT email, role FROM users;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT email, role FROM users;"
 
 # 4. If no users exist, restart API server (it will create admin on startup)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
 
 # 5. Check logs for admin creation
 # Should see: "[Startup] Creating admin user admin@example.com"
@@ -460,7 +454,7 @@ date
 
 # For Docker: Timezone is set in .env file (TZ=Asia/Kolkata)
 # Restart services after timezone change
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
 ```
 
 ---
@@ -474,8 +468,8 @@ cryptography.fernet.InvalidToken
 
 **Solution:**
 ```bash
-# Check .env file has ENCRYPTION_KEY
-cat .env | grep ENCRYPTION_KEY
+# Check .env file has APP_DATA_ENCRYPTION_KEY
+cat .env | grep APP_DATA_ENCRYPTION_KEY
 
 # Generate new encryption key
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -485,7 +479,7 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 # You'll need to re-enter broker credentials via Web UI
 
 # Restart services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
 ```
 
 ---
@@ -499,7 +493,7 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml re
 **Solution:**
 ```bash
 # Check service status and logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server --tail=100
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server --tail=100
 
 # Common causes:
 # 1. Database connection failure → Fix database (see above)
@@ -519,57 +513,57 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml lo
 
 ```bash
 # View logs for all services (last 100 lines)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100
 
 # View logs for specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 api-server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 web-frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 tradeagent-db
 
 # Follow logs in real-time (all services)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # Follow logs for specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
 ```
 
 ### Filtering and Searching Logs
 
 ```bash
 # View logs with timestamps
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -t
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -t
 
 # View logs since specific time
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --since 30m
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --since 1h
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --since 30m
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --since 1h
 
 # Filter logs by service and search for specific text
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i error
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "database"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i error
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "database"
 
 # View only errors
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "error\|exception\|failed\|traceback"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "error\|exception\|failed\|traceback"
 
 # View logs with context (lines before and after match)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -A 5 -B 5 "error"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -A 5 -B 5 "error"
 ```
 
 ### Service-Specific Log Debugging
 
 ```bash
 # API Server Logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "startup\|initialization\|migration"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "database\|postgres\|sqlite\|connection"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "login\|auth\|jwt\|token"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "trading\|order\|signal\|analysis"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "startup\|initialization\|migration"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "database\|postgres\|sqlite\|connection"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "login\|auth\|jwt\|token"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i "trading\|order\|signal\|analysis"
 
 # Web Frontend Logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i "build\|compile\|error"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i "server\|nginx\|vite"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i "build\|compile\|error"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i "server\|nginx\|vite"
 
 # Database Logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db | grep -i "connection\|authentication"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db | grep -i "error\|fatal\|panic"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db | grep -i "connection\|authentication"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db | grep -i "error\|fatal\|panic"
 ```
 
 ### User-Specific Log Debugging
@@ -578,7 +572,7 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml lo
 
 ```bash
 # Find user ID from email
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server python -c "
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server python -c "
 from src.infrastructure.db.session import SessionLocal
 from src.infrastructure.db.models import Users
 db = SessionLocal()
@@ -589,23 +583,23 @@ db.close()
 "
 
 # View logs for specific user ID
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "user_id.*123"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "uid.*123"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "user_id.*123"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "uid.*123"
 
 # View logs for specific user email
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "user@example.com"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep "user@example.com"
 
 # View user authentication logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -iE "login|signup|auth.*user@example.com"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -iE "login|signup|auth.*user@example.com"
 
 # View user trading activity logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -E "user_id.*123|uid.*123" | grep -iE "trading|order|signal|analysis"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -E "user_id.*123|uid.*123" | grep -iE "trading|order|signal|analysis"
 
 # View user-specific errors
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -E "user_id.*123|uid.*123" | grep -iE "error|exception|failed|traceback"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -E "user_id.*123|uid.*123" | grep -iE "error|exception|failed|traceback"
 
 # Follow user-specific logs in real-time
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server | grep --line-buffered -E "user_id.*123|uid.*123"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server | grep --line-buffered -E "user_id.*123|uid.*123"
 ```
 
 ---
@@ -621,8 +615,8 @@ df -h                      # Disk space
 uptime                     # System load
 
 # Service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50
 
 # Network
 sudo netstat -tlnp | grep -E ':(8000|5173|5432)'
@@ -631,10 +625,10 @@ curl http://localhost:5173
 
 # Database
 # PostgreSQL:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT COUNT(*) FROM users;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT COUNT(*) FROM users;"
 
 # SQLite:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT COUNT(*) FROM users;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server sqlite3 data/app.db "SELECT COUNT(*) FROM users;"
 
 # Files
 ls -la .env
@@ -864,7 +858,7 @@ sudo journalctl -u docker -n 50
 ## 🆘 Still Having Issues?
 
 1. **Check logs thoroughly:**
-   - `docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f`
+   - `docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f`
 
 2. **Verify all prerequisites:**
    - Firewall rules configured

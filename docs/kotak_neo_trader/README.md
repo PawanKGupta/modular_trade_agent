@@ -92,7 +92,7 @@ If you deploy on Oracle Cloud, reserved public IPs are described in-repo under [
 - ✅ Credentials are **encrypted** before storage in database
 - ✅ No plain text credentials in files
 - ✅ Per-user credential storage (multi-user system)
-- ✅ Encryption key managed via `ENCRYPTION_KEY` environment variable
+- ✅ Encryption key managed via `APP_DATA_ENCRYPTION_KEY` environment variable
 
 ### Legacy Note
 

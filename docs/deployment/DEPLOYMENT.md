@@ -76,7 +76,7 @@ curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.
 
 ```bash
 cp .env.example .env
-# Edit .env — fill in SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, and any broker credentials
+# Edit .env — fill in JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, and any broker credentials
 ```
 
 ### 3. Pull images and start

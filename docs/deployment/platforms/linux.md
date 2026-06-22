@@ -39,7 +39,7 @@ curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.
 
 # Configure environment
 cp .env.example .env
-# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
 # Pull images and start
 export APP_VERSION=v26.2.3.1
@@ -102,19 +102,13 @@ sudo systemctl enable docker
 sudo usermod -aG docker $USER
 ```
 
-### Docker Compose Installation (Standalone)
+### Docker Compose (v2 plugin)
 
-If Docker Compose plugin is not available:
+The `docker-compose-plugin` package installed above provides `docker compose` (v2). Verify:
 
 ```bash
-# Download Docker Compose v1
-sudo curl -L "https://github.com/docker/compose/releases/download/v1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-
-# Make executable
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Verify installation
-docker-compose --version
+docker compose version
+# Should show Docker Compose version v2.x.x
 ```
 
 ### Firewall Configuration
@@ -162,8 +156,8 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/path/to/modular_trade_agent
-ExecStart=/usr/local/bin/docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
-ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+ExecStart=/usr/local/bin/docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+ExecStop=/usr/local/bin/docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 User=your-username
 Group=your-group
 
@@ -195,7 +189,7 @@ TZ=Asia/Kolkata
 
 # Encryption key for credential encryption (generate with command below)
 # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=<generate-using-command-above>
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # Admin User Auto-Creation (only on first deployment when database is empty)
 ADMIN_EMAIL=admin@example.com
@@ -205,7 +199,7 @@ ADMIN_NAME=Admin User
 
 **Note:**
 - The `.env` file is automatically created by the quickstart scripts (with SQLite for local dev).
-- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `ENCRYPTION_KEY`.
+- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `APP_DATA_ENCRYPTION_KEY`.
 - Docker Compose will use PostgreSQL container regardless of `.env` DB_URL value.
 
 ### Credential Management
@@ -266,30 +260,30 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 ### Check Status
 
 ```bash
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 ```
 
 ### View Logs
 
 ```bash
 # All services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # Specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
 ```
 
 ### Stop/Start Services
 
 ```bash
 # Stop
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Start
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
 
 # Restart
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
 ```
 
 ## 🐛 Troubleshooting
@@ -391,7 +385,7 @@ Trading services (analysis, buy orders, sell monitoring, etc.) are managed via t
 
 ```bash
 # PostgreSQL (production)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
 ```
 
 ### Run Migrations
@@ -399,14 +393,14 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ex
 ```bash
 # Migrations run automatically on API server startup
 # Or manually:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
 ```
 
 ### Backup Database
 
 ```bash
 # Backup PostgreSQL
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
 ```
 
 For detailed backup and restore procedures, see [Backup & Restore Guide](../BACKUP_RESTORE_UNINSTALL_GUIDE.md).

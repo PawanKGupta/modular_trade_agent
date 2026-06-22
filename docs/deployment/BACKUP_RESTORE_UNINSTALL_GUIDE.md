@@ -19,10 +19,10 @@ All application data, including user accounts, trading history, orders, and encr
 
 ```bash
 # Backup PostgreSQL database
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d_%H%M%S).sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d_%H%M%S).sql
 
 # Backup with custom format (smaller, faster restore)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader -F c tradeagent > backup_$(date +%Y%m%d_%H%M%S).dump
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader -F c tradeagent > backup_$(date +%Y%m%d_%H%M%S).dump
 ```
 
 #### Automated Backup Script
@@ -39,7 +39,7 @@ mkdir -p $BACKUP_DIR
 # Create timestamped backup
 BACKUP_FILE="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S).sql"
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_dump -U trader tradeagent > $BACKUP_FILE
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_dump -U trader tradeagent > $BACKUP_FILE
 
 # Compress backup
 gzip $BACKUP_FILE
@@ -60,7 +60,7 @@ New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 
 $BackupFile = "$BackupDir\backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').sql"
 
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_dump -U trader tradeagent | Out-File -FilePath $BackupFile -Encoding utf8
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_dump -U trader tradeagent | Out-File -FilePath $BackupFile -Encoding utf8
 
 # Compress backup (requires 7-Zip or similar)
 # Compress-Archive -Path $BackupFile -DestinationPath "$BackupFile.zip"
@@ -97,13 +97,13 @@ If you want to backup the entire Docker volume (including database):
 
 ```bash
 # Stop services (optional, for consistent backup)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Backup volume
 docker run --rm -v modular_trade_agent_postgres_data:/data -v $(pwd):/backup ubuntu tar czf /backup/postgres_data_backup_$(date +%Y%m%d_%H%M%S).tar.gz /data
 
 # Start services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
 ```
 
 ### Configuration Backup
@@ -128,44 +128,44 @@ tar czf config_backup_$(date +%Y%m%d_%H%M%S).tar.gz .env docker/
 
 ```bash
 # Restore from SQL dump
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent < backup_20250101_120000.sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent < backup_20250101_120000.sql
 ```
 
 #### From Custom Format Dump
 
 ```bash
 # Restore from custom format dump
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_restore -U trader -d tradeagent backup_20250101_120000.dump
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_restore -U trader -d tradeagent backup_20250101_120000.dump
 ```
 
 #### Restore Process
 
 1. **Stop services** (optional, for clean restore):
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
    ```
 
 2. **Drop existing database** (if needed):
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "DROP DATABASE IF EXISTS tradeagent;"
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "CREATE DATABASE tradeagent;"
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "DROP DATABASE IF EXISTS tradeagent;"
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "CREATE DATABASE tradeagent;"
    ```
 
 3. **Restore backup**:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent < backup_20250101_120000.sql
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent < backup_20250101_120000.sql
    ```
 
 4. **Start services**:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
    ```
 
 ### Docker Volume Restore
 
 ```bash
 # Stop services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 
 # Remove existing volume (WARNING: This deletes current data!)
 docker volume rm modular_trade_agent_postgres_data
@@ -174,7 +174,7 @@ docker volume rm modular_trade_agent_postgres_data
 docker run --rm -v modular_trade_agent_postgres_data:/data -v $(pwd):/backup ubuntu tar xzf /backup/postgres_data_backup_20250101_120000.tar.gz -C /
 
 # Start services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ### Configuration Restore
@@ -197,10 +197,10 @@ tar xzf config_backup_20250101_120000.tar.gz
 
 ```bash
 # Stop and remove all containers and volumes
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down -v
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down -v
 
 # Remove images (optional)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down --rmi all
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down --rmi all
 
 # Remove Docker volumes (if any remain)
 docker volume ls | grep modular_trade_agent
@@ -213,10 +213,10 @@ docker volume rm modular_trade_agent_postgres_data
 
 ```bash
 # Stop containers only (keeps volumes)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Remove containers only (keeps volumes)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 ```
 
 ### Clean Uninstallation Checklist
@@ -258,8 +258,8 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml do
 ls -lh backup_*.sql
 
 # Test restore on a test database
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "CREATE DATABASE tradeagent_test;"
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent_test < backup_20250101_120000.sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -c "CREATE DATABASE tradeagent_test;"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db psql -U trader tradeagent_test < backup_20250101_120000.sql
 ```
 
 ### Disaster Recovery

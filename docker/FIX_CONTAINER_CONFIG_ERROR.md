@@ -9,7 +9,7 @@ This is a known bug in Docker Compose v1.29.2 when recreating containers.
 
 ## ⚠️ SAFE Fix (Preserves Data)
 
-**IMPORTANT:** Do NOT use `docker-compose down` as it removes volumes and deletes your data!
+**IMPORTANT:** Do NOT use `docker compose down` as it removes volumes and deletes your data!
 
 Run these commands on your Ubuntu server:
 
@@ -41,12 +41,12 @@ docker stop tradeagent-web
 docker rm -f tradeagent-web
 
 # Then recreate it
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d web-frontend
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d web-frontend
 ```
 
 ## ⚠️ Data Recovery (If You Already Ran `down`)
 
-If you already ran `docker-compose down` and lost your data:
+If you already ran `docker compose down` and lost your data:
 
 1. **Check if volumes still exist:**
    ```bash

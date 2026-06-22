@@ -192,7 +192,7 @@ curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.
 
 # Configure environment
 cp .env.example .env
-# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 nano .env
 
 # Pull images and start
@@ -263,11 +263,11 @@ ssh ubuntu@YOUR_PUBLIC_IP
 cd ~/modular_trade_agent
 
 # Check container status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # Verify Docker is running
 docker --version
-docker-compose --version
+docker compose --version
 ```
 
 ### Analysis Smoke Test (No Broker Calls)
@@ -371,13 +371,13 @@ For comprehensive Docker management commands, see [Linux Deployment Guide - Serv
 **Quick reference:**
 ```bash
 # View Docker logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # View specific service logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
 
 # Check service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # View system resources (Oracle Cloud VM)
 htop
@@ -658,7 +658,7 @@ For all other troubleshooting issues (Docker, services, database, logs, etc.), s
 **All steps and scripts in this guide have been validated and tested:**
 
 - ✅ Docker deployment script (`docker/deploy-oracle.sh`) validated
-- ✅ All Docker commands use correct syntax (`docker-compose` v1)
+- ✅ All Docker commands use correct syntax (`docker compose` v2 plugin)
 - ✅ All paths and file locations verified
 - ✅ Database configuration (PostgreSQL) validated
 - ✅ Service management commands validated

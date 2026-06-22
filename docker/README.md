@@ -19,7 +19,7 @@ Complete guide for running the Trading Agent with Docker.
 ### Manual Start
 ```bash
 cd docker
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 **Access:**
@@ -55,7 +55,7 @@ ADMIN_NAME=Admin User
 
 # Optional: Encryption key for credential encryption
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# ENCRYPTION_KEY=your_base64_encoded_key
+# APP_DATA_ENCRYPTION_KEY=your_base64_encoded_key
 
 # Optional: Telegram Bot Token (for notifications)
 # Get from @BotFather on Telegram
@@ -78,7 +78,7 @@ ADMIN_NAME=Admin User
 
 **All credentials are stored in the database** (not in `.env` files):
 
-1. Start Docker: `docker-compose -f docker-compose.yml up -d`
+1. Start Docker: `docker compose -f docker-compose.yml up -d`
 2. Access web UI: http://localhost:5173
 3. Login with admin credentials
 4. Go to **Settings**:
@@ -94,27 +94,27 @@ ADMIN_NAME=Admin User
 ### Start Services
 ```bash
 cd docker
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Stop Services
 ```bash
-docker-compose -f docker-compose.yml down
+docker compose -f docker-compose.yml down
 ```
 
 ### View Logs
 ```bash
 # All services
-docker-compose -f docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Specific service
-docker-compose -f docker-compose.yml logs -f api-server
-docker-compose -f docker-compose.yml logs -f web-frontend
+docker compose -f docker-compose.yml logs -f api-server
+docker compose -f docker-compose.yml logs -f web-frontend
 ```
 
 ### Restart Service
 ```bash
-docker-compose -f docker-compose.yml restart api-server
+docker compose -f docker-compose.yml restart api-server
 ```
 
 ### Pull a New Image Version
@@ -132,7 +132,7 @@ The **`api-server`** image (`Dockerfile.api`) installs **CPU PyTorch** and **`re
 ### Run Database Migrations Manually
 ```bash
 # If you need to run migrations manually (usually runs automatically on startup)
-docker-compose -f docker-compose.yml exec api-server python -m alembic upgrade head
+docker compose -f docker-compose.yml exec api-server python -m alembic upgrade head
 ```
 
 ### Upgrading to 26.2.1
@@ -155,7 +155,7 @@ See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-t
 
 ### Check Status
 ```bash
-docker-compose -f docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 ---
@@ -166,7 +166,7 @@ For hot reload and live code editing:
 
 ```powershell
 cd docker
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 **Features:**
@@ -193,7 +193,7 @@ curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.
 
 # 3. Create .env file
 cp .env.example .env
-# Edit .env — set SECRET_KEY, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
 # 4. Pull images and start
 export APP_VERSION=v26.2.3.1
@@ -230,10 +230,10 @@ netstat -ano | findstr :5173  # Windows
 lsof -i :5173                 # Linux/Mac
 
 # Stop and remove containers
-docker-compose -f docker-compose.yml down
+docker compose -f docker-compose.yml down
 
 # Restart
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Can't Access Web UI (404)
@@ -244,11 +244,11 @@ docker-compose -f docker-compose.yml up -d
 ### Login Fails
 - Verify admin user exists: Check logs for `[Startup] Creating admin user`
 - Verify `.env` has `ADMIN_EMAIL` and `ADMIN_PASSWORD` set
-- Check API logs: `docker-compose -f docker-compose.yml logs api-server`
+- Check API logs: `docker compose -f docker-compose.yml logs api-server`
 
 ### Database Issues
 - Delete database to reset: `Remove-Item data\app.db` (Windows) or `rm data/app.db` (Linux/Mac)
-- Restart API server: `docker-compose -f docker-compose.yml restart api-server`
+- Restart API server: `docker compose -f docker-compose.yml restart api-server`
 - Admin user will be auto-created if DB is empty
 
 ### Services Not Starting
@@ -311,7 +311,7 @@ docker/
 
 ## 🆘 Need Help?
 
-1. Check logs: `docker-compose -f docker-compose.yml logs -f`
-2. Verify services are running: `docker-compose -f docker-compose.yml ps`
+1. Check logs: `docker compose -f docker-compose.yml logs -f`
+2. Verify services are running: `docker compose -f docker-compose.yml ps`
 3. Check `.env` file exists and has required variables
 4. Ensure Docker Desktop is running

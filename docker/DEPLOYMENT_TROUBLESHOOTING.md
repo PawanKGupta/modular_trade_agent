@@ -23,7 +23,7 @@ docker ps
 ### Alternative: Use sudo (not recommended for production)
 
 ```bash
-sudo docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## Common Issues
