@@ -132,7 +132,7 @@ docker logs tradeagent-api
 
 # Restart containers
 cd ~/modular_trade_agent/docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml restart
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart
 ```
 
 ### Can't Access from Browser

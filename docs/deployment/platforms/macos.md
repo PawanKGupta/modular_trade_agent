@@ -20,63 +20,32 @@ Complete guide for deploying Rebound — Modular Trade Agent on macOS.
    - Includes Docker Engine, Docker Compose, and Kubernetes
    - Supports both Intel and Apple Silicon
 
-2. **Git** (usually pre-installed)
-   ```bash
-   # Install Git LFS
-   brew install git-lfs
-   # Or download from: https://git-lfs.github.com
-   ```
-
-3. **Homebrew** (optional, for package management)
+2. **Homebrew** (optional, for package management)
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
    ```
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Image-Based — Recommended)
 
-### Automated Deployment
-
-```bash
-# Clone repository
-git clone <repository-url>
-cd modular_trade_agent
-
-# Install Git LFS (required for ML models)
-git lfs install
-git lfs pull
-
-# Run quickstart script
-./docker/docker-quickstart.sh
-```
-
-The script will:
-1. ✅ Check Docker installation
-2. ✅ Create `.env` file if missing
-3. ✅ Build Docker images
-4. ✅ Start all services
-5. ✅ Display access URLs
-
-### Manual Deployment
+No git clone required. Pull pre-built images from GitHub Container Registry.
 
 ```bash
-# Ensure Docker Desktop is running
-# Check Docker status
-docker --version
-docker-compose --version
+# Create a working directory
+mkdir rebound && cd rebound
 
-# Navigate to project root
-cd ~/path/to/modular_trade_agent
+# Download Compose files
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
 
-# Create .env file (if not exists)
-# Edit .env with your configuration
+# Configure environment
+cp .env.example .env
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
-# Build and start (production mode with named volumes)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
-
-# Or for development (uses bind mounts, faster for code changes):
-# docker-compose -f docker/docker-compose.yml build
-# docker-compose -f docker/docker-compose.yml up -d
+# Pull images and start
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## 🔧 macOS-Specific Configuration
@@ -143,25 +112,28 @@ The `.env` file in the project root controls configuration:
 # Database (PostgreSQL in Docker)
 # Note: Docker Compose overrides this with PostgreSQL connection string
 # The DB_URL here is for reference - Docker uses PostgreSQL container
-DB_URL=postgresql+psycopg2://trader:changeme@tradeagent-db:5432/tradeagent
+DB_URL=postgresql+psycopg2://trader:<your-db-password>@tradeagent-db:5432/tradeagent
+# Set POSTGRES_PASSWORD in .env to the same value used above
 
 # Timezone
 TZ=Asia/Kolkata
 
 # Encryption key for credential encryption (generate with command below)
 # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=<generate-using-command-above>
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # Admin User Auto-Creation (only on first deployment when database is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=ChangeThisPassword123!
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python3 -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 ```
 
 **Note:**
 - The `.env` file is automatically created by the quickstart scripts (with SQLite for local dev).
-- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `ENCRYPTION_KEY`.
+- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `APP_DATA_ENCRYPTION_KEY`.
 - Docker Compose will use PostgreSQL container regardless of `.env` DB_URL value.
+- If serving over HTTPS (recommended for production), set `AUTH_COOKIE_SECURE=true` in `.env` so session cookies are only sent over encrypted connections.
 
 ### Credential Management
 
@@ -180,50 +152,38 @@ After deployment:
 - **Web Frontend**: http://localhost:5173
 - **API Server**: http://localhost:8000
 - **Health Check**: http://localhost:8000/health
-- **API Docs**: http://localhost:8000/docs
+- **API Docs**: http://localhost:8000/docs — disable in production if not needed (exposes full API schema)
 
 ## 🔄 Updating the Application
 
-### Option 1: Rebuild with Data Preservation (Recommended)
-
-Preserves all data including database, credentials, and trading history:
+Preserves all data (database, credentials, trading history) — volumes are not removed.
 
 ```bash
-# Pull latest code
-git pull origin main
-git lfs pull  # If ML models were updated
+# Set the new version
+export APP_VERSION=v26.2.3.1   # replace with target version
 
-# Rebuild and restart (volumes preserved)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+# Pull new images and restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Option 2: Complete Rebuild (Removes All Data)
-
-**⚠️ WARNING:** This removes all containers and volumes, deleting all data.
+### Rollback
 
 ```bash
-# Pull latest code
-git pull origin main
-git lfs pull
-
-# Stop and remove containers (WARNING: Removes volumes and data!)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
-
-# Rebuild images
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-
-# Start containers
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+export APP_VERSION=v26.2.3    # previous version
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Rebuild Specific Service Only
+### Complete Reset (Removes All Data)
+
+**⚠️ WARNING:** This removes all volumes and deletes all data including the database.
 
 ```bash
-# Rebuild and restart only API server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build api-server
-
-# Rebuild and restart only frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down -v
+export APP_VERSION=v26.2.3.1
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ## 🔄 Service Management
@@ -240,19 +200,19 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 
 ```bash
 # Check status (use same files as deployment)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # View logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # Stop services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Start services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
 
 # Restart services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
 ```
 
 ## 🐛 Troubleshooting
@@ -349,7 +309,7 @@ Trading services (analysis, buy orders, sell monitoring, etc.) are managed via t
 
 ```bash
 # PostgreSQL (production)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
 ```
 
 ### Run Migrations
@@ -357,14 +317,14 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ex
 ```bash
 # Migrations run automatically on API server startup
 # Or manually:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
 ```
 
 ### Backup Database
 
 ```bash
 # Backup PostgreSQL
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
 ```
 
 For detailed backup and restore procedures, see [Backup & Restore Guide](../BACKUP_RESTORE_UNINSTALL_GUIDE.md).

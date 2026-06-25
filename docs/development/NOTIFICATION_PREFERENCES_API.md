@@ -22,9 +22,8 @@ service = NotificationPreferenceService(db_session=db)
 - `db_session` (Session): SQLAlchemy database session
 
 **Features:**
-- In-memory caching (5-minute TTL) to reduce database queries
-- Automatic cache invalidation on updates
-- Thread-safe cache operations
+- In-memory caching to reduce database queries (cached indefinitely until database updates or manual invalidation)
+- Automatic cache invalidation on updates (cache entry is popped or overwritten on modification)
 
 ## Methods
 
@@ -56,10 +55,11 @@ Get existing preferences or create default preferences for a user.
 - `UserNotificationPreferences`: User preferences (existing or newly created)
 
 **Default Values:**
-- Most events enabled (`TRUE`)
-- Opt-in events disabled (`FALSE`): `ORDER_MODIFIED`, `SYSTEM_WARNING`, `SYSTEM_INFO`
-- All channels disabled except `in_app_enabled` (`TRUE`)
-- Quiet hours not set (`None`)
+- Channels: Only `in_app_enabled` is `TRUE`. `telegram_enabled` and `email_enabled` are `FALSE` (user must configure and enable).
+- Order Events: All granular order events are enabled by default (`TRUE`), including `notify_order_modified` and `notify_balance_shortfall`.
+- System Events: `notify_system_errors` and `notify_payment_failed` default to `TRUE`. `notify_system_warnings` and `notify_system_info` default to `FALSE` (opt-in).
+- Service Events: `notify_service_started`, `notify_service_stopped`, and `notify_service_execution_completed` default to `FALSE` (opt-in).
+- Quiet hours not set (`None`).
 
 **Example:**
 ```python
@@ -108,11 +108,11 @@ Check if a notification should be sent for a specific event type.
 - `bool`: `True` if notification should be sent, `False` otherwise
 
 **Decision Logic:**
-1. If no preferences exist → Returns `True` (backward compatibility)
-2. Check if channel is enabled → Returns `False` if disabled
-3. Check if event type is enabled → Returns `False` if disabled
-4. Check quiet hours → Returns `False` if within quiet hours
-5. Returns `True` if all checks pass
+1. If no preferences exist → Returns `False` for service lifecycle events (`service_started`, `service_stopped`, `service_execution_completed`, `service_event`) and `True` for non-service events (backward compatibility).
+2. Check if channel is enabled → Returns `False` if disabled.
+3. Check quiet hours → Returns `False` if within quiet hours.
+4. Check if event type is enabled → Returns `False` if disabled (unknown event types default to `True` for backward compatibility).
+5. Returns `True` if all checks pass.
 
 **Example:**
 ```python
@@ -183,32 +183,56 @@ service.clear_cache(user_id=1)
 service.clear_cache()
 ```
 
+### Telegram Connection Testing API
+
+#### `POST /api/v1/user/notification-preferences/telegram/test`
+
+Tests a Telegram bot connection configuration by sending a test message before the configuration is saved to the database.
+
+**Parameters (Query Params):**
+- `bot_token` (str): Telegram bot token to test.
+- `chat_id` (str): Telegram chat ID to test.
+
+**Returns:**
+- `{"success": bool, "message": str}`: Result indicating if the test message was sent successfully.
+```
+
 ## Event Type Constants
 
 **Class:** `NotificationEventType`
 
 **Order Events:**
-- `ORDER_PLACED` - Order placed successfully
-- `ORDER_REJECTED` - Order rejected
-- `ORDER_EXECUTED` - Order executed
-- `ORDER_CANCELLED` - Order cancelled
-- `ORDER_MODIFIED` - Order manually modified
-- `RETRY_QUEUE_ADDED` - Order added to retry queue
-- `RETRY_QUEUE_UPDATED` - Retry queue updated
-- `RETRY_QUEUE_REMOVED` - Order removed from retry queue
-- `RETRY_QUEUE_RETRIED` - Order retried successfully
-- `PARTIAL_FILL` - Partial order fill
+- `ORDER_PLACED` - Order placed successfully (`order_placed`)
+- `ORDER_REJECTED` - Order rejected (`order_rejected`)
+- `ORDER_EXECUTED` - Order executed (`order_executed`)
+- `ORDER_CANCELLED` - Order cancelled (`order_cancelled`)
+- `ORDER_MODIFIED` - Order manually modified (`order_modified`)
+- `ORDER_SKIPPED` - Order skipped (`order_skipped`)
+- `RETRY_QUEUE_ADDED` - Order added to retry queue (`retry_queue_added`)
+- `RETRY_QUEUE_UPDATED` - Retry queue updated (`retry_queue_updated`)
+- `RETRY_QUEUE_REMOVED` - Order removed from retry queue (`retry_queue_removed`)
+- `RETRY_QUEUE_RETRIED` - Order retried successfully (`retry_queue_retried`)
+- `PARTIAL_FILL` - Partial order fill (`partial_fill`)
+- `BALANCE_SHORTFALL` - Insufficient margin shortfall (`balance_shortfall`)
 
 **System Events:**
-- `SYSTEM_ERROR` - System errors
-- `SYSTEM_WARNING` - System warnings
-- `SYSTEM_INFO` - System information
+- `SYSTEM_ERROR` - System errors (`system_error`)
+- `SYSTEM_WARNING` - System warnings (`system_warning`)
+- `SYSTEM_INFO` - System information (`system_info`)
+
+**Service Lifecycle Events:**
+- `SERVICE_STARTED` - Service started (`service_started`)
+- `SERVICE_STOPPED` - Service stopped (`service_stopped`)
+- `SERVICE_EXECUTION_COMPLETED` - Service execution completed (`service_execution_completed`)
+
+**Billing Events:**
+- `PAYMENT_FAILED` - Razorpay payment failed (`payment_failed`)
 
 **Legacy Events (Backward Compatibility):**
-- `SERVICE_EVENT` - Service events
-- `TRADING_EVENT` - Trading events
-- `SYSTEM_EVENT` - System events
-- `ERROR` - Error events
+- `SERVICE_EVENT` - Service events (`service_event`)
+- `TRADING_EVENT` - Trading events (`trading_event`)
+- `SYSTEM_EVENT` - System events (`system_event`)
+- `ERROR` - Error events (`error`)
 
 **Usage:**
 ```python
@@ -261,20 +285,19 @@ notifier.notify_order_placed("RELIANCE", "123", 10, user_id=1)
 - `get_or_create_default_preferences()` creates defaults automatically
 
 **Invalid Event Types:**
-- Unknown event types return `False` (notification not sent)
-- Legacy event types are mapped to appropriate granular events
+- Unknown event types default to `True` (notification sent) for backward compatibility.
+- Legacy event types are mapped to appropriate granular event fields.
 
 ## Performance Considerations
 
 **Caching:**
-- Preferences are cached in memory for 5 minutes
-- Cache is automatically invalidated on updates
-- Cache can be manually cleared with `clear_cache()`
+- Preferences are cached in memory indefinitely (until server restart or cache clear/update).
+- Cache is automatically overwritten or popped on preference updates.
+- Cache can be manually cleared with `clear_cache()`.
 
 **Database Queries:**
-- First access: Database query + cache update
-- Subsequent access: Cache lookup (no database query)
-- After 5 minutes: Cache expires, next access queries database
+- First access: Database query + cache update.
+- Subsequent access: Cache lookup (no database query).
 
 **Best Practices:**
 - Use `get_or_create_default_preferences()` for guaranteed preferences
@@ -284,10 +307,10 @@ notifier.notify_order_placed("RELIANCE", "123", 10, user_id=1)
 ## Testing
 
 **Unit Tests:**
-- `tests/unit/services/test_notification_preference_service.py` (28 tests)
+- `tests/unit/services/test_notification_preference_service.py` (29 tests)
 
 **Integration Tests:**
-- `tests/integration/test_phase3_notification_preferences.py` (16 tests)
+- `tests/integration/test_phase3_notification_preferences.py` (21 tests)
 
 **Example Test:**
 ```python
@@ -307,6 +330,6 @@ def test_should_notify_with_preferences():
 
 ## See Also
 
-- [User Guide - Notification Preferences](../USER_GUIDE.md#notification-preferences)
+- [User Guide - Notification Preferences](../guides/USER_GUIDE.md#notification-preferences)
 - [Architecture - Notification System](../ARCHITECTURE.md#6-notification-system)
 - [Migration Guide](../ARCHITECTURE.md#notification-preferences-migration)

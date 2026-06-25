@@ -361,8 +361,8 @@ cd web; npx playwright install chromium; npm run test:e2e
   - Returns: `{ has_creds: bool, api_key?: str, api_secret?: str, mobile_number?: str, password?: str, mpin?: str, api_key_masked?: str, api_secret_masked?: str }`
 
 **Security Notes:**
-- Credentials are encrypted at rest using `cryptography.fernet` with a key derived from `ENCRYPTION_KEY` env var (or auto-generated for dev)
-- Encryption key should be set via environment variable in production: `ENCRYPTION_KEY=<base64-encoded-32-byte-key>`
+- Credentials are encrypted at rest using `cryptography.fernet` with a key derived from `APP_DATA_ENCRYPTION_KEY` env var (or auto-generated for dev)
+- Encryption key should be set via environment variable in production: `APP_DATA_ENCRYPTION_KEY=<base64-encoded-32-byte-key>`
 - Full credentials are only returned when explicitly requested via `show_full=true` query parameter
 - Masked credentials (last 4 characters) are shown by default for security
 - Credentials are isolated per user (row-level security via `user_id`)

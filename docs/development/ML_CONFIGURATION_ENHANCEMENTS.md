@@ -826,9 +826,9 @@ Before setting `is_active=True` for a new model version:
 
 ## Related Documentation
 
-- [Trading Configuration Guide](TRADING_CONFIG.md) - UI configuration options
-- [ML Implementation Guide](../archive/documents/ML_IMPLEMENTATION_GUIDE.md) - ML system overview
-- [Two-Stage Chart Quality + ML Approach](../documents/features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md) - Chart quality filtering
+- [Trading Configuration Guide](../guides/TRADING_CONFIG.md) - UI configuration options
+- [ML Implementation Guide](../../archive/documents/ML_IMPLEMENTATION_GUIDE.md) - ML system overview
+- [Two-Stage Chart Quality + ML Approach](../features/TWO_STAGE_CHART_QUALITY_ML_APPROACH.md) - Chart quality filtering
 
 ---
 

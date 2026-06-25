@@ -252,12 +252,23 @@ Authorization: Bearer <token>
 
 #### Reject Signal
 ```http
-POST /api/v1/signals/reject
+PATCH /api/v1/signals/signals/{symbol}/reject
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "symbol": "RELIANCE.NS"
+  "reason": "Manually decided not to trade"
+}
+```
+
+#### Activate Signal
+```http
+PATCH /api/v1/signals/signals/{symbol}/activate
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "reason": "Re-activate signal"
 }
 ```
 
@@ -358,19 +369,6 @@ Authorization: Bearer <token>
 
 ### Paper Trading
 
-#### Execute Paper Trade
-```http
-POST /api/v1/user/paper-trading/execute
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "symbol": "RELIANCE.NS",
-  "quantity": 10,
-  "price": 2450.00,
-  "transaction_type": "BUY"
-}
-```
 
 #### Get Paper Trading History
 ```http
@@ -396,11 +394,48 @@ Authorization: Bearer <token>
 ```json
 {
   "rsi_period": 10,
-  "ema9_period": 9,
-  "ema200_period": 200,
-  "min_volume_multiplier": 0.7,
-  "user_capital": 200000.0,
-  "max_position_volume_ratio": 0.10
+  "rsi_oversold": 30.0,
+  "rsi_extreme_oversold": 20.0,
+  "rsi_near_oversold": 40.0,
+  "user_capital": 100000.0,
+  "paper_trading_initial_capital": 1000000.0,
+  "max_portfolio_size": 6,
+  "max_position_volume_ratio": 0.10,
+  "min_absolute_avg_volume": 10000,
+  "chart_quality_enabled": true,
+  "chart_quality_min_score": 50.0,
+  "chart_quality_max_gap_frequency": 25.0,
+  "chart_quality_min_daily_range_pct": 1.0,
+  "chart_quality_max_extreme_candle_frequency": 20.0,
+  "default_stop_loss_pct": null,
+  "tight_stop_loss_pct": null,
+  "min_stop_loss_pct": null,
+  "default_target_pct": 0.10,
+  "strong_buy_target_pct": 0.12,
+  "excellent_target_pct": 0.15,
+  "strong_buy_risk_reward": 3.0,
+  "buy_risk_reward": 2.5,
+  "excellent_risk_reward": 3.5,
+  "default_exchange": "NSE",
+  "default_product": "CNC",
+  "default_order_type": "MARKET",
+  "default_variety": "AMO",
+  "default_validity": "DAY",
+  "allow_duplicate_recommendations_same_day": false,
+  "exit_on_ema9_or_rsi50": true,
+  "min_combined_score": 25,
+  "enable_premarket_amo_adjustment": true,
+  "news_sentiment_enabled": true,
+  "news_sentiment_lookback_days": 30,
+  "news_sentiment_min_articles": 2,
+  "news_sentiment_pos_threshold": 0.25,
+  "news_sentiment_neg_threshold": -0.25,
+  "ml_enabled": false,
+  "ml_price_enabled": false,
+  "ml_price_models_available": false,
+  "ml_model_version": null,
+  "ml_confidence_threshold": 0.6,
+  "ml_combine_with_rules": true
 }
 ```
 
@@ -412,47 +447,67 @@ Content-Type: application/json
 
 {
   "rsi_period": 10,
-  "ema9_period": 9,
   "user_capital": 300000.0,
   "ml_price_enabled": false
 }
 ```
 
-Optional fields include `ml_enabled`, `ml_price_enabled`, and other knobs from `TradingConfigUpdateRequest` (`server/app/schemas/trading_config.py`).
+All fields are optional. Returns the updated configuration matching the `GET /api/v1/user/trading-config` schema.
 
-### Broker Credentials
-
-#### Get Broker Credentials
+#### Reset Trading Config
 ```http
-GET /api/v1/user/broker/credentials
+POST /api/v1/user/trading-config/reset
 Authorization: Bearer <token>
 ```
 
-**Response:** (decrypted credentials)
+Resets all parameters to their system default values. Returns the default configuration matching the `GET /api/v1/user/trading-config` schema.
+
+### Broker Credentials
+
+#### Get Broker Credentials Info
+```http
+GET /api/v1/user/broker/creds/info?show_full=false
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `show_full` (optional, default `false`): Set to `true` to return full decrypted credentials instead of masked values.
+
+**Response:**
 ```json
 {
-  "consumer_key": "xxx",
-  "consumer_secret": "xxx",
-  "access_token": "xxx",
-  "user_id": "xxx"
+  "has_creds": true,
+  "api_key": "xxx",
+  "api_secret": "xxx",
+  "mobile_number": "xxx",
+  "password": "xxx",
+  "mpin": "xxx",
+  "totp_secret": "xxx",
+  "environment": "prod",
+  "api_key_masked": "ap...key",
+  "api_secret_masked": "se...ret"
 }
 ```
 
-#### Update Broker Credentials
+#### Save/Update Broker Credentials
 ```http
-PUT /api/v1/user/broker/credentials
+POST /api/v1/user/broker/creds
 Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "consumer_key": "xxx",
-  "consumer_secret": "xxx",
-  "access_token": "xxx",
-  "user_id": "xxx"
+  "broker": "kotak",
+  "api_key": "your_consumer_key",
+  "api_secret": "your_consumer_secret_ucc",
+  "mobile_number": "9876543210",
+  "password": "your_password",
+  "mpin": "1234",
+  "totp_secret": "your_totp_secret_key",
+  "environment": "prod"
 }
 ```
 
-**Note:** Credentials are encrypted before storage.
+**Note:** Credentials are encrypted before database storage. Saving credentials automatically switches the user's trade mode to `broker` (live trading mode) and restarts any running trading services to apply the new credentials.
 
 ### Notification Preferences
 
@@ -465,18 +520,21 @@ Authorization: Bearer <token>
 **Response:**
 ```json
 {
-  "id": 1,
-  "user_id": 1,
   "telegram_enabled": true,
+  "telegram_bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
   "telegram_chat_id": "123456789",
   "email_enabled": false,
   "email_address": null,
   "in_app_enabled": true,
+  "notify_service_events": false,
+  "notify_trading_events": true,
+  "notify_system_events": true,
+  "notify_errors": true,
   "notify_order_placed": true,
   "notify_order_rejected": true,
   "notify_order_executed": true,
   "notify_order_cancelled": true,
-  "notify_order_modified": false,
+  "notify_order_modified": true,
   "notify_retry_queue_added": true,
   "notify_retry_queue_updated": true,
   "notify_retry_queue_removed": true,
@@ -486,14 +544,12 @@ Authorization: Bearer <token>
   "notify_system_errors": true,
   "notify_system_warnings": false,
   "notify_system_info": false,
-  "notify_service_events": false,
   "notify_service_started": false,
   "notify_service_stopped": false,
   "notify_service_execution_completed": false,
+  "notify_payment_failed": true,
   "quiet_hours_start": "22:00:00",
-  "quiet_hours_end": "08:00:00",
-  "created_at": "2025-01-15T10:00:00Z",
-  "updated_at": "2025-01-15T10:00:00Z"
+  "quiet_hours_end": "08:00:00"
 }
 ```
 
@@ -505,6 +561,7 @@ Content-Type: application/json
 
 {
   "telegram_enabled": true,
+  "telegram_bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
   "telegram_chat_id": "123456789",
   "email_enabled": false,
   "in_app_enabled": true,
@@ -517,7 +574,27 @@ Content-Type: application/json
 }
 ```
 
+**Response:** Same as GET endpoint.
+
 **Note:** All fields are optional. Only provided fields will be updated. Set fields to `null` to clear them (e.g., `quiet_hours_start: null` to disable quiet hours).
+
+#### Test Telegram Bot Configuration
+```http
+POST /api/v1/user/notification-preferences/telegram/test?bot_token=YOUR_TOKEN&chat_id=YOUR_CHAT_ID
+Authorization: Bearer <token>
+```
+
+**Parameters (Query Params):**
+- `bot_token` (str): Telegram bot token to test.
+- `chat_id` (str): Telegram chat ID to test.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Test message sent successfully! Check your Telegram chat."
+}
+```
 
 ### Notifications (In-App)
 
@@ -553,7 +630,7 @@ Authorization: Bearer <token>
 
 #### Mark Notification as Read
 ```http
-PUT /api/v1/user/notifications/{notification_id}/read
+POST /api/v1/user/notifications/{notification_id}/read
 Authorization: Bearer <token>
 ```
 
@@ -568,7 +645,7 @@ Authorization: Bearer <token>
 
 #### Mark All Notifications as Read
 ```http
-PUT /api/v1/user/notifications/read-all
+POST /api/v1/user/notifications/read-all
 Authorization: Bearer <token>
 ```
 
@@ -581,7 +658,7 @@ Authorization: Bearer <token>
 
 #### Get Unread Count
 ```http
-GET /api/v1/user/notifications/unread-count
+GET /api/v1/user/notifications/count
 Authorization: Bearer <token>
 ```
 
@@ -669,9 +746,9 @@ Content-Type: application/json
 
 `mobile_number` is optional (same 10-digit Indian validation as signup). Admin-created users are email-verified immediately.
 
-#### Get ML Training Status
+#### Get ML Training Jobs
 ```http
-GET /api/v1/admin/ml/training
+GET /api/v1/admin/ml/jobs?status=running&limit=50
 Authorization: Bearer <admin_token>
 ```
 
@@ -682,14 +759,26 @@ Authorization: Bearer <admin_token>
 Content-Type: application/json
 
 {
-  "model_version": "v4",
-  "force_retrain": false
+  "model_type": "verdict_classifier",
+  "algorithm": "random_forest",
+  "training_data_path": "data/ml/verdict_rows.csv",
+  "hyperparameters": {},
+  "notes": "v4 RF model",
+  "auto_activate": true,
+  "incremental_training": false,
+  "training_run_end_date": "2026-06-22"
 }
 ```
 
-#### Get Logs
+#### Get User Logs
 ```http
-GET /api/v1/logs?level=ERROR&limit=100
+GET /api/v1/user/logs?level=ERROR&limit=100
+Authorization: Bearer <token>
+```
+
+#### Get Admin Logs (across users)
+```http
+GET /api/v1/admin/logs?user_id=1&level=ERROR&limit=100
 Authorization: Bearer <admin_token>
 ```
 

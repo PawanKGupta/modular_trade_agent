@@ -5,7 +5,7 @@ Complete guide to set up and run Rebound — Modular Trade Agent.
 ## Prerequisites
 
 - **Python 3.12+** (for backend)
-- **Node.js 18+** (for frontend)
+- **Node.js 20+** (for frontend)
 - **Docker Desktop** (optional, for containerized deployment)
 - **Git** (to clone the repository)
 
@@ -32,7 +32,7 @@ This will:
 - Web UI: http://localhost:5173
 - API: http://localhost:8000
 
-See [docker/README.md](../docker/README.md) for detailed Docker documentation.
+See [docker/README.md](../../docker/README.md) for detailed Docker documentation.
 
 ### Option 2: Manual Setup
 
@@ -85,15 +85,17 @@ DB_URL=sqlite:///./data/app.db
 
 # Admin User (auto-created on first run if DB is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change_me
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 
-# JWT Secret (generate a random string)
-JWT_SECRET=your-secret-key-here
+# JWT Secret — generate with: python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET=<generate-using-command-above>
 
-# Encryption Key for credentials (optional, auto-generated if not provided)
-# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=your-base64-encoded-key
+# Encryption Key for credentials (required for broker/MFA secret storage)
+# Generate and write directly to avoid shell history exposure:
+#   python -c "from cryptography.fernet import Fernet; print('APP_DATA_ENCRYPTION_KEY=' + Fernet.generate_key().decode())" >> .env
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # CORS (for development)
 CORS_ALLOW_ORIGINS=http://localhost:5173,http://localhost:3000
@@ -171,7 +173,7 @@ npm run dev
 Before live trading, test with paper trading:
 
 1. Navigate to **Paper Trading** in the web UI
-2. Set initial capital (default: ₹1,00,000)
+2. Set initial capital (default: ₹10,00,000)
 3. Enable paper trading mode
 4. Monitor simulated trades
 
@@ -309,8 +311,8 @@ results = asyncio.run(analyze_batch())
 ### Migration from Legacy Code
 
 If you're using deprecated `core.*` functions, see:
-- **[Migration Guide](MIGRATION_GUIDE_PHASE4.md)** - Complete migration instructions
-- **[Architecture Documentation](ARCHITECTURE.md)** - Service layer details
+- **[Migration Guide](../development/MIGRATION_GUIDE_PHASE4.md)** - Complete migration instructions
+- **[Architecture Documentation](../ARCHITECTURE.md)** - Service layer details
 
 **Key Services:**
 - `AnalysisService` - Main analysis orchestration
@@ -332,12 +334,12 @@ npm install
 
 - Read [User Guide](USER_GUIDE.md) to learn how to use the web interface
 - Review [Trading Configuration](TRADING_CONFIG.md) for strategy setup
-- Check [Architecture](ARCHITECTURE.md) to understand the system design
-- See [API Documentation](API.md) for programmatic access
+- Check [Architecture](../ARCHITECTURE.md) to understand the system design
+- See [API Documentation](../API.md) for programmatic access
 
 ## Getting Help
 
 - Review log files in `logs/` directory
 - Check application logs in the web UI (Admin → Logs)
 - Review [User Guide](USER_GUIDE.md) for feature usage
-- Check [API Documentation](API.md) for programmatic access
+- Check [API Documentation](../API.md) for programmatic access

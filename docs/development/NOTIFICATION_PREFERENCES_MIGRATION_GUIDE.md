@@ -21,7 +21,7 @@ This guide documents the migration to the new Notification Preferences system, i
    - `notify_order_rejected` (default: `TRUE`)
    - `notify_order_executed` (default: `TRUE`)
    - `notify_order_cancelled` (default: `TRUE`)
-   - `notify_order_modified` (default: `FALSE` - opt-in)
+   - `notify_order_modified` (default: `FALSE` in Alembic database schema, but initialized to `TRUE` by SQLAlchemy model/service defaults)
    - `notify_retry_queue_added` (default: `TRUE`)
    - `notify_retry_queue_updated` (default: `TRUE`)
    - `notify_retry_queue_removed` (default: `TRUE`)
@@ -149,9 +149,10 @@ If you want to enable preference checking:
 - Preference checking is skipped
 
 **Default Preferences:**
-- Most events enabled (`TRUE`)
-- Opt-in events disabled (`FALSE`): `ORDER_MODIFIED`, `SYSTEM_WARNING`, `SYSTEM_INFO`
-- All channels disabled except `in_app_enabled` (`TRUE`)
+- Channels: Only `in_app_enabled` is `TRUE`. `telegram_enabled` and `email_enabled` are `FALSE`.
+- Order Events: All granular order events are enabled by default (`TRUE`), including `notify_order_modified` and `notify_balance_shortfall` (though the database migration sets the column-level default for `notify_order_modified` to `FALSE` to handle existing record constraints safely).
+- System Events: `notify_system_errors` and `notify_payment_failed` default to `TRUE`. `notify_system_warnings` and `notify_system_info` default to `FALSE` (opt-in).
+- Service Events: `notify_service_started`, `notify_service_stopped`, and `notify_service_execution_completed` default to `FALSE` (opt-in).
 
 ### Legacy Event Types
 
@@ -279,6 +280,6 @@ For issues or questions:
 ## See Also
 
 - [Notification Preferences API Documentation](NOTIFICATION_PREFERENCES_API.md)
-- [User Guide - Notification Preferences](USER_GUIDE.md#notification-preferences)
-- [Architecture - Notification System](ARCHITECTURE.md#6-notification-system)
+- [User Guide - Notification Preferences](../guides/USER_GUIDE.md#notification-preferences)
+- [Architecture - Notification System](../ARCHITECTURE.md#6-notification-system)
 - [Implementation Plan](NOTIFICATION_PREFERENCES_IMPLEMENTATION_PLAN.md)

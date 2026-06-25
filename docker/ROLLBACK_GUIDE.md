@@ -53,19 +53,19 @@ git checkout <branch-name>
 
 ```bash
 cd docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 docker rm -f tradeagent-api tradeagent-web 2>/dev/null || true
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 ### Step 5: Verify Rollback
 
 ```bash
 # Check containers are running
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 
 # Check logs
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=50
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=50
 
 # Test API health
 curl http://localhost:8000/health
@@ -95,7 +95,7 @@ docker tag $(docker images -q modular_trade_agent-web-frontend) tradeagent-web:v
 cd docker
 
 # Stop current containers
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 docker rm -f tradeagent-api tradeagent-web 2>/dev/null || true
 
 # Create temporary compose file with tagged images
@@ -108,7 +108,7 @@ services:
 EOF
 
 # Start with previous images
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.rollback.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.rollback.yml up -d
 
 # Cleanup
 rm docker-compose.rollback.yml
@@ -175,7 +175,7 @@ docker exec tradeagent-api cp /app/data/app.db /app/data/app.db.backup.$(date +%
 # 2. Stop containers
 echo "🛑 Stopping containers..."
 cd ~/modular_trade_agent/docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 
 # 3. Rollback code (replace with your commit/tag)
 echo "📝 Rolling back code..."
@@ -191,7 +191,7 @@ docker rm -f tradeagent-api tradeagent-web 2>/dev/null || true
 # 5. Rebuild and start
 echo "🔨 Rebuilding and starting..."
 cd docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # 6. Wait for services
 echo "⏳ Waiting for services to start..."
@@ -199,7 +199,7 @@ sleep 10
 
 # 7. Verify
 echo "✅ Verifying rollback..."
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 curl -f http://localhost:8000/health || echo "⚠️  Health check failed"
 
 echo "✅ Rollback complete!"
@@ -247,9 +247,9 @@ After rollback:
 cd ~/modular_trade_agent
 git checkout <previous-commit>
 cd docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
 docker rm -f tradeagent-api tradeagent-web 2>/dev/null || true
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 ### Scenario 2: Database Migration Issue
@@ -257,7 +257,7 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```bash
 # Rollback migration first, then code if needed
 docker exec tradeagent-api alembic downgrade -1
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml restart api-server
+docker compose -f docker-compose.yml -f docker-compose.prod.yml restart api-server
 ```
 
 ### Scenario 3: Data Corruption
@@ -306,13 +306,13 @@ docker start tradeagent-api
 
 ```bash
 # Check logs
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml logs
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs
 
 # Check if volumes are accessible
 docker volume inspect modular_trade_agent_trading_data
 
 # Try rebuilding without cache
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
+docker compose -f docker-compose.yml -f docker-compose.prod.yml build --no-cache
 ```
 
 ### Database Migration Conflicts
@@ -332,7 +332,7 @@ docker exec tradeagent-api alembic upgrade head
 netstat -tulpn | grep -E ':(8000|5173)'
 
 # Stop conflicting services
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 ```
 
 ---

@@ -19,7 +19,7 @@ Complete guide for running the Trading Agent with Docker.
 ### Manual Start
 ```bash
 cd docker
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 **Access:**
@@ -32,7 +32,6 @@ docker-compose -f docker-compose.yml up -d
 ## 📋 Prerequisites
 
 - Docker Desktop installed and running
-- Git (to clone the repository)
 
 ---
 
@@ -51,12 +50,13 @@ TZ=Asia/Kolkata
 
 # Admin User (auto-created on first deployment when DB is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=change_me
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 
 # Optional: Encryption key for credential encryption
 # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# ENCRYPTION_KEY=your_base64_encoded_key
+# APP_DATA_ENCRYPTION_KEY=your_base64_encoded_key
 
 # Optional: Telegram Bot Token (for notifications)
 # Get from @BotFather on Telegram
@@ -79,7 +79,7 @@ ADMIN_NAME=Admin User
 
 **All credentials are stored in the database** (not in `.env` files):
 
-1. Start Docker: `docker-compose -f docker-compose.yml up -d`
+1. Start Docker: `docker compose -f docker-compose.yml up -d`
 2. Access web UI: http://localhost:5173
 3. Login with admin credentials
 4. Go to **Settings**:
@@ -95,33 +95,35 @@ ADMIN_NAME=Admin User
 ### Start Services
 ```bash
 cd docker
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Stop Services
 ```bash
-docker-compose -f docker-compose.yml down
+docker compose -f docker-compose.yml down
 ```
 
 ### View Logs
 ```bash
 # All services
-docker-compose -f docker-compose.yml logs -f
+docker compose -f docker-compose.yml logs -f
 
 # Specific service
-docker-compose -f docker-compose.yml logs -f api-server
-docker-compose -f docker-compose.yml logs -f web-frontend
+docker compose -f docker-compose.yml logs -f api-server
+docker compose -f docker-compose.yml logs -f web-frontend
 ```
 
 ### Restart Service
 ```bash
-docker-compose -f docker-compose.yml restart api-server
+docker compose -f docker-compose.yml restart api-server
 ```
 
-### Rebuild After Code Changes
+### Pull a New Image Version
 ```bash
-docker-compose -f docker-compose.yml build api-server
-docker-compose -f docker-compose.yml restart api-server
+export APP_VERSION=v26.2.3.1   # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.1"  # Windows PowerShell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ### News sentiment (CPU Transformers)
@@ -131,32 +133,30 @@ The **`api-server`** image (`Dockerfile.api`) installs **CPU PyTorch** and **`re
 ### Run Database Migrations Manually
 ```bash
 # If you need to run migrations manually (usually runs automatically on startup)
-docker-compose -f docker-compose.yml exec api-server python -m alembic upgrade head
+docker compose -f docker-compose.yml exec api-server python -m alembic upgrade head
 ```
 
 ### Upgrading to 26.2.1
 
 1. Backup Postgres (`docker/scripts/backup_postgres_docker.sh` or your operator backup).
-2. Pull latest code / image for `releases/rebound_2621` or tag `v26.2.1`.
-3. Update `.env` from repo `.env.example` (SMTP, billing, OHLCV).
-4. `docker-compose build` and `docker-compose up -d` (or your deploy script).
-5. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
+2. Update `.env` from repo `.env.example` (SMTP, billing, OHLCV).
+3. `APP_VERSION=v26.2.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
+4. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
 
 See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-to-2621) and [RELEASE_PLAN_V26.2.1.md](../docs/development/RELEASE_PLAN_V26.2.1.md).
 
 ### Upgrading to 26.2.2
 
 1. Backup Postgres (`docker/scripts/backup_postgres_docker.sh` or your operator backup).
-2. Pull latest code / image for `releases/rebound_2622` or tag `v26.2.2`.
-3. Update `.env` from repo `.env.example` (auth allowlist, cookie/rate-limit, notifications).
-4. `docker-compose build` and `docker-compose up -d` (or your deploy script).
-5. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
+2. Update `.env` from repo `.env.example` (auth allowlist, cookie/rate-limit, notifications).
+3. `APP_VERSION=v26.2.2 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
+4. Confirm API logs show Alembic upgrade success; run `verify_db_schema` on Postgres if needed.
 
 See [docs/deployment/DEPLOYMENT.md](../docs/deployment/DEPLOYMENT.md#upgrading-to-2622) and [RELEASE_PLAN_V26.2.2.md](../docs/development/RELEASE_PLAN_V26.2.2.md).
 
 ### Check Status
 ```bash
-docker-compose -f docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 ---
@@ -167,7 +167,7 @@ For hot reload and live code editing:
 
 ```powershell
 cd docker
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 **Features:**
@@ -179,49 +179,33 @@ docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 ## ☁️ Production Deployment (Oracle Ubuntu)
 
-### Quick Deploy
-```bash
-# SSH into your Ubuntu server
-ssh ubuntu@YOUR_PUBLIC_IP
-
-# Run deployment script
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/modular_trade_agent/main/docker/deploy-oracle.sh | bash
-```
-
-### Manual Deploy
 ```bash
 # 1. Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 sudo usermod -aG docker ubuntu
+newgrp docker
 
-# 2. Install Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-sudo chmod +x /usr/local/bin/docker-compose
+# 2. Create working directory and fetch Compose files
+mkdir rebound && cd rebound
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
 
-# 3. Clone repository
-cd /home/ubuntu
-git clone https://github.com/YOUR_REPO/modular_trade_agent.git
-cd modular_trade_agent
+# 3. Create .env file
+cp .env.example .env
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
-# 4. Create .env file
-cat > .env <<EOF
-DB_URL=sqlite:///./data/app.db
-TZ=Asia/Kolkata
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=ChangeThisPassword123!
-ADMIN_NAME=Admin User
-ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-EOF
+# 4. Pull images and start
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
-# 5. Build and start
-cd docker
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml build
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# 6. Check status
-docker-compose -f docker-compose.yml ps
+# 5. Check status
+docker compose -f docker-compose.yml ps
 ```
+
+For full Oracle Cloud setup (VM creation, firewall rules), see [docs/deployment/cloud/oracle-cloud.md](../docs/deployment/cloud/oracle-cloud.md).
 
 ---
 
@@ -247,35 +231,35 @@ netstat -ano | findstr :5173  # Windows
 lsof -i :5173                 # Linux/Mac
 
 # Stop and remove containers
-docker-compose -f docker-compose.yml down
+docker compose -f docker-compose.yml down
 
 # Restart
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Can't Access Web UI (404)
-- Check if container is running: `docker-compose -f docker-compose.yml ps`
-- Check logs: `docker-compose -f docker-compose.yml logs web-frontend`
-- Rebuild web frontend: `docker-compose -f docker-compose.yml build web-frontend`
+- Check if container is running: `docker compose -f docker-compose.yml ps`
+- Check logs: `docker compose -f docker-compose.yml logs web-frontend`
+- Pull a fresh image: `APP_VERSION=v26.2.3.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
 
 ### Login Fails
 - Verify admin user exists: Check logs for `[Startup] Creating admin user`
 - Verify `.env` has `ADMIN_EMAIL` and `ADMIN_PASSWORD` set
-- Check API logs: `docker-compose -f docker-compose.yml logs api-server`
+- Check API logs: `docker compose -f docker-compose.yml logs api-server`
 
 ### Database Issues
 - Delete database to reset: `Remove-Item data\app.db` (Windows) or `rm data/app.db` (Linux/Mac)
-- Restart API server: `docker-compose -f docker-compose.yml restart api-server`
+- Restart API server: `docker compose -f docker-compose.yml restart api-server`
 - Admin user will be auto-created if DB is empty
 
 ### Services Not Starting
 ```bash
 # Check all logs
-docker-compose -f docker-compose.yml logs
+docker compose -f docker-compose.yml logs
 
-# Rebuild everything
-docker-compose -f docker-compose.yml build --no-cache
-docker-compose -f docker-compose.yml up -d
+# Pull fresh images and restart
+APP_VERSION=v26.2.3.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+APP_VERSION=v26.2.3.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ---
@@ -328,7 +312,7 @@ docker/
 
 ## 🆘 Need Help?
 
-1. Check logs: `docker-compose -f docker-compose.yml logs -f`
-2. Verify services are running: `docker-compose -f docker-compose.yml ps`
+1. Check logs: `docker compose -f docker-compose.yml logs -f`
+2. Verify services are running: `docker compose -f docker-compose.yml ps`
 3. Check `.env` file exists and has required variables
 4. Ensure Docker Desktop is running

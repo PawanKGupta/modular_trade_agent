@@ -312,9 +312,9 @@ All position update operations now use locking:
 
 ## Related Documentation
 
-- [Transaction Safety Explanation](./TRANSACTION_SAFETY_EXPLANATION.md) - Detailed transaction safety explanation
-- [Race Condition Fix](./RACE_CONDITION_FIX.md) - Detailed race condition fix explanation
-- [Re-entry Implementation](../reentry_implementation_complete.md) - Re-entry implementation details
+- [Transaction Safety Explanation](../development/TRANSACTION_SAFETY_EXPLANATION.md) - Detailed transaction safety explanation
+- [Race Condition Fix](../development/RACE_CONDITION_FIX.md) - Detailed race condition fix explanation
+- [Re-entry Implementation](../kotak_neo_trader/KOTAK_NEO_REENTRY_LOGIC_DETAILS.md) - Re-entry implementation details
 
 ---
 

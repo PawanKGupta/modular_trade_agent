@@ -222,4 +222,4 @@ When "Run Once" detects a conflict:
 ## Related Documentation
 
 - [Service Status & Trading Config UI Guide](./SERVICE_STATUS_AND_TRADING_CONFIG_UI.md)
-- [Individual Service Management Implementation Plan](./INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)
+- [Individual Service Management Implementation Plan](../../archive/documents/features/INDIVIDUAL_SERVICE_MANAGEMENT_IMPLEMENTATION_PLAN.md)

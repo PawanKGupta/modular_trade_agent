@@ -33,7 +33,7 @@ Check if all Docker services are running:
 
 ```bash
 # Check service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # Expected output:
 # NAME                STATUS          PORTS
@@ -48,12 +48,12 @@ Check logs for errors:
 
 ```bash
 # View all service logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50
 
 # View specific service logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 api-server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 web-frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 tradeagent-db
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=50 tradeagent-db
 ```
 
 ---
@@ -70,10 +70,10 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml lo
 **Commands:**
 ```bash
 # Service status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 
 # Check for restarting containers
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps | grep -i restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps | grep -i restart
 ```
 
 ### 2. API Server
@@ -92,7 +92,7 @@ curl http://localhost:8000/health
 curl http://localhost:8000/docs
 
 # Check API logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i error
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server | grep -i error
 ```
 
 ### 3. Web Frontend
@@ -107,7 +107,7 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml lo
 curl http://localhost:5173
 
 # Check frontend logs
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i error
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend | grep -i error
 ```
 
 ### 4. Database
@@ -120,13 +120,13 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml lo
 **Commands:**
 ```bash
 # Check database status
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_isready -U trader
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_isready -U trader
 
 # Check database connection
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT version();"
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent -c "SELECT version();"
 
 # Check migrations
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic current
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic current
 ```
 
 ### 5. Configuration
@@ -210,7 +210,7 @@ echo ""
 
 # Check Docker services
 echo "1. Checking Docker services..."
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 echo ""
 
 # Check API health
@@ -233,7 +233,7 @@ echo ""
 
 # Check database
 echo "4. Checking database..."
-if docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_isready -U trader > /dev/null 2>&1; then
+if docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_isready -U trader > /dev/null 2>&1; then
     echo "✓ Database: Ready"
 else
     echo "✗ Database: Not ready"
@@ -242,7 +242,7 @@ echo ""
 
 # Check logs for errors
 echo "5. Checking for errors in logs..."
-ERROR_COUNT=$(docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 | grep -i "error\|exception\|failed" | wc -l)
+ERROR_COUNT=$(docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100 | grep -i "error\|exception\|failed" | wc -l)
 if [ $ERROR_COUNT -eq 0 ]; then
     echo "✓ No recent errors in logs"
 else
@@ -267,7 +267,7 @@ Write-Host ""
 
 # Check Docker services
 Write-Host "1. Checking Docker services..."
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 Write-Host ""
 
 # Check API health
@@ -296,7 +296,7 @@ Write-Host ""
 
 # Check database
 Write-Host "4. Checking database..."
-$dbCheck = docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_isready -U trader 2>&1
+$dbCheck = docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec -T tradeagent-db pg_isready -U trader 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Host "✓ Database: Ready" -ForegroundColor Green
 } else {
@@ -321,17 +321,17 @@ Write-Host "=========================================="
 **Solutions:**
 1. Check if API container is running:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps api-server
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps api-server
    ```
 
 2. Check API logs:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs api-server
    ```
 
 3. Restart API service:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart api-server
    ```
 
 ### Issue: Web UI Not Accessible
@@ -342,17 +342,17 @@ Write-Host "=========================================="
 **Solutions:**
 1. Check if frontend container is running:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps web-frontend
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps web-frontend
    ```
 
 2. Check frontend logs:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs web-frontend
    ```
 
 3. Restart frontend service:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart web-frontend
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart web-frontend
    ```
 
 ### Issue: Database Not Ready
@@ -364,17 +364,17 @@ Write-Host "=========================================="
 **Solutions:**
 1. Check if database container is running:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps tradeagent-db
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps tradeagent-db
    ```
 
 2. Check database logs:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs tradeagent-db
    ```
 
 3. Restart database service:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart tradeagent-db
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart tradeagent-db
    ```
 
 ### Issue: Services Restarting Repeatedly
@@ -386,7 +386,7 @@ Write-Host "=========================================="
 **Solutions:**
 1. Check logs for errors:
    ```bash
-   docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs --tail=100
    ```
 
 2. Check resource usage:

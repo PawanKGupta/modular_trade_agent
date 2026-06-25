@@ -695,6 +695,6 @@ python scripts/collect_training_data.py \
 
 ## Related Documentation
 
-- [ML Training Data Guide](../ML_TRAINING_DATA_GUIDE.md) - Detailed data collection
-- [ML Training Workflow](../ML_TRAINING_WORKFLOW.md) - Step-by-step workflow
-- [ML Integration Guide](./ML_INTEGRATION_GUIDE.md) - Integration details
+- [ML Configuration & Quality Filtering](../development/ML_CONFIGURATION_AND_QUALITY_FILTERING_ENHANCEMENTS.md) - ML configuration and quality filtering details
+- [ML Configuration Guide](../development/ML_CONFIGURATION_ENHANCEMENTS.md) - Developer details on ML configuration passing
+- [ML Monitoring Guide](../guides/ML_MONITORING_MODE_GUIDE.md) - Using ML monitoring mode

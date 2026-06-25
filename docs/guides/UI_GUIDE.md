@@ -903,6 +903,6 @@ Each new link is valid for **72 hours** from when the email is sent (same window
 ## 🆘 Getting Help
 
 - Check [User Guide](USER_GUIDE.md) for detailed feature usage
-- Review [API Documentation](API.md) for programmatic access
+- Review [API Documentation](../API.md) for programmatic access
 - Check logs for error details
 - Review service status for issues

@@ -24,56 +24,27 @@ Complete guide for deploying Rebound — Modular Trade Agent on Linux (Ubuntu, D
    - Standalone binary or plugin
    - See installation instructions below
 
-3. **Git** with Git LFS support
-   ```bash
-   sudo apt install git git-lfs  # Ubuntu/Debian
-   sudo yum install git git-lfs  # CentOS/RHEL
-   ```
+## 🚀 Quick Start (Image-Based — Recommended)
 
-## 🚀 Quick Start
-
-### Automated Deployment
+No git clone required. Pull pre-built images from GitHub Container Registry.
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd modular_trade_agent
+# Create a working directory
+mkdir rebound && cd rebound
 
-# Install Git LFS (required for ML models)
-git lfs install
-git lfs pull
+# Download Compose files
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/docker/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/PawanKGupta/modular_trade_agent/main/.env.example
 
-# Run quickstart script
-./docker/docker-quickstart.sh
-```
+# Configure environment
+cp .env.example .env
+# Edit .env — set JWT_SECRET, POSTGRES_PASSWORD, SMTP settings, ADMIN_EMAIL, ADMIN_PASSWORD
 
-The script will:
-1. ✅ Check Docker installation
-2. ✅ Create `.env` file if missing
-3. ✅ Build Docker images
-4. ✅ Start all services
-5. ✅ Display access URLs
-
-### Manual Deployment
-
-```bash
-# Ensure Docker is installed and running
-docker --version
-docker-compose --version
-
-# Navigate to project root
-cd /path/to/modular_trade_agent
-
-# Create .env file (if not exists)
-# Edit .env with your configuration
-
-# Build and start (production mode with named volumes)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
-
-# Or for development (uses bind mounts, faster for code changes):
-# docker-compose -f docker/docker-compose.yml build
-# docker-compose -f docker/docker-compose.yml up -d
+# Pull images and start
+export APP_VERSION=v26.2.3.1
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 ## 🔧 Linux-Specific Configuration
@@ -131,22 +102,18 @@ sudo systemctl enable docker
 sudo usermod -aG docker $USER
 ```
 
-### Docker Compose Installation (Standalone)
+### Docker Compose (v2 plugin)
 
-If Docker Compose plugin is not available:
+The `docker-compose-plugin` package installed above provides `docker compose` (v2). Verify:
 
 ```bash
-# Download Docker Compose v1
-sudo curl -L "https://github.com/docker/compose/releases/download/v1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-
-# Make executable
-sudo chmod +x /usr/local/bin/docker-compose
-
-# Verify installation
-docker-compose --version
+docker compose version
+# Should show Docker Compose version v2.x.x
 ```
 
 ### Firewall Configuration
+
+> **Production note:** Port 8000 (API server) should ideally be restricted to loopback (`127.0.0.1`) and fronted by an nginx/Caddy reverse proxy with TLS. Opening it directly to `0.0.0.0/0` exposes the API and its `/docs` endpoint to the internet without transport encryption. See [HTTPS Setup Guide](../HTTPS_ORACLE_DUCKDNS.md) if you plan to expose this server publicly.
 
 #### Ubuntu/Debian (UFW)
 
@@ -154,7 +121,7 @@ docker-compose --version
 # Allow ports
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 5173/tcp  # Web UI
-sudo ufw allow 8000/tcp  # API
+sudo ufw allow 8000/tcp  # API (restrict to reverse-proxy IP in production)
 
 # Enable firewall
 sudo ufw enable
@@ -166,7 +133,7 @@ sudo ufw enable
 # Allow ports
 sudo firewall-cmd --permanent --add-port=22/tcp   # SSH
 sudo firewall-cmd --permanent --add-port=5173/tcp # Web UI
-sudo firewall-cmd --permanent --add-port=8000/tcp # API
+sudo firewall-cmd --permanent --add-port=8000/tcp # API (restrict to reverse-proxy IP in production)
 
 # Reload firewall
 sudo firewall-cmd --reload
@@ -191,8 +158,8 @@ After=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/path/to/modular_trade_agent
-ExecStart=/usr/local/bin/docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
-ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
+ExecStart=/usr/local/bin/docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+ExecStop=/usr/local/bin/docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 User=your-username
 Group=your-group
 
@@ -217,25 +184,28 @@ The `.env` file in the project root controls configuration:
 # Database (PostgreSQL in Docker)
 # Note: Docker Compose overrides this with PostgreSQL connection string
 # The DB_URL here is for reference - Docker uses PostgreSQL container
-DB_URL=postgresql+psycopg2://trader:changeme@tradeagent-db:5432/tradeagent
+DB_URL=postgresql+psycopg2://trader:<your-db-password>@tradeagent-db:5432/tradeagent
+# Set POSTGRES_PASSWORD in .env to the same value used above
 
 # Timezone
 TZ=Asia/Kolkata
 
 # Encryption key for credential encryption (generate with command below)
 # Generate with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=<generate-using-command-above>
+APP_DATA_ENCRYPTION_KEY=<generate-using-command-above>
 
 # Admin User Auto-Creation (only on first deployment when database is empty)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=ChangeThisPassword123!
+ADMIN_PASSWORD=<set-a-strong-unique-password>
+# Generate: python3 -c "import secrets; print(secrets.token_urlsafe(16))"
 ADMIN_NAME=Admin User
 ```
 
 **Note:**
 - The `.env` file is automatically created by the quickstart scripts (with SQLite for local dev).
-- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `ENCRYPTION_KEY`.
+- For production, edit `.env` and set `DB_URL` to PostgreSQL (as shown above) and generate `APP_DATA_ENCRYPTION_KEY`.
 - Docker Compose will use PostgreSQL container regardless of `.env` DB_URL value.
+- If serving over HTTPS (recommended for production), set `AUTH_COOKIE_SECURE=true` in `.env` so session cookies are only sent over encrypted connections.
 
 ### Credential Management
 
@@ -254,50 +224,40 @@ After deployment:
 - **Web Frontend**: http://localhost:5173 (or http://your-server-ip:5173)
 - **API Server**: http://localhost:8000 (or http://your-server-ip:8000)
 - **Health Check**: http://localhost:8000/health
-- **API Docs**: http://localhost:8000/docs
+- **API Docs**: http://localhost:8000/docs — disable in production if not needed (exposes full API schema)
+
+> **Production:** Use HTTPS to protect credentials in transit. See [HTTPS Setup Guide](../HTTPS_ORACLE_DUCKDNS.md).
 
 ## 🔄 Updating the Application
 
-### Option 1: Rebuild with Data Preservation (Recommended)
-
-Preserves all data including database, credentials, and trading history:
+Preserves all data (database, credentials, trading history) — volumes are not removed.
 
 ```bash
-# Pull latest code
-git pull origin main
-git lfs pull  # If ML models were updated
+# Set the new version
+export APP_VERSION=v26.2.3.1   # replace with target version
 
-# Rebuild and restart (volumes preserved)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+# Pull new images and restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Option 2: Complete Rebuild (Removes All Data)
-
-**⚠️ WARNING:** This removes all containers and volumes, deleting all data.
+### Rollback
 
 ```bash
-# Pull latest code
-git pull origin main
-git lfs pull
-
-# Stop and remove containers (WARNING: Removes volumes and data!)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
-
-# Rebuild images
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml build
-
-# Start containers
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+export APP_VERSION=v26.2.3    # previous version
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-### Rebuild Specific Service Only
+### Complete Reset (Removes All Data)
+
+**⚠️ WARNING:** This removes all volumes and deletes all data including the database.
 
 ```bash
-# Rebuild and restart only API server
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build api-server
-
-# Rebuild and restart only frontend
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build web-frontend
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down -v
+export APP_VERSION=v26.2.3.1
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
 ## 🔄 Service Management
@@ -307,30 +267,30 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 ### Check Status
 
 ```bash
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 ```
 
 ### View Logs
 
 ```bash
 # All services
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f
 
 # Specific service
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml logs -f api-server
 ```
 
 ### Stop/Start Services
 
 ```bash
 # Stop
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml stop
 
 # Start
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml start
 
 # Restart
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart
 ```
 
 ## 🐛 Troubleshooting
@@ -407,11 +367,11 @@ docker system df
 
 **Solution**:
 ```bash
-# Set SELinux to permissive (temporary)
-sudo setenforce 0
-
-# Or configure SELinux for Docker (permanent)
+# Configure SELinux for Docker (permanent — preferred)
 sudo setsebool -P container_manage_cgroup on
+
+# Temporary diagnosis only — do NOT leave this in place on production
+sudo setenforce 0
 ```
 
 ## 🔧 Trading Services Management
@@ -432,7 +392,7 @@ Trading services (analysis, buy orders, sell monitoring, etc.) are managed via t
 
 ```bash
 # PostgreSQL (production)
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db psql -U trader -d tradeagent
 ```
 
 ### Run Migrations
@@ -440,14 +400,14 @@ docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ex
 ```bash
 # Migrations run automatically on API server startup
 # Or manually:
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec api-server alembic upgrade head
 ```
 
 ### Backup Database
 
 ```bash
 # Backup PostgreSQL
-docker-compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml exec tradeagent-db pg_dump -U trader tradeagent > backup_$(date +%Y%m%d).sql
 ```
 
 For detailed backup and restore procedures, see [Backup & Restore Guide](../BACKUP_RESTORE_UNINSTALL_GUIDE.md).

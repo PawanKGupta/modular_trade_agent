@@ -818,7 +818,7 @@ def test_analysis():
 
 ## References
 
-- [PROJECT_RULES.md](../../PROJECT_RULES.md) - Overall project rules
+- [PROJECT_RULES.md](../development/PROJECT_RULES.md) - Overall project rules
 - [pytest.ini](../../pytest.ini) - Pytest configuration
 - [tests/conftest.py](../../tests/conftest.py) - Shared fixtures
 - [documents/testing/](../testing/) - Additional testing documentation
