@@ -12,6 +12,20 @@ if [ -z "$(ls -A /app/models 2>/dev/null)" ] && [ -d /app/models_default ]; then
   echo "ML models seeded."
 fi
 
+# Seed the ML training dataset into the trading_data volume (copy-if-missing). Unlike
+# /app/models this volume also holds the runtime DB, so we never gate on emptiness — we
+# only copy a dataset file when it is absent. Failures here must not block API startup.
+if [ -d /app/data_default/training ]; then
+  for f in /app/data_default/training/*.csv; do
+    [ -e "$f" ] || continue
+    dest="/app/data/training/$(basename "$f")"
+    if [ ! -f "$dest" ]; then
+      mkdir -p /app/data/training
+      cp "$f" "$dest" && echo "Seeded ML training dataset: $dest" || echo "WARN: could not seed $dest"
+    fi
+  done
+fi
+
 echo "Checking database migration status..."
 python /app/tools/alembic_reconcile_drift.py
 RECON_EXIT=$?

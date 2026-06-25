@@ -71,7 +71,7 @@ describe('MLTrainingForm', () => {
 		fireEvent.submit(screen.getByRole('form', { name: /ML Training Form/i }));
 		expect(onSubmit.mock.calls[0][0]).toMatchObject({
 			model_type: 'price_regressor',
-			training_data_path: 'data/ml_training_data_price.csv',
+			training_data_path: 'data/training/verdict_classifier.csv',
 		});
 	});
 

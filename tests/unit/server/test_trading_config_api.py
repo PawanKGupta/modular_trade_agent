@@ -70,8 +70,13 @@ def auth_token(client, test_user):
 class TestTradingConfigAPI:
     """Tests for trading configuration API endpoints"""
 
-    def test_get_trading_config_creates_default(self, client, test_user, auth_token):
+    def test_get_trading_config_creates_default(
+        self, client, test_user, auth_token, tmp_path, monkeypatch
+    ):
         """Test that GET creates default config if none exists"""
+        # Point price-model discovery at an empty dir so availability is deterministic
+        # regardless of any committed models/ artifacts.
+        monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
         response = client.get(
             "/api/v1/user/trading-config",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -87,9 +92,11 @@ class TestTradingConfigAPI:
         assert data.get("ml_price_models_available") is False
 
     def test_update_ml_price_enabled_without_model_rejected(
-        self, client, test_user_with_config, auth_token
+        self, client, test_user_with_config, auth_token, tmp_path, monkeypatch
     ):
         """PUT cannot enable ml_price when no price model file exists on server."""
+        # Empty PROJECT_ROOT → no discoverable price model, regardless of committed artifacts.
+        monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
         response = client.put(
             "/api/v1/user/trading-config",
             headers={"Authorization": f"Bearer {auth_token}"},

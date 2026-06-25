@@ -149,13 +149,12 @@ def test_ml_price_service():
 
     features = service._extract_target_features(
         current_price=2520.0,
-        indicators={"rsi": 35, "ema200": 2400},
-        timeframe_confirmation={"alignment_score": 7},
+        indicators={"rsi": 35, "ema9": 2480},
         df=df_long,
     )
-    assert "current_price" in features, "Current price should be in features"
-    assert "volatility" in features, "Volatility should be in features"
-    assert "momentum" in features, "Momentum should be in features"
+    assert "rsi_10" in features, "rsi_10 should be in features"
+    assert "atr_pct_14" in features, "atr_pct_14 should be in features"
+    assert "ret_60d" in features, "ret_60d should be in features"
     logger.info("? Test 4 PASSED: Target feature extraction")
 
     # Test 5: Feature extraction for stop loss

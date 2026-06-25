@@ -65,6 +65,9 @@ dist/
 *.spec.bak
 backups/
 data/
+# data/ is ignored, but the committed ML training dataset is force-added and stays tracked
+# (data/training/verdict_classifier.csv) — baked into the image + seeded into the
+# /app/data volume on first boot so admin UI training works out of the box.
 
 # Test coverage
 .coverage

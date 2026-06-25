@@ -8,6 +8,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from services.ml_price_feature_manifest import load_price_feature_manifest
+from services.ml_training_metadata import (
+    PRICE_TARGET_FEATURE_COLUMNS,
+    PRICE_TARGET_LABEL_COLUMN,
+)
 from services.ml_verdict_feature_manifest import (
     load_verdict_feature_manifest,
     verdict_feature_manifest_path,
@@ -30,6 +35,24 @@ def _write_verdict_csv(path: Path) -> None:
                 "label": "buy" if idx % 2 == 0 else "watch",
             }
         )
+    pd.DataFrame(rows).to_csv(path, index=False)
+
+
+def _write_price_csv(path: Path) -> None:
+    """Historical-dataset-shaped CSV with curated price features + forward-looking label."""
+    rows = []
+    for idx in range(60):
+        day = date(2026, 1, 1) + timedelta(days=idx)
+        row = {
+            "ticker": f"STOCK{idx % 5}.NS",
+            "entry_date": day.isoformat(),
+            PRICE_TARGET_LABEL_COLUMN: 5.0 + (idx % 7),
+            # MaxHold rows must be dropped by the trainer; mix some in.
+            "exit_reason": "MaxHold" if idx % 10 == 0 else "EMA9",
+        }
+        for col_idx, col in enumerate(PRICE_TARGET_FEATURE_COLUMNS):
+            row[col] = float((idx + col_idx) % 11) + 0.5
+        rows.append(row)
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
@@ -336,3 +359,92 @@ def test_run_training_job_failure_updates_status(training_service, admin_user, t
     stored_job = training_service.job_repo.get(job.id)
     assert stored_job.status == "failed"
     assert stored_job.error_message == "boom"
+
+
+def test_price_regressor_training_writes_manifest(training_service, admin_user, tmp_path: Path):
+    """A price_regressor job trains, persists a model, and writes a price feature manifest."""
+    csv_path = tmp_path / "price_train.csv"
+    _write_price_csv(csv_path)
+
+    config = TrainingJobConfig(
+        model_type="price_regressor",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 10},
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job = training_service.start_training_job(started_by=admin_user.id, config=config)
+    training_service.run_training_job(job.id, config)
+
+    stored_job = training_service.job_repo.get(job.id)
+    assert stored_job.status == "completed", stored_job.error_message
+
+    models = training_service.model_repo.list(model_type="price_regressor")
+    assert models, "a price_regressor model should have been persisted"
+    model = models[0]
+
+    manifest = load_price_feature_manifest(Path(model.model_path))
+    assert manifest is not None, "price feature manifest must be written beside the pkl"
+    # Only curated columns present in the CSV, in canonical order.
+    assert manifest["feature_names"] == list(PRICE_TARGET_FEATURE_COLUMNS)
+
+
+def test_price_regressor_deploy_to_canonical_copies_manifest(
+    training_service, admin_user, tmp_path: Path
+):
+    """Activating a price_regressor deploys the canonical pkl + .price_features.json sidecar."""
+    csv_path = tmp_path / "price_train.csv"
+    _write_price_csv(csv_path)
+
+    config = TrainingJobConfig(
+        model_type="price_regressor",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        hyperparameters={"n_estimators": 10},
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job = training_service.start_training_job(started_by=admin_user.id, config=config)
+    training_service.run_training_job(job.id, config)
+
+    model = training_service.model_repo.list(model_type="price_regressor")[0]
+    updated, canonical_pkl = training_service.activate_and_deploy(model.id)
+
+    assert updated.is_active
+    assert canonical_pkl.name == "price_model_random_forest.pkl"
+    assert canonical_pkl.is_file()
+
+    canonical_manifest = canonical_pkl.with_name("price_model_random_forest.price_features.json")
+    assert canonical_manifest.is_file(), "price manifest sidecar must be deployed alongside pkl"
+
+
+def test_price_regressor_drops_maxhold_before_fit(training_service, admin_user, tmp_path: Path):
+    """All-MaxHold training data is rejected (no real exits to learn from)."""
+    rows = []
+    for idx in range(30):
+        day = date(2026, 1, 1) + timedelta(days=idx)
+        row = {
+            "entry_date": day.isoformat(),
+            PRICE_TARGET_LABEL_COLUMN: 1.0,
+            "exit_reason": "MaxHold",
+        }
+        for col in PRICE_TARGET_FEATURE_COLUMNS:
+            row[col] = 1.0
+        rows.append(row)
+    csv_path = tmp_path / "all_maxhold.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    config = TrainingJobConfig(
+        model_type="price_regressor",
+        algorithm="random_forest",
+        training_data_path=str(csv_path),
+        auto_activate=False,
+        incremental_training=False,
+    )
+    job = training_service.start_training_job(started_by=admin_user.id, config=config)
+    training_service.run_training_job(job.id, config)
+
+    stored_job = training_service.job_repo.get(job.id)
+    assert stored_job.status == "failed"
+    assert "maxhold" in (stored_job.error_message or "").lower()

@@ -10,7 +10,7 @@ interface Props {
 
 const DEFAULT_TRAINING_PATH: Record<StartTrainingPayload['model_type'], string> = {
 	verdict_classifier: 'data/training/verdict_classifier.csv',
-	price_regressor: 'data/ml_training_data_price.csv',
+	price_regressor: 'data/training/verdict_classifier.csv',
 };
 
 export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
@@ -116,7 +116,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 			</label>
 			<p className="text-xs text-[var(--muted)]">
 				{modelType === 'price_regressor'
-					? 'Price regressor needs actual_pnl_pct and entry_date (use data/ml_training_data_price.csv).'
+					? 'Price regressor needs actual_pnl_pct and entry_date (same historical dataset as verdict, e.g. data/training/verdict_classifier.csv).'
 					: 'Verdict classifier needs a label column (use data/training/verdict_classifier.csv).'}
 			</p>
 

@@ -350,7 +350,9 @@ def test_process_results_without_backtest(monkeypatch):
         sent["calls"].append(msg)
 
     monkeypatch.setattr(trade_agent, "send_telegram", _send)
-    config = SimpleNamespace(ml_enabled=True, ml_confidence_threshold=0.0, ml_combine_with_rules=False)
+    config = SimpleNamespace(
+        ml_enabled=True, ml_confidence_threshold=0.0, ml_combine_with_rules=False
+    )
     result = trade_agent._process_results(
         [stock1, stock2],
         enable_backtest_scoring=False,
@@ -477,7 +479,11 @@ def test_process_results_backtest_handles_export_failure(monkeypatch):
     monkeypatch.setattr(trade_agent, "BacktestService", lambda **__: StubBacktestService())
     monkeypatch.setattr(trade_agent.pd, "DataFrame", ExplodingDF)
     warnings = []
-    monkeypatch.setattr(trade_agent.logger, "warning", lambda msg, **kwargs: warnings.append(msg))
+    # Accept any positional/keyword args so a lazy "%s"-style warning (msg, *args) does not
+    # raise a TypeError here — we only care that a warning was emitted.
+    monkeypatch.setattr(
+        trade_agent.logger, "warning", lambda msg, *args, **kwargs: warnings.append(msg)
+    )
     trade_agent._process_results([stock], enable_backtest_scoring=True)
     assert warnings
 
