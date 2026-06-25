@@ -83,6 +83,10 @@ export interface RegisterModelPayload {
 	auto_activate?: boolean;
 }
 
+export async function deleteModel(modelId: number): Promise<void> {
+	await api.delete(`/admin/ml/models/${modelId}`);
+}
+
 export async function registerModel(
 	payload: RegisterModelPayload
 ): Promise<{ message: string; model: MLModel }> {

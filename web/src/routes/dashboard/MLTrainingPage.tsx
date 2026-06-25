@@ -5,6 +5,7 @@ import {
 	getTrainingJobs,
 	startTrainingJob,
 	activateModel,
+	deleteModel,
 	registerModel,
 	type MLModel,
 	type MLTrainingJob,
@@ -21,9 +22,11 @@ export function MLTrainingPage() {
 	const queryClient = useQueryClient();
 	const [trainingServerError, setTrainingServerError] = useState<string | null>(null);
 	const [activateServerError, setActivateServerError] = useState<string | null>(null);
+	const [deleteServerError, setDeleteServerError] = useState<string | null>(null);
 	const [registerServerError, setRegisterServerError] = useState<string | null>(null);
 	const [showTrainingForm, setShowTrainingForm] = useState(false);
 	const [showRegisterForm, setShowRegisterForm] = useState(false);
+	const [showJobs, setShowJobs] = useState(false);
 
 	const {
 		data: jobs = [],
@@ -69,6 +72,19 @@ export function MLTrainingPage() {
 		},
 		onError: (err) => {
 			setRegisterServerError(getApiErrorMessage(err));
+		},
+	});
+
+	const deleteModelMutation = useMutation({
+		mutationFn: (modelId: number) => deleteModel(modelId),
+		onMutate: () => {
+			setDeleteServerError(null);
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['mlModels'] });
+		},
+		onError: (err) => {
+			setDeleteServerError(getApiErrorMessage(err));
 		},
 	});
 
@@ -121,19 +137,30 @@ export function MLTrainingPage() {
 				)}
 			</div>
 
-			{/* Recent Training Jobs */}
+			{/* Recent Training Jobs — collapsed by default */}
 			<div className="bg-[var(--panel)] border border-[#1e293b] rounded-lg p-3 sm:p-6 space-y-3 sm:space-y-4">
 				<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-0">
 					<h2 className="text-base sm:text-lg font-semibold">Recent Training Jobs</h2>
-					<button
-						type="button"
-						onClick={() => queryClient.invalidateQueries({ queryKey: ['mlTrainingJobs'] })}
-						className="text-xs text-[var(--accent)] min-h-[36px] sm:min-h-0 px-3 py-2 sm:py-1"
-					>
-						Refresh
-					</button>
+					<div className="flex items-center gap-3">
+						{showJobs && (
+							<button
+								type="button"
+								onClick={() => queryClient.invalidateQueries({ queryKey: ['mlTrainingJobs'] })}
+								className="text-xs text-[var(--accent)] min-h-[36px] sm:min-h-0 px-3 py-2 sm:py-1"
+							>
+								Refresh
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={() => setShowJobs((v) => !v)}
+							className="text-xs text-[var(--accent)] min-h-[36px] sm:min-h-0 px-3 py-2 sm:py-1"
+						>
+							{showJobs ? 'Hide' : `Show${jobs.length ? ` (${jobs.length})` : ''}`}
+						</button>
+					</div>
 				</div>
-				<MLTrainingJobsTable jobs={jobs} isLoading={jobsLoading} />
+				{showJobs && <MLTrainingJobsTable jobs={jobs} isLoading={jobsLoading} />}
 			</div>
 
 			{/* Model Versions */}
@@ -148,12 +175,12 @@ export function MLTrainingPage() {
 						Refresh
 					</button>
 				</div>
-				{activateServerError ? (
+				{(activateServerError || deleteServerError) ? (
 					<div
 						role="alert"
 						className="text-xs sm:text-sm text-red-400 break-words whitespace-pre-wrap border border-red-900/40 rounded p-3"
 					>
-						{activateServerError}
+						{activateServerError ?? deleteServerError}
 					</div>
 				) : null}
 				<MLModelsTable
@@ -162,6 +189,10 @@ export function MLTrainingPage() {
 					onActivate={(modelId) => activateModelMutation.mutate(modelId)}
 					activatingModelId={
 						activateModelMutation.isPending ? activateModelMutation.variables : null
+					}
+					onDelete={(modelId) => deleteModelMutation.mutate(modelId)}
+					deletingModelId={
+						deleteModelMutation.isPending ? deleteModelMutation.variables : null
 					}
 				/>
 			</div>
