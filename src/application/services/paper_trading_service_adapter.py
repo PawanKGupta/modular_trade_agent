@@ -711,7 +711,16 @@ class PaperTradingServiceAdapter:
                     execution_capital = self._resolve_premarket_target_capital(
                         price_symbol, premarket_price
                     )
-                    new_qty = compute_premarket_qty(execution_capital, premarket_price)
+                    max_order_val = None
+                    if self.engine and getattr(self.engine, "strategy_config", None):
+                        max_order_val = getattr(
+                            self.engine.strategy_config, "max_order_value", None
+                        )
+                    new_qty = compute_premarket_qty(
+                        execution_capital,
+                        premarket_price,
+                        max_order_val=max_order_val,
+                    )
 
                     if not needs_premarket_market_finalize(
                         is_limit=order.is_limit_order(),
@@ -756,9 +765,9 @@ class PaperTradingServiceAdapter:
                                     OrdersRepository,
                                 )
 
-                                cancelled_db_order = OrdersRepository(self.db).get_by_broker_order_id(
-                                    self.user_id, order.order_id
-                                )
+                                cancelled_db_order = OrdersRepository(
+                                    self.db
+                                ).get_by_broker_order_id(self.user_id, order.order_id)
                             except Exception as db_lookup_err:
                                 self.logger.warning(
                                     f"{order.symbol}: Could not load DB order before adjustment: "
@@ -792,9 +801,7 @@ class PaperTradingServiceAdapter:
                         ):
                             merged_metadata.update(cancelled_db_order.order_metadata)
                         if cancelled_db_order and cancelled_db_order.entry_type:
-                            merged_metadata.setdefault(
-                                "entry_type", cancelled_db_order.entry_type
-                            )
+                            merged_metadata.setdefault("entry_type", cancelled_db_order.entry_type)
                         if merged_metadata:
                             new_order._metadata = merged_metadata
 
@@ -1753,8 +1760,7 @@ class PaperTradingServiceAdapter:
             if symbol in self.active_sell_orders:
                 del self.active_sell_orders[symbol]
         self.logger.info(
-            f"Removed {len(unique)} executed orders. "
-            f"Active orders: {len(self.active_sell_orders)}",
+            f"Removed {len(unique)} executed orders. Active orders: {len(self.active_sell_orders)}",
             action="_monitor_sell_orders",
         )
         self._save_sell_orders_to_file()
@@ -2462,7 +2468,7 @@ class PaperTradingEngineAdapter:
         Returns:
             Summary dict with placement statistics
         """
-        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+        from modules.kotak_neo_auto_trader.domain import Order, TransactionType
 
         summary = {
             "attempted": 0,
@@ -2857,9 +2863,7 @@ class PaperTradingEngineAdapter:
 
         return summary
 
-    def _get_daily_indicators(
-        self, ticker: str, *, add_current_day: bool = True
-    ) -> dict | None:
+    def _get_daily_indicators(self, ticker: str, *, add_current_day: bool = True) -> dict | None:
         """
         Get daily indicators (RSI, EMA9, price, volume) for a ticker.
 
@@ -2949,7 +2953,7 @@ class PaperTradingEngineAdapter:
         """
         from math import floor
 
-        from modules.kotak_neo_auto_trader.domain import Order, OrderType, TransactionType
+        from modules.kotak_neo_auto_trader.domain import Order, TransactionType
 
         summary = {
             "attempted": 0,

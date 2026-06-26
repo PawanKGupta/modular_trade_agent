@@ -4,11 +4,13 @@ Configuration for Kotak Neo Auto Trader
 """
 
 from datetime import time
+
 from config.strategy_config import StrategyConfig
 
 # Portfolio constraints
 MAX_PORTFOLIO_SIZE = 6
 CAPITAL_PER_TRADE = 100000  # fixed capital per entry (Rs 1 lakh per stock)
+MAX_ORDER_VALUE = 500000  # maximum allowed order value (Rs 5 lakh per stock order)
 
 # Scheduling
 RUN_TIME = time(hour=16, minute=0)  # 16:00 local time

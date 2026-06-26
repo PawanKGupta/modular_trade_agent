@@ -32,6 +32,7 @@ def sample_user_config(db_session):
         rsi_extreme_oversold=15.0,
         rsi_near_oversold=35.0,
         user_capital=300000.0,
+        max_order_value=600000.0,
         max_portfolio_size=8,
         max_position_volume_ratio=0.12,
         min_absolute_avg_volume=15000,
@@ -87,6 +88,7 @@ class TestConfigConverter:
         strategy_config = user_config_to_strategy_config(sample_user_config)
 
         assert strategy_config.user_capital == sample_user_config.user_capital
+        assert strategy_config.max_order_value == sample_user_config.max_order_value
         assert (
             strategy_config.max_position_volume_ratio
             == sample_user_config.max_position_volume_ratio
@@ -256,3 +258,26 @@ class TestConfigConverter:
 
         # Verify conversion preserves the value
         assert strategy_config.enable_premarket_amo_adjustment is True
+
+    def test_max_order_value_conversion(self, db_session):
+        """Test that user_config_to_strategy_config correctly maps custom max_order_value"""
+        from src.infrastructure.db.models import Users
+
+        user = Users(
+            email="test_max_order@example.com",
+            password_hash="hash",
+            created_at=ist_now(),
+        )
+        db_session.add(user)
+        db_session.commit()
+
+        config = UserTradingConfig(
+            user_id=user.id,
+            max_order_value=750000.0,
+        )
+        db_session.add(config)
+        db_session.commit()
+        db_session.refresh(config)
+
+        strategy_config = user_config_to_strategy_config(config)
+        assert strategy_config.max_order_value == 750000.0

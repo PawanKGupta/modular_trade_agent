@@ -87,6 +87,7 @@ def user_config_to_strategy_config(
         user_capital=user_config.user_capital,
         max_portfolio_size=user_config.max_portfolio_size,
         max_position_volume_ratio=user_config.max_position_volume_ratio,
+        max_order_value=getattr(user_config, "max_order_value", 500000.0),
         # Chart Quality Configuration
         chart_quality_enabled=user_config.chart_quality_enabled,
         chart_quality_min_score=user_config.chart_quality_min_score,
