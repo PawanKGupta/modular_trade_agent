@@ -81,11 +81,20 @@ export function getCsrfToken(): string | null {
 	return sessionStorage.getItem(CSRF_TOKEN_KEY);
 }
 
+let onAuthFailureCallback: (() => void) | null = null;
+
+export function setAuthFailureCallback(callback: () => void) {
+	onAuthFailureCallback = callback;
+}
+
 export function clearAuthTokens() {
 	memoryAccessToken = null;
 	setAccessToken(null);
 	setRefreshToken(null);
 	setCsrfToken(null);
+	if (onAuthFailureCallback) {
+		onAuthFailureCallback();
+	}
 }
 
 export function applyTokenResponse(data: {
@@ -149,7 +158,9 @@ api.interceptors.response.use(
 			response?.status === 401 &&
 			original &&
 			!original._retry &&
-			!original.url?.includes('/auth/refresh')
+			!original.url?.includes('/auth/refresh') &&
+			!original.url?.includes('/auth/login') &&
+			!original.url?.includes('/auth/mfa/login')
 		) {
 			original._retry = true;
 			const newToken = await requestTokenRefresh();
@@ -158,6 +169,8 @@ api.interceptors.response.use(
 				original.headers.Authorization = `Bearer ${newToken}`;
 				return api(original);
 			}
+		} else if (response?.status === 401 && !original?.url?.includes('/auth/refresh')) {
+			clearAuthTokens();
 		}
 		return Promise.reject(error);
 	},
