@@ -97,12 +97,12 @@ class TestPredictTargetEMA9Fallback:
         df = _make_ohlcv(close=100.0)
         target, confidence = svc.predict_target(
             current_price=100.0,
-            indicators={"rsi": 28.0},
+            indicators={"rsi": 28.0, "ema9": 103.0},
             timeframe_confirmation=None,
             df=df,
-            rule_based_target=103.0,
+            rule_based_target=105.0,
         )
-        assert abs(target - 103.0) < 0.01, f"Expected 103.0 (EMA9 fallback), got {target}"
+        assert abs(target - 103.0) < 0.01, f"Expected 103.0 (EMA9 floor fallback), got {target}"
         assert confidence == 0.5
 
     def test_returns_rule_based_when_model_not_loaded(self):

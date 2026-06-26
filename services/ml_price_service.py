@@ -160,32 +160,35 @@ class MLPriceService:
             predicted_pct = max(0.0, predicted_ceiling_pct) * _TARGET_CAPTURE_FRACTION
             predicted_target = current_price * (1.0 + predicted_pct / 100.0)
 
-            # Conservative gate: if model predicts less upside than EMA9, use EMA9.
-            if rule_based_target is not None and predicted_target < rule_based_target:
-                logger.debug(
-                    "ML price target %.2f < EMA9 target %.2f; using rule-based fallback",
-                    predicted_target,
-                    rule_based_target,
-                )
-                return rule_based_target, 0.5
+            # Resolve the actual EMA9 floor price from indicators or df
+            ema9 = indicators.get("ema9")
+            if ema9 is None and len(df) >= _EMA9_SPAN:
+                close = df["close"]
+                ema9 = float(close.ewm(span=_EMA9_SPAN, adjust=False).mean().iloc[-1])
+            ema9_floor = float(ema9) if ema9 is not None else (rule_based_target or current_price)
 
-            ema9_pct = (
-                (rule_based_target / current_price - 1.0) * 100.0
-                if rule_based_target is not None
-                else None
-            )
+            # Conservative gate: if model predicts less upside than the EMA9 target, use EMA9.
+            if predicted_target < ema9_floor:
+                logger.debug(
+                    "ML price target %.2f < EMA9 floor %.2f; using EMA9 fallback",
+                    predicted_target,
+                    ema9_floor,
+                )
+                return ema9_floor, 0.5
+
+            ema9_pct = (ema9_floor / current_price - 1.0) * 100.0
             # Confidence grows with the gap between ML prediction and EMA9 target,
             # capped at 0.9 to reflect model uncertainty.
-            if ema9_pct is not None and predicted_pct > ema9_pct:
+            if predicted_pct > ema9_pct:
                 confidence = min(0.9, 0.65 + (predicted_pct - ema9_pct) * 0.02)
             else:
                 confidence = 0.65
 
             logger.debug(
-                "ML price target: %.2f (predicted_pct=%.2f%%, rule-based: %s, confidence: %.0f%%)",
+                "ML price target: %.2f (pct=%.2f%%, EMA9 floor: %.2f, confidence: %.0f%%)",
                 predicted_target,
                 predicted_pct,
-                f"{rule_based_target:.2f}" if rule_based_target is not None else "N/A",
+                ema9_floor,
                 confidence * 100,
             )
             return predicted_target, confidence
