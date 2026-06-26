@@ -39,6 +39,7 @@ jobs:
 
       - name: Start API
         env:
+          ENV: "test"  # dev opt-in: skip production secret guard (validate_production_secrets)
           DB_URL: "sqlite:///./data/e2e.db"
           ADMIN_EMAIL: "testadmin@rebound.com"
           ADMIN_PASSWORD: "testadmin@123"
