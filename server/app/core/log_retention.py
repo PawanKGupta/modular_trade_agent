@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 def cleanup_user_log_files(logs_root: str | Path | None = None) -> int:
     """
-    Delete per-user log files older than log_retention_days.
+    Delete plain ``*.log`` files older than ``log_retention_days`` (by mtime).
+
+    This covers the global, daily-rotated ``trade_agent_*.log`` files written by
+    ``utils.logger``. Per-user JSONL logs (``logs/users/user_*/**/*.jsonl``) are
+    pruned separately by ``LogRetentionService._prune_file_logs``.
 
     Returns:
         Number of files removed.
@@ -36,5 +40,9 @@ def cleanup_user_log_files(logs_root: str | Path | None = None) -> int:
             logger.warning("Could not remove old log file: %s", path)
 
     if removed:
-        logger.info("Log retention: removed %s files older than %s days", removed, settings.log_retention_days)
+        logger.info(
+            "Log retention: removed %s files older than %s days",
+            removed,
+            settings.log_retention_days,
+        )
     return removed
