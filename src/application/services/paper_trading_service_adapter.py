@@ -203,7 +203,7 @@ class PaperTradingServiceAdapter:
                 initial_capital=self.initial_capital,
                 enable_slippage=True,
                 enable_fees=True,
-                enforce_market_hours=False,  # Allow testing anytime
+                enforce_market_hours=True,  # Mirror live: gate fills to the 09:15 open
                 price_source="live",  # Use live prices
                 storage_path=self.storage_path,
                 auto_save=True,

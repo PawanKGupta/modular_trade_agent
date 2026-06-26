@@ -9,6 +9,25 @@ from datetime import UTC, datetime, timedelta, timezone
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# NSE market-open window (IST). Used to source the day's opening price for
+# AMO fills at market open instead of the previous session's close.
+MARKET_OPEN_HOUR = 9
+MARKET_OPEN_START_MIN = 15
+MARKET_OPEN_END_MIN = 20
+
+# Plausible-age bounds for disambiguating IST-naive vs UTC-naive DB timestamps.
+_MIN_PLAUSIBLE_AGE_MINUTES = -5
+_MAX_PLAUSIBLE_AGE_MINUTES = 24 * 60
+_MIN_PLAUSIBLE_AGE_SECONDS = -60
+_MAX_PLAUSIBLE_AGE_SECONDS = 7 * 86400
+
+
+def is_market_open_window(now: datetime) -> bool:
+    """Return True if ``now`` falls within the NSE market-open window (09:15-09:20 IST)."""
+    return (
+        now.hour == MARKET_OPEN_HOUR and MARKET_OPEN_START_MIN <= now.minute <= MARKET_OPEN_END_MIN
+    )
+
 
 def ist_now() -> datetime:
     """
@@ -58,9 +77,7 @@ def as_ist_aware(dt: datetime) -> datetime:
     return dt.replace(tzinfo=IST)
 
 
-def coerce_db_timestamp_to_ist(
-    dt: datetime, *, reference: datetime | None = None
-) -> datetime:
+def coerce_db_timestamp_to_ist(dt: datetime, *, reference: datetime | None = None) -> datetime:
     """
     Normalize naive DB timestamps to aware IST.
 
@@ -74,7 +91,7 @@ def coerce_db_timestamp_to_ist(
     ref = reference or ist_now()
     as_ist = dt.replace(tzinfo=IST)
     age_min = (ref - as_ist).total_seconds() / 60
-    if -5 <= age_min <= 24 * 60:
+    if _MIN_PLAUSIBLE_AGE_MINUTES <= age_min <= _MAX_PLAUSIBLE_AGE_MINUTES:
         return as_ist
     return dt.replace(tzinfo=UTC).astimezone(IST)
 
@@ -104,7 +121,9 @@ def service_status_heartbeat_age_seconds(
     age_as_ist_naive = (ref - last_heartbeat.replace(tzinfo=IST)).total_seconds()
     age_as_utc_stored = (ref - utc_to_ist(last_heartbeat.replace(tzinfo=UTC))).total_seconds()
     candidates = [age_as_ist_naive, age_as_utc_stored]
-    plausible = [age for age in candidates if -60 <= age <= 7 * 86400]
+    plausible = [
+        age for age in candidates if _MIN_PLAUSIBLE_AGE_SECONDS <= age <= _MAX_PLAUSIBLE_AGE_SECONDS
+    ]
     if plausible:
         return min(plausible)
     return min(candidates)
@@ -136,7 +155,11 @@ def service_status_heartbeat_to_utc_for_api(
     age_as_ist = (ref - last_heartbeat.replace(tzinfo=IST)).total_seconds()
     age_as_utc = (ref - utc_to_ist(instant_as_utc_write)).total_seconds()
     candidates = [(age_as_ist, instant_as_ist_write), (age_as_utc, instant_as_utc_write)]
-    plausible = [(age, instant) for age, instant in candidates if -60 <= age <= 7 * 86400]
+    plausible = [
+        (age, instant)
+        for age, instant in candidates
+        if _MIN_PLAUSIBLE_AGE_SECONDS <= age <= _MAX_PLAUSIBLE_AGE_SECONDS
+    ]
     if plausible:
         return min(plausible, key=lambda pair: pair[0])[1]
     return min(candidates, key=lambda pair: pair[0])[1]

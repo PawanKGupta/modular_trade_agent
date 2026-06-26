@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
+import pandas as pd
+
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
@@ -17,8 +19,11 @@ from modules.kotak_neo_auto_trader.utils.symbol_utils import (  # noqa: E402
 from utils.logger import logger  # noqa: E402
 
 try:
+    from src.infrastructure.db.timezone_utils import is_market_open_window, ist_now
     from src.infrastructure.db.timezone_utils import ist_now_naive as _ist_now_naive_fn
 except ImportError:
+    ist_now = None  # type: ignore[assignment, misc]
+    is_market_open_window = None  # type: ignore[assignment, misc]
     _ist_now_naive_fn = None  # type: ignore[misc, assignment]
 
 
@@ -91,28 +96,35 @@ class PriceProvider:
                 logger.warning("[WARN]? No live data providers available; using mock prices")
                 self.mode = "mock"
 
-    def get_price(self, symbol: str) -> float | None:
+    def get_price(self, symbol: str, at_open: bool = False) -> float | None:
         """
         Get current price for a symbol
 
         Args:
             symbol: Stock symbol
+            at_open: Whether to fetch the opening price for AMO orders
 
         Returns:
             Current price or None if not available
         """
+        # In live mode an at_open fetch must bypass the current-price cache so we get
+        # a fresh opening price (and not pollute the cache with it). In mock/historical
+        # mode the cache is the price source (e.g. set_mock_price), so honor it.
+        bypass_cache = at_open and self.mode == "live"
+
         # Check cache first
-        with self._lock:
-            if symbol in self._price_cache:
-                price, timestamp = self._price_cache[symbol]
-                if _naive_stamp() - timestamp < self.cache_duration:
-                    return price
+        if not bypass_cache:
+            with self._lock:
+                if symbol in self._price_cache:
+                    price, timestamp = self._price_cache[symbol]
+                    if _naive_stamp() - timestamp < self.cache_duration:
+                        return price
 
         # Fetch fresh price
-        price = self._fetch_price(symbol)
+        price = self._fetch_price(symbol, at_open=at_open)
 
-        # Update cache
-        if price is not None:
+        # Update cache (skip for live at_open fetches to avoid polluting current price)
+        if price is not None and not bypass_cache:
             with self._lock:
                 self._price_cache[symbol] = (price, _naive_stamp())
 
@@ -135,31 +147,33 @@ class PriceProvider:
                 prices[symbol] = price
         return prices
 
-    def _fetch_price(self, symbol: str) -> float | None:
+    def _fetch_price(self, symbol: str, at_open: bool = False) -> float | None:
         """
         Fetch price based on mode
 
         Args:
             symbol: Stock symbol
+            at_open: Whether to fetch the opening price for AMO orders
 
         Returns:
             Price or None
         """
         if self.mode == "live":
-            return self._fetch_live_price(symbol)
+            return self._fetch_live_price(symbol, at_open=at_open)
         elif self.mode == "mock":
             return self._fetch_mock_price(symbol)
         else:
             logger.error(f"? Unknown price mode: {self.mode}")
             return None
 
-    def _fetch_live_price(self, symbol: str) -> float | None:
+    def _fetch_live_price(self, symbol: str, at_open: bool = False) -> float | None:
         """
         Fetch live price using data fetcher
 
         Args:
             symbol: Stock symbol (full, base, or ticker format)
                    Examples: 'SALSTEEL-BE', 'AAREYDRUGS', 'RELIANCE.NS'
+            at_open: Whether to fetch the opening price for AMO orders
 
         Returns:
             Current price or None
@@ -183,14 +197,14 @@ class PriceProvider:
                 )
 
                 if data is not None and not data.empty:
-                    latest_price = float(data["close"].iloc[-1])
+                    latest_price = self._parse_data_fetcher_price(data, at_open)
                     logger.debug(f"? Fetched live price for {ticker}: Rs {latest_price:.2f}")
                     return latest_price
                 logger.warning(f"[WARN]? No broker data available for {ticker}")
             except Exception as e:
                 logger.error(f"? Error fetching broker price for {ticker}: {e}")
 
-        price = self._fetch_yfinance_price(ticker)
+        price = self._fetch_yfinance_price(ticker, at_open=at_open)
         if price is not None:
             return price
 
@@ -211,6 +225,31 @@ class PriceProvider:
         )
         return mock_price
 
+    def _parse_data_fetcher_price(self, data: pd.DataFrame, at_open: bool) -> float:
+        """Parse price from data fetcher DataFrame, returning open or close depending on context."""
+        latest_row = data.iloc[-1]
+        latest_date = latest_row.get("date")
+        if hasattr(latest_date, "date"):
+            latest_date = latest_date.date()
+        elif isinstance(latest_date, str):
+            try:
+                latest_date = datetime.strptime(latest_date, "%Y-%m-%d").date()
+            except ValueError:
+                latest_date = None
+
+        if ist_now is not None:
+            now_ist = ist_now()
+        else:
+            now_ist = datetime.now(datetime.UTC)
+
+        in_open_window = (
+            is_market_open_window(now_ist) if is_market_open_window is not None else False
+        )
+
+        if (at_open and in_open_window and latest_date == now_ist.date()) or len(data) == 1:
+            return float(data["open"].iloc[0])
+        return float(data["close"].iloc[-1])
+
     def _stale_cached_price(self, symbol: str) -> float | None:
         """Return last cached price regardless of TTL (for live-mode fallback)."""
         with self._lock:
@@ -219,13 +258,13 @@ class PriceProvider:
                 return entry[0]
         return None
 
-    def _fetch_yfinance_price(self, symbol: str) -> float | None:
+    def _fetch_yfinance_price(self, symbol: str, at_open: bool = False) -> float | None:
         """Fetch live price via YFinance provider."""
         if not self.yfinance_provider:
             return None
 
         try:
-            price = self.yfinance_provider.fetch_current_price(symbol)
+            price = self.yfinance_provider.fetch_current_price(symbol, at_open=at_open)
             if price is not None:
                 logger.debug(f"? YFinance price for {symbol}: Rs {price:.2f}")
             return price

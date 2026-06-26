@@ -81,11 +81,16 @@ class OrderSimulator:
             price_symbol = f"{price_symbol}.NS"
             logger.debug(f"? Added .NS suffix for price fetching: {price_symbol}")
 
-        # Get current price (opening price for AMO orders at market open)
-        current_price = self.price_provider.get_price(price_symbol)
+        # Get current price. For any BUY filling in the market-open window, request
+        # the opening price (not the prior close): AMO buys fill at 09:15, and the
+        # pre-open REGULAR LIMIT morning buys also fill at the open. Outside the
+        # open window the provider returns the normal current price, so this is safe
+        # for intraday/re-entry buys too.
+        at_open = order.is_buy_order()
+        current_price = self.price_provider.get_price(price_symbol, at_open=at_open)
         if current_price is None:
             # Try without suffix as fallback
-            current_price = self.price_provider.get_price(order.symbol)
+            current_price = self.price_provider.get_price(order.symbol, at_open=at_open)
             if current_price is None:
                 return False, f"Price not available for {order.symbol} (tried {price_symbol})", None
 
