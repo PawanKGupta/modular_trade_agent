@@ -49,10 +49,10 @@ describe('CapitalConfigSection', () => {
 		render(<CapitalConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
 
 		fireEvent.change(screen.getByLabelText(/Capital per Trade/i), { target: { value: '' } });
-		expect(onChange).toHaveBeenCalledWith({ user_capital: 200000 });
+		expect(onChange).toHaveBeenCalledWith({ user_capital: 100000 });
 
 		fireEvent.change(screen.getByLabelText(/Paper Trading Initial Capital/i), { target: { value: '' } });
-		expect(onChange).toHaveBeenCalledWith({ paper_trading_initial_capital: 300000 });
+		expect(onChange).toHaveBeenCalledWith({ paper_trading_initial_capital: 1000000 });
 
 		fireEvent.change(screen.getByLabelText(/Max Portfolio Size/i), { target: { value: '' } });
 		expect(onChange).toHaveBeenCalledWith({ max_portfolio_size: 6 });
@@ -120,5 +120,25 @@ describe('CapitalConfigSection', () => {
 			<CapitalConfigSection config={modifiedConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />
 		);
 		expect(container.textContent).toMatch(/Rs.*50,000.*from default/i);
+	});
+
+	it('calls onChange when max order value is changed', () => {
+		const onChange = vi.fn();
+		render(<CapitalConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+
+		const maxOrderInput = screen.getByLabelText(/Maximum Order Value/i);
+		fireEvent.change(maxOrderInput, { target: { value: '600000' } });
+
+		expect(onChange).toHaveBeenCalledWith({ max_order_value: 600000 });
+	});
+
+	it('uses fallback values when max order value input is cleared', () => {
+		const onChange = vi.fn();
+		render(<CapitalConfigSection config={mockConfig} defaultConfig={DEFAULT_CONFIG} onChange={onChange} />);
+
+		const maxOrderInput = screen.getByLabelText(/Maximum Order Value/i);
+		fireEvent.change(maxOrderInput, { target: { value: '' } });
+
+		expect(onChange).toHaveBeenCalledWith({ max_order_value: 500000 });
 	});
 });

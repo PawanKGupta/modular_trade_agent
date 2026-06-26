@@ -35,6 +35,7 @@ class StrategyConfig:
     user_capital: float = 200000.0  # Default: 2L
     max_portfolio_size: int = 6  # Maximum number of positions in portfolio
     max_position_volume_ratio: float = 0.10  # 10% of daily volume max
+    max_order_value: float = 500000.0  # maximum allowed order value (Rs 5 lakh per stock order)
 
     # Chart Quality Configuration
     # [WARN]? IMPORTANT: Chart quality is REQUIRED in production - DO NOT disable in live trading
@@ -167,6 +168,7 @@ class StrategyConfig:
             user_capital=float(os.getenv("USER_CAPITAL", "200000.0")),
             max_portfolio_size=int(os.getenv("MAX_PORTFOLIO_SIZE", "6")),
             max_position_volume_ratio=float(os.getenv("MAX_POSITION_VOLUME_RATIO", "0.10")),
+            max_order_value=float(os.getenv("MAX_ORDER_VALUE", "500000.0")),
             # Chart Quality
             chart_quality_enabled=os.getenv("CHART_QUALITY_ENABLED", "true").lower()
             in ("1", "true", "yes", "on"),

@@ -9,6 +9,7 @@ export interface TradingConfig {
 
 	// Capital & Position Management
 	user_capital: number;
+	max_order_value: number;
 	paper_trading_initial_capital: number;
 	max_portfolio_size: number;
 	max_position_volume_ratio: number;
@@ -72,6 +73,7 @@ export interface TradingConfigUpdate {
 	rsi_extreme_oversold?: number;
 	rsi_near_oversold?: number;
 	user_capital?: number;
+	max_order_value?: number;
 	paper_trading_initial_capital?: number;
 	max_portfolio_size?: number;
 	max_position_volume_ratio?: number;
@@ -140,6 +142,7 @@ export const DEFAULT_CONFIG: TradingConfig = {
 	rsi_extreme_oversold: 20.0,
 	rsi_near_oversold: 40.0,
 	user_capital: 100000.0,
+	max_order_value: 500000.0,
 	paper_trading_initial_capital: 1000000.0,
 	max_portfolio_size: 6,
 	max_position_volume_ratio: 0.1,

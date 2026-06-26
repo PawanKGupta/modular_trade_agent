@@ -77,6 +77,7 @@ try:
     )
     from .trader import KotakNeoTrader
     from .utils.order_field_extractor import OrderFieldExtractor
+    from .utils.order_sizing_helper import apply_max_order_value_cap
 except ImportError:
     from modules.kotak_neo_auto_trader import config
     from modules.kotak_neo_auto_trader.auth import KotakNeoAuth
@@ -3655,6 +3656,18 @@ class AutoTradeEngine:
                 avg_vol = ind.get("avg_volume", 0)
                 execution_capital = self._calculate_execution_capital(ticker, close, avg_vol)
                 qty = max(config.MIN_QTY, floor(execution_capital / close))
+                qty = apply_max_order_value_cap(
+                    qty,
+                    close,
+                    config.MIN_QTY,
+                    symbol,
+                    max_order_val=getattr(self.strategy_config, "max_order_value", None),
+                )
+
+                if qty <= 0:
+                    logger.warning(f"Skipping retry {symbol}: calculated quantity is 0")
+                    summary["skipped"] += 1
+                    continue
 
                 # Check for manual orders before proceeding
                 manual_order_info = self._check_for_manual_orders(symbol)
@@ -4469,6 +4482,7 @@ class AutoTradeEngine:
                     execution_capital,
                     premarket_price,
                     min_qty=config.MIN_QTY,
+                    max_order_val=getattr(self.strategy_config, "max_order_value", None),
                 )
                 is_limit = OrderFieldExtractor.is_limit_broker_order(order)
 
@@ -5478,14 +5492,24 @@ class AutoTradeEngine:
                     f"(using user_capital: Rs {self.strategy_config.user_capital:,.0f})"
                 )
 
-            # Phase 11: Log if capital was adjusted from user_capital
-            if execution_capital < self.strategy_config.user_capital:
-                logger.info(
-                    f"{broker_symbol}: Capital adjusted due to liquidity: "
-                    f"Rs {execution_capital:,.0f} (requested: Rs {self.strategy_config.user_capital:,.0f})"
-                )
-
             qty = max(config.MIN_QTY, floor(execution_capital / close))
+            qty = apply_max_order_value_cap(
+                qty,
+                close,
+                config.MIN_QTY,
+                broker_symbol,
+                max_order_val=getattr(self.strategy_config, "max_order_value", None),
+            )
+
+            if qty <= 0:
+                logger.info(
+                    f"Skipping {broker_symbol}: calculated quantity is 0 (due to capital/cap constraints)"
+                )
+                summary["skipped"] += 1
+                ticker_attempt["status"] = "skipped"
+                ticker_attempt["reason"] = "invalid_qty_zero"
+                summary["ticker_attempts"].append(ticker_attempt)
+                continue
 
             # If database has an existing PENDING order, check if quantity or price needs to be updated
             # due to capital change (e.g., user updated capital per trade config) or price change
@@ -6126,6 +6150,13 @@ class AutoTradeEngine:
                     ticker, current_price, avg_volume
                 )
                 qty = max(config.MIN_QTY, floor(execution_capital / current_price))
+                qty = apply_max_order_value_cap(
+                    qty,
+                    current_price,
+                    config.MIN_QTY,
+                    symbol,
+                    max_order_val=getattr(self.strategy_config, "max_order_value", None),
+                )
 
                 logger.info(
                     f"Re-entry quantity calculation for {symbol}: "
@@ -6814,6 +6845,20 @@ class AutoTradeEngine:
                 )
 
                 qty = max(config.MIN_QTY, floor(execution_capital / price))
+                qty = apply_max_order_value_cap(
+                    qty,
+                    price,
+                    config.MIN_QTY,
+                    symbol,
+                    max_order_val=getattr(self.strategy_config, "max_order_value", None),
+                )
+
+                if qty <= 0:
+                    logger.warning(
+                        f"Skipping re-entry for {symbol}: calculated quantity is 0 after cap/min quantity constraints"
+                    )
+                    continue
+
                 # Balance check for re-entry
                 affordable = self.get_affordable_qty(price)
                 if affordable < 1:

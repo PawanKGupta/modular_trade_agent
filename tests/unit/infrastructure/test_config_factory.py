@@ -47,6 +47,7 @@ class TestConfigFactory:
         assert config.rsi_near_oversold == 40.0
         # Verify capital defaults
         assert config.user_capital == 200000.0
+        assert config.max_order_value == 500000.0
         assert config.max_portfolio_size == 6
         # Verify chart quality defaults
         assert config.chart_quality_enabled is True
@@ -74,6 +75,7 @@ class TestConfigFactory:
         assert db_config.rsi_extreme_oversold == strategy_config.rsi_extreme_oversold
         assert db_config.rsi_near_oversold == strategy_config.rsi_near_oversold
         assert db_config.user_capital == strategy_config.user_capital
+        assert db_config.max_order_value == strategy_config.max_order_value
         assert db_config.max_position_volume_ratio == strategy_config.max_position_volume_ratio
         assert db_config.min_absolute_avg_volume == strategy_config.min_absolute_avg_volume
         assert db_config.chart_quality_enabled == strategy_config.chart_quality_enabled
@@ -96,6 +98,7 @@ class TestConfigFactory:
             rsi_period=14,
             rsi_oversold=35.0,
             user_capital=300000.0,
+            max_order_value=600000.0,
             chart_quality_min_score=60.0,
         )
         db_session.add(db_config)
@@ -107,6 +110,7 @@ class TestConfigFactory:
         assert strategy_config.rsi_period == 14
         assert strategy_config.rsi_oversold == 35.0
         assert strategy_config.user_capital == 300000.0
+        assert strategy_config.max_order_value == 600000.0
         assert strategy_config.chart_quality_min_score == 60.0
         # Verify defaults for fields not in UserTradingConfig
         assert strategy_config.min_volume_multiplier == 1.0
@@ -130,6 +134,7 @@ class TestConfigFactory:
         assert strategy_config.rsi_period == original_db_config.rsi_period
         assert strategy_config.rsi_oversold == original_db_config.rsi_oversold
         assert strategy_config.user_capital == original_db_config.user_capital
+        assert strategy_config.max_order_value == original_db_config.max_order_value
         assert strategy_config.chart_quality_enabled == original_db_config.chart_quality_enabled
         assert (
             strategy_config.enable_premarket_amo_adjustment
