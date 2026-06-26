@@ -16,6 +16,7 @@ services:
     # Mount source for live code changes
     environment:
       - DEBUG=true
+      - ENV=development
 
   # Development web frontend
   web-frontend:

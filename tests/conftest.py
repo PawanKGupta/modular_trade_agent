@@ -44,6 +44,7 @@ os.environ["NSE_BHAVCOPY_REQUEST_TIMEOUT_S"] = "1"
 # Signup tests use example.com; production enforces provider allowlist only.
 os.environ.setdefault("EMAIL_DOMAIN_ALLOWLIST_ENABLED", "false")
 os.environ.setdefault("AUTH_USE_COOKIES", "false")
+os.environ["ENV"] = "test"
 
 
 def pytest_load_initial_conftests(early_config, parser, args):
