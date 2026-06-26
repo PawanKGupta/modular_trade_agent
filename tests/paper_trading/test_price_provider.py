@@ -92,7 +92,7 @@ class TestPriceProvider:
         monkeypatch.setattr(price_mod, "HAS_YFINANCE_PROVIDER", True, raising=False)
 
         class DummyYF:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 return 123.45
 
         monkeypatch.setattr(price_mod, "YFinanceProvider", lambda: DummyYF(), raising=False)
@@ -115,7 +115,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 100.0
 
@@ -138,7 +138,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 200.0
 
@@ -161,7 +161,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 300.0
 
@@ -184,7 +184,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 400.0
 
@@ -207,7 +207,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 500.0
 
@@ -230,7 +230,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 600.0
 
@@ -253,7 +253,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 700.0
 
@@ -280,7 +280,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 return 800.0
 
@@ -311,7 +311,7 @@ class TestPriceProviderTickerConversion:
                 return pd.DataFrame()
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_yfinance_symbols.append(symbol)
                 return 900.0
 
@@ -352,7 +352,7 @@ class TestPriceProviderTickerConversion:
                 return pd.DataFrame()
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 return 1000.0
 
         # Create mock instances
@@ -396,7 +396,7 @@ class TestPriceProviderTickerConversion:
         captured_tickers = []
 
         class MockYFinanceProvider:
-            def fetch_current_price(self, symbol):
+            def fetch_current_price(self, symbol, at_open=False):
                 captured_tickers.append(symbol)
                 # Return different prices for different symbols
                 prices = {

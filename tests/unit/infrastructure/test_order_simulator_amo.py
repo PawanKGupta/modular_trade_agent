@@ -9,8 +9,6 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.infrastructure.db.timezone_utils import IST
-
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
 from modules.kotak_neo_auto_trader.domain import (
     Order,
@@ -21,6 +19,7 @@ from modules.kotak_neo_auto_trader.domain import (
 )
 from modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator import OrderSimulator
 from modules.kotak_neo_auto_trader.infrastructure.simulation.price_provider import PriceProvider
+from src.infrastructure.db.timezone_utils import IST
 
 
 def _aware_at(h: int, m: int) -> datetime:
@@ -142,8 +141,9 @@ class TestAMOMarketOrderExecution:
         ):
             order_simulator.execute_order(order)
 
-            # Verify price was fetched using original ticker
-            order_simulator.price_provider.get_price.assert_called_with("RELIANCE.NS")
+            # Verify price was fetched using original ticker, requesting the
+            # opening price for the AMO fill.
+            order_simulator.price_provider.get_price.assert_called_with("RELIANCE.NS", at_open=True)
 
 
 class TestAMOExecutionTimeCheck:
