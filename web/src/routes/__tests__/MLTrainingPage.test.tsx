@@ -205,7 +205,7 @@ describe('MLTrainingPage', () => {
 				logs: 'error',
 			},
 		];
-		vi.mocked(mlApi.getTrainingJobs).mockResolvedValueOnce(jobs);
+		vi.mocked(mlApi.getTrainingJobs).mockResolvedValue(jobs);
 
 		render(
 			withProviders(
@@ -215,6 +215,12 @@ describe('MLTrainingPage', () => {
 				{ queryClient }
 			)
 		);
+
+		// The jobs section is collapsed by default — expand it first.
+		await waitFor(() => {
+			expect(screen.getByRole('button', { name: /show/i })).toBeInTheDocument();
+		});
+		fireEvent.click(screen.getByRole('button', { name: /show/i }));
 
 		await waitFor(() => {
 			expect(

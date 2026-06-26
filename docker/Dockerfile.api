@@ -57,6 +57,11 @@ COPY . .
 # api-entrypoint.sh copies these into the volume on first boot when /app/models is empty.
 RUN cp -r /app/models /app/models_default
 
+# Preserve the baked ML training dataset before the trading_data volume shadows /app/data.
+# api-entrypoint.sh seeds it into the volume (copy-if-missing) so admin UI training works.
+RUN mkdir -p /app/data_default && \
+    if [ -d /app/data/training ]; then cp -r /app/data/training /app/data_default/training; fi
+
 # Create directories with proper permissions; ensure entrypoint is executable
 RUN mkdir -p data logs paper_trading && \
     chmod +x /app/docker/api-entrypoint.sh && \

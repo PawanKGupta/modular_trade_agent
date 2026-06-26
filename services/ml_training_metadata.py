@@ -59,6 +59,11 @@ BULK_ANALYSIS_CSV_METADATA: frozenset[str] = frozenset(
     }
 )
 
+# Price-regressor target: best achievable upside within a forward window after entry
+# (emitted by scripts/build_historical_dataset.py). Predicting this lets the model set
+# targets BEYOND the EMA9 exit, unlike actual_pnl_pct which encodes the EMA9 return.
+PRICE_TARGET_LABEL_COLUMN = "max_favorable_pct_20d"
+
 # Shared across verdict classifier and price regressor (position-level backtest rows).
 VERDICT_AND_REGRESSOR_METADATA: tuple[str, ...] = (
     "ticker",
@@ -66,6 +71,7 @@ VERDICT_AND_REGRESSOR_METADATA: tuple[str, ...] = (
     "exit_date",
     "label",
     "actual_pnl_pct",
+    PRICE_TARGET_LABEL_COLUMN,
     "holding_days",
     "backtest_date",
     "position_id",
@@ -88,6 +94,57 @@ DIP_EPISODE_METADATA: tuple[str, ...] = (
     "strong_win",
 )
 
+# Curated price-regressor feature contract. Order IS the contract — emitted to the
+# `.price_features.json` manifest at train time and consumed by MLPriceService at serve
+# time. Every column here is computed live by ``MLPriceService._extract_target_features``.
+PRICE_TARGET_FEATURE_COLUMNS: tuple[str, ...] = (
+    "rsi_10",
+    "ema9_distance_pct",
+    "volume_ratio",
+    "support_distance_pct",
+    "dip_depth_from_20d_high_pct",
+    "consecutive_red_days",
+    "volume_green_vs_red_ratio",
+    "day_of_week",
+    "rsi_volume_interaction",
+    "dip_support_interaction",
+    # Magnitude features (volatility / momentum / room-to-run) — drive HOW FAR price runs.
+    "atr_pct_14",
+    "hist_vol_20d",
+    "ret_60d",
+    "ret_120d",
+    "dist_from_high_252d_pct",
+)
+
+# Backtest exits that hit the 30-day holding ceiling rather than a real signal exit;
+# their pnl is not a predictable price target, so they are dropped before fitting.
+_MAXHOLD_EXIT_REASON = "MaxHold"
+
+
+def price_regressor_feature_columns(df: pd.DataFrame) -> list[str]:
+    """
+    Resolve the curated price-regressor feature columns present in ``df``.
+
+    Preserves the canonical order of :data:`PRICE_TARGET_FEATURE_COLUMNS`.
+
+    Raises:
+        ValueError: If none of the curated columns are present.
+    """
+    cols = [c for c in PRICE_TARGET_FEATURE_COLUMNS if c in df.columns]
+    if not cols:
+        raise ValueError(
+            "None of the curated price feature columns are present in the training data: "
+            f"{list(PRICE_TARGET_FEATURE_COLUMNS)}. Regenerate with build_historical_dataset.py."
+        )
+    return cols
+
+
+def drop_maxhold_exits(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df`` without MaxHold-ceiling exits (no-op if ``exit_reason`` absent)."""
+    if "exit_reason" not in df.columns:
+        return df
+    return df[df["exit_reason"] != _MAXHOLD_EXIT_REASON]
+
 
 def _union_exclude(*parts: Iterable[str]) -> list[str]:
     seen: set[str] = set()
@@ -103,13 +160,6 @@ def _union_exclude(*parts: Iterable[str]) -> list[str]:
 def verdict_classifier_exclude_columns() -> list[str]:
     """Metadata excluded before fitting verdict classifiers."""
     return _union_exclude(VERDICT_AND_REGRESSOR_METADATA, BULK_ANALYSIS_CSV_METADATA)
-
-
-def price_regressor_exclude_columns(*, target_column: str) -> list[str]:
-    """Metadata excluded before fitting price regressors."""
-    return _union_exclude(
-        VERDICT_AND_REGRESSOR_METADATA, BULK_ANALYSIS_CSV_METADATA, (target_column,)
-    )
 
 
 def dip_classifier_exclude_columns() -> list[str]:
@@ -179,7 +229,7 @@ def validate_training_csv_for_model_type(
     frame: pd.DataFrame,
     model_type: str,
     *,
-    target_column: str = "actual_pnl_pct",
+    target_column: str = PRICE_TARGET_LABEL_COLUMN,
 ) -> None:
     """
     Ensure a training CSV has columns required for the selected admin model type.
@@ -199,8 +249,8 @@ def validate_training_csv_for_model_type(
         if target_column not in columns:
             raise ValueError(
                 f"Price regressor training requires target column '{target_column}'. "
-                "Use position-level data (e.g. data/ml_training_data_price.csv), not "
-                "verdict_classifier.csv. "
+                "Use the historical-dataset CSV from build_historical_dataset.py "
+                "(e.g. data/training/verdict_classifier.csv). "
                 f"Columns present: {sorted(columns)[:12]}"
             )
         if "entry_date" not in columns and "backtest_date" not in columns:

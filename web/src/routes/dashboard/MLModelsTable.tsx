@@ -5,9 +5,11 @@ interface Props {
 	isLoading: boolean;
 	onActivate: (modelId: number) => void;
 	activatingModelId?: number | null;
+	onDelete: (modelId: number) => void;
+	deletingModelId?: number | null;
 }
 
-export function MLModelsTable({ models, isLoading, onActivate, activatingModelId }: Props) {
+export function MLModelsTable({ models, isLoading, onActivate, activatingModelId, onDelete, deletingModelId }: Props) {
 	if (isLoading) {
 		return <div className="text-sm text-[var(--muted)]">Loading models...</div>;
 	}
@@ -59,14 +61,28 @@ export function MLModelsTable({ models, isLoading, onActivate, activatingModelId
 								{model.is_active ? (
 									<span className="text-xs text-green-300 font-medium">In Use</span>
 								) : (
-									<button
-										type="button"
-										onClick={() => onActivate(model.id)}
-										className="text-xs px-3 py-2 sm:px-2 sm:py-1 text-[var(--accent)] disabled:opacity-50 min-h-[36px] sm:min-h-0"
-										disabled={activatingModelId === model.id}
-									>
-										{activatingModelId === model.id ? 'Activating...' : 'Activate'}
-									</button>
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() => onActivate(model.id)}
+											className="text-xs px-3 py-2 sm:px-2 sm:py-1 text-[var(--accent)] disabled:opacity-50 min-h-[36px] sm:min-h-0"
+											disabled={activatingModelId === model.id || deletingModelId === model.id}
+										>
+											{activatingModelId === model.id ? 'Activating...' : 'Activate'}
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												if (confirm(`Delete ${model.model_type} ${model.version}? This cannot be undone.`)) {
+													onDelete(model.id);
+												}
+											}}
+											className="text-xs px-3 py-2 sm:px-2 sm:py-1 text-red-400 hover:text-red-300 disabled:opacity-50 min-h-[36px] sm:min-h-0"
+											disabled={deletingModelId === model.id || activatingModelId === model.id}
+										>
+											{deletingModelId === model.id ? 'Deleting...' : 'Delete'}
+										</button>
+									</div>
 								)}
 							</td>
 						</tr>

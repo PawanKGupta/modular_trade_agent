@@ -12,9 +12,12 @@ import numpy as np
 import pandas as pd
 
 from services.ml_dip_feature_manifest import write_dip_feature_manifest
+from services.ml_price_feature_manifest import write_price_feature_manifest
 from services.ml_training_metadata import (
+    PRICE_TARGET_LABEL_COLUMN,
     dip_classifier_exclude_columns,
-    price_regressor_exclude_columns,
+    drop_maxhold_exits,
+    price_regressor_feature_columns,
     select_training_feature_columns,
     verdict_classifier_exclude_columns,
 )
@@ -23,6 +26,7 @@ from utils.logger import logger
 
 try:
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import accuracy_score, classification_report, mean_squared_error, r2_score
     from sklearn.model_selection import GroupKFold, train_test_split
     from sklearn.preprocessing import LabelEncoder
@@ -33,12 +37,15 @@ except ImportError:
     logger.warning("scikit-learn not available. Install with: pip install scikit-learn")
 
 try:
-    import xgboost as xgb
+    import xgboost  # noqa: F401 -- availability probe; concrete estimators imported lazily
 
     XGBOOST_AVAILABLE = True
 except ImportError:
     XGBOOST_AVAILABLE = False
     logger.warning("xgboost not available. Install with: pip install xgboost")
+
+# Minimum samples per class required before sklearn stratified splitting is enabled.
+_MIN_STRATIFY_CLASS_COUNT = 2
 
 
 def _coerce_hp(raw: dict | None, key: str, caster, default):  # noqa: ANN001
@@ -148,9 +155,12 @@ class MLTrainingService:
         sample_weights = df["sample_weight"].values if has_sample_weight else None
 
         if has_position_id:
+            reentry_count = (
+                int(df["is_reentry"].astype(bool).sum()) if "is_reentry" in df.columns else 0
+            )
             logger.info("   Re-entry support detected:")
             logger.info(f"      Unique positions: {df['position_id'].nunique()}")
-            logger.info(f"      Re-entries: {(df.get('is_reentry', False) == True).sum()}")
+            logger.info(f"      Re-entries: {reentry_count}")
             if has_sample_weight:
                 logger.info("      Using quantity-based sample weights")
 
@@ -175,7 +185,9 @@ class MLTrainingService:
                 groups = df_sorted["position_id"].values
                 sample_weights = df_sorted["sample_weight"].values if has_sample_weight else None
                 logger.info(
-                    f"   Sorted by entry_date: {df_sorted['entry_date'].min()} to {df_sorted['entry_date'].max()}"
+                    "   Sorted by entry_date: %s to %s",
+                    df_sorted["entry_date"].min(),
+                    df_sorted["entry_date"].max(),
                 )
             else:
                 logger.warning("   'entry_date' not found - using unsorted data")
@@ -188,15 +200,18 @@ class MLTrainingService:
             X_train, X_test = X.iloc[train_idx].copy(), X.iloc[test_idx].copy()
             y_train, y_test = y[train_idx], y[test_idx]
 
-            # Get sample weights for train/test
+            # Get sample weights for the training split (test weights are unused).
             sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
-            sample_weights_test = sample_weights[test_idx] if sample_weights is not None else None
 
             logger.info(
-                f"   Train set: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions"
+                "   Train set: %d examples from %d positions",
+                len(X_train),
+                len(np.unique(groups[train_idx])),
             )
             logger.info(
-                f"   Test set: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions"
+                "   Test set: %d examples from %d positions",
+                len(X_test),
+                len(np.unique(groups[test_idx])),
             )
 
             # Log temporal split
@@ -215,25 +230,36 @@ class MLTrainingService:
             min_class_count = counts.min()
 
             # Use stratification only if all classes have at least 2 samples
-            use_stratify = min_class_count >= 2 and test_size > 0
+            use_stratify = min_class_count >= _MIN_STRATIFY_CLASS_COUNT and test_size > 0
 
             if not use_stratify:
                 logger.warning(
-                    f"   Stratification disabled: smallest class has only {min_class_count} sample(s). "
-                    f"   Need at least 2 samples per class for stratification."
+                    "   Stratification disabled: smallest class has only %d sample(s). "
+                    "Need at least %d samples per class for stratification.",
+                    min_class_count,
+                    _MIN_STRATIFY_CLASS_COUNT,
                 )
 
-            # Split train/test
-            X_train, X_test, y_train, y_test = train_test_split(
-                X,
-                y,
-                test_size=test_size,
-                random_state=random_state,
-                stratify=y if use_stratify else None,
-            )
-
-            sample_weights_train = sample_weights
-            sample_weights_test = None
+            # Split train/test. When sample weights exist, split them alongside X/y so
+            # the train subset aligns (sklearn requires sample_weight to match X_train rows).
+            if sample_weights is not None:
+                X_train, X_test, y_train, y_test, sample_weights_train, _ = train_test_split(
+                    X,
+                    y,
+                    sample_weights,
+                    test_size=test_size,
+                    random_state=random_state,
+                    stratify=y if use_stratify else None,
+                )
+            else:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X,
+                    y,
+                    test_size=test_size,
+                    random_state=random_state,
+                    stratify=y if use_stratify else None,
+                )
+                sample_weights_train = None
 
             logger.info(f"   Train set: {len(X_train)} examples")
             logger.info(f"   Test set: {len(X_test)} examples")
@@ -250,7 +276,7 @@ class MLTrainingService:
                 n_jobs=-1,
             )
         elif model_type == "xgboost" and XGBOOST_AVAILABLE:
-            from xgboost import XGBClassifier
+            from xgboost import XGBClassifier  # noqa: PLC0415 -- optional dependency, lazy import
 
             model = XGBClassifier(
                 n_estimators=_coerce_hp(hp, "n_estimators", int, 100),
@@ -260,8 +286,6 @@ class MLTrainingService:
                 eval_metric="mlogloss",
             )
         elif model_type == "logistic_regression":
-            from sklearn.linear_model import LogisticRegression
-
             # sklearn >= 1.8 removed multi_class; lbfgs handles multiclass by default.
             model = LogisticRegression(
                 C=_coerce_hp(hp, "C", float, 1.0),
@@ -303,9 +327,10 @@ class MLTrainingService:
 
         logger.info("\n? Model Evaluation:")
         logger.info(f"   Accuracy: {accuracy:.2%}")
-        logger.info(
-            f"\n{classification_report(y_test_fit, y_pred, target_names=report_labels, zero_division=0)}"
+        report = classification_report(
+            y_test_fit, y_pred, target_names=report_labels, zero_division=0
         )
+        logger.info("\n%s", report)
 
         # Feature importance
         if hasattr(model, "feature_importances_"):
@@ -429,8 +454,6 @@ class MLTrainingService:
         )
         model = rf
         if calibrate:
-            from sklearn.linear_model import LogisticRegression  # noqa: PLC0415
-
             # Platt scaling on a held-out calibration set.
             # cv="prefit" was removed in sklearn 1.4; replaced with manual sigmoid fit.
             cal_n = max(1, int(0.15 * len(X_train)))
@@ -464,7 +487,7 @@ class MLTrainingService:
     def train_price_regressor(
         self,
         training_data_path: str | None = None,
-        target_column: str = "actual_pnl_pct",
+        target_column: str = PRICE_TARGET_LABEL_COLUMN,
         test_size: float = 0.2,
         model_type: str = "random_forest",
         random_state: int = 42,
@@ -499,11 +522,22 @@ class MLTrainingService:
         if target_column not in df.columns:
             raise ValueError(
                 f"Target column '{target_column}' not found in training data. "
-                f"Columns: {list(df.columns)}. For price models use data/ml_training_data_price.csv."
+                f"Columns: {list(df.columns)}. For price models use the historical-dataset CSV."
             )
 
-        exclude_cols = price_regressor_exclude_columns(target_column=target_column)
-        feature_cols = select_training_feature_columns(df, exclude_cols)
+        # Drop MaxHold-ceiling exits — their pnl is not a predictable price target.
+        df = cast(pd.DataFrame, drop_maxhold_exits(df))
+        # Drop rows with no target (e.g. forward-window labels are NaN at end of data).
+        df = df.dropna(subset=[target_column]).reset_index(drop=True)
+        if df.empty:
+            raise ValueError(
+                "Training data is empty after dropping MaxHold exits and rows missing "
+                f"'{target_column}'"
+            )
+
+        # Curated, manifest-backed feature contract shared with MLPriceService inference.
+        feature_cols = price_regressor_feature_columns(df)
+        logger.info("   Price regressor features (%d): %s", len(feature_cols), feature_cols)
 
         # Extract features and target
         X = df[feature_cols].copy()
@@ -537,17 +571,25 @@ class MLTrainingService:
             sample_weights_train = sample_weights[train_idx] if sample_weights is not None else None
 
             logger.info(
-                f"   Train: {len(X_train)} examples from {len(np.unique(groups[train_idx]))} positions"
+                "   Train: %d examples from %d positions",
+                len(X_train),
+                len(np.unique(groups[train_idx])),
             )
             logger.info(
-                f"   Test: {len(X_test)} examples from {len(np.unique(groups[test_idx]))} positions"
+                "   Test: %d examples from %d positions",
+                len(X_test),
+                len(np.unique(groups[test_idx])),
+            )
+        elif sample_weights is not None:
+            # Traditional split — split weights alongside X/y so the train subset aligns.
+            X_train, X_test, y_train, y_test, sample_weights_train, _ = train_test_split(
+                X, y, sample_weights, test_size=test_size, random_state=random_state
             )
         else:
-            # Fallback to traditional train/test split
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=test_size, random_state=random_state
             )
-            sample_weights_train = sample_weights
+            sample_weights_train = None
 
         # Train model
         if model_type == "random_forest":
@@ -560,7 +602,7 @@ class MLTrainingService:
                 n_jobs=-1,
             )
         elif model_type == "xgboost" and XGBOOST_AVAILABLE:
-            from xgboost import XGBRegressor
+            from xgboost import XGBRegressor  # noqa: PLC0415 -- optional dependency, lazy import
 
             model = XGBRegressor(
                 n_estimators=_coerce_hp(hp, "n_estimators", int, 100),
@@ -598,5 +640,7 @@ class MLTrainingService:
         model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(model, model_path)
         logger.info(f"\n? Model saved to: {model_path}")
+
+        write_price_feature_manifest(model_path, feature_cols)
 
         return str(model_path), float(r2)
