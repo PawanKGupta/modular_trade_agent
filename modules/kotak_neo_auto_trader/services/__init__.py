@@ -24,6 +24,7 @@ from .sell_target_service import (
     round_sell_price,
     round_sell_price_down,
 )
+from .trade_history_store import TradeHistoryStore
 
 __all__ = [
     "PriceService",
@@ -45,4 +46,5 @@ __all__ = [
     "prepare_broker_sell_limit_price",
     "round_sell_price",
     "round_sell_price_down",
+    "TradeHistoryStore",
 ]

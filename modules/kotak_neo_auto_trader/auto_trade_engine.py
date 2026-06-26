@@ -183,6 +183,7 @@ class AutoTradeEngine:
         if self.db:
             # Use database repositories
             self.history_path = None  # No longer using file-based storage
+            self.history_store = None  # DB-backed mode: no file-based store
             from src.infrastructure.persistence.orders_repository import OrdersRepository
             from src.infrastructure.persistence.positions_repository import PositionsRepository
 
@@ -207,6 +208,9 @@ class AutoTradeEngine:
             self.history_path = config.TRADES_HISTORY_PATH
             self.orders_repo = None
             self.positions_repo = None
+            from .services import TradeHistoryStore
+
+            self.history_store = TradeHistoryStore(self.history_path)
 
         # Initialize scrip master for symbol resolution
         self.scrip_master: KotakNeoScripMaster | None = None
@@ -550,8 +554,8 @@ class AutoTradeEngine:
                 "last_run": ist_now().isoformat(),
             }
         # Fallback to file-based storage
-        elif self.history_path:
-            return load_history(self.history_path)
+        elif self.history_store:
+            return self.history_store.load_history()
         else:
             # No storage available - return empty structure
             return {
@@ -708,8 +712,8 @@ class AutoTradeEngine:
             # Note: Failed orders are handled separately in add_failed_order/remove_failed_order
             # Skip JSON writes when DB is available (DB-only mode)
         # Fallback to file-based storage only if DB is not available
-        elif self.history_path:
-            save_history(self.history_path, data)
+        elif self.history_store:
+            self.history_store.save_history(data)
 
     def _append_trade(self, trade: dict[str, Any]) -> None:
         """
@@ -725,9 +729,9 @@ class AutoTradeEngine:
                 self._update_position_from_trade(trade)
             # Skip JSON writes when DB is available (DB-only mode)
             # Fallback to file-based storage only if DB is not available
-        elif self.history_path:
+        elif self.history_store:
             # Fallback: file-based storage when DB is not available
-            append_trade(self.history_path, trade)
+            self.history_store.append_trade(trade)
 
     def _get_failed_orders(
         self, include_previous_day_before_market: bool = False
@@ -783,8 +787,8 @@ class AutoTradeEngine:
                         failed_orders.append(failed_data)
                 return failed_orders
         # Fallback to file-based storage
-        elif self.history_path:
-            return get_failed_orders(self.history_path, include_previous_day_before_market)
+        elif self.history_store:
+            return self.history_store.get_failed_orders(include_previous_day_before_market)
         else:
             return []
 
@@ -979,8 +983,8 @@ class AutoTradeEngine:
                             except Exception:
                                 pass
             # Fallback to file-based storage
-            elif self.history_path:
-                add_failed_order(self.history_path, failed_order)
+            elif self.history_store:
+                self.history_store.add_failed_order(failed_order)
         except Exception as e:
             # Log error but don't crash the task - failed order tracking is non-critical
             logger.warning(
@@ -1036,8 +1040,8 @@ class AutoTradeEngine:
                             logger.warning(f"Failed to remove failed order {symbol}: {e}")
                         break
         # Fallback to file-based storage
-        elif self.history_path:
-            remove_failed_order(self.history_path, symbol)
+        elif self.history_store:
+            self.history_store.remove_failed_order(symbol)
 
     # ---------------------- Utilities ----------------------
     @staticmethod
