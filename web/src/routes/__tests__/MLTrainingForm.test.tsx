@@ -100,7 +100,7 @@ describe('MLTrainingForm', () => {
 		expect(onSubmit.mock.calls[0][0]).toMatchObject({
 			notes: 'nightly run',
 			training_run_end_date: '2025-06-01',
-			incremental_training: false,
+			incremental_training: true,
 		});
 	});
 

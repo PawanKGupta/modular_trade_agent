@@ -20,7 +20,7 @@ export function MLTrainingForm({ onSubmit, isSubmitting, serverError }: Props) {
 	const [hyperparametersText, setHyperparametersText] = useState('{"max_depth": 6, "learning_rate": 0.1}');
 	const [notes, setNotes] = useState<string>('');
 	const [autoActivate, setAutoActivate] = useState(true);
-	const [incrementalTraining, setIncrementalTraining] = useState(true);
+	const [incrementalTraining, setIncrementalTraining] = useState(false);
 	const [trainingRunEndDate, setTrainingRunEndDate] = useState<string>(''); // yyyy-mm-dd ISO
 	const [error, setError] = useState<string | null>(null);
 
