@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.3.3] - 2026-06-28
+
+Patch release from branch `releases/rebound_26233` (on top of `v26.2.3.2`). See [docs/development/RELEASE_PLAN_V26.2.3.3.md](docs/development/RELEASE_PLAN_V26.2.3.3.md) for the deploy checklist.
+
+### Fixed
+
+- **Stale ML training dataset on upgrade:** the API entrypoint previously seeded `data/training/verdict_classifier.csv` into the data volume only when absent, so deployments upgrading from before the price-regressor dataset kept an old copy missing the `max_favorable_pct_20d` target — price-regressor training failed with `requires target column 'max_favorable_pct_20d'`. The entrypoint now refreshes the volume copy when the image-baked dataset differs (backing up the previous file first), and the price-regressor training errors point to the bundled dataset / `/app/data_default` refresh path instead of the unshipped `build_historical_dataset.py`.
+- **Weekend "service stale" false alerts:** the paper-trading scheduler's per-minute liveness heartbeat sat below the weekend `continue`, so on Saturdays/Sundays it stopped writing heartbeats while still alive — the monitoring dashboard then flagged healthy paper services as critically stale all weekend. The scheduler now writes its heartbeat on the weekend path too (tasks still don't run on weekends). Weekday off-market hours were unaffected.
+- **Off-market schedule validation (400 on update):** updating the `buy_margin_preview` (and `eod_cleanup`) schedule to an evening time (e.g. after 6:00 PM) returned `400 Bad Request` because schedule validation only allowed `analysis` to be scheduled off-market; all other tasks were forced into the 09:00–18:00 window. `buy_margin_preview` and `eod_cleanup` are now validated as off-market tasks (allowed outside 09:00–16:00, like `analysis`); on-market tasks remain 09:00–18:00.
+
+### No database migration
+
+No schema changes — `alembic upgrade head` is a no-op relative to 26.2.3.2.
+
+---
+
 ## [26.2.3.2] - 2026-06-27
 
 Release from branch `releases/rebound_26232` (cut from `main`). See [docs/development/RELEASE_PLAN_V26.2.3.2.md](docs/development/RELEASE_PLAN_V26.2.3.2.md) for the deploy checklist.
@@ -26,7 +42,6 @@ Release from branch `releases/rebound_26232` (cut from `main`). See [docs/develo
 - **Daily log rotation:** the global log file now rotates daily rather than once per process, preventing unbounded single-file growth on long-running services.
 - **401 polling loop:** resolved a 401 loop on portfolio polling and on login credential errors in the web app.
 - **ML training correctness:** incremental-training freshness gate fixed (defaults to full retrain when appropriate) and the EMA9 floor is derived from the actual `ema9` indicator value.
-- **Stale ML training dataset on upgrade:** the API entrypoint previously seeded `data/training/verdict_classifier.csv` into the data volume only when absent, so deployments upgrading from before the price-regressor dataset kept an old copy missing the `max_favorable_pct_20d` target — price-regressor training failed with "requires target column 'max_favorable_pct_20d'". The entrypoint now refreshes the volume copy when the image-baked dataset differs (backing up the previous file), and the training error message points to the bundled dataset / refresh path instead of an unshipped script.
 
 ### Database migration
 

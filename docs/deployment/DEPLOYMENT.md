@@ -83,8 +83,8 @@ cp .env.example .env
 
 ```bash
 # Set the version you want to deploy
-export APP_VERSION=v26.2.3.2        # Linux/macOS
-# $env:APP_VERSION = "v26.2.3.2"   # Windows PowerShell
+export APP_VERSION=v26.2.3.3        # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.3"   # Windows PowerShell
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -133,6 +133,24 @@ If you have the repository cloned locally:
 - [ ] Broker credentials configured via Web UI
 - [ ] Trading services started via Web UI
 - [ ] Health check passing
+
+## Upgrading to 26.2.3.3
+
+From **`v26.2.3.2`**. No `.env` changes and no database migration.
+
+This patch fixes price-regressor training failing with `requires target column 'max_favorable_pct_20d'` after upgrades: the API entrypoint now refreshes a stale `data/training/verdict_classifier.csv` in the data volume from the image default (backing up the old copy) instead of leaving it untouched.
+
+```bash
+export APP_VERSION=v26.2.3.3        # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.3"   # Windows PowerShell
+
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+```
+
+On restart, look for `Refreshed ML training dataset from image default ...` in the API logs if your volume held an older dataset. Post-deploy: run a price_regressor training job and confirm it completes.
+
+Full checklist: [RELEASE_PLAN_V26.2.3.3.md](../development/RELEASE_PLAN_V26.2.3.3.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
 ## Upgrading to 26.2.3.2
 
