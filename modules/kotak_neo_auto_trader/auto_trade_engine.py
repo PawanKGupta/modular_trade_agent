@@ -5024,9 +5024,9 @@ class AutoTradeEngine:
         )
 
         # Clean up expired failed orders (past market open time)
-        # Note: cleanup_expired_failed_orders still uses file-based storage for backward compatibility
-        if self.history_path:
-            cleanup_expired_failed_orders(self.history_path)
+        # File-based store (legacy mode); DB mode has no history_store.
+        if self.history_store:
+            self.history_store.cleanup_expired_failed_orders()
 
         # Pre-step: If user bought manually (same day or prev day before open), update history and remove from failed queue
         # Note: check_manual_buys_of_failed_orders still uses file-based storage for backward compatibility

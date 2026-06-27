@@ -140,6 +140,8 @@ ignore = ["S101"] # allow assert in tests
 ]
 # Legacy trades-history JSON I/O: long log strings, skip-on-parse loops, lazy datetime imports.
 "modules/kotak_neo_auto_trader/storage.py" = ["E501", "S112", "PLR0912", "PLC0415"]
+# Large order-state manager; long log strings, magic thresholds, merged-comparison style.
+"modules/kotak_neo_auto_trader/order_state_manager.py" = ["E501", "PLR1714", "PLR2004"]
 # Order simulator; sys.path bootstrap required for standalone execution.
 "modules/kotak_neo_auto_trader/infrastructure/simulation/order_simulator.py" = ["E402", "E501", "PLR0911", "PLR0912", "S311"]
 # Large paper-trading adapter; sys.path bootstrap and long broker integration paths.
