@@ -239,12 +239,6 @@ def test_db_add_failed_order_updates_existing(engine, db_session, user_id):
     assert "insufficient_balance" in failed[0]["reason"]
 
 
-@pytest.mark.skip(
-    reason="new-failed-order path uses orders_repo.create_amo() (Postgres-only "
-    "INSERT ... ON CONFLICT); characterize via a Postgres-backed test, not SQLite."
-)
-def test_db_add_failed_order_creates_new(engine, db_session, user_id):
-    engine._add_failed_order(
-        {"symbol": "NEW", "qty": 1, "close": 10.0, "reason": "insufficient_balance"}
-    )
-    assert any(f["symbol"] == "NEW" for f in engine._get_failed_orders())
+# The new-failed-order CREATE path (orders_repo.create_amo -> Postgres INSERT ... ON CONFLICT)
+# is Postgres-only and cannot run on in-memory SQLite; it is covered by
+# tests/integration/kotak/test_db_trade_history_postgres.py (runs in the Postgres CI job).
