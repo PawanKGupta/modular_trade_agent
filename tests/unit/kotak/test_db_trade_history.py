@@ -140,3 +140,111 @@ def test_db_load_trades_history_reconstructs_open_closed_and_failed(engine, db_s
     assert closed_trade["qty"] == 5
 
     assert data["failed_orders"] == [{"symbol": "FAILSYM", "qty": 1}]
+
+
+# --------------------------------------------------------------------------- write path
+# Note on the test DB: tests run against in-memory SQLite (forced by tests/conftest.py),
+# separate from the Postgres runtime. The positions upsert and mark_failed/mark_cancelled
+# paths are written to be dialect-agnostic, so they're characterized faithfully here. The
+# new-failed-order create path uses orders_repo.create_amo() (Postgres-only
+# INSERT ... ON CONFLICT) and is NOT faithfully testable on SQLite — see the skipped test.
+
+
+def test_db_append_trade_creates_open_position(engine, db_session, user_id):
+    engine._append_trade(
+        {
+            "symbol": "REL",
+            "status": "open",
+            "qty": 10,
+            "entry_price": 100.0,
+            "entry_time": "2026-06-11T09:15:00",
+        }
+    )
+
+    open_pos = [p for p in engine.positions_repo.list(user_id) if p.closed_at is None]
+    assert [(p.symbol.upper(), p.quantity, p.avg_price) for p in open_pos] == [("REL", 10, 100.0)]
+
+
+def test_db_append_trade_upserts_existing_position(engine, db_session, user_id):
+    db_session.add(
+        Positions(
+            user_id=user_id,
+            symbol="REL",
+            quantity=10,
+            avg_price=100.0,
+            opened_at=datetime(2026, 6, 11, 9, 15, 0),
+            closed_at=None,
+        )
+    )
+    db_session.commit()
+
+    engine._append_trade(
+        {
+            "symbol": "REL",
+            "status": "open",
+            "qty": 20,
+            "entry_price": 105.0,
+            "entry_time": "2026-06-11T09:20:00",
+        }
+    )
+
+    open_pos = [p for p in engine.positions_repo.list(user_id) if p.closed_at is None]
+    # Upsert, not a duplicate.
+    assert len(open_pos) == 1
+    assert open_pos[0].quantity == 20
+    assert open_pos[0].avg_price == 105.0
+
+
+def test_db_remove_failed_order_marks_cancelled(engine, db_session, user_id):
+    db_session.add(
+        _order(
+            user_id,
+            symbol="ABC",
+            quantity=5,
+            price=50.0,
+            status=OrderStatus.FAILED,
+            first_failed_at=datetime(2026, 6, 11, 9, 0, 0),
+        )
+    )
+    db_session.commit()
+    assert len(engine._get_failed_orders()) == 1
+
+    engine._remove_failed_order("ABC")
+
+    # No longer FAILED (marked CANCELLED), so it drops out of the failed-order list.
+    assert engine._get_failed_orders() == []
+
+
+def test_db_add_failed_order_updates_existing(engine, db_session, user_id):
+    db_session.add(
+        _order(
+            user_id,
+            symbol="ABC",
+            quantity=5,
+            price=50.0,
+            status=OrderStatus.FAILED,
+            reason="old reason",
+            retry_count=0,
+            first_failed_at=datetime(2026, 6, 11, 9, 0, 0),
+        )
+    )
+    db_session.commit()
+
+    engine._add_failed_order(
+        {"symbol": "ABC", "qty": 5, "close": 50.0, "reason": "insufficient_balance"}
+    )
+
+    failed = engine._get_failed_orders()
+    assert len(failed) == 1  # de-duplicated: updated, not appended
+    assert "insufficient_balance" in failed[0]["reason"]
+
+
+@pytest.mark.skip(
+    reason="new-failed-order path uses orders_repo.create_amo() (Postgres-only "
+    "INSERT ... ON CONFLICT); characterize via a Postgres-backed test, not SQLite."
+)
+def test_db_add_failed_order_creates_new(engine, db_session, user_id):
+    engine._add_failed_order(
+        {"symbol": "NEW", "qty": 1, "close": 10.0, "reason": "insufficient_balance"}
+    )
+    assert any(f["symbol"] == "NEW" for f in engine._get_failed_orders())
