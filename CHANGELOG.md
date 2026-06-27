@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [26.2.3.2] - 2026-06-27
+
+Release from branch `releases/rebound_26232` (cut from `main`). See [docs/development/RELEASE_PLAN_V26.2.3.2.md](docs/development/RELEASE_PLAN_V26.2.3.2.md) for the deploy checklist.
+
+> **⚠️ Action required before upgrading.** This release fails fast in production if auth secrets are missing or default, and it adds a database migration. See [Security](#security) and [Database migration](#database-migration) below and the [upgrade notes](docs/deployment/DEPLOYMENT.md#upgrading-to-26232).
+
+### Security
+
+- **Default-deny environment detection + secure-by-default auth (C2):** A missing or misspelled `ENV`/`APP_ENV` previously downgraded the auth model — the production secret guard only fired when `ENV == "production"`, so an unset value let the app boot with the hardcoded default JWT secret and non-secure cookies (token-forgery / auth-bypass risk). `is_production()` is now **default-deny**: the app is treated as production unless `ENV`/`APP_ENV` is explicitly one of `{development, dev, local, test, testing}` (unset, unknown, typos, and `staging` all resolve to production). `auth_cookie_secure` now derives from the environment (True in production, False in dev) and `validate_production_secrets()` additionally fails fast when cookies would be insecure in production. **Operator impact:** production deployments must set a strong `JWT_SECRET` and a Fernet key (`APP_DATA_ENCRYPTION_KEY` or `BROKER_SECRET_KEY`) and serve over HTTPS, or the app refuses to boot; local/dev must set `ENV=development` to opt out. See `.env.example` and [USER_DATA_SECURITY.md](docs/security/USER_DATA_SECURITY.md).
+
+### Added
+
+- **Per-user max order value:** end-to-end configurable per-user cap on order value — strategy config, a new `max_order_value` DB column, order-sizing enforcement (`apply_max_order_value_cap`) across buy/re-entry/retry paths, and the dashboard Capital config UI.
+- **ML price regressor beyond EMA9:** the price regressor can now predict targets beyond EMA9, wired through the training UI and deployment; added a delete-model endpoint and collapsible training-jobs section.
+
+### Fixed
+
+- **Paper trading morning fills:** morning AMO buys now fill at the real 09:15 open instead of the prior day's close, matching live execution and P&L.
+- **Daily log rotation:** the global log file now rotates daily rather than once per process, preventing unbounded single-file growth on long-running services.
+- **401 polling loop:** resolved a 401 loop on portfolio polling and on login credential errors in the web app.
+- **ML training correctness:** incremental-training freshness gate fixed (defaults to full retrain when appropriate) and the EMA9 floor is derived from the actual `ema9` indicator value.
+
+### Database migration
+
+- `20260626_add_max_order_value.py` — adds the per-user `max_order_value` column. **`alembic upgrade head` is required** during upgrade.
+
+### Docs
+
+- Image-based deployment guide; security docs no longer ship hardcoded default credentials; documentation links, paths, and env vars aligned with the implementation.
+
 ## [26.2.3.1] - 2026-06-22
 
 Hotfix release from branch `hotfix/limit_order_fill_price`. See [docs/development/RELEASE_PLAN_V26.2.3.1.md](docs/development/RELEASE_PLAN_V26.2.3.1.md) for deploy checklist.

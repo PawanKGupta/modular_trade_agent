@@ -83,8 +83,8 @@ cp .env.example .env
 
 ```bash
 # Set the version you want to deploy
-export APP_VERSION=v26.2.3.1        # Linux/macOS
-# $env:APP_VERSION = "v26.2.3.1"   # Windows PowerShell
+export APP_VERSION=v26.2.3.2        # Linux/macOS
+# $env:APP_VERSION = "v26.2.3.2"   # Windows PowerShell
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -133,6 +133,45 @@ If you have the repository cloned locally:
 - [ ] Broker credentials configured via Web UI
 - [ ] Trading services started via Web UI
 - [ ] Health check passing
+
+## Upgrading to 26.2.3.2
+
+From **`v26.2.3.1`**, **`v26.2.3`**, **`releases/rebound_2623`**, or earlier 26.2.x deployments.
+
+> **⚠️ Breaking for misconfigured deployments — read first.** This release is **secure-by-default**: production now refuses to boot (fail-fast) unless auth secrets are properly set. Before upgrading, ensure:
+> - `JWT_SECRET` is a strong, non-default value (`python -c "import secrets; print(secrets.token_urlsafe(48))"`).
+> - A Fernet key is set: `APP_DATA_ENCRYPTION_KEY` (or the legacy `BROKER_SECRET_KEY` — same key, set only one).
+> - The app is served over **HTTPS** (cookies default to `Secure` in production; override with `AUTH_COOKIE_SECURE` only if you know what you're doing).
+> - Any non-production host that should run in dev mode sets `ENV=development` explicitly — an unset/typo'd `ENV` now resolves to **production**.
+>
+> See `.env.example` and [USER_DATA_SECURITY.md](../security/USER_DATA_SECURITY.md).
+
+**This release includes a database migration** (`max_order_value` column).
+
+1. **Backup** the database ([Postgres backup guide](POSTGRES_DOCKER_BACKUP_CRON.md)).
+2. Verify the auth secrets above are set in your `.env`.
+3. Pull and start:
+
+   **Image-based (recommended):**
+   ```bash
+   export APP_VERSION=v26.2.3.2        # Linux/macOS
+   # $env:APP_VERSION = "v26.2.3.2"   # Windows PowerShell
+
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml pull
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+   ```
+
+   **Source-based:**
+   ```bash
+   git fetch origin
+   git checkout v26.2.3.2
+   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+   ```
+4. **Apply the migration:** `alembic upgrade head` (run inside the API container or environment).
+
+Post-deploy smoke: confirm the API boots (no fail-fast secret error in logs); confirm `max_order_value` is configurable per user in the dashboard Capital config and that orders are capped accordingly; run a pre-open paper cycle and confirm morning buys fill at the 09:15 open.
+
+Full checklist: [RELEASE_PLAN_V26.2.3.2.md](../development/RELEASE_PLAN_V26.2.3.2.md). Release notes: [CHANGELOG.md](../../CHANGELOG.md).
 
 ## Upgrading to 26.2.1
 
