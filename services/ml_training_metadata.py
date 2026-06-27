@@ -134,7 +134,9 @@ def price_regressor_feature_columns(df: pd.DataFrame) -> list[str]:
     if not cols:
         raise ValueError(
             "None of the curated price feature columns are present in the training data: "
-            f"{list(PRICE_TARGET_FEATURE_COLUMNS)}. Regenerate with build_historical_dataset.py."
+            f"{list(PRICE_TARGET_FEATURE_COLUMNS)}. Train on the bundled historical dataset "
+            "'data/training/verdict_classifier.csv' (refresh it from "
+            "'/app/data_default/training/verdict_classifier.csv' if it is a stale volume copy)."
         )
     return cols
 
@@ -249,8 +251,11 @@ def validate_training_csv_for_model_type(
         if target_column not in columns:
             raise ValueError(
                 f"Price regressor training requires target column '{target_column}'. "
-                "Use the historical-dataset CSV from build_historical_dataset.py "
-                "(e.g. data/training/verdict_classifier.csv). "
+                "Train on the bundled historical dataset 'data/training/verdict_classifier.csv'. "
+                "If that file lacks this column it is a stale volume copy from an older "
+                "deployment — refresh it from the image default "
+                "'/app/data_default/training/verdict_classifier.csv' (the API entrypoint now "
+                "does this automatically on restart). "
                 f"Columns present: {sorted(columns)[:12]}"
             )
         if "entry_date" not in columns and "backtest_date" not in columns:

@@ -26,6 +26,7 @@ Release from branch `releases/rebound_26232` (cut from `main`). See [docs/develo
 - **Daily log rotation:** the global log file now rotates daily rather than once per process, preventing unbounded single-file growth on long-running services.
 - **401 polling loop:** resolved a 401 loop on portfolio polling and on login credential errors in the web app.
 - **ML training correctness:** incremental-training freshness gate fixed (defaults to full retrain when appropriate) and the EMA9 floor is derived from the actual `ema9` indicator value.
+- **Stale ML training dataset on upgrade:** the API entrypoint previously seeded `data/training/verdict_classifier.csv` into the data volume only when absent, so deployments upgrading from before the price-regressor dataset kept an old copy missing the `max_favorable_pct_20d` target — price-regressor training failed with "requires target column 'max_favorable_pct_20d'". The entrypoint now refreshes the volume copy when the image-baked dataset differs (backing up the previous file), and the training error message points to the bundled dataset / refresh path instead of an unshipped script.
 
 ### Database migration
 
