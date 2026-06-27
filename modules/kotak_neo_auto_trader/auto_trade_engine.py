@@ -469,11 +469,35 @@ class AutoTradeEngine:
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
     def _sync_history_store_deps(self) -> None:
         """Sync repositories and notifier to the history store (needed for mock compatibility)."""
+        orders_repo = getattr(self, "orders_repo", None)
+        user_id = getattr(self, "user_id", None)
+        db_session = getattr(self, "db", None)
+
+        if orders_repo and user_id:
+            from .services import DatabaseTradeHistoryStore
+
+            if not isinstance(getattr(self, "history_store", None), DatabaseTradeHistoryStore):
+                self.history_store = DatabaseTradeHistoryStore(
+                    db_session=db_session,
+                    user_id=user_id,
+                    orders_repo=orders_repo,
+                    positions_repo=getattr(self, "positions_repo", None),
+                    telegram_notifier=getattr(self, "telegram_notifier", None),
+                )
+        else:
+            from .services import TradeHistoryStore
+
+            history_path = getattr(self, "history_path", None) or (
+                config.TRADES_HISTORY_PATH if "config" in globals() else "trades_history.json"
+            )
+            if not isinstance(getattr(self, "history_store", None), TradeHistoryStore):
+                self.history_store = TradeHistoryStore(history_path)
+
         history_store = getattr(self, "history_store", None)
         if history_store:
-            orders_repo = getattr(self, "orders_repo", None)
             positions_repo = getattr(self, "positions_repo", None)
             telegram_notifier = getattr(self, "telegram_notifier", None)
+            history_path = getattr(self, "history_path", None)
 
             if (
                 hasattr(history_store, "orders_repo")
@@ -490,6 +514,12 @@ class AutoTradeEngine:
                 and history_store.telegram_notifier is not telegram_notifier
             ):
                 history_store.telegram_notifier = telegram_notifier
+            if (
+                hasattr(history_store, "history_path")
+                and history_path is not None
+                and history_store.history_path != history_path
+            ):
+                history_store.history_path = history_path
 
     def _sync_services_deps(self) -> None:
         """Sync repositories, auth, orders, and notifiers to the extracted services."""
@@ -527,7 +557,9 @@ class AutoTradeEngine:
         Returns dict with 'trades' list and 'failed_orders' list.
         """
         self._sync_history_store_deps()
-        if self.history_store:
+        if self.orders_repo and self.user_id:
+            return self.history_store.load_history()
+        elif self.history_path and self.history_store:
             return self.history_store.load_history()
         else:
             # No storage available - return empty structure
@@ -544,8 +576,12 @@ class AutoTradeEngine:
         Syncs reentry data from trade history.
         """
         self._sync_history_store_deps()
-        if self.history_store and hasattr(self.history_store, "update_position_from_trade"):
-            self.history_store.update_position_from_trade(trade)
+        if self.orders_repo and self.user_id:
+            if self.history_store and hasattr(self.history_store, "update_position_from_trade"):
+                self.history_store.update_position_from_trade(trade)
+        elif self.history_path and self.history_store:
+            if hasattr(self.history_store, "update_position_from_trade"):
+                self.history_store.update_position_from_trade(trade)
 
     def _save_trades_history(self, data: dict[str, Any]) -> None:
         """
@@ -556,7 +592,9 @@ class AutoTradeEngine:
         DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         self._sync_history_store_deps()
-        if self.history_store:
+        if self.orders_repo and self.user_id:
+            self.history_store.save_history(data)
+        elif self.history_path and self.history_store:
             self.history_store.save_history(data)
 
     def _append_trade(self, trade: dict[str, Any]) -> None:
@@ -567,7 +605,9 @@ class AutoTradeEngine:
         DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
         self._sync_history_store_deps()
-        if self.history_store:
+        if self.orders_repo and self.user_id:
+            self.history_store.append_trade(trade)
+        elif self.history_path and self.history_store:
             self.history_store.append_trade(trade)
 
     def _get_failed_orders(
@@ -580,7 +620,9 @@ class AutoTradeEngine:
         instead of metadata flags. RETRY_PENDING merged into FAILED.
         """
         self._sync_history_store_deps()
-        if self.history_store:
+        if self.orders_repo and self.user_id:
+            return self.history_store.get_failed_orders(include_previous_day_before_market)
+        elif self.history_path and self.history_store:
             return self.history_store.get_failed_orders(include_previous_day_before_market)
         else:
             return []
@@ -599,7 +641,9 @@ class AutoTradeEngine:
         """
         try:
             self._sync_history_store_deps()
-            if self.history_store:
+            if self.orders_repo and self.user_id:
+                self.history_store.add_failed_order(failed_order)
+            elif self.history_path and self.history_store:
                 self.history_store.add_failed_order(failed_order)
         except Exception as e:
             # Log error but don't crash the task - failed order tracking is non-critical
@@ -617,7 +661,9 @@ class AutoTradeEngine:
         instead of metadata flags.
         """
         self._sync_history_store_deps()
-        if self.history_store:
+        if self.orders_repo and self.user_id:
+            self.history_store.remove_failed_order(symbol)
+        elif self.history_path and self.history_store:
             self.history_store.remove_failed_order(symbol)
 
     # ---------------------- Utilities ----------------------
