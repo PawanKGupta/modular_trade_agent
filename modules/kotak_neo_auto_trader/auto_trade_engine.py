@@ -522,7 +522,16 @@ class AutoTradeEngine:
                 history_store.history_path = history_path
 
     def _sync_services_deps(self) -> None:
-        """Sync repositories, auth, orders, and notifiers to the extracted services."""
+        """
+        Sync repositories, auth, orders, and notifiers to the extracted services.
+
+        Thread Safety Note: This method is called from delegation entry points.
+        The underlying services are shared instances across the engine.
+        Concurrently modifying these fields from multiple threads would cause
+        concurrency hazards if called concurrently. Currently, threaded paths
+        in the engine (via ThreadPoolExecutor) do not call these delegation services,
+        making the pattern safe, but callers must avoid calling these services concurrently.
+        """
         self._sync_history_store_deps()
 
         from .services import CapitalSizingService, OrderPlacementService, PositionMonitorService
@@ -620,9 +629,7 @@ class AutoTradeEngine:
         instead of metadata flags. RETRY_PENDING merged into FAILED.
         """
         self._sync_history_store_deps()
-        if self.orders_repo and self.user_id:
-            return self.history_store.get_failed_orders(include_previous_day_before_market)
-        elif self.history_path and self.history_store:
+        if self.history_store and ((self.orders_repo and self.user_id) or (self.history_path)):
             return self.history_store.get_failed_orders(include_previous_day_before_market)
         else:
             return []

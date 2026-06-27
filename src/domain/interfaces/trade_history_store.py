@@ -31,7 +31,7 @@ class ITradeHistoryStore(ABC):
 
     @abstractmethod
     def get_failed_orders(
-        self, include_previous_day_before_market: bool = True
+        self, include_previous_day_before_market: bool = False
     ) -> list[dict[str, Any]]:
         """
         Return failed orders eligible for retry.

@@ -18,12 +18,6 @@ except ImportError:
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
-DEFAULT_HISTORY_TEMPLATE = {
-    "trades": [],  # list of trade entries
-    "failed_orders": [],  # orders that failed due to insufficient balance (to retry later)
-    "last_run": None,
-}
-
 
 def _default_history() -> dict[str, Any]:
     """Return a fresh default history with independent nested lists.

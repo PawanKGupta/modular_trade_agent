@@ -68,11 +68,9 @@ def test_store_get_failed_orders_passes_flag_through(tmp_path, monkeypatch):
     )
 
     # Yesterday + after open -> filtered out when the window is applied.
-    assert store.get_failed_orders() == []
-    # Flag off -> returned unfiltered.
-    assert [
-        o["symbol"] for o in store.get_failed_orders(include_previous_day_before_market=False)
-    ] == ["OLD"]
+    assert store.get_failed_orders(include_previous_day_before_market=True) == []
+    # Flag off (default False) -> returned unfiltered.
+    assert [o["symbol"] for o in store.get_failed_orders()] == ["OLD"]
 
 
 def test_store_mark_position_closed(tmp_path, monkeypatch):

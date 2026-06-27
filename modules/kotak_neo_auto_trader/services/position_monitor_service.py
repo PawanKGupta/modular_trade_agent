@@ -220,7 +220,9 @@ class PositionMonitorService(IPositionMonitorService):
             return False
 
     def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
-        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
+        from modules.kotak_neo_auto_trader.reentry_day_guard import (
+            has_reentry_at_level_today as reentry_today_check,
+        )
 
         try:
             if not self.positions_repo or not self.user_id:
@@ -232,7 +234,7 @@ class PositionMonitorService(IPositionMonitorService):
                 orders_list, _ = self.orders_repo.list(self.user_id)
                 orders = list(orders_list or [])
 
-            return has_reentry_at_level_today(
+            return reentry_today_check(
                 position=position,
                 orders=orders,
                 base_symbol=base_symbol,

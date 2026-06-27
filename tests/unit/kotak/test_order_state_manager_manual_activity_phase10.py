@@ -447,3 +447,54 @@ class TestManualActivityDetectionPhase10:
 
         # Should not raise exception
         order_state_manager._handle_manual_cancellation(order_id, order_info, broker_order)
+
+
+class TestOrderStateManagerStoreIntegration:
+    """Tests for OrderStateManager integration with TradeHistoryStore (Phase 2.3)"""
+
+    def test_store_delegation_load_and_append(self, tmp_path):
+        # Create temp history file path
+        temp_file = tmp_path / "temp_history.json"
+
+        # Instantiate OrderStateManager with real history file path (which creates TradeHistoryStore)
+        manager = OrderStateManager(
+            history_path=str(temp_file),
+            data_dir=str(tmp_path),
+            telegram_notifier=Mock(),
+            orders_repo=None,
+            user_id=None,
+        )
+
+        # Test get_trade_history initially returns empty
+        history = manager.get_trade_history()
+        assert "trades" in history
+        assert history["trades"] == []
+
+        # Test append_trade via history_store
+        trade_data = {
+            "symbol": "RELIANCE",
+            "placed_symbol": "RELIANCE-EQ",
+            "ticker": "RELIANCE.NS",
+            "entry_price": 2500.0,
+            "entry_time": "2026-06-27T12:00:00",
+            "status": "open",
+        }
+        manager.history_store.append_trade(trade_data)
+
+        # Test get_trade_history again
+        history_after = manager.get_trade_history()
+        assert len(history_after["trades"]) == 1
+        assert history_after["trades"][0]["symbol"] == "RELIANCE"
+
+        # Test mark_position_closed via history_store
+        success = manager.history_store.mark_position_closed("RELIANCE", 2600.0, "SELL123")
+        assert success is True
+
+        # Verify it was marked closed
+        history_closed = manager.get_trade_history()
+        assert history_closed["trades"][0]["status"] == "closed"
+        assert history_closed["trades"][0]["exit_price"] == 2600.0
+
+        # Test cleanup_expired_failed_orders
+        expired_count = manager.cleanup_expired_failed_orders()
+        assert expired_count == 0

@@ -360,3 +360,85 @@ def test_determine_reentry_level_reset_detection():
     assert updates["current_cycle"] == 1
     assert updates["last_rsi_above_30"] is None  # cleared reset flag
     assert level == 20  # reset triggered level 20 because current RSI is 18
+
+
+# ==============================================================================
+# Engine-level Delegation Smoke & Seam Tests
+# ==============================================================================
+
+
+def test_engine_delegation_smoke():
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+    # Instantiate AutoTradeEngine with minimal mocks/stubs
+    mock_auth = Mock()
+    mock_auth.is_authenticated.return_value = True
+
+    engine = AutoTradeEngine(
+        env_file="test.env",
+        auth=mock_auth,
+        user_id=None,
+        db_session=None,
+    )
+
+    # 1. Capital sizing delegation smoke test
+    engine.capital_sizing_service = Mock()
+    engine.capital_sizing_service.calculate_execution_capital.return_value = 50000.0
+    engine.capital_sizing_service.get_affordable_qty.return_value = 20
+    engine.capital_sizing_service.check_order_margin.return_value = (
+        True,
+        10000.0,
+        5000.0,
+        0.0,
+        True,
+    )
+
+    assert engine._calculate_execution_capital("RELIANCE", 2500.0, 100000.0) == 50000.0
+    assert engine.get_affordable_qty(2500.0) == 20
+    assert engine._check_order_margin("RELIANCE-EQ", 2500.0, 20) == (
+        True,
+        10000.0,
+        5000.0,
+        0.0,
+        True,
+    )
+
+    # 2. Order placement delegation smoke test
+    engine.order_placement_service = Mock()
+    engine.order_placement_service.has_active_buy_order.return_value = True
+    engine.order_placement_service.get_order_variety_for_market_hours.return_value = "REGULAR"
+    engine.order_placement_service.check_for_manual_orders.return_value = {"has_manual_order": True}
+
+    assert engine.has_active_buy_order("RELIANCE") is True
+    assert engine._get_order_variety_for_market_hours() == "REGULAR"
+    assert engine._check_for_manual_orders("RELIANCE") == {"has_manual_order": True}
+
+    # 3. Position monitor delegation smoke test
+    engine.position_monitor_service = Mock()
+    engine.position_monitor_service.determine_reentry_level.return_value = (20, {})
+
+    assert engine._determine_reentry_level(25.0, 15.0, None) == (20, {})
+
+
+def test_engine_sync_services_deps_mock_compatibility():
+    from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+    mock_auth = Mock()
+    mock_auth.is_authenticated.return_value = True
+
+    engine = AutoTradeEngine(
+        env_file="test.env",
+        auth=mock_auth,
+        user_id=None,
+        db_session=None,
+    )
+
+    # Set mock properties on engine
+    mock_orders = Mock()
+    engine.orders = mock_orders
+
+    # Run sync
+    engine._sync_services_deps()
+
+    # Verify that order_placement_service got the mock orders
+    assert engine.order_placement_service.orders is mock_orders

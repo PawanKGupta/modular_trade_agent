@@ -45,7 +45,7 @@ class TradeHistoryStore(ITradeHistoryStore):
         storage.append_trade(self.history_path, trade)
 
     def get_failed_orders(
-        self, include_previous_day_before_market: bool = True
+        self, include_previous_day_before_market: bool = False
     ) -> list[dict[str, Any]]:
         return storage.get_failed_orders(self.history_path, include_previous_day_before_market)
 
@@ -198,7 +198,7 @@ class DatabaseTradeHistoryStore(ITradeHistoryStore):
             self.update_position_from_trade(trade)
 
     def get_failed_orders(
-        self, include_previous_day_before_market: bool = True
+        self, include_previous_day_before_market: bool = False
     ) -> list[dict[str, Any]]:
         """Get failed orders from database."""
         if not self.orders_repo:
