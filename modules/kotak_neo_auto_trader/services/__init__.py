@@ -5,7 +5,9 @@ Centralized services for price fetching, indicators, portfolio management, etc.
 These services eliminate duplicate code across trading services.
 """
 
+from .capital_sizing_service import CapitalSizingService
 from .indicator_service import IndicatorService, get_indicator_service
+from .order_placement_service import OrderPlacementService
 from .order_validation_service import (
     OrderValidationService,
     ValidationResult,
@@ -13,6 +15,7 @@ from .order_validation_service import (
 )
 from .portfolio_service import PortfolioService, get_portfolio_service
 from .position_loader import PositionLoader, get_position_loader
+from .position_monitor_service import PositionMonitorService
 from .price_service import PriceService, get_price_service
 from .sell_target_service import (
     PreparedSellLimit,
@@ -24,6 +27,7 @@ from .sell_target_service import (
     round_sell_price,
     round_sell_price_down,
 )
+from .trade_history_store import DatabaseTradeHistoryStore, TradeHistoryStore
 
 __all__ = [
     "PriceService",
@@ -45,4 +49,9 @@ __all__ = [
     "prepare_broker_sell_limit_price",
     "round_sell_price",
     "round_sell_price_down",
+    "TradeHistoryStore",
+    "DatabaseTradeHistoryStore",
+    "CapitalSizingService",
+    "OrderPlacementService",
+    "PositionMonitorService",
 ]

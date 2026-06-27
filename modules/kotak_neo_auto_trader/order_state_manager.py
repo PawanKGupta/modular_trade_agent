@@ -11,32 +11,22 @@ Provides single source of truth for:
 """
 
 import threading
-from datetime import datetime
 from typing import Any
 
-from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
+from src.infrastructure.db.timezone_utils import ist_now
 from utils.logger import logger
 
 try:
     from .domain.value_objects.order_enums import OrderStatus
     from .order_tracker import OrderTracker
-    from .storage import (
-        append_trade,
-        cleanup_expired_failed_orders,
-        load_history,
-        mark_position_closed,
-    )
+    from .services.trade_history_store import TradeHistoryStore
     from .utils.order_field_extractor import OrderFieldExtractor
     from .utils.order_status_parser import OrderStatusParser
     from .utils.symbol_utils import extract_base_symbol
 except ImportError:
     from modules.kotak_neo_auto_trader.domain.value_objects.order_enums import OrderStatus
     from modules.kotak_neo_auto_trader.order_tracker import OrderTracker
-    from modules.kotak_neo_auto_trader.storage import (
-        cleanup_expired_failed_orders,
-        load_history,
-        mark_position_closed,
-    )
+    from modules.kotak_neo_auto_trader.services.trade_history_store import TradeHistoryStore
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
     from modules.kotak_neo_auto_trader.utils.order_status_parser import OrderStatusParser
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
@@ -76,6 +66,7 @@ class OrderStateManager:
             user_id: Optional user ID for database operations
         """
         self.history_path = history_path
+        self.history_store = TradeHistoryStore(history_path)
         self.data_dir = data_dir
         self.telegram_notifier = telegram_notifier
         self.orders_repo = orders_repo
@@ -154,9 +145,7 @@ class OrderStateManager:
                         needs_update = True
 
                     if needs_update:
-                        self.active_sell_orders[base_symbol][
-                            "last_updated"
-                        ] = ist_now().isoformat()
+                        self.active_sell_orders[base_symbol]["last_updated"] = ist_now().isoformat()
                         return True
                     else:
                         # Order already registered with same price and has ticker
@@ -338,8 +327,7 @@ class OrderStateManager:
                 )
 
                 # 3. Update trade history
-                mark_position_closed(
-                    history_path=self.history_path,
+                self.history_store.mark_position_closed(
                     symbol=base_symbol,
                     exit_price=execution_price,
                     sell_order_id=order_id,
@@ -413,7 +401,7 @@ class OrderStateManager:
                         "buy_order_id": order_id,
                         "placed_at": ist_now().date().isoformat(),
                     }
-                    append_trade(self.history_path, trade_data)
+                    self.history_store.append_trade(trade_data)
                     logger.debug(
                         f"Added trade to JSON history for {base_symbol} "
                         f"(order_id: {order_id}, "
@@ -1054,7 +1042,7 @@ class OrderStateManager:
         Returns:
             Number of orders removed
         """
-        return cleanup_expired_failed_orders(self.history_path)
+        return self.history_store.cleanup_expired_failed_orders()
 
     def get_trade_history(self) -> dict[str, Any]:
         """
@@ -1063,7 +1051,7 @@ class OrderStateManager:
         Returns:
             Trade history dict
         """
-        return load_history(self.history_path)
+        return self.history_store.load_history()
 
     def reload_state(self):
         """

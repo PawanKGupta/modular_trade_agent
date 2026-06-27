@@ -6,7 +6,7 @@ Storage utilities for trades history JSON
 import json
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any
+from typing import Any
 
 from src.infrastructure.db.timezone_utils import ist_now, ist_now_naive
 from utils.logger import logger
@@ -18,11 +18,15 @@ except ImportError:
     from modules.kotak_neo_auto_trader.utils.order_field_extractor import OrderFieldExtractor
     from modules.kotak_neo_auto_trader.utils.symbol_utils import extract_base_symbol
 
-DEFAULT_HISTORY_TEMPLATE = {
-    "trades": [],  # list of trade entries
-    "failed_orders": [],  # orders that failed due to insufficient balance (to retry later)
-    "last_run": None,
-}
+
+def _default_history() -> dict[str, Any]:
+    """Return a fresh default history with independent nested lists.
+
+    Using a factory (rather than ``DEFAULT_HISTORY_TEMPLATE.copy()``, a shallow copy)
+    avoids sharing the module-level ``trades``/``failed_orders`` list objects across
+    callers — a shallow copy let one caller's append mutate the shared template.
+    """
+    return {"trades": [], "failed_orders": [], "last_run": None}
 
 
 def ensure_dir(path: str):
@@ -31,18 +35,19 @@ def ensure_dir(path: str):
         os.makedirs(d, exist_ok=True)
 
 
-def load_history(path: str) -> Dict[str, Any]:
+def load_history(path: str) -> dict[str, Any]:
     try:
         if not os.path.exists(path):
             ensure_dir(path)
+            default = _default_history()
             with open(path, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_HISTORY_TEMPLATE, f, indent=2)
-            return DEFAULT_HISTORY_TEMPLATE.copy()
-        with open(path, "r", encoding="utf-8") as f:
+                json.dump(default, f, indent=2)
+            return default
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         logger.error(f"Failed to load trades history at {path}: {e}")
-        return DEFAULT_HISTORY_TEMPLATE.copy()
+        return _default_history()
 
 
 essential_trade_fields = [
@@ -60,7 +65,7 @@ essential_trade_fields = [
 ]
 
 
-def append_trade(path: str, trade: Dict[str, Any]) -> None:
+def append_trade(path: str, trade: dict[str, Any]) -> None:
     try:
         data = load_history(path)
         data.setdefault("trades", [])
@@ -73,7 +78,7 @@ def append_trade(path: str, trade: Dict[str, Any]) -> None:
         logger.error(f"Failed to append trade to history: {e}")
 
 
-def save_history(path: str, data: Dict[str, Any]) -> None:
+def save_history(path: str, data: dict[str, Any]) -> None:
     try:
         ensure_dir(path)
         with open(path, "w", encoding="utf-8") as f:
@@ -82,7 +87,7 @@ def save_history(path: str, data: Dict[str, Any]) -> None:
         logger.error(f"Failed to save trades history: {e}")
 
 
-def add_failed_order(path: str, failed_order: Dict[str, Any]) -> None:
+def add_failed_order(path: str, failed_order: dict[str, Any]) -> None:
     """
     Add an order that failed due to insufficient balance to retry later.
 
@@ -221,7 +226,8 @@ def check_manual_buys_of_failed_orders(
         List of symbols that were manually bought and added to trade history
     """
     try:
-        from datetime import datetime, date, time as dt_time
+        from datetime import date, datetime
+        from datetime import time as dt_time
 
         data = load_history(path)
         failed_orders = data.get("failed_orders", [])

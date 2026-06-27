@@ -32,8 +32,14 @@ if "DB_URL" not in os.environ or not os.environ.get("DB_URL", "").startswith("sq
             # Any other on-disk sqlite URL (e.g. CI sets sqlite:///tmp/...) breaks pytest-xdist:
             # workers share one file and see torn commits / missing rows (auth tests flake).
             os.environ["DB_URL"] = "sqlite:///:memory:"
+    elif db_url.startswith("postgresql"):
+        # Honor an explicit Postgres URL (e.g. the integration-concurrency-postgres CI job)
+        # so dialect-specific tests (ON CONFLICT / partial unique indexes) run on real
+        # Postgres. There is no on-disk safeguard here: only set DB_URL=postgresql://... when
+        # you intend tests to use that database (never a production instance).
+        pass
     else:
-        # Set to in-memory if not already set or not in-memory
+        # Unset or any other URL -> in-memory SQLite (fast, isolated, xdist-safe).
         os.environ["DB_URL"] = "sqlite:///:memory:"
 
 # Daily OHLCV gap-fill defaults to NSE in production; tests must not hit nsearchives HTTP.
