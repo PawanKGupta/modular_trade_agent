@@ -27,15 +27,112 @@ class OrderPlacementService(IOrderPlacementService):
         user_id=None,
         telegram_notifier=None,
         db_session=None,
+        get_orders=None,
+        get_auth=None,
+        get_scrip_master=None,
+        get_strategy_config=None,
+        get_orders_repo=None,
+        get_user_id=None,
+        get_telegram_notifier=None,
+        get_db=None,
     ):
-        self.orders = orders
-        self.auth = auth
-        self.scrip_master = scrip_master
-        self.strategy_config = strategy_config
-        self.orders_repo = orders_repo
-        self.user_id = user_id
-        self.telegram_notifier = telegram_notifier
-        self.db = db_session
+        self._get_orders = get_orders
+        self._get_auth = get_auth
+        self._get_scrip_master = get_scrip_master
+        self._get_strategy_config = get_strategy_config
+        self._get_orders_repo = get_orders_repo
+        self._get_user_id = get_user_id
+        self._get_telegram_notifier = get_telegram_notifier
+        self._get_db = get_db
+
+        self._orders = orders
+        self._auth = auth
+        self._scrip_master = scrip_master
+        self._strategy_config = strategy_config
+        self._orders_repo = orders_repo
+        self._user_id = user_id
+        self._telegram_notifier = telegram_notifier
+        self._db = db_session
+
+    @property
+    def orders(self):
+        if self._get_orders:
+            return self._get_orders()
+        return self._orders
+
+    @orders.setter
+    def orders(self, value):
+        self._orders = value
+
+    @property
+    def auth(self):
+        if self._get_auth:
+            return self._get_auth()
+        return self._auth
+
+    @auth.setter
+    def auth(self, value):
+        self._auth = value
+
+    @property
+    def scrip_master(self):
+        if self._get_scrip_master:
+            return self._get_scrip_master()
+        return self._scrip_master
+
+    @scrip_master.setter
+    def scrip_master(self, value):
+        self._scrip_master = value
+
+    @property
+    def strategy_config(self):
+        if self._get_strategy_config:
+            return self._get_strategy_config()
+        return self._strategy_config
+
+    @strategy_config.setter
+    def strategy_config(self, value):
+        self._strategy_config = value
+
+    @property
+    def orders_repo(self):
+        if self._get_orders_repo:
+            return self._get_orders_repo()
+        return self._orders_repo
+
+    @orders_repo.setter
+    def orders_repo(self, value):
+        self._orders_repo = value
+
+    @property
+    def user_id(self):
+        if self._get_user_id:
+            return self._get_user_id()
+        return self._user_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self._user_id = value
+
+    @property
+    def telegram_notifier(self):
+        if self._get_telegram_notifier:
+            return self._get_telegram_notifier()
+        return self._telegram_notifier
+
+    @telegram_notifier.setter
+    def telegram_notifier(self, value):
+        self._telegram_notifier = value
+
+    @property
+    def db(self):
+        if self._get_db:
+            return self._get_db()
+        return self._db
+
+    @db.setter
+    def db(self, value):
+        self._db = value
 
     @staticmethod
     def _symbol_variants(base: str) -> list[str]:
@@ -121,7 +218,11 @@ class OrderPlacementService(IOrderPlacementService):
             except ImportError:
                 default_variety = "AMO"
 
-            return self.strategy_config.default_variety if self.strategy_config else default_variety
+            return (
+                self.strategy_config.default_variety
+                if getattr(self, "strategy_config", None) is not None
+                else default_variety
+            )
 
     def sync_order_status_snapshot(
         self, order_id: str, symbol: str | None = None, quantity: int | None = None

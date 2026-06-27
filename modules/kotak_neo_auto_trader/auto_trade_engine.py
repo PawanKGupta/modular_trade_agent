@@ -523,42 +523,46 @@ class AutoTradeEngine:
 
     def _sync_services_deps(self) -> None:
         """
-        Sync repositories, auth, orders, and notifiers to the extracted services.
+        Ensure the extracted services exist, bound to live engine state.
 
-        Thread Safety Note: This method is called from delegation entry points.
-        The underlying services are shared instances across the engine.
-        Concurrently modifying these fields from multiple threads would cause
-        concurrency hazards if called concurrently. Currently, threaded paths
-        in the engine (via ThreadPoolExecutor) do not call these delegation services,
-        making the pattern safe, but callers must avoid calling these services concurrently.
+        Each service is constructed once with provider callables (``get_*``) that
+        read the engine's attributes lazily at access time. Because the engine no
+        longer mutates shared service fields on every call, there is no reach-in
+        coupling and no per-call mutation race: the providers always reflect the
+        engine's current ``portfolio``/``orders``/``orders_repo``/etc. This makes
+        the pattern safe even if a service were accessed from multiple threads
+        (provider reads are not in-place mutations of shared state).
         """
         self._sync_history_store_deps()
 
         from .services import CapitalSizingService, OrderPlacementService, PositionMonitorService
 
-        if not hasattr(self, "capital_sizing_service") or not self.capital_sizing_service:
-            self.capital_sizing_service = CapitalSizingService()
-        self.capital_sizing_service.portfolio = getattr(self, "portfolio", None)
-        self.capital_sizing_service.auth = getattr(self, "auth", None)
-        self.capital_sizing_service.scrip_master = getattr(self, "scrip_master", None)
-        self.capital_sizing_service.strategy_config = getattr(self, "strategy_config", None)
+        if not getattr(self, "capital_sizing_service", None):
+            self.capital_sizing_service = CapitalSizingService(
+                get_portfolio=lambda: getattr(self, "portfolio", None),
+                get_auth=lambda: getattr(self, "auth", None),
+                get_scrip_master=lambda: getattr(self, "scrip_master", None),
+                get_strategy_config=lambda: getattr(self, "strategy_config", None),
+            )
 
-        if not hasattr(self, "order_placement_service") or not self.order_placement_service:
-            self.order_placement_service = OrderPlacementService()
-        self.order_placement_service.orders = getattr(self, "orders", None)
-        self.order_placement_service.auth = getattr(self, "auth", None)
-        self.order_placement_service.scrip_master = getattr(self, "scrip_master", None)
-        self.order_placement_service.strategy_config = getattr(self, "strategy_config", None)
-        self.order_placement_service.orders_repo = getattr(self, "orders_repo", None)
-        self.order_placement_service.user_id = getattr(self, "user_id", None)
-        self.order_placement_service.telegram_notifier = getattr(self, "telegram_notifier", None)
-        self.order_placement_service.db = getattr(self, "db", None)
+        if not getattr(self, "order_placement_service", None):
+            self.order_placement_service = OrderPlacementService(
+                get_orders=lambda: getattr(self, "orders", None),
+                get_auth=lambda: getattr(self, "auth", None),
+                get_scrip_master=lambda: getattr(self, "scrip_master", None),
+                get_strategy_config=lambda: getattr(self, "strategy_config", None),
+                get_orders_repo=lambda: getattr(self, "orders_repo", None),
+                get_user_id=lambda: getattr(self, "user_id", None),
+                get_telegram_notifier=lambda: getattr(self, "telegram_notifier", None),
+                get_db=lambda: getattr(self, "db", None),
+            )
 
-        if not hasattr(self, "position_monitor_service") or not self.position_monitor_service:
-            self.position_monitor_service = PositionMonitorService()
-        self.position_monitor_service.positions_repo = getattr(self, "positions_repo", None)
-        self.position_monitor_service.orders_repo = getattr(self, "orders_repo", None)
-        self.position_monitor_service.user_id = getattr(self, "user_id", None)
+        if not getattr(self, "position_monitor_service", None):
+            self.position_monitor_service = PositionMonitorService(
+                get_positions_repo=lambda: getattr(self, "positions_repo", None),
+                get_orders_repo=lambda: getattr(self, "orders_repo", None),
+                get_user_id=lambda: getattr(self, "user_id", None),
+            )
 
     def _load_trades_history(self) -> dict[str, Any]:
         """

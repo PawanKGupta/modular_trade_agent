@@ -1,4 +1,4 @@
-# ruff: noqa: PLR0912, PLR0915, PLC0415, PLC0207, PLR2004
+# ruff: noqa: PLR0912, PLR0913, PLR0915, PLC0415, PLC0207, PLR2004
 """
 Concrete implementation of CapitalSizingService.
 """
@@ -13,11 +13,66 @@ from utils.logger import logger
 class CapitalSizingService(ICapitalSizingService):
     """Concrete implementation of ICapitalSizingService."""
 
-    def __init__(self, portfolio=None, auth=None, scrip_master=None, strategy_config=None):
-        self.portfolio = portfolio
-        self.auth = auth
-        self.scrip_master = scrip_master
-        self.strategy_config = strategy_config
+    def __init__(
+        self,
+        portfolio=None,
+        auth=None,
+        scrip_master=None,
+        strategy_config=None,
+        get_portfolio=None,
+        get_auth=None,
+        get_scrip_master=None,
+        get_strategy_config=None,
+    ):
+        self._get_portfolio = get_portfolio
+        self._get_auth = get_auth
+        self._get_scrip_master = get_scrip_master
+        self._get_strategy_config = get_strategy_config
+
+        self._portfolio = portfolio
+        self._auth = auth
+        self._scrip_master = scrip_master
+        self._strategy_config = strategy_config
+
+    @property
+    def portfolio(self):
+        if self._get_portfolio:
+            return self._get_portfolio()
+        return self._portfolio
+
+    @portfolio.setter
+    def portfolio(self, value):
+        self._portfolio = value
+
+    @property
+    def auth(self):
+        if self._get_auth:
+            return self._get_auth()
+        return self._auth
+
+    @auth.setter
+    def auth(self, value):
+        self._auth = value
+
+    @property
+    def scrip_master(self):
+        if self._get_scrip_master:
+            return self._get_scrip_master()
+        return self._scrip_master
+
+    @scrip_master.setter
+    def scrip_master(self, value):
+        self._scrip_master = value
+
+    @property
+    def strategy_config(self):
+        if self._get_strategy_config:
+            return self._get_strategy_config()
+        return self._strategy_config
+
+    @strategy_config.setter
+    def strategy_config(self, value):
+        self._strategy_config = value
 
     def get_affordable_qty(self, price: float) -> int:
         if not self.portfolio or not price or price <= 0:
@@ -96,6 +151,10 @@ class CapitalSizingService(ICapitalSizingService):
                 if num is not None:
                     nums.append(num)
             if nums:
+                logger.warning(
+                    "No recognized cash key in limits payload; "
+                    f"falling back to max numeric field: {max(nums)}"
+                )
                 return max(nums), f"{prefix}max_numeric_field"
 
         return 0.0, None

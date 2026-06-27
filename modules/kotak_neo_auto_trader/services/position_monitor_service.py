@@ -1,4 +1,4 @@
-# ruff: noqa: PLR0912, PLR0915, PLR0911, PLC0415, PLR2004
+# ruff: noqa: PLR0912, PLR0913, PLR0915, PLR0911, PLC0415, PLR2004
 """
 Concrete implementation of PositionMonitorService.
 """
@@ -13,10 +13,52 @@ from utils.logger import logger
 class PositionMonitorService(IPositionMonitorService):
     """Concrete implementation of IPositionMonitorService."""
 
-    def __init__(self, positions_repo=None, orders_repo=None, user_id=None):
-        self.positions_repo = positions_repo
-        self.orders_repo = orders_repo
-        self.user_id = user_id
+    def __init__(
+        self,
+        positions_repo=None,
+        orders_repo=None,
+        user_id=None,
+        get_positions_repo=None,
+        get_orders_repo=None,
+        get_user_id=None,
+    ):
+        self._get_positions_repo = get_positions_repo
+        self._get_orders_repo = get_orders_repo
+        self._get_user_id = get_user_id
+
+        self._positions_repo = positions_repo
+        self._orders_repo = orders_repo
+        self._user_id = user_id
+
+    @property
+    def positions_repo(self):
+        if self._get_positions_repo:
+            return self._get_positions_repo()
+        return self._positions_repo
+
+    @positions_repo.setter
+    def positions_repo(self, value):
+        self._positions_repo = value
+
+    @property
+    def orders_repo(self):
+        if self._get_orders_repo:
+            return self._get_orders_repo()
+        return self._orders_repo
+
+    @orders_repo.setter
+    def orders_repo(self, value):
+        self._orders_repo = value
+
+    @property
+    def user_id(self):
+        if self._get_user_id:
+            return self._get_user_id()
+        return self._user_id
+
+    @user_id.setter
+    def user_id(self, value):
+        self._user_id = value
 
     def _get_position_cycle_metadata(self, position: Any) -> dict[str, Any]:
         metadata = {
