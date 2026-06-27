@@ -183,12 +183,21 @@ class AutoTradeEngine:
         if self.db:
             # Use database repositories
             self.history_path = None  # No longer using file-based storage
-            self.history_store = None  # DB-backed mode: no file-based store
             from src.infrastructure.persistence.orders_repository import OrdersRepository
             from src.infrastructure.persistence.positions_repository import PositionsRepository
 
             self.orders_repo = OrdersRepository(self.db)
             self.positions_repo = PositionsRepository(self.db)
+
+            from .services import DatabaseTradeHistoryStore
+
+            self.history_store = DatabaseTradeHistoryStore(
+                db_session=self.db,
+                user_id=self.user_id,
+                orders_repo=self.orders_repo,
+                positions_repo=self.positions_repo,
+                telegram_notifier=None,
+            )
 
             # Ensure global OrderTracker writes pending orders to the database
             try:
@@ -264,6 +273,11 @@ class AutoTradeEngine:
             orders_repo=self.orders_repo if hasattr(self, "orders_repo") else None,
             user_id=self.user_id,
         )
+
+        # Initialize CapitalSizingService, OrderPlacementService, and PositionMonitorService (C1 Refactoring)
+        self.capital_sizing_service = None
+        self.order_placement_service = None
+        self.position_monitor_service = None
 
     # ---------------------- Telegram Notifier Helper (Phase 3) ----------------------
     def _get_telegram_notifier(self):
@@ -453,108 +467,67 @@ class AutoTradeEngine:
         self._send_balance_shortfall_digest([item], dry_run=dry_run)
 
     # ---------------------- Storage Abstraction (Phase 2.3) ----------------------
+    def _sync_history_store_deps(self) -> None:
+        """Sync repositories and notifier to the history store (needed for mock compatibility)."""
+        history_store = getattr(self, "history_store", None)
+        if history_store:
+            orders_repo = getattr(self, "orders_repo", None)
+            positions_repo = getattr(self, "positions_repo", None)
+            telegram_notifier = getattr(self, "telegram_notifier", None)
+
+            if (
+                hasattr(history_store, "orders_repo")
+                and history_store.orders_repo is not orders_repo
+            ):
+                history_store.orders_repo = orders_repo
+            if (
+                hasattr(history_store, "positions_repo")
+                and history_store.positions_repo is not positions_repo
+            ):
+                history_store.positions_repo = positions_repo
+            if (
+                hasattr(history_store, "telegram_notifier")
+                and history_store.telegram_notifier is not telegram_notifier
+            ):
+                history_store.telegram_notifier = telegram_notifier
+
+    def _sync_services_deps(self) -> None:
+        """Sync repositories, auth, orders, and notifiers to the extracted services."""
+        self._sync_history_store_deps()
+
+        from .services import CapitalSizingService, OrderPlacementService, PositionMonitorService
+
+        if not hasattr(self, "capital_sizing_service") or not self.capital_sizing_service:
+            self.capital_sizing_service = CapitalSizingService()
+        self.capital_sizing_service.portfolio = getattr(self, "portfolio", None)
+        self.capital_sizing_service.auth = getattr(self, "auth", None)
+        self.capital_sizing_service.scrip_master = getattr(self, "scrip_master", None)
+        self.capital_sizing_service.strategy_config = getattr(self, "strategy_config", None)
+
+        if not hasattr(self, "order_placement_service") or not self.order_placement_service:
+            self.order_placement_service = OrderPlacementService()
+        self.order_placement_service.orders = getattr(self, "orders", None)
+        self.order_placement_service.auth = getattr(self, "auth", None)
+        self.order_placement_service.scrip_master = getattr(self, "scrip_master", None)
+        self.order_placement_service.strategy_config = getattr(self, "strategy_config", None)
+        self.order_placement_service.orders_repo = getattr(self, "orders_repo", None)
+        self.order_placement_service.user_id = getattr(self, "user_id", None)
+        self.order_placement_service.telegram_notifier = getattr(self, "telegram_notifier", None)
+        self.order_placement_service.db = getattr(self, "db", None)
+
+        if not hasattr(self, "position_monitor_service") or not self.position_monitor_service:
+            self.position_monitor_service = PositionMonitorService()
+        self.position_monitor_service.positions_repo = getattr(self, "positions_repo", None)
+        self.position_monitor_service.orders_repo = getattr(self, "orders_repo", None)
+        self.position_monitor_service.user_id = getattr(self, "user_id", None)
+
     def _load_trades_history(self) -> dict[str, Any]:
         """
         Load trades history from repository or file-based storage.
         Returns dict with 'trades' list and 'failed_orders' list.
         """
-        if self.orders_repo and self.user_id:
-            # Use repository-based storage
-
-            # Get open positions
-            open_positions = self.positions_repo.list(self.user_id)
-            open_positions = [p for p in open_positions if p.closed_at is None]
-
-            # Get buy orders for these positions to reconstruct trade metadata
-            all_orders, _ = self.orders_repo.list(self.user_id)
-            buy_orders = [o for o in all_orders if o.side.lower() == "buy"]
-
-            # Convert positions to trades format
-            trades = []
-            for pos in open_positions:
-                # Find related buy orders for this position
-                symbol_orders = [
-                    o for o in buy_orders if o.symbol.upper().split("-")[0] == pos.symbol.upper()
-                ]
-                if symbol_orders:
-                    # Use the first buy order's metadata
-                    first_order = symbol_orders[0]
-                    metadata = first_order.order_metadata or {}
-                else:
-                    metadata = {}
-
-                trade = {
-                    "symbol": pos.symbol,
-                    "placed_symbol": metadata.get("placed_symbol", pos.symbol),
-                    "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
-                    "entry_price": pos.avg_price,
-                    "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
-                    ),
-                    "rsi10": metadata.get("rsi10"),
-                    "ema9": metadata.get("ema9"),
-                    "ema200": metadata.get("ema200"),
-                    "capital": metadata.get("capital"),
-                    "qty": pos.quantity,
-                    "rsi_entry_level": metadata.get("rsi_entry_level"),
-                    "levels_taken": metadata.get(
-                        "levels_taken", {"30": True, "20": False, "10": False}
-                    ),
-                    "reset_ready": metadata.get("reset_ready", False),
-                    "order_response": metadata.get("order_response"),
-                    "status": "open",
-                    "entry_type": metadata.get("entry_type", "system_recommended"),
-                    "reentries": metadata.get("reentries", []),
-                }
-                trades.append(trade)
-
-            # Get closed positions (for historical reference)
-            closed_positions = [
-                p for p in self.positions_repo.list(self.user_id) if p.closed_at is not None
-            ]
-            for pos in closed_positions:
-                # Find related orders
-                symbol_orders = [
-                    o for o in all_orders if o.symbol.upper().split("-")[0] == pos.symbol.upper()
-                ]
-                if symbol_orders:
-                    first_order = symbol_orders[0]
-                    metadata = first_order.order_metadata or {}
-                else:
-                    metadata = {}
-
-                trade = {
-                    "symbol": pos.symbol,
-                    "placed_symbol": metadata.get("placed_symbol", pos.symbol),
-                    "ticker": metadata.get("ticker", f"{pos.symbol}.NS"),
-                    "entry_price": pos.avg_price,
-                    "entry_time": (
-                        pos.opened_at.isoformat() if pos.opened_at else ist_now().isoformat()
-                    ),
-                    "exit_price": metadata.get("exit_price"),
-                    "exit_time": pos.closed_at.isoformat() if pos.closed_at else None,
-                    "exit_rsi10": metadata.get("exit_rsi10"),
-                    "exit_reason": metadata.get("exit_reason"),
-                    "qty": pos.quantity,
-                    "status": "closed",
-                    "entry_type": metadata.get("entry_type", "system_recommended"),
-                }
-                trades.append(trade)
-
-            # Failed orders: stored in Orders with special metadata flag
-            failed_orders = []
-            for order in all_orders:
-                metadata = order.order_metadata or {}
-                if metadata.get("failed_order"):
-                    failed_orders.append(metadata.get("failed_order_data", {}))
-
-            return {
-                "trades": trades,
-                "failed_orders": failed_orders,
-                "last_run": ist_now().isoformat(),
-            }
-        # Fallback to file-based storage
-        elif self.history_store:
+        self._sync_history_store_deps()
+        if self.history_store:
             return self.history_store.load_history()
         else:
             # No storage available - return empty structure
@@ -570,126 +543,9 @@ class AutoTradeEngine:
         This is called when a trade is added/updated to avoid syncing all trades.
         Syncs reentry data from trade history.
         """
-        if not self.positions_repo or not self.user_id:
-            return
-
-        symbol = trade.get("symbol", "").upper()
-        status = trade.get("status", "open")
-        qty = trade.get("qty", 0)
-        entry_price = trade.get("entry_price")
-
-        if not symbol or not entry_price:
-            return
-
-        if status == "open":
-            # Upsert open position
-            try:
-                entry_time = datetime.fromisoformat(trade.get("entry_time", ist_now().isoformat()))
-            except:
-                entry_time = ist_now_naive()
-
-            # Get reentry data from trade history
-            reentries = trade.get("reentries", [])
-            reentry_count = len(reentries) if isinstance(reentries, list) else 0
-
-            # Calculate initial_entry_price (first entry price, before any reentries)
-            initial_entry_price = entry_price
-            last_reentry_price = None
-
-            # If there are reentries, get the initial entry price from the first trade entry
-            # For now, we'll use entry_price as initial_entry_price
-            # This will be updated when we sync from trade history properly
-
-            # Find last reentry price
-            if reentries and isinstance(reentries, list) and len(reentries) > 0:
-                last_reentry = reentries[-1]
-                if isinstance(last_reentry, dict):
-                    last_reentry_price = last_reentry.get("price")
-
-            # Check if position already exists to preserve initial_entry_price
-            existing_pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
-            if existing_pos and existing_pos.initial_entry_price:
-                initial_entry_price = existing_pos.initial_entry_price
-
-            # Extract entry RSI from trade metadata or order metadata
-            entry_rsi = None
-            if trade.get("entry_rsi") is not None:
-                entry_rsi = trade.get("entry_rsi")
-            elif trade.get("rsi_entry_level") is not None:
-                entry_rsi = trade.get("rsi_entry_level")
-            elif trade.get("rsi10") is not None:
-                entry_rsi = trade.get("rsi10")
-
-            # Only set entry_rsi for new positions (preserve original entry RSI)
-            # If position exists and already has entry_rsi, don't overwrite it
-            if existing_pos and existing_pos.entry_rsi is not None:
-                entry_rsi = None  # Don't update existing entry_rsi
-
-            self.positions_repo.upsert(
-                user_id=self.user_id,
-                symbol=symbol,
-                quantity=qty,
-                avg_price=entry_price,
-                opened_at=entry_time,
-                reentry_count=reentry_count,
-                reentries=reentries if reentries else None,
-                initial_entry_price=(
-                    initial_entry_price if not existing_pos else None
-                ),  # Only set for new positions
-                last_reentry_price=last_reentry_price,
-                entry_rsi=entry_rsi,  # Set entry RSI for new positions
-            )
-        elif status == "closed":
-            # Close position using mark_closed() to ensure exit details are populated
-            pos = self.positions_repo.get_by_symbol(self.user_id, symbol)
-            if pos:
-                try:
-                    exit_time = datetime.fromisoformat(
-                        trade.get("exit_time", ist_now().isoformat())
-                    )
-                except:
-                    exit_time = ist_now_naive()
-
-                # Extract exit details from trade dictionary if available
-                exit_price = trade.get("exit_price")
-                exit_reason = trade.get("exit_reason", "HISTORY_IMPORT")
-                exit_rsi = trade.get("exit_rsi10")  # May be "exit_rsi10" in trade dict
-                realized_pnl = trade.get("pnl")  # May be "pnl" in trade dict
-                sell_order_id_str = trade.get("sell_order_id")
-
-                # Try to find sell_order_id if provided (may be string or int)
-                sell_order_id = None
-                if sell_order_id_str and self.orders_repo:
-                    try:
-                        # If it's already an int, use it directly (assume it's a DB ID)
-                        if isinstance(sell_order_id_str, int):
-                            sell_order_id = sell_order_id_str
-                        else:
-                            # Try to find order by broker_order_id or order_id (string match)
-                            all_orders, _ = self.orders_repo.list(self.user_id)
-                            for order in all_orders:
-                                if str(getattr(order, "broker_order_id", None) or "") == str(
-                                    sell_order_id_str
-                                ) or str(getattr(order, "order_id", None) or "") == str(
-                                    sell_order_id_str
-                                ):
-                                    sell_order_id = order.id
-                                    break
-                    except Exception as e:
-                        logger.debug(f"Could not find sell_order_id {sell_order_id_str}: {e}")
-
-                # Use mark_closed() to properly set all exit details
-                self.positions_repo.mark_closed(
-                    user_id=self.user_id,
-                    symbol=pos.symbol,
-                    closed_at=exit_time,
-                    exit_price=exit_price,
-                    exit_reason=exit_reason,
-                    exit_rsi=exit_rsi,
-                    realized_pnl=realized_pnl,
-                    sell_order_id=sell_order_id,
-                    auto_commit=True,
-                )
+        self._sync_history_store_deps()
+        if self.history_store and hasattr(self.history_store, "update_position_from_trade"):
+            self.history_store.update_position_from_trade(trade)
 
     def _save_trades_history(self, data: dict[str, Any]) -> None:
         """
@@ -699,20 +555,8 @@ class AutoTradeEngine:
 
         DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
-        if self.orders_repo and self.user_id:
-            # DB-only mode: Bulk sync all trades to positions (no JSON write)
-            # This aligns with sell order tracking which is DB-only
-            if self.positions_repo:
-                trades = data.get("trades", [])
-                for trade in trades:
-                    self._update_position_from_trade(trade)
-
-            # Save failed orders metadata in Orders (if any)
-            failed_orders = data.get("failed_orders", [])
-            # Note: Failed orders are handled separately in add_failed_order/remove_failed_order
-            # Skip JSON writes when DB is available (DB-only mode)
-        # Fallback to file-based storage only if DB is not available
-        elif self.history_store:
+        self._sync_history_store_deps()
+        if self.history_store:
             self.history_store.save_history(data)
 
     def _append_trade(self, trade: dict[str, Any]) -> None:
@@ -722,15 +566,8 @@ class AutoTradeEngine:
 
         DB-only mode: When DB is available, skip JSON writes for consistency with sell orders.
         """
-        if self.orders_repo and self.user_id:
-            # DB-only mode: Update positions table directly (no JSON write)
-            # This aligns with sell order tracking which is DB-only
-            if self.positions_repo:
-                self._update_position_from_trade(trade)
-            # Skip JSON writes when DB is available (DB-only mode)
-            # Fallback to file-based storage only if DB is not available
-        elif self.history_store:
-            # Fallback: file-based storage when DB is not available
+        self._sync_history_store_deps()
+        if self.history_store:
             self.history_store.append_trade(trade)
 
     def _get_failed_orders(
@@ -742,52 +579,8 @@ class AutoTradeEngine:
         Phase 6: Updated to use first-class failure statuses (FAILED)
         instead of metadata flags. RETRY_PENDING merged into FAILED.
         """
-        if self.orders_repo and self.user_id:
-            # Phase 6: Use repository's get_failed_orders() method or check status
-            try:
-                failed_orders_db = self.orders_repo.get_failed_orders(self.user_id)
-                # Convert DB orders to dict format for backward compatibility
-                failed_orders = []
-                for order in failed_orders_db:
-                    failed_data = {
-                        "symbol": order.symbol,
-                        "ticker": getattr(order, "ticker", None),
-                        "close": order.price,
-                        "qty": order.quantity,
-                        "reason": getattr(order, "reason", None)
-                        or "unknown",  # Use unified reason field
-                        "first_failed_at": (
-                            order.first_failed_at.isoformat() if order.first_failed_at else None
-                        ),
-                        "retry_count": order.retry_count or 0,
-                        "status": order.status.value if order.status else "failed",
-                    }
-                    failed_orders.append(failed_data)
-                return failed_orders
-            except Exception as e:
-                logger.warning(f"Error getting failed orders from repository: {e}")
-                # Fallback: Check status manually
-
-                all_orders, _ = self.orders_repo.list(self.user_id)
-                failed_orders = []
-                for order in all_orders:
-                    if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
-                        failed_data = {
-                            "symbol": order.symbol,
-                            "ticker": getattr(order, "ticker", None),
-                            "close": order.price,
-                            "qty": order.quantity,
-                            "reason": getattr(order, "reason", None) or "unknown",
-                            "first_failed_at": (
-                                order.first_failed_at.isoformat() if order.first_failed_at else None
-                            ),
-                            "retry_count": order.retry_count or 0,
-                            "status": order.status.value if order.status else "failed",
-                        }
-                        failed_orders.append(failed_data)
-                return failed_orders
-        # Fallback to file-based storage
-        elif self.history_store:
+        self._sync_history_store_deps()
+        if self.history_store:
             return self.history_store.get_failed_orders(include_previous_day_before_market)
         else:
             return []
@@ -805,185 +598,8 @@ class AutoTradeEngine:
         non-critical - if it fails, we log and continue.
         """
         try:
-            if self.orders_repo and self.user_id:
-                # Phase 6: Use repository-based storage with first-class failure statuses
-                symbol = failed_order.get("symbol", "")
-                if not symbol:
-                    return
-
-                # Normalize symbol for comparison (remove segment suffixes like -EQ, -BE, etc.)
-                def normalize_symbol(sym: str) -> str:
-                    """Normalize symbol by removing segment suffixes"""
-                    if not sym:
-                        return ""
-                    # Remove common segment suffixes and normalize
-                    normalized = sym.upper().strip()
-                    # Split by "-" and take first part, or use whole symbol if no "-"
-                    if "-" in normalized:
-                        normalized = normalized.split("-")[0].strip()
-                    return normalized
-
-                normalized_symbol = normalize_symbol(symbol)
-
-                # Phase 6: Check for existing failed orders using status instead of metadata
-
-                existing_orders, _ = self.orders_repo.list(self.user_id)
-                existing_failed_orders = [
-                    o
-                    for o in existing_orders
-                    if o.status == DbOrderStatus.FAILED  # Merged: FAILED + RETRY_PENDING
-                    and normalize_symbol(o.symbol) == normalized_symbol
-                ]
-
-                # Determine failure reason and retry status
-                failure_reason = failed_order.get("reason", "unknown")
-                is_retryable = failure_reason == "insufficient_balance" and not failed_order.get(
-                    "non_retryable", False
-                )
-                retry_pending = is_retryable
-
-                # Build failure reason string
-                reason_parts = [failure_reason]
-                if failed_order.get("shortfall"):
-                    reason_parts.append(f"shortfall: Rs {failed_order['shortfall']:,.0f}")
-                failure_reason_str = " - ".join(reason_parts)
-
-                if existing_failed_orders:
-                    # Phase 6: Update existing failed order using mark_failed()
-                    order = existing_failed_orders[0]
-                    try:
-                        retry_count = order.retry_count or 0
-                        self.orders_repo.mark_failed(
-                            order=order,
-                            failure_reason=failure_reason_str,
-                            retry_pending=retry_pending,
-                        )
-                        logger.debug(
-                            f"Updated existing failed order for {symbol} "
-                            f"(status: FAILED)"  # All failures are FAILED now
-                        )
-                        # Phase 9: Send notification for retry queue update (if retryable)
-                        if (
-                            self.telegram_notifier
-                            and self.telegram_notifier.enabled
-                            and retry_pending
-                        ):
-                            try:
-                                self.telegram_notifier.notify_retry_queue_updated(
-                                    symbol=symbol,
-                                    action="updated",
-                                    retry_count=retry_count + 1,
-                                    additional_info={"reason": failure_reason_str},
-                                    user_id=self.user_id,
-                                )
-                            except Exception as notify_error:
-                                logger.warning(
-                                    f"Failed to send retry queue update notification: {notify_error}"
-                                )
-                    except Exception as update_error:
-                        logger.warning(
-                            f"Failed to update failed order {symbol}: {update_error}",
-                            exc_info=update_error,
-                        )
-                        if hasattr(self.orders_repo, "db"):
-                            try:
-                                self.orders_repo.db.rollback()
-                            except Exception:
-                                pass
-                else:
-                    # Phase 6: Create new failed order with proper status
-                    # Create order first, then mark as failed
-                    try:
-                        # Build order_metadata with ticker for retry logic
-                        order_metadata = {}
-                        if failed_order.get("ticker"):
-                            order_metadata["ticker"] = failed_order["ticker"]
-                        if failed_order.get("rsi10") is not None:
-                            order_metadata["rsi10"] = failed_order["rsi10"]
-                        if failed_order.get("ema9") is not None:
-                            order_metadata["ema9"] = failed_order["ema9"]
-                        if failed_order.get("ema200") is not None:
-                            order_metadata["ema200"] = failed_order["ema200"]
-
-                        new_order = self.orders_repo.create_amo(
-                            user_id=self.user_id,
-                            symbol=symbol,
-                            side="buy",
-                            order_type="market",
-                            quantity=failed_order.get("qty", 0),
-                            price=failed_order.get("close"),
-                            order_id=None,
-                            broker_order_id=None,
-                            order_metadata=order_metadata if order_metadata else None,
-                        )
-                    except Exception as create_error:
-                        # Handle database schema errors (e.g., missing column)
-                        from sqlalchemy.exc import OperationalError
-
-                        if isinstance(create_error, OperationalError) or (
-                            hasattr(create_error, "orig")
-                            and isinstance(create_error.orig, Exception)
-                            and "no column named" in str(create_error).lower()
-                        ):
-                            logger.warning(
-                                f"Database schema error when creating failed order for {symbol}: "
-                                f"{create_error}. Migration may not have been applied. "
-                                "Failed order won't be saved to database.",
-                                exc_info=create_error,
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to create failed order for {symbol}: {create_error}",
-                                exc_info=create_error,
-                            )
-                        # Rollback session to allow subsequent operations
-                        if hasattr(self.orders_repo, "db"):
-                            try:
-                                self.orders_repo.db.rollback()
-                            except Exception:
-                                pass
-                        return  # Exit early if order creation failed
-                    # Phase 6: Mark as failed with proper status and metadata in columns
-                    try:
-                        self.orders_repo.mark_failed(
-                            order=new_order,
-                            failure_reason=failure_reason_str,
-                            retry_pending=retry_pending,
-                        )
-                        logger.debug(
-                            f"Created new failed order for {symbol} "
-                            f"(status: FAILED)"  # All failures are FAILED now
-                        )
-                        # Phase 9: Send notification for retry queue update
-                        if (
-                            self.telegram_notifier
-                            and self.telegram_notifier.enabled
-                            and retry_pending
-                        ):
-                            try:
-                                self.telegram_notifier.notify_retry_queue_updated(
-                                    symbol=symbol,
-                                    action="added",
-                                    retry_count=0,
-                                    additional_info={"reason": failure_reason_str},
-                                    user_id=self.user_id,
-                                )
-                            except Exception as notify_error:
-                                logger.warning(
-                                    f"Failed to send retry queue notification: {notify_error}"
-                                )
-                    except Exception as update_error:
-                        logger.warning(
-                            f"Failed to mark new order as failed {symbol}: {update_error}",
-                            exc_info=update_error,
-                        )
-                        if hasattr(self.orders_repo, "db"):
-                            try:
-                                self.orders_repo.db.rollback()
-                            except Exception:
-                                pass
-            # Fallback to file-based storage
-            elif self.history_store:
+            self._sync_history_store_deps()
+            if self.history_store:
                 self.history_store.add_failed_order(failed_order)
         except Exception as e:
             # Log error but don't crash the task - failed order tracking is non-critical
@@ -1000,47 +616,8 @@ class AutoTradeEngine:
         Phase 6: Updated to work with first-class failure statuses (FAILED, RETRY_PENDING)
         instead of metadata flags.
         """
-        if self.orders_repo and self.user_id:
-            # Phase 6: Use repository-based storage with status-based lookup
-
-            all_orders, _ = self.orders_repo.list(self.user_id)
-            for order in all_orders:
-                # Phase 6: Check status instead of metadata
-                if order.status == DbOrderStatus.FAILED:  # Merged: FAILED + RETRY_PENDING
-                    # Normalize symbol for comparison
-                    order_symbol = order.symbol.upper().strip()
-                    if "-" in order_symbol:
-                        order_symbol = order_symbol.split("-")[0].strip()
-                    symbol_normalized = symbol.upper().strip()
-                    if "-" in symbol_normalized:
-                        symbol_normalized = symbol_normalized.split("-")[0].strip()
-
-                    if order_symbol == symbol_normalized:
-                        # Phase 6: Mark as closed instead of removing (keep record)
-                        try:
-                            retry_count = order.retry_count or 0
-                            self.orders_repo.mark_cancelled(
-                                order=order, cancelled_reason="Removed from retry queue"
-                            )
-                            logger.debug(f"Removed failed order for {symbol} from retry queue")
-                            # Phase 9: Send notification for retry queue removal
-                            if self.telegram_notifier and self.telegram_notifier.enabled:
-                                try:
-                                    self.telegram_notifier.notify_retry_queue_updated(
-                                        symbol=symbol,
-                                        action="removed",
-                                        retry_count=retry_count,
-                                        user_id=self.user_id,
-                                    )
-                                except Exception as notify_error:
-                                    logger.warning(
-                                        f"Failed to send retry queue removal notification: {notify_error}"
-                                    )
-                        except Exception as e:
-                            logger.warning(f"Failed to remove failed order {symbol}: {e}")
-                        break
-        # Fallback to file-based storage
-        elif self.history_store:
+        self._sync_history_store_deps()
+        if self.history_store:
             self.history_store.remove_failed_order(symbol)
 
     # ---------------------- Utilities ----------------------
@@ -1057,21 +634,9 @@ class AutoTradeEngine:
     def _get_order_variety_for_market_hours(self) -> str:
         """
         Determine order variety based on market hours.
-
-        Returns:
-            "REGULAR" if market is open, otherwise uses configured default (typically "AMO")
         """
-        from core.volume_analysis import is_market_hours
-
-        if is_market_hours():
-            return "REGULAR"
-        else:
-            # Use configured default (typically AMO for after-market orders)
-            return (
-                self.strategy_config.default_variety
-                if hasattr(self, "strategy_config")
-                else config.DEFAULT_VARIETY
-            )
+        self._sync_services_deps()
+        return self.order_placement_service.get_order_variety_for_market_hours()
 
     def market_was_open_today() -> bool:
         # Try NIFTY 50 index to detect trading day
@@ -1505,37 +1070,9 @@ class AutoTradeEngine:
     def _calculate_execution_capital(self, ticker: str, close: float, avg_volume: float) -> float:
         """
         Phase 11: Calculate execution capital based on liquidity using instance's strategy_config.
-
-        Args:
-            ticker: Stock ticker (e.g., RELIANCE.NS)
-            close: Current close price
-            avg_volume: Average daily volume
-
-        Returns:
-            Execution capital to use for this trade
         """
-        try:
-            from services.liquidity_capital_service import LiquidityCapitalService
-
-            liquidity_service = LiquidityCapitalService(config=self.strategy_config)
-
-            capital_data = liquidity_service.calculate_execution_capital(
-                avg_volume=avg_volume, stock_price=close
-            )
-            execution_capital = capital_data.get(
-                "execution_capital", self.strategy_config.user_capital
-            )
-
-            # Fallback to strategy_config if calculation failed
-            if execution_capital <= 0:
-                execution_capital = self.strategy_config.user_capital
-
-            return execution_capital
-        except Exception as e:
-            logger.warning(
-                f"Failed to calculate execution capital for {ticker}: {e}, using user_capital from config"
-            )
-            return self.strategy_config.user_capital
+        self._sync_services_deps()
+        return self.capital_sizing_service.calculate_execution_capital(ticker, close, avg_volume)
 
     @staticmethod
     def calculate_execution_capital(ticker: str, close: float, avg_volume: float) -> float:
@@ -1902,6 +1439,8 @@ class AutoTradeEngine:
                     logger.info(
                         "Telegram notifier not available (user preferences or credentials missing)"
                     )
+                if self.history_store and hasattr(self.history_store, "telegram_notifier"):
+                    self.history_store.telegram_notifier = self.telegram_notifier
 
             # 2. Initialize Manual Order Matcher
             self.manual_matcher = get_manual_order_matcher()
@@ -2102,177 +1641,28 @@ class AutoTradeEngine:
 
     def get_affordable_qty(self, price: float) -> int:
         """Return maximum whole quantity affordable from available cash/margin."""
-        if not self.portfolio or not price or price <= 0:
-            return 0
-        lim = self.portfolio.get_limits() or {}
-        avail, used_key = self._extract_available_cash_from_limits(lim)
-        logger.debug(
-            f"Available balance: Rs {avail:.2f} (from limits API; key={used_key or 'n/a'})"
-        )
-        try:
-            from math import floor
-
-            return max(0, floor(avail / float(price)))
-        except Exception:
-            return 0
+        self._sync_services_deps()
+        return self.capital_sizing_service.get_affordable_qty(price)
 
     def get_available_cash(self) -> float:
         """Return available funds from limits with robust field fallbacks."""
-        if not self.portfolio:
-            return 0.0
-        lim = self.portfolio.get_limits() or {}
-        avail, used_key = self._extract_available_cash_from_limits(lim)
-        logger.debug(f"Available cash from limits API: Rs {avail:.2f} (key={used_key or 'n/a'})")
-        return float(avail)
+        self._sync_services_deps()
+        return self.capital_sizing_service.get_available_cash()
 
     def _check_order_margin(
         self, symbol: str, price: float, qty: int, transaction_type: str = "B", product: str = "CNC"
     ) -> tuple[bool, float, float, float, bool]:
         """
         Validate order funds using Kotak check-margin API.
-
-        Returns:
-            (has_sufficient, available_cash, required_margin, shortfall, margin_api_ok)
         """
-        required_cash = max(0.0, float(price) * float(qty))
-
-        try:
-            if not self.auth or not hasattr(self.auth, "get_rest_client"):
-                raise RuntimeError("REST client unavailable")
-            rest = self.auth.get_rest_client()
-            if not rest:
-                raise RuntimeError("REST client unavailable")
-
-            token = None
-            if self.scrip_master:
-                # Prefer exact symbol first (e.g., RELIANCE-EQ), then base symbol.
-                token = self.scrip_master.get_token(symbol, exchange="NSE")
-                if not token and "-" in symbol:
-                    token = self.scrip_master.get_token(symbol.split("-")[0], exchange="NSE")
-            if not token:
-                raise RuntimeError(f"instrument token unavailable for {symbol}")
-
-            ex_seg = "nse_cm"
-            prc_tp = "MKT" if float(price) <= 0 else "L"
-            jdata = {
-                "brkName": "KOTAK",
-                "brnchId": "ONLINE",
-                "exSeg": ex_seg,
-                "prc": str(0 if prc_tp == "MKT" else float(price)),
-                "prcTp": prc_tp,
-                "prod": product,
-                "qty": str(int(qty)),
-                "tok": str(token),
-                "trnsTp": "B" if str(transaction_type).upper().startswith("B") else "S",
-            }
-
-            resp = rest.check_margin(jdata) or {}
-            if not isinstance(resp, dict):
-                raise RuntimeError(f"invalid check-margin response type: {type(resp)}")
-
-            def _to_num(v: Any, default: float = 0.0) -> float:
-                try:
-                    if v is None:
-                        return default
-                    return float(str(v).replace(",", "").strip())
-                except Exception:
-                    return default
-
-            # Kotak payloads can be either flat or wrapped under `data`
-            # (dict/list). Parse both envelope and data-body fields.
-            body: dict[str, Any] = resp
-            data_node = resp.get("data")
-            if isinstance(data_node, dict):
-                body = data_node
-            elif isinstance(data_node, list) and data_node and isinstance(data_node[0], dict):
-                body = data_node[0]
-
-            def _first(*keys: str, source: dict[str, Any]) -> Any:
-                for key in keys:
-                    if key in source and source.get(key) is not None:
-                        return source.get(key)
-                return None
-
-            avl_raw = _first(
-                "avlCash",
-                "availableCash",
-                "cash",
-                "netCash",
-                source=body,
-            )
-            if avl_raw is None:
-                avl_raw = _first(
-                    "avlCash",
-                    "availableCash",
-                    "cash",
-                    "netCash",
-                    source=resp,
-                )
-
-            req_raw = _first(
-                "reqdMrgn",
-                "requiredMargin",
-                "reqMargin",
-                "ordMrgn",
-                source=body,
-            )
-            if req_raw is None:
-                req_raw = _first(
-                    "reqdMrgn",
-                    "requiredMargin",
-                    "reqMargin",
-                    "ordMrgn",
-                    source=resp,
-                )
-
-            insuf_raw = _first(
-                "insufFund",
-                "insufficientFund",
-                "shortfall",
-                source=body,
-            )
-            if insuf_raw is None:
-                insuf_raw = _first(
-                    "insufFund",
-                    "insufficientFund",
-                    "shortfall",
-                    source=resp,
-                )
-
-            rms_raw = _first("rmsVldtd", "rmsValidated", source=body)
-            if rms_raw is None:
-                rms_raw = _first("rmsVldtd", "rmsValidated", source=resp)
-
-            stat_raw = _first("stat", "status", source=resp)
-            if stat_raw is None:
-                stat_raw = _first("stat", "status", source=body)
-
-            stcode_raw = _first("stCode", "statusCode", "code", source=resp)
-            if stcode_raw is None:
-                stcode_raw = _first("stCode", "statusCode", "code", source=body)
-
-            avl_cash = _to_num(avl_raw, 0.0)
-            req_margin = _to_num(req_raw, required_cash)
-            insuf_fund = _to_num(insuf_raw, max(0.0, req_margin - avl_cash))
-            rms_valid = str(rms_raw or "").upper().strip()
-            stat_ok = str(stat_raw or "").lower().strip() in {"ok", "success", "true"}
-            stcode = str(stcode_raw or "").strip()
-            has_sufficient = bool(
-                stat_ok
-                and stcode in {"200", "0", ""}
-                and (rms_valid == "OK" or insuf_fund <= 0.0 or avl_cash >= req_margin)
-            )
-            margin_api_ok = bool(stat_ok and stcode in {"200", "0", ""})
-            shortfall = max(0.0, insuf_fund if insuf_fund > 0 else (req_margin - avl_cash))
-            logger.debug(
-                f"check-margin {symbol}: sufficient={has_sufficient}, avlCash={avl_cash:.2f}, "
-                f"reqdMrgn={req_margin:.2f}, insufFund={shortfall:.2f}, rmsVldtd={rms_valid or 'n/a'}"
-            )
-            return has_sufficient, avl_cash, req_margin, shortfall, margin_api_ok
-        except Exception as e:
-            # Hard-fail policy: if check-margin is unavailable/invalid, do not place order.
-            logger.error(f"check-margin failed for {symbol}: {e}")
-            return False, 0.0, required_cash, required_cash, False
+        self._sync_services_deps()
+        return self.capital_sizing_service.check_order_margin(
+            symbol=symbol,
+            price=price,
+            qty=qty,
+            transaction_type=transaction_type,
+            product=product,
+        )
 
     def _extract_available_cash_from_limits(self, limits_payload: Any) -> tuple[float, str | None]:
         """Parse available cash from nested/flat limits payloads."""
@@ -2376,75 +1766,9 @@ class AutoTradeEngine:
     def has_active_buy_order(self, base_symbol: str) -> bool:
         """
         Check if there's an active buy order for the given symbol.
-        First checks broker API, then falls back to database check.
-        This prevents duplicate orders when broker API doesn't return pending orders.
         """
-        variants = set(self._symbol_variants(base_symbol))
-
-        # 1) Check broker API first (primary source)
-        if self.orders:
-            try:
-                pend = self.orders.get_pending_orders() or []
-                for o in pend:
-                    txn = str(o.get("transactionType") or "").upper()
-                    sym = str(o.get("tradingSymbol") or "").upper()
-                    if txn.startswith("B") and sym in variants:
-                        return True
-            except Exception as e:
-                logger.warning(
-                    f"Broker API check for active buy order failed for {base_symbol}: {e}. "
-                    "Falling back to database check."
-                )
-
-        # 2) Database fallback: Check for PENDING/ONGOING/CLOSED buy orders (AMO/PENDING_EXECUTION merged into PENDING)
-        # This prevents duplicates when broker API doesn't return pending orders or is unavailable
-        if self.orders_repo and self.user_id:
-            try:
-                existing_orders, _ = self.orders_repo.list(self.user_id)
-                for existing_order in existing_orders:
-                    # Check if symbol matches (including variants)
-                    order_symbol_base = (
-                        existing_order.symbol.upper()
-                        .replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                    )
-                    base_symbol_clean = (
-                        base_symbol.upper()
-                        .replace("-EQ", "")
-                        .replace("-BE", "")
-                        .replace("-BL", "")
-                        .replace("-BZ", "")
-                    )
-
-                    if (
-                        existing_order.side == "buy"
-                        and existing_order.status
-                        in {
-                            DbOrderStatus.PENDING,  # Merged: AMO + PENDING_EXECUTION
-                            DbOrderStatus.ONGOING,  # Legacy executed
-                            DbOrderStatus.CLOSED,  # Filled (position open; don't block re-entry if filled)
-                        }
-                        and order_symbol_base == base_symbol_clean
-                    ):
-                        # Only block re-entry for UNFILLED orders (execution_qty is None)
-                        # Filled orders (ONGOING legacy or CLOSED) shouldn't block re-entry
-                        if existing_order.execution_qty is None:
-                            logger.debug(
-                                f"Database check: {base_symbol} already has unfilled buy order "
-                                f"(status: {existing_order.status}, order_id: {existing_order.id})"
-                            )
-                            return True
-                        else:
-                            logger.debug(
-                                f"Database check: {base_symbol} has filled buy order (execution_qty={existing_order.execution_qty}), "
-                                f"not blocking re-entry (status: {existing_order.status}, order_id: {existing_order.id})"
-                            )
-            except Exception as e:
-                logger.warning(f"Database check for active buy order failed for {base_symbol}: {e}")
-
-        return False
+        self._sync_services_deps()
+        return self.order_placement_service.has_active_buy_order(base_symbol)
 
     def reentries_today(self, base_symbol: str) -> int:
         """
@@ -2631,120 +1955,20 @@ class AutoTradeEngine:
     def has_reentry_at_level(self, base_symbol: str, level: int, allow_reset: bool = False) -> bool:
         """
         Check if a re-entry at the specified level already exists in the current cycle.
-
-        Enhanced Hybrid Approach: Now checks by cycle number, not just level.
-        This allows re-entries at the same level after a reset (new cycle).
-
-        This includes checking:
-        1. Initial entry RSI - if initial entry was at this level, block re-entry at same level
-           (Exception: If allow_reset=True, allow it after reset for any level)
-        2. Existing re-entries in current cycle - if a re-entry at this level exists in current cycle, block duplicate
-
-        Args:
-            base_symbol: Symbol to check
-            level: Re-entry level (30, 20, or 10)
-            allow_reset: If True, allow re-entry at this level even if initial entry was at this level
-                        (This handles the reset case where RSI > 30 then < 30, allowing re-entry at any level)
-
-        Returns:
-            True if re-entry at this level already exists in current cycle (including initial entry), False otherwise
         """
-        try:
-            if not self.positions_repo or not self.user_id:
-                return False
-
-            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
-            if not position:
-                return False
-
-            # Get current cycle from metadata
-            cycle_meta = self._get_position_cycle_metadata(position)
-            current_cycle = cycle_meta.get("current_cycle", 0)
-
-            # Check if initial entry was at this level
-            # Exception: If allow_reset=True, skip this check (reset allows re-entry at any level again)
-            entry_rsi = position.entry_rsi
-            if entry_rsi is not None and not allow_reset:
-                # Determine which level the initial entry was at
-                if level == 30 and entry_rsi < 30:
-                    return True  # Initial entry was at RSI < 30, block re-entry at level 30
-                elif level == 20 and entry_rsi < 20:
-                    return True  # Initial entry was at RSI < 20, block re-entry at level 20
-                elif level == 10 and entry_rsi < 10:
-                    return True  # Initial entry was at RSI < 10, block re-entry at level 10
-
-            # Check existing re-entries in current cycle
-            if not position.reentries:
-                return False
-
-            # Extract reentries array (handle both old and new format)
-            reentries = position.reentries
-            if isinstance(reentries, dict):
-                # New format: extract reentries array
-                reentries = reentries.get("reentries", [])
-            if not isinstance(reentries, list):
-                return False
-
-            for reentry in reentries:
-                if not isinstance(reentry, dict):
-                    continue
-
-                # Check if level matches
-                reentry_level = reentry.get("level")
-                if reentry_level is None:
-                    continue
-
-                try:
-                    # Handle both int and string representations
-                    reentry_level_int = int(reentry_level) if reentry_level is not None else None
-                    if reentry_level_int == level:
-                        # Check cycle number (if stored)
-                        reentry_cycle = reentry.get("cycle")
-                        if reentry_cycle is not None:
-                            # Only block if it's in the same cycle
-                            if int(reentry_cycle) == current_cycle:
-                                return True
-                        # Backward compatibility: if cycle not stored, assume cycle 0
-                        # Only block if current_cycle is also 0 (initial cycle)
-                        elif current_cycle == 0:
-                            return True
-                except (ValueError, TypeError):
-                    continue
-
-            return False
-        except Exception as e:
-            logger.error(f"Error checking reentry level for {base_symbol}: {e}")
-            return False
+        self._sync_services_deps()
+        return self.position_monitor_service.has_reentry_at_level(
+            base_symbol=base_symbol, level=level, allow_reset=allow_reset
+        )
 
     def has_reentry_at_level_today(self, base_symbol: str, level: int) -> bool:
         """
         Return True when a system re-entry at ``level`` was already placed or filled today.
-
-        Independent of cycle metadata: blocks duplicate same-level re-entries on the same
-        IST calendar day even after a cycle reset.
         """
-        from modules.kotak_neo_auto_trader.reentry_day_guard import has_reentry_at_level_today
-
-        try:
-            if not self.positions_repo or not self.user_id:
-                return False
-
-            position = self.positions_repo.get_by_symbol(self.user_id, base_symbol)
-            orders: list[Any] = []
-            if self.orders_repo:
-                orders_list, _ = self.orders_repo.list(self.user_id)
-                orders = list(orders_list or [])
-
-            return has_reentry_at_level_today(
-                position=position,
-                orders=orders,
-                base_symbol=base_symbol,
-                level=level,
-                today=ist_now().date(),
-            )
-        except Exception as e:
-            logger.error(f"Error checking same-day reentry level for {base_symbol}: {e}")
-            return False
+        self._sync_services_deps()
+        return self.position_monitor_service.has_reentry_at_level_today(
+            base_symbol=base_symbol, level=level
+        )
 
     def _resolve_broker_symbol(self, base_symbol: str) -> str:
         """
@@ -3096,87 +2320,10 @@ class AutoTradeEngine:
         Immediately fetch the current broker status for a newly placed order and
         mirror it in the orders table.
         """
-        if not (self.orders and self.orders_repo and self.user_id):
-            return
-
-        try:
-            orders_response = self.orders.get_orders() or {}
-            broker_orders = (
-                orders_response.get("data", []) if isinstance(orders_response, dict) else []
-            )
-            target = None
-            for broker_order in broker_orders:
-                if OrderFieldExtractor.get_order_id(broker_order) == str(order_id):
-                    target = broker_order
-                    break
-
-            if not target:
-                return
-
-            db_order = self.orders_repo.get_by_broker_order_id(
-                self.user_id, str(order_id)
-            ) or self.orders_repo.get_by_order_id(self.user_id, str(order_id))
-            if not db_order:
-                return
-
-            status = OrderFieldExtractor.get_status(target)
-            status_lower = status.lower()
-            if not status_lower:
-                return
-
-            self.orders_repo.update_status_check(db_order)
-
-            if status_lower in {"rejected", "reject"}:
-                rejection_reason = (
-                    OrderFieldExtractor.get_rejection_reason(target) or "Rejected by broker"
-                )
-                self.orders_repo.mark_rejected(db_order, rejection_reason)
-            elif status_lower in {"cancelled", "cancel"}:
-                cancelled_reason = OrderFieldExtractor.get_rejection_reason(target) or "Cancelled"
-                self.orders_repo.mark_cancelled(db_order, cancelled_reason)
-            elif status_lower in {"executed", "filled", "complete"}:
-                execution_price = OrderFieldExtractor.get_price(target)
-                execution_qty = (
-                    OrderFieldExtractor.get_quantity(target) or quantity or db_order.quantity
-                )
-                # Defer early fill sync: placement snapshot can mark executed before
-                # unified_order_monitor records the real fill time/price.
-                from src.infrastructure.db.timezone_utils import ist_now_naive
-
-                placed_at = getattr(db_order, "placed_at", None)
-                if placed_at is not None:
-                    placed_naive = (
-                        placed_at.replace(tzinfo=None)
-                        if getattr(placed_at, "tzinfo", None) is not None
-                        else placed_at
-                    )
-                    age_s = (ist_now_naive() - placed_naive).total_seconds()
-                    if age_s < 120:
-                        logger.debug(
-                            f"Deferring immediate execute sync for {order_id} "
-                            f"({age_s:.0f}s after placement) to order monitor"
-                        )
-                        return
-                if execution_price and execution_qty and execution_price > 0 and execution_qty > 0:
-                    self.orders_repo.mark_executed(
-                        db_order,
-                        execution_price=execution_price,
-                        execution_qty=execution_qty,
-                    )
-            elif status_lower in {
-                "pending",
-                "open",
-                "trigger_pending",
-                "partially_filled",
-                "partially filled",
-            }:
-                if db_order.status != DbOrderStatus.PENDING:
-                    self.orders_repo.update(db_order, status=DbOrderStatus.PENDING)
-        except Exception as e:
-            logger.debug(
-                f"Immediate order status sync failed for {symbol or order_id}: {e}",
-                exc_info=False,
-            )
+        self._sync_services_deps()
+        self.order_placement_service.sync_order_status_snapshot(
+            order_id=order_id, symbol=symbol, quantity=quantity
+        )
 
     def _verify_order_placement(
         self, order_id: str, symbol: str, wait_seconds: int = 15
@@ -3339,82 +2486,11 @@ class AutoTradeEngine:
     ) -> dict[str, Any]:
         """
         Check for manual orders (orders not in our database) for a given symbol.
-
-        Args:
-            symbol: Symbol to check
-            cached_pending_orders: Optional cached pending orders to avoid redundant API calls
-
-        Returns:
-            {
-                'has_manual_order': bool,
-                'has_system_order': bool,
-                'manual_orders': list[dict],  # List of manual orders found
-                'system_orders': list[dict],  # List of system orders found
-            }
         """
-        result = {
-            "has_manual_order": False,
-            "has_system_order": False,
-            "manual_orders": [],
-            "system_orders": [],
-        }
-
-        if not self.orders or not self.orders_repo or not self.user_id:
-            return result
-
-        try:
-            # Use cached orders if provided, otherwise fetch
-            if cached_pending_orders is not None:
-                pending_orders = cached_pending_orders
-            else:
-                pending_orders = self.orders.get_pending_orders() or []
-            variants = set(self._symbol_variants(symbol))
-
-            from .utils.order_field_extractor import OrderFieldExtractor
-
-            for order in pending_orders:
-                order_symbol = OrderFieldExtractor.get_symbol(order).upper()
-                transaction_type = OrderFieldExtractor.get_transaction_type(order)
-
-                # Check if this is a BUY order for our symbol
-                if not transaction_type.startswith("B"):
-                    continue
-
-                if order_symbol not in variants:
-                    continue
-
-                # Extract order details
-                order_id = OrderFieldExtractor.get_order_id(order)
-                if not order_id:
-                    continue
-
-                quantity = OrderFieldExtractor.get_quantity(order)
-                price = OrderFieldExtractor.get_price(order)
-
-                order_info = {
-                    "order_id": order_id,
-                    "symbol": order_symbol,
-                    "quantity": quantity,
-                    "price": price,
-                    "broker_order": order,
-                }
-
-                # Check if order exists in our database
-                db_order = self.orders_repo.get_by_broker_order_id(self.user_id, order_id)
-
-                if db_order:
-                    # This is a system order
-                    result["has_system_order"] = True
-                    result["system_orders"].append(order_info)
-                else:
-                    # This is a manual order (not in our DB)
-                    result["has_manual_order"] = True
-                    result["manual_orders"].append(order_info)
-
-        except Exception as e:
-            logger.warning(f"Error checking for manual orders for {symbol}: {e}")
-
-        return result
+        self._sync_services_deps()
+        return self.order_placement_service.check_for_manual_orders(
+            symbol=symbol, cached_pending_orders=cached_pending_orders
+        )
 
     def _should_skip_retry_due_to_manual_order(
         self, symbol: str, retry_qty: int, manual_order_info: dict[str, Any]
@@ -6281,207 +5357,11 @@ class AutoTradeEngine:
     ) -> tuple[int | None, dict[str, Any]]:
         """
         Determine next re-entry level based on entry RSI and current RSI.
-
-        Enhanced Hybrid Approach: Implements cycle tracking with reset detection on startup.
-
-        Logic:
-        - Entry at RSI < 30 → Re-entry at RSI < 20 → RSI < 10 → Reset
-        - Entry at RSI < 20 → Re-entry at RSI < 10 → Reset
-        - Entry at RSI < 10 → Only Reset
-
-        Reset mechanism:
-        - When RSI > 30: Store last_rsi_above_30 timestamp in position metadata
-        - When RSI drops < 30 after last_rsi_above_30 exists: Increment current_cycle, reset all levels
-        - On startup: Check if current RSI < 30 and last_rsi_above_30 exists → Reset detected
-
-        Args:
-            entry_rsi: RSI10 value at initial entry
-            current_rsi: Current RSI10 value
-            position: Position object (for tracking reset state)
-
-        Returns:
-            Tuple of (next_level, metadata_updates):
-            - next_level: Next re-entry level (30, 20, or 10), or None if no re-entry opportunity
-            - metadata_updates: Dict with cycle metadata updates to apply:
-              {
-                  "current_cycle": int | None,  # None = no change
-                  "last_rsi_above_30": str | None,  # ISO timestamp or None to clear
-                  "last_rsi_value": float | None,  # None = no change
-              }
         """
-        from src.infrastructure.db.timezone_utils import ist_now
-
-        # Get current cycle metadata
-        cycle_meta = self._get_position_cycle_metadata(position)
-        current_cycle = cycle_meta.get("current_cycle", 0)
-        last_rsi_above_30 = cycle_meta.get("last_rsi_above_30")
-        last_rsi_value = cycle_meta.get("last_rsi_value")
-
-        # Initialize metadata updates (None = no change)
-        metadata_updates = {
-            "current_cycle": None,
-            "last_rsi_above_30": None,
-            "last_rsi_value": None,
-        }
-
-        levels_taken = {"30": False, "20": False, "10": False}
-
-        # Determine initial levels_taken based on entry_rsi
-        if entry_rsi < 10:
-            # Entry at RSI < 10: All levels taken
-            levels_taken = {"30": True, "20": True, "10": True}
-        elif entry_rsi < 20:
-            # Entry at RSI < 20: 30 and 20 taken
-            levels_taken = {"30": True, "20": True, "10": False}
-        elif entry_rsi < 30:
-            # Entry at RSI < 30: Only 30 taken
-            levels_taken = {"30": True, "20": False, "10": False}
-        else:
-            # Entry at RSI >= 30: No levels taken (shouldn't happen, but handle it)
-            levels_taken = {"30": False, "20": False, "10": False}
-
-        # Fix Issue 1: Update levels_taken based on executed re-entries in current cycle
-        # Check reentries array to see which levels have been taken in the current cycle
-        if position and position.reentries:
-            reentries = position.reentries
-            if isinstance(reentries, dict):
-                # New format: extract reentries array
-                reentries = reentries.get("reentries", [])
-            if isinstance(reentries, list):
-                for reentry in reentries:
-                    if not isinstance(reentry, dict):
-                        continue
-                    # Check if this re-entry is in the current cycle
-                    reentry_cycle = reentry.get("cycle")
-                    if reentry_cycle is not None:
-                        # Only consider re-entries in the current cycle
-                        if int(reentry_cycle) == current_cycle:
-                            reentry_level = reentry.get("level")
-                            if reentry_level is not None:
-                                try:
-                                    level_int = int(reentry_level)
-                                    if level_int == 30:
-                                        levels_taken["30"] = True
-                                    elif level_int == 20:
-                                        levels_taken["20"] = True
-                                    elif level_int == 10:
-                                        levels_taken["10"] = True
-                                except (ValueError, TypeError):
-                                    pass
-                    # Backward compatibility: if cycle not stored, assume cycle 0
-                    elif current_cycle == 0:
-                        reentry_level = reentry.get("level")
-                        if reentry_level is not None:
-                            try:
-                                level_int = int(reentry_level)
-                                if level_int == 30:
-                                    levels_taken["30"] = True
-                                elif level_int == 20:
-                                    levels_taken["20"] = True
-                                elif level_int == 10:
-                                    levels_taken["10"] = True
-                            except (ValueError, TypeError):
-                                pass
-
-        # Fix: Mark intermediate levels as taken to prevent backtracking
-        # Rule: When a re-entry at level X is taken, mark all higher levels (between entry level and X) as taken
-        # This prevents backtracking: e.g., if level 10 is taken, level 20 should also be marked as taken
-        # Examples:
-        #   - If level 10 is taken → Mark levels 20 and 30 as taken (can't backtrack to 20 or 30)
-        #   - If level 20 is taken → Mark level 30 as taken (can't backtrack to 30)
-        #   - If level 30 is taken → No intermediate levels
-        if levels_taken.get("10"):
-            # If level 10 is taken, mark level 20 and 30 as taken (can't backtrack)
-            levels_taken["20"] = True
-            levels_taken["30"] = True
-            logger.debug(
-                "Level 10 is taken - marking levels 20 and 30 as taken to prevent backtracking"
-            )
-        elif levels_taken.get("20"):
-            # If level 20 is taken, mark level 30 as taken (can't backtrack)
-            levels_taken["30"] = True
-            logger.debug("Level 20 is taken - marking level 30 as taken to prevent backtracking")
-
-        # Enhanced reset detection with startup support
-        # Step 1: If RSI > 30, store last_rsi_above_30 timestamp
-        if current_rsi > 30:
-            # Store timestamp when RSI goes above 30
-            now = ist_now()
-            metadata_updates["last_rsi_above_30"] = now.isoformat()
-            metadata_updates["last_rsi_value"] = current_rsi
-            logger.debug(
-                f"RSI > 30 detected: {current_rsi:.2f}. Storing last_rsi_above_30 timestamp."
-            )
-            # Don't return yet - continue to check if we should trigger reset immediately
-
-        # Step 2: Check for reset condition (RSI < 30 AND last_rsi_above_30 exists)
-        # This works both during runtime and on startup
-        reset_detected = False
-        if current_rsi < 30 and last_rsi_above_30:
-            # Reset detected! Increment cycle and reset all levels
-            new_cycle = current_cycle + 1
-            metadata_updates["current_cycle"] = new_cycle
-            metadata_updates["last_rsi_above_30"] = None  # Clear reset flag
-            metadata_updates["last_rsi_value"] = current_rsi  # Update last RSI value
-            reset_detected = True
-
-            logger.info(
-                f"Reset detected: RSI dropped to {current_rsi:.2f} after being above 30. "
-                f"Incrementing cycle from {current_cycle} to {new_cycle}."
-            )
-
-            # Reset all levels, treat as new cycle
-            levels_taken = {"30": False, "20": False, "10": False}
-
-            # Fix Issue 2: Reset should check current RSI level and trigger appropriate level
-            # Don't always return level 30 - check what level the current RSI satisfies
-            if current_rsi < 10:
-                # RSI < 10: Trigger level 10 (highest priority)
-                logger.info(f"Reset triggers re-entry at level 10 (RSI {current_rsi:.2f} < 10)")
-                return (10, metadata_updates)
-            elif current_rsi < 20:
-                # RSI < 20: Trigger level 20
-                logger.info(f"Reset triggers re-entry at level 20 (RSI {current_rsi:.2f} < 20)")
-                return (20, metadata_updates)
-            elif current_rsi < 30:
-                # RSI < 30: Trigger level 30
-                logger.info(f"Reset triggers re-entry at level 30 (RSI {current_rsi:.2f} < 30)")
-                return (30, metadata_updates)
-            else:
-                # Shouldn't happen (we're in reset condition with RSI < 30)
-                logger.warning(
-                    f"Reset detected but RSI {current_rsi:.2f} is not < 30. This shouldn't happen."
-                )
-                return (None, metadata_updates)
-
-        # Step 3: Update last_rsi_value if RSI changed (for tracking)
-        if last_rsi_value != current_rsi:
-            metadata_updates["last_rsi_value"] = current_rsi
-
-        # Normal progression through levels
-        # Fix Issue 3: Allow skipping levels if RSI drops directly to a lower level
-        # Check levels in priority order (10 > 20 > 30) - allows skipping levels
-        next_level = None
-
-        if current_rsi < 10:
-            # RSI < 10: Check if level 10 is available
-            if not levels_taken.get("10"):
-                next_level = 10
-                logger.debug(
-                    f"RSI {current_rsi:.2f} < 10, level 10 available (allows skipping level 20)"
-                )
-        elif current_rsi < 20:
-            # RSI < 20: Check if level 20 is available
-            if not levels_taken.get("20"):
-                next_level = 20
-                logger.debug(f"RSI {current_rsi:.2f} < 20, level 20 available")
-        elif current_rsi < 30:
-            # RSI < 30: Check if level 30 is available
-            if not levels_taken.get("30"):
-                next_level = 30
-                logger.debug(f"RSI {current_rsi:.2f} < 30, level 30 available")
-
-        return (next_level, metadata_updates)
+        self._sync_services_deps()
+        return self.position_monitor_service.determine_reentry_level(
+            entry_rsi=entry_rsi, current_rsi=current_rsi, position=position
+        )
 
     def evaluate_reentries_and_exits(self) -> dict[str, int]:
         summary = {"symbols_evaluated": 0, "exits": 0, "reentries": 0}

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: PLR0912
 """
 Phase -1: Critical Kotak Authentication Fixes - Unit Tests
 
@@ -27,6 +28,8 @@ from unittest.mock import Mock, patch
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from contextlib import contextmanager
+
 from modules.kotak_neo_auto_trader.auth import KotakNeoAuth  # noqa: E402
 from modules.kotak_neo_auto_trader.auth_handler import is_auth_error  # noqa: E402
 from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adapter import (  # noqa: E402
@@ -35,6 +38,69 @@ from modules.kotak_neo_auto_trader.infrastructure.broker_adapters.kotak_neo_adap
 from modules.kotak_neo_auto_trader.shared_session_manager import (  # noqa: E402
     SharedSessionManager,
 )
+
+
+@contextmanager
+def patch_kotak_login(return_value=True, mock_obj=None):
+    """Helper to patch KotakNeoAuth.login across all loaded namespaces/modules."""
+    if mock_obj is None:
+        mock_obj = Mock(return_value=return_value)
+
+    patches = []
+    patched_class_ids = set()
+
+    # Always patch the local class reference first
+    primary_patch = patch.object(KotakNeoAuth, "login", mock_obj)
+    patches.append(primary_patch)
+    patched_class_ids.add(id(KotakNeoAuth))
+
+    import sys
+
+    # Scan all loaded modules in sys.modules
+    for name, module in list(sys.modules.items()):
+        if not name or name.startswith(
+            (
+                "pytest",
+                "unittest",
+                "unittest.mock",
+                "importlib",
+                "sys",
+                "builtins",
+                "encodings",
+                "collections",
+            )
+        ):
+            continue
+
+        try:
+            if module and hasattr(module, "KotakNeoAuth"):
+                cls = module.KotakNeoAuth
+                if isinstance(cls, type) and hasattr(cls, "login"):
+                    if id(cls) not in patched_class_ids:
+                        patches.append(patch.object(cls, "login", mock_obj))
+                        patched_class_ids.add(id(cls))
+        except Exception:
+            pass
+
+    # Start the primary patch and let any failure raise
+    primary_patch.start()
+
+    for p in patches:
+        if p is primary_patch:
+            continue
+        try:
+            p.start()
+        except Exception:
+            pass
+
+    try:
+        yield mock_obj
+    finally:
+        for p in patches:
+            try:
+                p.stop()
+            except Exception:
+                pass
 
 
 class TestSessionValidityTracking(unittest.TestCase):
@@ -381,7 +447,7 @@ class TestSharedSessionManagerValidation(unittest.TestCase):
         self.manager._sessions[user_id] = mock_auth
 
         # Should clear expired session and create new one
-        with patch.object(KotakNeoAuth, "login", return_value=True):
+        with patch_kotak_login(return_value=True):
             session = self.manager.get_or_create_session(user_id, str(self.env_path))
 
             # Should create new session
@@ -416,7 +482,7 @@ class TestReauthRateLimiting(unittest.TestCase):
         user_id = 1
 
         # First re-auth
-        with patch.object(KotakNeoAuth, "login", return_value=True):
+        with patch_kotak_login(return_value=True):
             session1 = self.manager.get_or_create_session(user_id, str(self.env_path))
             self.assertIsNotNone(session1)
 
@@ -434,7 +500,7 @@ class TestReauthRateLimiting(unittest.TestCase):
             self.manager._last_reauth_time[user_id] = time.time()
 
             # Try to re-auth immediately (should be blocked by cooldown)
-            with patch.object(KotakNeoAuth, "login") as mock_login:
+            with patch_kotak_login() as mock_login:
                 session2 = self.manager.get_or_create_session(user_id, str(self.env_path))
 
                 # Should return existing session (not create new one)
@@ -449,7 +515,7 @@ class TestReauthRateLimiting(unittest.TestCase):
         user_id = 1
 
         # First re-auth
-        with patch.object(KotakNeoAuth, "login", return_value=True):
+        with patch_kotak_login(return_value=True):
             session1 = self.manager.get_or_create_session(user_id, str(self.env_path))
             self.assertIsNotNone(session1)
 
@@ -457,7 +523,7 @@ class TestReauthRateLimiting(unittest.TestCase):
         self.manager._last_reauth_time[user_id] = time.time() - 61  # 61 seconds ago
 
         # Try to re-auth (should be allowed)
-        with patch.object(KotakNeoAuth, "login", return_value=True):
+        with patch_kotak_login(return_value=True):
             session2 = self.manager.get_or_create_session(
                 user_id, str(self.env_path), force_new=True
             )

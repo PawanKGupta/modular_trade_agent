@@ -9,9 +9,12 @@ import json
 from datetime import datetime
 from unittest.mock import patch
 
+import pytest
+
 from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
-from modules.kotak_neo_auto_trader.services import TradeHistoryStore
+from modules.kotak_neo_auto_trader.services import DatabaseTradeHistoryStore, TradeHistoryStore
 from src.domain.interfaces.trade_history_store import ITradeHistoryStore
+from src.infrastructure.db.models import Users
 
 
 def _read(path: str) -> dict:
@@ -108,3 +111,22 @@ def test_engine_file_mode_delegates_to_store(_mock_auth, tmp_path):
     assert any(t.get("symbol") == "ABC" for t in loaded.get("trades", []))
     # The store wrote to the expected file.
     assert any(t.get("symbol") == "ABC" for t in _read(p).get("trades", []))
+
+
+@pytest.fixture
+def db_user_id(db_session):
+    user = Users(
+        email="dbstoretest@example.com", password_hash="x", created_at=datetime(2026, 6, 1)
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user.id
+
+
+def test_db_store_implements_interface(db_session, db_user_id):
+    store = DatabaseTradeHistoryStore(db_session=db_session, user_id=db_user_id)
+    assert isinstance(store, ITradeHistoryStore)
+    history = store.load_history()
+    assert history["trades"] == []
+    assert history["failed_orders"] == []
+    assert isinstance(history["last_run"], str)
