@@ -479,6 +479,8 @@ def test_process_results_backtest_handles_export_failure(monkeypatch):
     monkeypatch.setattr(trade_agent, "BacktestService", lambda **__: StubBacktestService())
     monkeypatch.setattr(trade_agent.pd, "DataFrame", ExplodingDF)
     warnings = []
+    # Accept any positional/keyword args so a lazy "%s"-style warning (msg, *args) does not
+    # raise a TypeError here — we only care that a warning was emitted.
     monkeypatch.setattr(
         trade_agent.logger, "warning", lambda msg, *args, **kwargs: warnings.append(msg)
     )

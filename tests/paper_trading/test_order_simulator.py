@@ -2,11 +2,20 @@
 Test Order Simulator
 """
 
+from datetime import datetime
+
 import pytest
 
 from modules.kotak_neo_auto_trader.config.paper_trading_config import PaperTradingConfig
-from modules.kotak_neo_auto_trader.domain import Money, Order, OrderType, TransactionType
+from modules.kotak_neo_auto_trader.domain import (
+    Money,
+    Order,
+    OrderType,
+    OrderVariety,
+    TransactionType,
+)
 from modules.kotak_neo_auto_trader.infrastructure.simulation import OrderSimulator, PriceProvider
+from src.infrastructure.db.timezone_utils import IST
 
 
 class TestOrderSimulator:
@@ -329,6 +338,145 @@ class TestOrderSimulator:
         if not success:
             assert "Price not available" in message or "Market is closed" in message
             assert execution_price is None
+
+
+class _SpyPriceProvider(PriceProvider):
+    """Records the at_open flag passed to get_price()."""
+
+    def __init__(self):
+        super().__init__(mode="mock")
+        self.at_open_calls: list[bool] = []
+
+    def get_price(self, symbol: str, at_open: bool = False):
+        self.at_open_calls.append(at_open)
+        return 100.0
+
+
+def _at(h: int, m: int) -> datetime:
+    """An IST-aware datetime on a weekday for time-gate tests."""
+    return datetime(2026, 6, 11, h, m, 0, tzinfo=IST)
+
+
+class TestOrderSimulatorAtOpenWiring:
+    """BUY fills request the opening price (open window); sells do not."""
+
+    @pytest.fixture
+    def config(self):
+        # enforce_market_hours disabled here to isolate the at_open wiring from the
+        # time gate (which is covered separately in TestOrderSimulatorMarketHoursGate).
+        return PaperTradingConfig(
+            enable_slippage=False,
+            enable_fees=False,
+            enforce_market_hours=False,
+            price_source="mock",
+        )
+
+    def test_amo_buy_requests_open_price(self, config, monkeypatch):
+        provider = _SpyPriceProvider()
+        simulator = OrderSimulator(config, provider)
+        monkeypatch.setattr(simulator, "should_execute_amo", lambda order: True)
+
+        order = Order(
+            symbol="INFY",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.AMO,
+        )
+
+        simulator.execute_order(order)
+
+        assert provider.at_open_calls, "get_price was never called"
+        assert all(provider.at_open_calls), "AMO buy must fetch price with at_open=True"
+
+    def test_regular_buy_requests_open_price(self, config):
+        """Pre-open REGULAR morning buys must also request the open price."""
+        provider = _SpyPriceProvider()
+        simulator = OrderSimulator(config, provider)
+
+        order = Order(
+            symbol="INFY",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,  # variety REGULAR
+        )
+
+        simulator.execute_order(order)
+
+        assert provider.at_open_calls, "get_price was never called"
+        assert all(provider.at_open_calls), "Regular buy must fetch price with at_open=True"
+
+    def test_sell_order_does_not_request_open_price(self, config):
+        provider = _SpyPriceProvider()
+        simulator = OrderSimulator(config, provider)
+
+        order = Order(
+            symbol="INFY",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.SELL,
+        )
+
+        simulator.execute_order(order)
+
+        assert provider.at_open_calls, "get_price was never called"
+        assert not any(provider.at_open_calls), "Sell must fetch price with at_open=False"
+
+
+class TestOrderSimulatorMarketHoursGate:
+    """Regression: REGULAR buys must not fill before the 09:15 open when market hours are enforced.
+
+    The production paper service runs with ``enforce_market_hours=True``; a pre-open
+    REGULAR buy was previously filling at the stale prior-close because the service
+    had the gate disabled.
+    """
+
+    @pytest.fixture
+    def config(self):
+        return PaperTradingConfig(
+            enable_slippage=False,
+            enable_fees=False,
+            enforce_market_hours=True,
+            price_source="mock",
+        )
+
+    def _regular_market_buy(self):
+        return Order(
+            symbol="INFY",
+            quantity=10,
+            order_type=OrderType.MARKET,
+            transaction_type=TransactionType.BUY,
+            variety=OrderVariety.REGULAR,
+        )
+
+    def test_regular_buy_blocked_before_open(self, config, monkeypatch):
+        provider = PriceProvider(mode="mock")
+        provider.set_mock_price("INFY.NS", 1400.0)
+        provider.set_mock_price("INFY", 1400.0)
+        simulator = OrderSimulator(config, provider)
+        import modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator as order_sim_mod
+
+        monkeypatch.setattr(order_sim_mod, "ist_now", lambda: _at(9, 5))  # 09:05, before the open
+
+        success, message, execution_price = simulator.execute_order(self._regular_market_buy())
+
+        assert success is False
+        assert "market is closed" in message.lower()
+        assert execution_price is None
+
+    def test_regular_buy_fills_after_open(self, config, monkeypatch):
+        provider = PriceProvider(mode="mock")
+        provider.set_mock_price("INFY.NS", 1400.0)
+        provider.set_mock_price("INFY", 1400.0)
+        simulator = OrderSimulator(config, provider)
+        import modules.kotak_neo_auto_trader.infrastructure.simulation.order_simulator as order_sim_mod
+
+        monkeypatch.setattr(order_sim_mod, "ist_now", lambda: _at(9, 30))  # 09:30, market open
+
+        success, _message, execution_price = simulator.execute_order(self._regular_market_buy())
+
+        assert success is True
+        assert execution_price is not None
 
 
 if __name__ == "__main__":

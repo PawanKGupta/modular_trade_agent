@@ -1,0 +1,21 @@
+{
+  "artifact": "modular_trade_agent.price_features",
+  "feature_schema_version": 1,
+  "feature_names": [
+    "rsi_10",
+    "ema9_distance_pct",
+    "volume_ratio",
+    "support_distance_pct",
+    "dip_depth_from_20d_high_pct",
+    "consecutive_red_days",
+    "volume_green_vs_red_ratio",
+    "day_of_week",
+    "rsi_volume_interaction",
+    "dip_support_interaction",
+    "atr_pct_14",
+    "hist_vol_20d",
+    "ret_60d",
+    "ret_120d",
+    "dist_from_high_252d_pct"
+  ]
+}

@@ -1,5 +1,12 @@
 import logging
+import os
 import sys
+from datetime import datetime
+
+try:
+    from src.infrastructure.db.timezone_utils import ist_now_naive
+except ImportError:
+    ist_now_naive = None  # type: ignore[assignment]
 
 # Try to ensure UTF-8 capable stdout to avoid Unicode errors in console
 try:
@@ -7,7 +14,7 @@ try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
+except Exception:  # noqa: S110
     pass
 
 # Create a logger object
@@ -36,24 +43,60 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)  # Info+ to console
 console_handler.setFormatter(formatter)
 
-# Date-based file handler for better log management
-from datetime import datetime
-import os
+
+class DailyRotatingFileHandler(logging.FileHandler):
+    """
+    A file handler that rotates daily at midnight (in IST if available, or local time).
+    The file name dynamically incorporates the current date stamp on each log write.
+    """
+
+    def __init__(self, filename_pattern: str, encoding: str = "utf-8"):
+        self.filename_pattern = filename_pattern
+        self.encoding = encoding
+
+        if ist_now_naive is not None:
+            self._get_date_fn = ist_now_naive
+        else:
+            self._get_date_fn = datetime.now
+
+        self.current_stamp = self._get_today_stamp()
+
+        filename = self.filename_pattern.format(self.current_stamp)
+        super().__init__(filename, encoding=self.encoding)
+
+    def _get_today_stamp(self) -> str:
+        return self._get_date_fn().strftime("%Y%m%d")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            today_stamp = self._get_today_stamp()
+            if today_stamp != self.current_stamp:
+                self.current_stamp = today_stamp
+                new_filename = self.filename_pattern.format(today_stamp)
+                self.baseFilename = os.path.abspath(new_filename)
+
+                # Close the current stream; self.flush() re-acquires the lock,
+                # which is safe since the lock is reentrant (RLock)
+                if self.stream:
+                    try:
+                        self.flush()
+                        self.stream.close()
+                    except Exception:  # noqa: S110
+                        pass
+                self.stream = None
+        except Exception:  # noqa: S110
+            pass
+        super().emit(record)
+
 
 logger.addHandler(console_handler)
 
 # File logging is optional: subprocesses / containers often run with a read-only or
 # root-owned `logs/` mount (PermissionError). Console logging still works.
-try:
-    from src.infrastructure.db.timezone_utils import ist_now_naive
-
-    _log_day_stamp = ist_now_naive().strftime("%Y%m%d")
-except ImportError:
-    _log_day_stamp = datetime.now().strftime("%Y%m%d")
-_log_path = f"logs/trade_agent_{_log_day_stamp}.log"
+_log_pattern = "logs/trade_agent_{}.log"
 try:
     os.makedirs("logs", exist_ok=True)
-    file_handler = logging.FileHandler(_log_path, encoding="utf-8")
+    file_handler = DailyRotatingFileHandler(_log_pattern, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter(
@@ -62,4 +105,4 @@ try:
     )
     logger.addHandler(file_handler)
 except OSError as exc:
-    logger.warning("File logging disabled (%s): %s", _log_path, exc)
+    logger.warning("File logging disabled (%s): %s", _log_pattern, exc)

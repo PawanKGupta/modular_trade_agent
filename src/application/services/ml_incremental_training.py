@@ -114,7 +114,7 @@ def subset_for_incremental_training(
             "incremental_requested": incremental,
             "note": (
                 "Active model watermark is on/after train_through; using full CSV window "
-                '(uncheck incremental or add rows with dates after the watermark).'
+                "(uncheck incremental or add rows with dates after the watermark)."
             ),
         }
 
@@ -132,9 +132,16 @@ def subset_for_incremental_training(
             'or omit incremental training ("full refresh").'
         )
     if news == 0:
+        # The CSV has no rows newer than the active model's watermark.  Refusing here is
+        # deliberate: silently full-retraining would move the watermark backward and could
+        # replace a more-current model with one trained on older data.  Make the user choose
+        # a full retrain explicitly (uncheck Incremental Training) instead.
         raise IncrementalTrainingDataError(
-            f"No samples after {prior_through_inclusive.isoformat()} through {train_through}. "
-            "Export or refresh CSV with newer rows."
+            f"No new rows since {prior_through_inclusive.isoformat()} "
+            f"(CSV ends on/before {pd.Timestamp(row_dates.max()).date().isoformat()}). "
+            "The active model was already trained through that date. "
+            'Uncheck "Incremental Training" to do a full retrain on this dataset, '
+            "or supply a CSV with rows dated after the watermark."
         )
 
     combo_mask = prior_mask | new_mask

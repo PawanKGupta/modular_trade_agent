@@ -80,6 +80,16 @@ class MLModelRepository:
         stmt = stmt.order_by(MLModel.created_at.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def delete(self, model_id: int) -> None:
+        """Delete a model by ID. Raises ValueError if model is active."""
+        model = self.get(model_id)
+        if not model:
+            raise ValueError(f"Model {model_id} not found")
+        if model.is_active:
+            raise ValueError("Cannot delete an active model. Activate another model first.")
+        self.db.delete(model)
+        self.db.commit()
+
     def set_active(self, model_id: int, deactivate_others: bool = True) -> MLModel:
         """Set a model as active (optionally deactivate others of same type)"""
         model = self.get(model_id)

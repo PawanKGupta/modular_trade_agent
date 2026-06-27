@@ -26,6 +26,7 @@ def create_default_user_config(user_id: int) -> UserTradingConfig:
         rsi_near_oversold=strategy_config.rsi_near_oversold,
         # Capital & Position Management
         user_capital=strategy_config.user_capital,
+        max_order_value=strategy_config.max_order_value,
         max_portfolio_size=6,  # From modules/kotak_neo_auto_trader/config.py
         max_position_volume_ratio=strategy_config.max_position_volume_ratio,
         min_absolute_avg_volume=strategy_config.min_absolute_avg_volume,
@@ -98,6 +99,7 @@ def db_config_to_strategy_config(db_config: UserTradingConfig) -> StrategyConfig
         user_capital=db_config.user_capital,
         max_portfolio_size=db_config.max_portfolio_size,
         max_position_volume_ratio=db_config.max_position_volume_ratio,
+        max_order_value=getattr(db_config, "max_order_value", 500000.0),
         # Chart Quality Configuration
         chart_quality_enabled=db_config.chart_quality_enabled,
         chart_quality_min_score=db_config.chart_quality_min_score,

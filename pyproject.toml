@@ -14,7 +14,6 @@ extend-exclude = [
 	# Legacy ML modules exceed PL/complexity rules; refactor tracked separately.
 	"services/analysis_service.py",
 	"services/ml_verdict_service.py",
-	"services/ml_training_service.py",
 	"services/ml_retraining_service.py",
 ]
 
@@ -52,6 +51,9 @@ ignore = ["S101"] # allow assert in tests
 "services/pipeline_steps.py" = ["E501"]
 # Large verdict module; refactor tracked separately (line length / complexity).
 "services/verdict_service.py" = ["E501", "PLR0912", "PLR0913", "PLR0915"]
+# Legacy sklearn trainer: 3 large train_* methods; only function-size rules suppressed
+# (now linted for F/E/S/B and other PL rules). Splitting risks trading-model behavior.
+"services/ml_training_service.py" = ["PLR0912", "PLR0913", "PLR0915"]
 # Admin training orchestrator; large try/except job runner.
 "src/application/services/ml_training_service.py" = ["PLR0915"]
 # Large deduplication+expiry loop; pre-existing complexity, refactor tracked separately.

@@ -25,9 +25,9 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						id="user_capital"
 						type="number"
 						step="1000"
-						min="0"
+						min="1"
 						value={config.user_capital}
-						onChange={(e) => onChange({ user_capital: parseFloat(e.target.value) || 200000 })}
+						onChange={(e) => onChange({ user_capital: parseFloat(e.target.value) || defaultConfig.user_capital })}
 						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
@@ -48,9 +48,9 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 						id="paper_trading_initial_capital"
 						type="number"
 						step="10000"
-						min="0"
-						value={config.paper_trading_initial_capital ?? 300000}
-						onChange={(e) => onChange({ paper_trading_initial_capital: parseFloat(e.target.value) || 300000 })}
+						min="1"
+						value={config.paper_trading_initial_capital ?? (defaultConfig.paper_trading_initial_capital ?? 300000)}
+						onChange={(e) => onChange({ paper_trading_initial_capital: parseFloat(e.target.value) || (defaultConfig.paper_trading_initial_capital ?? 300000) })}
 						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
 					/>
 					<div className="text-xs text-[var(--muted)] mt-1">
@@ -93,6 +93,32 @@ export function CapitalConfigSection({ config, defaultConfig, onChange }: Capita
 							)}
 						</div>
 					)}
+				</div>
+				<div>
+					<label htmlFor="max_order_value" className="block text-xs sm:text-sm mb-1">
+						Maximum Order Value (Rs )
+						{!isDefault('max_order_value') && <span className="text-yellow-400 ml-1">*</span>}
+					</label>
+					<input
+						id="max_order_value"
+						type="number"
+						step="50000"
+						min="1"
+						value={config.max_order_value}
+						onChange={(e) => onChange({ max_order_value: parseFloat(e.target.value) || defaultConfig.max_order_value })}
+						className="w-full px-3 py-2 sm:p-2 rounded bg-[#0f1720] border border-[#1e293b] text-sm min-h-[44px] sm:min-h-0"
+					/>
+					<div className="text-xs text-[var(--muted)] mt-1">
+						Default: Rs {defaultConfig.max_order_value.toLocaleString('en-IN')}
+					</div>
+					{config.max_order_value !== defaultConfig.max_order_value && (
+						<div className={`text-xs mt-1 ${config.max_order_value - defaultConfig.max_order_value > 0 ? 'text-green-400' : 'text-red-400'}`}>
+							{config.max_order_value - defaultConfig.max_order_value > 0 ? '+' : ''}Rs {Math.abs(config.max_order_value - defaultConfig.max_order_value).toLocaleString('en-IN')} from default
+						</div>
+					)}
+					<div className="text-xs text-blue-400 mt-1">
+						💡 Maximum allowed order value per individual stock order
+					</div>
 				</div>
 			</div>
 

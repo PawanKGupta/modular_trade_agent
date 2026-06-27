@@ -170,6 +170,22 @@ def activate_model(
     )
 
 
+@router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_model(
+    model_id: int,
+    admin=Depends(require_admin),
+    service: MLTrainingService = Depends(get_ml_training_service),
+):
+    """Delete an inactive model from the registry."""
+    _ = admin
+    try:
+        service.model_repo.delete(model_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+
 @router.post(
     "/models/register",
     response_model=RegisterModelResponse,

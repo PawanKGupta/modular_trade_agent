@@ -856,6 +856,7 @@ class UserTradingConfig(Base):
     rsi_near_oversold: Mapped[float] = mapped_column(Float, default=40.0, nullable=False)
     # Capital & Position Management
     user_capital: Mapped[float] = mapped_column(Float, default=100000.0, nullable=False)
+    max_order_value: Mapped[float] = mapped_column(Float, default=500000.0, nullable=False)
     paper_trading_initial_capital: Mapped[float] = mapped_column(
         Float, default=1000000.0, nullable=False
     )  # Paper trading starting balance (default: Rs 10 Lakh)

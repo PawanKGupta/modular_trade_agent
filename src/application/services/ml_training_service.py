@@ -13,6 +13,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from services.ml_training_metadata import (
+    PRICE_TARGET_LABEL_COLUMN,
     bulk_analysis_training_path_error,
     validate_training_csv_for_model_type,
 )
@@ -108,7 +109,9 @@ class MLTrainingService:
             self.validate_training_csv_for_ml(csv_path)
 
             raw_frame = pd.read_csv(csv_path)
-            target_column = str(config.hyperparameters.get("target_column", "actual_pnl_pct"))
+            target_column = str(
+                config.hyperparameters.get("target_column", PRICE_TARGET_LABEL_COLUMN)
+            )
             validate_training_csv_for_model_type(
                 raw_frame,
                 config.model_type,
@@ -168,7 +171,9 @@ class MLTrainingService:
                     raise ValueError(
                         f"'{config.algorithm}' unsupported for price_regressor training jobs"
                     )
-                target_column = str(config.hyperparameters.get("target_column", "actual_pnl_pct"))
+                target_column = str(
+                    config.hyperparameters.get("target_column", PRICE_TARGET_LABEL_COLUMN)
+                )
                 model_disk_path, r_squared = trainer.train_price_regressor(
                     df=train_frame,
                     target_column=target_column,
@@ -189,6 +194,9 @@ class MLTrainingService:
             verdict_manifest_path = resolved_pickled.with_name(
                 f"{resolved_pickled.stem}.verdict_features.json"
             )
+            price_manifest_path = resolved_pickled.with_name(
+                f"{resolved_pickled.stem}.price_features.json"
+            )
 
             manifest = {
                 "model_type": config.model_type,
@@ -207,6 +215,9 @@ class MLTrainingService:
                         verdict_manifest_path.as_posix()
                         if verdict_manifest_path.is_file()
                         else None
+                    ),
+                    "price_features_manifest": (
+                        price_manifest_path.as_posix() if price_manifest_path.is_file() else None
                     ),
                 },
                 "notes": config.notes,
@@ -285,6 +296,17 @@ class MLTrainingService:
     # Maps model_type → canonical pkl stem under self.artifact_dir.parent
     _CANONICAL_STEM: dict[str, str] = {
         "verdict_classifier": "verdict_model_random_forest",
+        "price_regressor": "price_model_random_forest",
+    }
+
+    # Companion sidecars copied alongside the canonical pkl, keyed by model_type.
+    # Each tuple is (source_suffix, dest_suffix) relative to the model stem.
+    _CANONICAL_SIDECARS: dict[str, tuple[tuple[str, str], ...]] = {
+        "verdict_classifier": (
+            ("_features.txt", "_features.txt"),
+            (".verdict_features.json", ".verdict_features.json"),
+        ),
+        "price_regressor": ((".price_features.json", ".price_features.json"),),
     }
 
     def deploy_to_canonical(self, model_id: int) -> Path:
@@ -321,11 +343,8 @@ class MLTrainingService:
         shutil.copy2(src_pkl, dst_pkl)
         logger.info("Deployed %s → %s", src_pkl.name, dst_pkl)
 
-        # Copy companion sidecars when present (features txt + verdict manifest)
-        for src_suffix, dst_suffix in (
-            ("_features.txt", "_features.txt"),
-            (".verdict_features.json", ".verdict_features.json"),
-        ):
+        # Copy companion sidecars (feature manifests / column lists) for this model type.
+        for src_suffix, dst_suffix in self._CANONICAL_SIDECARS.get(model.model_type, ()):
             src_side = src_pkl.with_name(src_pkl.stem + src_suffix)
             dst_side = canonical_dir / f"{stem}{dst_suffix}"
             if src_side.is_file():

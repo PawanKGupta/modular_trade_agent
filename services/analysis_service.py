@@ -187,9 +187,16 @@ class AnalysisService:
         except (TypeError, ValueError):
             ema200_f = current_price
 
+        ema9_raw = last.get("ema9")
+        try:
+            ema9_f = float(ema9_raw) if ema9_raw is not None and not pd.isna(ema9_raw) else None
+        except (TypeError, ValueError):
+            ema9_f = None
+
         indicators_ml: dict[str, Any] = {
             "rsi": float(rsi_value) if rsi_value is not None else 50.0,
             "ema200": ema200_f,
+            "ema9": ema9_f,
         }
 
         rule_target = out.get("target")

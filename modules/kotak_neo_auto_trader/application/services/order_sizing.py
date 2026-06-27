@@ -3,9 +3,13 @@ Order Sizing Service
 Calculate order quantity based on capital and price
 """
 
+import logging
 from dataclasses import dataclass
-from decimal import Decimal
+
 from ...domain import Money
+from ...utils.order_sizing_helper import apply_max_order_value_cap
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,11 +63,14 @@ class OrderSizingService:
 
         quantity = min(quantity, self.config.max_quantity)
 
-        # Check if order value exceeds max
-        order_value = price * quantity
-        if order_value > self.config.max_order_value:
-            # Recalculate based on max order value
-            quantity = int(self.config.max_order_value.amount / price.amount)
+        # Apply max order value cap using shared helper
+        quantity = apply_max_order_value_cap(
+            qty=quantity,
+            price=price.amount,
+            min_qty=self.config.min_quantity,
+            symbol=symbol,
+            max_order_val=self.config.max_order_value.amount,
+        )
 
         return max(quantity, 0)
 

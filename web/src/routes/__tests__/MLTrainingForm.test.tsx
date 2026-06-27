@@ -71,7 +71,7 @@ describe('MLTrainingForm', () => {
 		fireEvent.submit(screen.getByRole('form', { name: /ML Training Form/i }));
 		expect(onSubmit.mock.calls[0][0]).toMatchObject({
 			model_type: 'price_regressor',
-			training_data_path: 'data/ml_training_data_price.csv',
+			training_data_path: 'data/training/verdict_classifier.csv',
 		});
 	});
 
@@ -100,7 +100,7 @@ describe('MLTrainingForm', () => {
 		expect(onSubmit.mock.calls[0][0]).toMatchObject({
 			notes: 'nightly run',
 			training_run_end_date: '2025-06-01',
-			incremental_training: false,
+			incremental_training: true,
 		});
 	});
 

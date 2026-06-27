@@ -1,4 +1,38 @@
+import os
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def is_production_env() -> bool:
+    """
+    True unless ENV or APP_ENV is explicitly set to a known development/local/testing environment.
+    This implements a default-deny security model where unset or unknown environments
+    default to production constraints.
+    """
+    env_val = os.getenv("ENV")
+    app_env_val = os.getenv("APP_ENV")
+
+    # Normalize env values
+    envs = []
+    if env_val is not None:
+        envs.append(env_val.strip().lower())
+    if app_env_val is not None:
+        envs.append(app_env_val.strip().lower())
+
+    if not envs:
+        # Both unset -> treat as production (default-deny)
+        return True
+
+    allowed_dev_envs = {"development", "dev", "local", "test", "testing"}
+
+    # If any set environment variable is not explicitly in the allowed dev environments,
+    # treat the environment as production.
+    for env in envs:
+        if env not in allowed_dev_envs:
+            return True
+
+    return False
 
 
 class Settings(BaseSettings):
@@ -44,7 +78,8 @@ class Settings(BaseSettings):
 
     # Cookie-based auth (httpOnly); Bearer still supported for transition
     auth_use_cookies: bool = True
-    auth_cookie_secure: bool = False  # set True in production behind HTTPS
+    # secure in prod, overridable in dev
+    auth_cookie_secure: bool = Field(default_factory=is_production_env)
     auth_cookie_samesite: str = "lax"  # lax for dev; strict in prod HTTPS
 
     # MFA

@@ -439,19 +439,17 @@ class TestMLPriceService:
 
         features = service._extract_target_features(
             current_price=2520.0,
-            indicators={"rsi": 35, "ema200": 2400},
-            timeframe_confirmation={"alignment_score": 7},
+            indicators={"rsi": 35, "ema9": 2480},
             df=df,
         )
 
-        assert "current_price" in features
-        assert features["current_price"] == 2520.0
+        # New curated contract (forward-looking magnitude model).
         assert "rsi_10" in features
-        assert "ema200" in features
-        assert "recent_high" in features
-        assert "recent_low" in features
-        assert "volatility" in features
-        assert "momentum" in features
+        assert features["rsi_10"] == 35.0
+        assert "ema9_distance_pct" in features
+        assert "atr_pct_14" in features
+        assert "dist_from_high_252d_pct" in features
+        assert "volume_ratio" in features
 
     def test_extract_stop_loss_features(self):
         """Test stop loss feature extraction"""

@@ -5,6 +5,7 @@ import {
 	getAccessToken,
 	getRefreshToken,
 	requestTokenRefresh,
+	setAuthFailureCallback,
 } from '@/api/client';
 
 /** Treat missing email_verified as verified (legacy API / cached sessions). */
@@ -85,3 +86,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 		set({ user: null, isAuthenticated: false, isAdmin: false, hasHydrated: true });
 	},
 }));
+
+setAuthFailureCallback(() => {
+	useSessionStore.setState({ user: null, isAuthenticated: false, isAdmin: false });
+});

@@ -100,6 +100,14 @@ class DummyModelRepo:
         self.list_called.append({"model_type": model_type, "is_active": is_active})
         return list(self.models_by_id.values())
 
+    def delete(self, model_id):
+        model = self.models_by_id.get(model_id)
+        if not model:
+            raise ValueError(f"Model {model_id} not found")
+        if model.is_active:
+            raise ValueError("Cannot delete an active model. Activate another model first.")
+        del self.models_by_id[model_id]
+
     def set_active(self, model_id):
         model = self.models_by_id.get(model_id)
         if model:
@@ -699,3 +707,33 @@ def test_get_ml_training_service(monkeypatch):
 
     assert result == mock_service_instance
     mock_service_class.assert_called_once_with(mock_db)
+
+
+# DELETE /admin/ml/models/{model_id} tests
+def test_delete_model_success(ml_service, admin_user):
+    model = DummyMLModel(id=5, model_type="verdict_classifier", version="v1.0", is_active=False)
+    ml_service.model_repo.models_by_id[5] = model
+
+    ml.delete_model(model_id=5, admin=admin_user, service=ml_service)
+
+    assert 5 not in ml_service.model_repo.models_by_id
+
+
+def test_delete_model_not_found(ml_service, admin_user):
+    with pytest.raises(HTTPException) as exc:
+        ml.delete_model(model_id=999, admin=admin_user, service=ml_service)
+
+    assert exc.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "not found" in exc.value.detail.lower()
+
+
+def test_delete_model_active_raises_422(ml_service, admin_user):
+    model = DummyMLModel(id=7, model_type="price_regressor", version="v3.0", is_active=True)
+    ml_service.model_repo.models_by_id[7] = model
+
+    with pytest.raises(HTTPException) as exc:
+        ml.delete_model(model_id=7, admin=admin_user, service=ml_service)
+
+    assert exc.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "active" in exc.value.detail.lower()
+    assert 7 in ml_service.model_repo.models_by_id

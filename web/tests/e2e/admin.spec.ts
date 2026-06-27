@@ -117,6 +117,13 @@ test.describe('Admin Features', () => {
 		// Wait a bit for content to load
 		await authenticatedPage.waitForTimeout(500);
 
+		// Expand the Recent Training Jobs section
+		const showButton = authenticatedPage.getByRole('button', { name: /Show/i });
+		if (await showButton.isVisible().catch(() => false)) {
+			await showButton.click();
+			await authenticatedPage.waitForTimeout(300);
+		}
+
 		// Verify either training jobs table or empty state is displayed
 		const jobsTable = authenticatedPage.locator('table');
 		const emptyState = authenticatedPage.getByText(/No training jobs/i);
