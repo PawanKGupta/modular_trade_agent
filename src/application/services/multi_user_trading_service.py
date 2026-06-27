@@ -583,6 +583,15 @@ class MultiUserTradingService:
 
                     # Only run on trading days (Monday-Friday)
                     if now.weekday() >= 5:  # Weekend  # noqa: PLR2004
+                        # Keep the liveness heartbeat fresh on weekends. No trading tasks run,
+                        # but the scheduler thread is alive — without this the heartbeat would
+                        # freeze for the whole weekend and monitoring would flag the (healthy)
+                        # service as stale. Best-effort, mirroring the initial-heartbeat path.
+                        try:
+                            ServiceStatusRepository(thread_db).update_heartbeat(user_id)
+                            thread_db.commit()
+                        except Exception:
+                            thread_db.rollback()
                         # Check service.running flag more frequently during long sleep
                         # This allows faster shutdown when stop_service() is called
                         for _ in range(60):  # Check 60 times in 60 seconds
@@ -965,10 +974,9 @@ class MultiUserTradingService:
                 except Exception:
                     pass  # Logger might fail, but status is updated
                 break
-            except OperationalError as op_err:
+            except OperationalError:
                 thread_db.rollback()
                 thread_db.expire_all()
-                is_locked_error = "database is locked" in str(op_err).lower()
 
                 if retry_attempt < max_exit_retries - 1:
                     time.sleep(exit_retry_delays[retry_attempt])
