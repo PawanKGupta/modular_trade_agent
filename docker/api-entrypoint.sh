@@ -12,16 +12,33 @@ if [ -z "$(ls -A /app/models 2>/dev/null)" ] && [ -d /app/models_default ]; then
   echo "ML models seeded."
 fi
 
-# Seed the ML training dataset into the trading_data volume (copy-if-missing). Unlike
-# /app/models this volume also holds the runtime DB, so we never gate on emptiness — we
-# only copy a dataset file when it is absent. Failures here must not block API startup.
+# Seed the ML training dataset into the trading_data volume. Unlike /app/models this volume
+# also holds the runtime DB, so we never gate on emptiness. We copy a dataset when it is
+# absent, AND refresh it when the image-baked copy has changed (e.g. a new schema or extra
+# label columns after an upgrade) so training never runs on a stale volume copy — the cause
+# of "price regressor requires target column 'max_favorable_pct_20d'" after upgrades. The
+# previous volume copy is backed up before a refresh. Failures must not block API startup.
+_dataset_differs() {
+  # True (0) when the two files differ or cannot be compared. Prefer cmp; fall back to
+  # byte size via wc (both safe on the slim base image) when cmp is unavailable.
+  if command -v cmp >/dev/null 2>&1; then
+    ! cmp -s "$1" "$2"
+  else
+    [ "$(wc -c < "$1" 2>/dev/null)" != "$(wc -c < "$2" 2>/dev/null)" ]
+  fi
+}
 if [ -d /app/data_default/training ]; then
+  mkdir -p /app/data/training
   for f in /app/data_default/training/*.csv; do
     [ -e "$f" ] || continue
     dest="/app/data/training/$(basename "$f")"
     if [ ! -f "$dest" ]; then
-      mkdir -p /app/data/training
       cp "$f" "$dest" && echo "Seeded ML training dataset: $dest" || echo "WARN: could not seed $dest"
+    elif _dataset_differs "$f" "$dest"; then
+      cp "$dest" "$dest.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+      cp "$f" "$dest" \
+        && echo "Refreshed ML training dataset from image default (previous copy backed up): $dest" \
+        || echo "WARN: could not refresh $dest"
     fi
   done
 fi

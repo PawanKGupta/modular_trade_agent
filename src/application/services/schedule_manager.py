@@ -182,14 +182,16 @@ class ScheduleManager:
 
         # Business hours validation for non-continuous, non-hourly tasks
         if not is_continuous and not is_hourly:
-            # Analysis service: allow off-trading hours (4PM-9AM, i.e., >= 16:00 or <= 09:00)
-            if task_name == "analysis":
+            # Off-market tasks: allowed outside 09:00-16:00 (before open or after close).
+            # analysis, buy_margin_preview, and eod_cleanup run around/after the trading day.
+            if task_name in ("analysis", "buy_margin_preview", "eod_cleanup"):
                 if time(9, 0) < schedule_time < time(16, 0):
                     return (
                         False,
-                        "Analysis service must be scheduled during off-trading hours (4:00 PM - 9:00 AM)",
+                        f"'{task_name}' must be scheduled during off-trading hours "
+                        "(before 9:00 AM or after 4:00 PM)",
                     )
-            # Other tasks: 9:00 AM - 6:00 PM
+            # On-market tasks: 9:00 AM - 6:00 PM
             elif schedule_time < time(9, 0) or schedule_time > time(18, 0):
                 return False, "Schedule time must be between 9:00 AM and 6:00 PM"
 

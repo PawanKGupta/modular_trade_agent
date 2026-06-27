@@ -298,6 +298,35 @@ def test_validate_schedule_buy_margin_preview_valid(db_session, schedule_manager
     assert message == ""
 
 
+def test_validate_schedule_off_market_tasks_allow_evening_reject_midday(
+    db_session, schedule_manager
+):
+    """analysis, buy_margin_preview, eod_cleanup are off-market: evening allowed, mid-day rejected."""
+    for task in ("analysis", "buy_margin_preview", "eod_cleanup"):
+        # After 16:00 (e.g. 20:00) is allowed for off-market tasks — previously buy_margin_preview
+        # and eod_cleanup were wrongly capped at 18:00 (on-market rule), causing 400s.
+        ok, msg = schedule_manager.validate_schedule(
+            task_name=task, schedule_time=time(20, 0), schedule_type="daily"
+        )
+        assert ok, f"{task} 20:00 should be valid (off-market): {msg}"
+
+        # Mid-day (inside the 09:00-16:00 band) is rejected for off-market tasks.
+        ok, msg = schedule_manager.validate_schedule(
+            task_name=task, schedule_time=time(12, 0), schedule_type="daily"
+        )
+        assert not ok
+        assert "off-trading hours" in msg.lower()
+
+
+def test_validate_schedule_on_market_task_still_capped_at_18(db_session, schedule_manager):
+    """On-market tasks (e.g. buy_orders) must stay within 09:00-18:00 (regression guard)."""
+    ok, msg = schedule_manager.validate_schedule(
+        task_name="buy_orders", schedule_time=time(20, 0), schedule_type="daily"
+    )
+    assert not ok
+    assert "between 9:00 AM and 6:00 PM" in msg
+
+
 def test_validate_schedule_premarket_amo_adjustment_valid(db_session, schedule_manager):
     """9:05 pre-market adjustment is a valid schedulable task."""
     is_valid, message = schedule_manager.validate_schedule(
