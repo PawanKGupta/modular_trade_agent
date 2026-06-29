@@ -35,6 +35,20 @@ class TestRoundSellPrice:
             round_sell_price(100.1, exchange="NSE", symbol="FOO-EQ", scrip_master=scrip) == 100.25
         )
 
+    def test_uses_scrip_master_tick_with_trailing_space_header(self):
+        """Test that round_sell_price correctly resolves the tick size with trailing spaces in headers"""
+        from modules.kotak_neo_auto_trader.scrip_master import KotakNeoScripMaster
+
+        scrip = KotakNeoScripMaster(cache_dir=".", auth_client=None)
+
+        raw_instruments = [{"symbol": "HINDALCO-EQ", "token": "123", "dTickSize ": "10.0"}]
+        scrip._build_symbol_map("NSE", raw_instruments)
+
+        assert (
+            round_sell_price(987.93, exchange="NSE", symbol="HINDALCO-EQ", scrip_master=scrip)
+            == 988.00
+        )
+
     def test_nse_5000_band_rounds_high_priced_ema9(self):
         """Regression: LINDEINDIA-style targets must not stay at 7140.9 on a 0.10-only tick."""
         assert round_sell_price(7140.9, exchange="NSE") == 7141.0
@@ -48,7 +62,10 @@ class TestRoundSellPrice:
         )
         assert tick == 0.50
         assert source == "scrip_master+band_floor"
-        assert round_sell_price(7140.9, exchange="NSE", symbol="LINDEINDIA-EQ", scrip_master=scrip) == 7141.0
+        assert (
+            round_sell_price(7140.9, exchange="NSE", symbol="LINDEINDIA-EQ", scrip_master=scrip)
+            == 7141.0
+        )
 
     def test_is_price_on_tick_grid_detects_invalid_high_price_paise(self):
         assert is_price_on_tick_grid(7140.9, 0.10) is True

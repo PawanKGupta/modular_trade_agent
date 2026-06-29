@@ -21,6 +21,7 @@ from .sell_target_service import (
     parse_circuit_limits_from_quote_payload,
     parse_circuit_limits_from_rejection,
     prepare_broker_sell_limit_price,
+    round_buy_price,
     round_sell_price,
     round_sell_price_down,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "parse_circuit_limits_from_quote_payload",
     "parse_circuit_limits_from_rejection",
     "prepare_broker_sell_limit_price",
+    "round_buy_price",
     "round_sell_price",
     "round_sell_price_down",
 ]

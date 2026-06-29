@@ -6,15 +6,14 @@ Tests the fix where background download is skipped when auth_client is not avail
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 # Add project root to path
+from tests.ist_clock import ist_now_naive
 
-from tests.ist_clock import IST, ist_now, ist_now_naive
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -173,3 +172,24 @@ class TestScripMasterAuthBehavior:
 
         # Should resolve correctly
         assert trading_symbol is not None
+
+    def test_scrip_master_tick_size_trailing_space(self, tmp_cache_dir):
+        """Test that tick size key with a trailing space is parsed correctly"""
+        scrip_master = KotakNeoScripMaster(cache_dir=str(tmp_cache_dir), auth_client=None)
+
+        # Mock cache data with trailing space in dTickSize key
+        mock_instruments = [
+            {
+                "symbol": "HINDALCO-EQ",
+                "token": "123",
+                "dTickSize ": "10.0",
+            },  # 10 paise = 0.10 rupees
+            {"symbol": "RELIANCE-EQ", "token": "456", "dTickSize": "5.0"},  # 5 paise = 0.05 rupees
+        ]
+
+        scrip_master.scrip_data["NSE"] = mock_instruments
+        scrip_master._build_symbol_map("NSE", mock_instruments)
+
+        # Check that tick sizes are resolved correctly
+        assert scrip_master.get_tick_size("HINDALCO-EQ", "NSE") == 0.10
+        assert scrip_master.get_tick_size("RELIANCE-EQ", "NSE") == 0.05
