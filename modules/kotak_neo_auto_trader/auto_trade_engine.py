@@ -2847,7 +2847,15 @@ class AutoTradeEngine:
             )
             return (False, None)
 
-        limit_price = round(float(close), 2)
+        # Apply the same tick size rounding logic to limit buy orders
+        from modules.kotak_neo_auto_trader.services import round_buy_price
+
+        limit_price = round_buy_price(
+            float(close),
+            exchange=config.DEFAULT_EXCHANGE,
+            symbol=place_symbol,
+            scrip_master=self.scrip_master,
+        )
         if use_limit_pre_open:
             trial = self.orders.place_limit_buy(
                 symbol=place_symbol,

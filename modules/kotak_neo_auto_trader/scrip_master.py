@@ -6,11 +6,10 @@ Downloads and manages the scrip master file containing instrument tokens,
 symbols, and other metadata required for accurate order placement and quotes.
 """
 
+import csv
 import json
 import sys
-import csv
 from io import StringIO
-from datetime import datetime
 from pathlib import Path
 
 import requests
@@ -192,7 +191,15 @@ class KotakNeoScripMaster:
                 delimiter = ","
 
             reader = csv.DictReader(StringIO(text), delimiter=delimiter)
-            instruments = [{k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()} for row in reader]
+            instruments = [
+                {
+                    (k.strip() if isinstance(k, str) else k): (
+                        v.strip() if isinstance(v, str) else v
+                    )
+                    for k, v in row.items()
+                }
+                for row in reader
+            ]
 
             if not instruments:
                 logger.error(f"No instruments parsed from scrip master for {exchange}")
@@ -208,7 +215,9 @@ class KotakNeoScripMaster:
             logger.error(f"Error parsing scrip master for {exchange}: {e}")
             return None
 
-    def _resolve_csv_url_for_exchange(self, exchange: str, payload: dict | list | None) -> str | None:
+    def _resolve_csv_url_for_exchange(
+        self, exchange: str, payload: dict | list | None
+    ) -> str | None:
         """Resolve exchange-specific CSV URL from /masterscrip/file-paths response."""
         seg = self.EXCHANGE_SEGMENT_MAP.get(str(exchange).upper())
         if not seg:
@@ -403,7 +412,9 @@ class KotakNeoScripMaster:
 
     def _build_symbol_map(self, exchange: str, instruments: list[dict]):
         """Build quick lookup map for symbols"""
-        for instrument in instruments:
+        for raw in instruments:
+            # Normalize keys to strip any leading/trailing spaces defensively (e.g. "dTickSize ")
+            instrument = {(k.strip() if isinstance(k, str) else k): v for k, v in raw.items()}
             # Extract relevant fields - pTrdSymbol is the trading symbol (e.g. GLENMARK-EQ)
             # pSymbol is numeric ID in Kotak's new format
             trading_symbol = (

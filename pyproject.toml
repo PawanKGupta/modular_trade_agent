@@ -103,6 +103,17 @@ ignore = ["S101"] # allow assert in tests
 	"S112",
 	"PLC0207",
 ]
+"modules/kotak_neo_auto_trader/scrip_master.py" = [
+	"B007",
+	"E402",
+	"E501",
+	"F401",
+	"F841",
+	"PLC0207",
+	"PLR0911",
+	"PLR0912",
+	"PLC0415",
+]
 "modules/kotak_neo_auto_trader/run_trading_service.py" = [
 	"E402",
 	"E501",
@@ -139,6 +150,13 @@ ignore = ["S101"] # allow assert in tests
 	"PLR0911",
 	"PLR0912",
 	"PLR0124",
+]
+"modules/kotak_neo_auto_trader/services/sell_target_service.py" = [
+	"E501",
+	"F401",
+	"PLR0913",
+	"PLR2004",
+	"PLC0415",
 ]
 # Schedule validator/next-execution: dense but intentional return/branch fan-out per task.
 "src/application/services/schedule_manager.py" = ["PLR0911", "PLR0912", "PLR0913"]

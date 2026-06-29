@@ -297,6 +297,10 @@ def round_sell_price(
     return rounded
 
 
+# Alias for semantic clarity when placing buy limit orders
+round_buy_price = round_sell_price
+
+
 def round_sell_price_down(
     price: float,
     *,
@@ -338,9 +342,7 @@ def _cap_sell_price_to_upper_circuit_legacy(
 ) -> float:
     """Legacy cap-to-upper helper (superseded by defer-only ``prepare_broker_sell_limit_price``)."""
     if price <= upper_circuit:
-        return round_sell_price(
-            price, exchange=exchange, symbol=symbol, scrip_master=scrip_master
-        )
+        return round_sell_price(price, exchange=exchange, symbol=symbol, scrip_master=scrip_master)
     return round_sell_price_down(
         upper_circuit, exchange=exchange, symbol=symbol, scrip_master=scrip_master
     )
@@ -454,6 +456,7 @@ def compute_sell_target(
         get_indicator_service,
         get_price_service,
     )
+
     ps = price_service or get_price_service(
         live_price_manager=live_price_manager, enable_caching=True
     )
@@ -474,7 +477,9 @@ def compute_sell_target(
     if not tick_symbol:
         base = ticker.replace(".NS", "").replace(".BO", "")
         tick_symbol = f"{base}-EQ" if base else None
-    rounded = round_sell_price(ema9, exchange=exchange, symbol=tick_symbol, scrip_master=scrip_master)
+    rounded = round_sell_price(
+        ema9, exchange=exchange, symbol=tick_symbol, scrip_master=scrip_master
+    )
     if rounded != ema9:
         logger.debug(
             f"Sell target rounded {tick_symbol or ticker}: Rs {ema9:.4f} -> Rs {rounded:.2f} (tick)"

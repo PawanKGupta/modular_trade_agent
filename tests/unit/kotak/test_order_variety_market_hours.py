@@ -212,3 +212,65 @@ class TestOrderVarietyMarketHours:
                 if engine.orders.place_market_buy.called:
                     call_args = engine.orders.place_market_buy.call_args
                     assert call_args[1]["variety"] == "AMO"
+
+    @patch("core.volume_analysis.is_pre_open_session", return_value=True)
+    @patch("core.volume_analysis.is_market_hours", return_value=True)
+    def test_attempt_place_order_limit_buy_tick_rounding(self, _mock_mh, _mock_pre):
+        """Test that limit buy price is rounded to the tick size correctly in _attempt_place_order."""
+        from modules.kotak_neo_auto_trader.auto_trade_engine import AutoTradeEngine
+
+        with patch.object(AutoTradeEngine, "__init__", lambda self: None):
+            engine = AutoTradeEngine()
+            engine.orders = Mock()
+            engine.orders.place_limit_buy = Mock(return_value={"stat": "ok", "nOrdNo": "12345"})
+            engine.orders_repo = Mock()
+            engine.telegram_notifier = None
+            engine.db = None
+            engine.user_id = 1
+            engine.portfolio = Mock()
+            engine.strategy_config = Mock()
+            engine.strategy_config.default_variety = "AMO"
+
+            # 1. Test fallback rounding (price = 987.93, which is < 1000 so fallback tick size is 0.05)
+            engine.scrip_master = None
+            with (
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"),
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"),
+                patch(
+                    "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+                    return_value="12345",
+                ),
+            ):
+                success, order_id = engine._attempt_place_order(
+                    broker_symbol="HINDALCO-EQ",
+                    ticker="HINDALCO.NS",
+                    qty=10,
+                    close=987.93,
+                    ind={},
+                )
+                assert success is True
+                # 987.93 rounded to 0.05 is 987.95
+                assert engine.orders.place_limit_buy.call_args[1]["price"] == 987.95
+
+            # 2. Test with scrip master tick size (HINDALCO-EQ has 0.10 tick size)
+            mock_scrip = Mock()
+            mock_scrip.get_tick_size.return_value = 0.10
+            engine.scrip_master = mock_scrip
+            with (
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_tracked_symbol"),
+                patch("modules.kotak_neo_auto_trader.auto_trade_engine.add_pending_order"),
+                patch(
+                    "modules.kotak_neo_auto_trader.auto_trade_engine.extract_order_id",
+                    return_value="12345",
+                ),
+            ):
+                success, order_id = engine._attempt_place_order(
+                    broker_symbol="HINDALCO-EQ",
+                    ticker="HINDALCO.NS",
+                    qty=10,
+                    close=987.93,
+                    ind={},
+                )
+                assert success is True
+                # 987.93 rounded up to 0.10 is 988.00
+                assert engine.orders.place_limit_buy.call_args[1]["price"] == 988.00
