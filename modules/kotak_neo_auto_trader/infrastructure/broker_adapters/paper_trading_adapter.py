@@ -438,9 +438,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
                         reentries_array = []
                         if existing_pos.reentries:
                             if isinstance(existing_pos.reentries, dict):
-                                reentries_array = list(
-                                    existing_pos.reentries.get("reentries", [])
-                                )
+                                reentries_array = list(existing_pos.reentries.get("reentries", []))
                             elif isinstance(existing_pos.reentries, list):
                                 reentries_array = list(existing_pos.reentries)
 
@@ -1043,7 +1041,11 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
 
         # Execute order
         if predetermined_execution_price is not None:
-            success, message, execution_price = True, "Predetermined fill", predetermined_execution_price
+            success, message, execution_price = (
+                True,
+                "Predetermined fill",
+                predetermined_execution_price,
+            )
         else:
             success, message, execution_price = self.order_simulator.execute_order(order)
 
@@ -1284,8 +1286,8 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
         summary["checked"] = len(pending_orders)
 
         for order in pending_orders:
-            # Check limit orders (including AMO orders)
-            if order.order_type != OrderType.LIMIT:
+            # Check limit and market orders (including AMO/re-entry orders)
+            if order.order_type not in (OrderType.LIMIT, OrderType.MARKET):
                 continue
 
             # For AMO orders, check if it's time to execute
@@ -1363,9 +1365,7 @@ class PaperTradingBrokerAdapter(IBrokerGateway):
             try:
                 self._execute_order(order, predetermined_execution_price=execution_price)
             except Exception as e:
-                logger.error(
-                    f"Error filling sell limit on daily high for {order.symbol}: {e}"
-                )
+                logger.error(f"Error filling sell limit on daily high for {order.symbol}: {e}")
                 continue
 
             if order.is_executed():
